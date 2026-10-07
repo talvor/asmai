@@ -2,7 +2,7 @@
 
 AsmAI (short for AssemblyAI) is a personal software engineering **factory**: a coordinated group of AI agents that does software engineering work for one user across the repositories they register with it.
 
-The project is at an early stage (milestone M0, groundwork). This repository is the Go module `github.com/talvor/asmai`; so far it builds a minimal `asmai` executable that prints its version (`asmai version`) and its license with the third-party notices (`asmai notices`).
+The project is at an early stage (milestone M1, the walking skeleton, is under way). This repository is the Go module `github.com/talvor/asmai`; so far `asmai` runs the per-user daemon and its store (see [Running the factory](#running-the-factory)), and prints its version (`asmai version`) and its license with the third-party notices (`asmai notices`).
 
 ## Two repositories
 
@@ -40,6 +40,29 @@ A repository job ends in a **tested pull request**. Quality has validated its ex
 | absent | No check runs at all                                                |
 
 Switch with `scripts/ci-mode.sh <mode> [minutes]`, then commit and push. See the [fixture README](https://github.com/talvor/asmai-fixture#readme) for details.
+
+## Running the factory
+
+`asmai start` starts the per-user daemon in the background and returns once it answers; `asmai start --foreground` keeps it attached to the terminal, showing its log, until `asmai stop` or Ctrl-C. Each user runs at most one daemon: a second start reports the running factory. Every other command is a thin client that reaches the daemon over a Unix socket in the state directory; the daemon opens no network listener.
+
+| Command | What it does |
+| --- | --- |
+| `asmai start [--foreground]` | Start the daemon |
+| `asmai stop` | Persist the factory's state and stop the daemon |
+| `asmai status` | Whether the daemon is running, and its version |
+| `asmai log [--follow]` | The daemon's log, oldest first; `--follow` waits for new lines. It reads the log files, so it works while the daemon is stopped |
+| `asmai export` | The journal, written out for inspection |
+
+Every command prints readable tables, or JSON with `--json`.
+
+Everything the factory keeps on the host is in the state directory, `~/.local/state/asmai`, readable only by the user:
+
+- `store.db`, the store: an SQLite database, built into `asmai`, that only the daemon opens. It holds the factory's current state and the journal of everything that happened, and writes each change in the same transaction as its journal entry. The journal is append-only and never trimmed. Inspect it with `asmai export`, never by editing it.
+- `daemon.sock`, the daemon's socket.
+- `daemon.log`, the daemon's log, which rotates through 5 files of 20 MB (`daemon.log`, then `daemon.log.1` to `daemon.log.4`, the oldest).
+- `daemon.lock`, held by the running daemon.
+
+No journal entry or log line records environment variables.
 
 ## Building
 

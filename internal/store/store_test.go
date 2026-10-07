@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func open(t *testing.T, path string) *Store {
+	t.Helper()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func kinds(t *testing.T, s *Store) []string {
+	t.Helper()
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, e := range entries {
+		kinds = append(kinds, e.Kind)
+	}
+	return kinds
+}
+
+func TestANewStoreIsReadableOnlyByTheUserAndHasAnEmptyJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s := open(t, path)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("the store's mode is %v, want -rw-------", mode)
+	}
+	if f, err := s.Factory(); err != nil || f.State != StateNew {
+		t.Errorf("a new store's factory is %+v (%v), want state %q", f, err, StateNew)
+	}
+	if got := kinds(t, s); len(got) != 0 {
+		t.Errorf("a new store's journal holds %v, want nothing", got)
+	}
+}
+
+func TestStartsAndStopsAreJournaledAndTheNextOpenFindsTheStoreAsItWasLeft(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	start := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	s := open(t, path)
+	previous, err := s.Started("v1.0.0", 4242, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous.State != StateNew {
+		t.Errorf("the first start found the store %q, want %q", previous.State, StateNew)
+	}
+	if err := s.Stopped("asmai stop", start.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s = open(t, path)
+	f, err := s.Factory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Factory{State: StateStopped, Version: "v1.0.0", PID: 4242, StartedAt: start, StoppedAt: start.Add(time.Minute)}
+	if f != want {
+		t.Errorf("after reopening, the factory is %+v, want %+v", f, want)
+	}
+	previous, err = s.Started("v1.0.1", 4343, start.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous != want {
+		t.Errorf("the second start found %+v, want %+v", previous, want)
+	}
+
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Kind+" "+e.At.Format(time.RFC3339)+" "+string(e.Data))
+	}
+	wantEntries := []string{
+		`daemon.started 2026-10-08T09:00:00Z {"pid":4242,"previous":"new","version":"v1.0.0"}`,
+		`daemon.stopped 2026-10-08T09:01:00Z {"by":"asmai stop","pid":4242,"version":"v1.0.0"}`,
+		`daemon.started 2026-10-08T10:00:00Z {"pid":4343,"previous":"stopped","version":"v1.0.1"}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(wantEntries, "\n") {
+		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(wantEntries, "\n"))
+	}
+	for i, e := range entries {
+		if e.ID != int64(i+1) {
+			t.Errorf("entry %d has ID %d, want %d", i, e.ID, i+1)
+		}
+	}
+}
+
+// A start that finds the factory still running means the last daemon did not
+// stop cleanly.
+func TestAStartAfterAnUncleanStopFindsTheFactoryRunning(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	if _, err := s.Started("dev", 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := s.Started("dev", 2, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous.State != StateRunning || previous.PID != 1 {
+		t.Errorf("the second start found %+v, want the first daemon still running", previous)
+	}
+}
+
+func TestAStopWithNoDaemonRunningChangesNothing(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	if err := s.Stopped("asmai stop", time.Now()); err == nil {
+		t.Error("a stop on a new store succeeded, want an error")
+	}
+	if got := kinds(t, s); len(got) != 0 {
+		t.Errorf("the journal holds %v, want nothing", got)
+	}
+}
+
+// A change and its journal entry are written in one transaction: when either
+// fails, neither is kept.
+func TestAChangeAndItsJournalEntryAreKeptTogetherOrNotAtAll(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	if _, err := s.Started("dev", 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.change(time.Now(), func(tx *sql.Tx) (string, any, error) {
+		if _, err := tx.Exec(`UPDATE factory SET state = 'changed'`); err != nil {
+			return "", nil, err
+		}
+		return "", nil, errors.New("the change failed after writing")
+	})
+	if err == nil {
+		t.Fatal("the failed change succeeded")
+	}
+	err = s.change(time.Now(), func(tx *sql.Tx) (string, any, error) {
+		_, err := tx.Exec(`UPDATE factory SET state = 'changed'`)
+		return "test.unjournalable", func() {}, err
+	})
+	if err == nil {
+		t.Fatal("the change with an entry that cannot be journaled succeeded")
+	}
+
+	if f, err := s.Factory(); err != nil || f.State != StateRunning {
+		t.Errorf("the factory is %+v (%v), want it still running", f, err)
+	}
+	if got := kinds(t, s); strings.Join(got, ",") != KindDaemonStarted {
+		t.Errorf("the journal holds %v, want only the start", got)
+	}
+}
+
+func TestTheJournalIsAppendOnly(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	if _, err := s.Started("dev", 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`UPDATE journal SET kind = 'rewritten'`,
+		`DELETE FROM journal`,
+	} {
+		if _, err := s.db.Exec(stmt); err == nil || !strings.Contains(err.Error(), "append-only") {
+			t.Errorf("%s: got %v, want the journal to refuse", stmt, err)
+		}
+	}
+	if got := kinds(t, s); strings.Join(got, ",") != KindDaemonStarted {
+		t.Errorf("the journal holds %v, want the start unchanged", got)
+	}
+}
+
+func TestOpenRefusesAStoreItCannotUse(t *testing.T) {
+	for name, prepare := range map[string]func(t *testing.T, path string){
+		"not a database": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte(strings.Repeat("not a database\n", 100)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"another program's database": func(t *testing.T, path string) {
+			db, err := sql.Open("sqlite3", "file:"+path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE notes (text TEXT)`); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"written by a later asmai": func(t *testing.T, path string) {
+			s := open(t, path)
+			if _, err := s.db.Exec(`PRAGMA user_version = 99`); err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "store.db")
+			prepare(t, path)
+			s, err := Open(path)
+			if err == nil {
+				s.Close()
+				t.Fatal("Open succeeded, want it to refuse the store")
+			}
+			if !strings.Contains(err.Error(), "cannot be used") {
+				t.Errorf("Open's error %q does not say the store cannot be used", err)
+			}
+		})
+	}
+}
+
+func TestJournalEntriesEncodeAsJSON(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	if _, err := s.Started("dev", 7, time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"id":1,"at":"2026-10-08T09:00:00Z","kind":"daemon.started","data":{"pid":7,"previous":"new","version":"dev"}}]`
+	if string(got) != want {
+		t.Errorf("the journal encodes as\n%s\nwant\n%s", got, want)
+	}
+}

@@ -4,6 +4,7 @@ package fakeprovider_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -53,7 +54,14 @@ type session struct {
 
 func start(t *testing.T, args ...string) *session {
 	t.Helper()
-	s := &session{t: t, cmd: exec.Command(fakeProvider, args...)}
+	return startCmd(t, exec.Command(fakeProvider, args...))
+}
+
+// startCmd starts cmd, the fake with its arguments, environment and working
+// directory, in a pseudo-terminal.
+func startCmd(t *testing.T, cmd *exec.Cmd) *session {
+	t.Helper()
+	s := &session{t: t, cmd: cmd}
 	s.cmd.Stderr = &s.stderr
 	ptmx, err := pty.StartWithSize(s.cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -158,18 +166,46 @@ func TestTheFakeDrawsItsScreensInOrderAfterNamingItselfAFake(t *testing.T) {
 	}
 }
 
-// hookLog is where the hooks configured by hookArgs record each delivery, one
+// hookLog is where the hooks configured by hookSettings record each delivery, one
 // line per payload: the event name, a tab, and the payload as delivered.
 type hookLog string
 
-// hookArgs configures a hook command for each event that appends the event
-// name and its payload to log.
-func hookArgs(log hookLog, events ...string) []string {
-	var args []string
-	for _, event := range events {
-		args = append(args, "--hook", fmt.Sprintf(`%[1]s=printf '%%s\t' %[1]s >> '%[2]s'; cat >> '%[2]s'; echo >> '%[2]s'`, event, log))
+// logCommand is a hook command that appends event and its payload to log.
+func logCommand(log hookLog, event string) string {
+	return fmt.Sprintf(`printf '%%s\t' %[1]s >> '%[2]s'; cat >> '%[2]s'; echo >> '%[2]s'`, event, log)
+}
+
+// hookSettings is Claude Code settings, as JSON, with a hook command for each
+// event that appends the event name and its payload to log.
+func hookSettings(t *testing.T, log hookLog, events ...string) string {
+	t.Helper()
+	type command struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
 	}
-	return args
+	type matcher struct {
+		Matcher string    `json:"matcher,omitempty"`
+		Hooks   []command `json:"hooks"`
+	}
+	hooks := map[string][]matcher{}
+	for _, event := range events {
+		hooks[event] = []matcher{{Hooks: []command{{"command", logCommand(log, event)}}}}
+	}
+	settings, err := json.Marshal(map[string]any{"hooks": hooks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(settings)
+}
+
+// settingsFile writes settings to a file and returns its path.
+func settingsFile(t *testing.T, settings string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func (l hookLog) deliveries(t *testing.T) []string {
@@ -195,8 +231,8 @@ func (l hookLog) deliveries(t *testing.T) []string {
 func startSample(t *testing.T) (*session, hookLog) {
 	t.Helper()
 	log := hookLog(filepath.Join(t.TempDir(), "hooks.log"))
-	args := append([]string{"--script", "testdata/sample.jsonl"}, hookArgs(log, "SessionStart", "UserPromptSubmit", "Stop")...)
-	return start(t, args...), log
+	settings := settingsFile(t, hookSettings(t, log, "SessionStart", "UserPromptSubmit", "Stop"))
+	return start(t, "--script", "testdata/sample.jsonl", "--settings", settings), log
 }
 
 func TestTheFakePlaysTheSampleScriptReactingToInputAndDeliveringHooks(t *testing.T) {
@@ -289,12 +325,16 @@ func TestTheFakeRefusesAScriptItCannotPlay(t *testing.T) {
 	for name, tc := range map[string]struct {
 		line, want string
 	}{
-		"two kinds in one step":  {`{"screen": "a", "expect": "b"}`, `exactly one of "screen", "expect" and "hook"`},
+		"two kinds in one step":  {`{"screen": "a", "expect": "b"}`, `exactly one of "screen", "expect", "hook" and "run"`},
 		"a hook without payload": {`{"hook": "Stop"}`, `a "hook" step has a "payload"`},
 		"a payload on a screen":  {`{"screen": "a", "payload": {}}`, `only a "hook" step has a "payload"`},
 		"an empty screen":        {`{"screen": ""}`, `a "screen" step draws something`},
 		"an unknown field":       {`{"screen": "a", "delay": 3}`, `unknown field "delay"`},
 		"not JSON":               {`screen: a`, `invalid character`},
+		"an empty command":       {`{"run": ""}`, `a "run" step runs a command`},
+		"a status on a screen":   {`{"screen": "a", "status": 0}`, `only a "run" step has a "status" or an "output"`},
+		"an output on a hook":    {`{"hook": "Stop", "payload": {}, "output": "x"}`, `only a "run" step has a "status" or an "output"`},
+		"a bad output pattern":   {`{"run": "true", "output": "("}`, `"output": error parsing regexp`},
 		"a late recorded line":   {`{"recorded": {"provider": "Claude Code", "version": "2.1.292", "columns": 80, "rows": 24}}`, `only the first line is "recorded"`},
 	} {
 		t.Run(name, func(t *testing.T) {

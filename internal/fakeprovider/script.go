@@ -2,9 +2,10 @@
 
 // Package fakeprovider is the scripted fake provider CLI that AsmAI's
 // development tests drive in place of a real provider: it plays a script of
-// terminal screens, expected input and hook payloads. The fake never counts
-// toward qualification, never certifies a combination and is never built into
-// the asmai executable. README.md documents the script format.
+// terminal screens, expected input, hook payloads and commands run as an
+// agent's tool calls would run them. The fake never counts toward
+// qualification, never certifies a combination and is never built into the
+// asmai executable. README.md documents the script format.
 package fakeprovider
 
 import (
@@ -14,19 +15,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 )
 
 // A step is one entry of a script: exactly one of a screen to draw, input to
-// wait for, or a hook payload to deliver.
+// wait for, a hook payload to deliver, or a command to run.
 type step struct {
+	// line is the script line the step was read from.
+	line int
 	// screen is drawn on the terminal as it is, escape sequences included.
 	screen string
 	// expect is the input the fake waits for, byte for byte, before it goes on.
 	expect string
 	// hook is the name of the event whose payload is delivered to the hook
-	// command configured for it.
+	// commands configured for it.
 	hook    string
 	payload []byte
+	// run is a shell command the fake runs, as an agent's tool call would, and
+	// waits for. status, if set, is the exit status it must exit with, and
+	// output, if set, must match what it prints on stdout and stderr.
+	run    string
+	status *int
+	output *regexp.Regexp
 }
 
 // scriptLine is a step as written in the script, with each field optional so
@@ -37,6 +47,9 @@ type scriptLine struct {
 	Expect   *string         `json:"expect"`
 	Hook     *string         `json:"hook"`
 	Payload  json.RawMessage `json:"payload"`
+	Run      *string         `json:"run"`
+	Status   *int            `json:"status"`
+	Output   *string         `json:"output"`
 }
 
 // recording is the first line of a script recorded from a real provider: the
@@ -49,7 +62,10 @@ type recording struct {
 	Rows     int    `json:"rows"`
 }
 
-var errPayloadOutsideHook = errors.New(`only a "hook" step has a "payload"`)
+var (
+	errPayloadOutsideHook = errors.New(`only a "hook" step has a "payload"`)
+	errCheckOutsideRun    = errors.New(`only a "run" step has a "status" or an "output"`)
+)
 
 // readScript reads a script: one JSON object per line, each a step, played in
 // order. Blank lines are skipped. A recorded script starts with a "recorded"
@@ -73,6 +89,7 @@ func readScript(r io.Reader) ([]step, error) {
 		}
 		first = false
 		if !recorded {
+			s.line = n
 			steps = append(steps, s)
 		}
 	}
@@ -95,7 +112,8 @@ func parseStep(line []byte) (s step, recorded bool, err error) {
 		return step{}, false, err
 	}
 	if raw.Recorded != nil {
-		if raw.Screen != nil || raw.Expect != nil || raw.Hook != nil || raw.Payload != nil {
+		if raw.Screen != nil || raw.Expect != nil || raw.Hook != nil || raw.Payload != nil ||
+			raw.Run != nil || raw.Status != nil || raw.Output != nil {
 			return step{}, false, errors.New(`a "recorded" line has nothing else`)
 		}
 		r := raw.Recorded
@@ -110,13 +128,16 @@ func parseStep(line []byte) (s step, recorded bool, err error) {
 
 func parseKind(raw scriptLine) (step, error) {
 	kinds := 0
-	for _, f := range []*string{raw.Screen, raw.Expect, raw.Hook} {
+	for _, f := range []*string{raw.Screen, raw.Expect, raw.Hook, raw.Run} {
 		if f != nil {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		return step{}, errors.New(`a step has exactly one of "screen", "expect" and "hook"`)
+		return step{}, errors.New(`a step has exactly one of "screen", "expect", "hook" and "run"`)
+	}
+	if raw.Run == nil && (raw.Status != nil || raw.Output != nil) {
+		return step{}, errCheckOutsideRun
 	}
 	switch {
 	case raw.Screen != nil:
@@ -135,6 +156,22 @@ func parseKind(raw scriptLine) (step, error) {
 			return step{}, errors.New(`an "expect" step waits for some input`)
 		}
 		return step{expect: *raw.Expect}, nil
+	case raw.Run != nil:
+		if raw.Payload != nil {
+			return step{}, errPayloadOutsideHook
+		}
+		if *raw.Run == "" {
+			return step{}, errors.New(`a "run" step runs a command`)
+		}
+		s := step{run: *raw.Run, status: raw.Status}
+		if raw.Output != nil {
+			re, err := regexp.Compile(*raw.Output)
+			if err != nil {
+				return step{}, fmt.Errorf(`"output": %w`, err)
+			}
+			s.output = re
+		}
+		return s, nil
 	default:
 		if *raw.Hook == "" {
 			return step{}, errors.New(`a "hook" step names its event`)

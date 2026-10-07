@@ -62,8 +62,8 @@ const stubSessionID = "3f2a9c1e-5b7d-4e8a-9c0b-1d2e3f4a5b6c"
 // `stub --settings FILE`. It greets its user by name and email and shows its
 // working directory, waits for a prompt, answers it and waits for another to
 // end the session, running the hooks in FILE as Claude Code would. With
-// STUB_LEAK set, its answer also draws something the recorder must refuse,
-// whole or in pieces around cursor movements.
+// STUB_LEAK set, its answer also draws something more: mostly what the
+// recorder must refuse, whole or in pieces around cursor movements.
 func stub(args []string) int {
 	if slices.Equal(args, []string{"--version"}) {
 		fmt.Println("9.9.9 (Claude Code)")
@@ -142,7 +142,12 @@ func stub(args []string) int {
 	case "styled email":
 		answer += " bob\x1b[1m@corp.example\x1b[0m"
 	case "partial token":
-		answer += " sk-an\x1b[10Gt-oat01"
+		answer += " sk-ant\x1b[10G-oat01"
+	case "partial name":
+		answer += "\x1b[3;1HCaroli\x1b[3;10G!"
+	case "wrapped reply":
+		// Pieces of the names the recorder is given, but ordinary words.
+		answer += " the first\r\n\x1b[1Gline of the file\x1b[K\r\n\x1b[1Glocal changes"
 	case "partial redraw":
 		// Redraw the working directory's line, skipping the cells that
 		// did not change, as Claude Code's renderer does.
@@ -247,6 +252,7 @@ func eventually(cond func() bool) bool {
 
 // recordStub records a session with the stub as Claude Code, in a working
 // directory inside a home directory of its own, typing hello and then /exit.
+// It has the recorder redact Alice, Caroline and a macOS host name.
 // It returns the recorder's terminal and where the recording goes.
 func recordStub(t *testing.T, env ...string) (*terminal, string) {
 	t.Helper()
@@ -268,7 +274,7 @@ func recordStub(t *testing.T, env ...string) (*terminal, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(recordSession, "--out", out, "--redact", "Alice", "--", self)
+	cmd := exec.Command(recordSession, "--out", out, "--redact", "Alice", "--redact", "Caroline", "--redact", "Someones-MacBook-Pro.local", "--", self)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "HOME="+home, stubEnv+"=1")
 	cmd.Env = append(cmd.Env, env...)
@@ -422,6 +428,7 @@ func TestTheRecorderRefusesToWriteARecordingHoldingACredentialOrPersonalData(t *
 		"styled email":   "holds an email address",
 		"partial token":  "holds a fragment of a credential",
 		"partial redraw": "holds a fragment of personal data from this host",
+		"partial name":   "holds a fragment of personal data from this host",
 	} {
 		t.Run(leak, func(t *testing.T) {
 			term, out := recordStub(t, "STUB_LEAK="+leak, "STUB_SECRET_TOKEN="+secret)
@@ -434,7 +441,7 @@ func TestTheRecorderRefusesToWriteARecordingHoldingACredentialOrPersonalData(t *
 					t.Errorf("stderr %q does not say %q", stderr, want)
 				}
 			}
-			for _, leaked := range []string{"sk-an", secret, "bob", "corp.example", "alice", "scra"} {
+			for _, leaked := range []string{"sk-an", secret, "bob", "corp.example", "alice", "scra", "Caroli"} {
 				if strings.Contains(stderr, leaked) {
 					t.Errorf("stderr %q repeats %q", stderr, leaked)
 				}
@@ -443,6 +450,20 @@ func TestTheRecorderRefusesToWriteARecordingHoldingACredentialOrPersonalData(t *
 				t.Errorf("the recording was written (%v)", err)
 			}
 		})
+	}
+}
+
+func TestTheRecorderAcceptsOrdinaryWordsThatArePiecesOfPersonalData(t *testing.T) {
+	term, out := recordStub(t, "STUB_LEAK=wrapped reply")
+	if code := term.exit(); code != 0 {
+		t.Fatalf("recorder exited %d, want 0; stderr %q", code, term.stderr.String())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := record.Check(data); err != nil {
+		t.Errorf("Check: %v", err)
 	}
 }
 
@@ -511,8 +532,8 @@ func TestCheckRefusesHomeDirectoriesAndCredentialFragments(t *testing.T) {
 		"a Linux home":           {script(map[string]any{"screen": "cd /home/phillip/scratch\r\n"}), "line 1 holds a home directory that is not the placeholder's"},
 		"a macOS home":           {script(map[string]any{"screen": "ok"}, map[string]any{"hook": "Stop", "payload": map[string]any{"cwd": "/Users/phillip"}}), "line 2 holds a home directory that is not the placeholder's"},
 		"a project directory":    {script(map[string]any{"hook": "Stop", "payload": map[string]any{"transcript_path": "/home/user/.claude/projects/-Users-phillip-scratch/x.jsonl"}}), "line 1 holds a home directory that is not the placeholder's"},
-		"a credential redrawn":   {script(map[string]any{"screen": "key sk-an\x1b[10Gt-oat01"}), "line 1 holds a fragment of a credential around a cursor movement"},
-		"a credential split":     {script(map[string]any{"screen": "key sk-a"}, map[string]any{"screen": "\x1b[9Gnt-oat01"}), "the screens together hold a fragment of a credential around a cursor movement"},
+		"a credential redrawn":   {script(map[string]any{"screen": "key sk-ant\x1b[11G-oat01"}), "line 1 holds a fragment of a credential around a cursor movement"},
+		"a credential split":     {script(map[string]any{"screen": "key sk-ant"}, map[string]any{"screen": "\x1b[11G-oat01"}), "the screens together hold a fragment of a credential around a cursor movement"},
 		"the placeholder's home": {script(map[string]any{"screen": "~/project /home/user/project\r\n"}, map[string]any{"hook": "Stop", "payload": map[string]any{"transcript_path": "/home/user/.claude/projects/-home-user-project/x.jsonl"}}), ""},
 	} {
 		t.Run(name, func(t *testing.T) {

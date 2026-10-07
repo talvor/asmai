@@ -40,10 +40,10 @@ var (
 	// homePattern matches a home directory, as a path and as Claude Code
 	// names a project directory after it, with the name of its owner.
 	homePattern = regexp.MustCompile(`/(?:home|Users)/(\w+)|-(?:home|Users)-(\w+)`)
-	// cursorPattern matches what moves the cursor or erases. A renderer
-	// that redraws only the cells that changed writes it between the pieces
-	// of a line it draws.
-	cursorPattern = regexp.MustCompile("\x1b\\[[0-9;?]*[A-HJKSTXdf@P`]|[\r\n\b]")
+	// cursorPattern matches the escape sequences that move the cursor or
+	// erase. A renderer that redraws only the cells that changed writes them
+	// between the pieces of a line it draws.
+	cursorPattern = regexp.MustCompile("\x1b\\[[0-9;?]*[A-HJKSTXdf@P`]")
 	// secretName is an environment variable whose value is likely a
 	// credential.
 	secretName = regexp.MustCompile(`(?i)TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE`)
@@ -66,10 +66,9 @@ var credentials = []struct {
 	{"a Slack token", regexp.MustCompile(`xox[abprs]-[A-Za-z0-9-]{10,}`)},
 }
 
-// credentialFragments are the fragments of the start every Anthropic
-// credential shares, which a redraw of only the cells that changed can draw
-// apart from the rest of it.
-var credentialFragments = newFragments(nil, []string{"sk-ant-"})
+// credentialFragments are the start every Anthropic credential shares, which
+// a redraw of only the cells that changed can draw apart from the rest of it.
+var credentialFragments = fragments{prefixes: []string{"sk-ant", "sk-ant-"}}
 
 const credentialFragment = "a fragment of a credential around a cursor movement"
 
@@ -155,7 +154,7 @@ func newScrubber(dir string, redact []string) *scrubber {
 	for _, v := range values {
 		s.replacements = append(s.replacements, replacement{value: v, pattern: valuePattern(v), placeholder: pairs[v]})
 	}
-	s.fragments = newFragments(values, nil)
+	s.fragments = newFragments(values)
 
 	for _, kv := range os.Environ() {
 		name, value, _ := strings.Cut(kv, "=")
@@ -270,9 +269,14 @@ func (s *scrubber) fragment(text string) string {
 	return ""
 }
 
-// minFragment is the fewest characters a fragment has, so that ordinary
-// words do not look like one.
-const minFragment = 4
+// A fragment is distinctive, and not an ordinary word, when it has at least
+// distinctFragment characters and more than half of its value, or when it
+// has at least minFragment characters and cuts through a run of the value
+// that is not letters, such as a path's separators.
+const (
+	minFragment      = 4
+	distinctFragment = 6
+)
 
 // fragments are the prefixes and suffixes of values that, drawn just before
 // or just after a cursor movement, may be the rest of a value redrawn in part.
@@ -283,35 +287,25 @@ type fragments struct {
 	whole []string
 }
 
-// newFragments collects the fragments of each of personal, which are drawn
-// whole and scrubbed, and of each of starts, which are refused even whole.
-// Fragments of the placeholders, or of macOS's home directories, are common
-// to everyone and left out.
-func newFragments(personal, starts []string) fragments {
+// newFragments collects the distinctive fragments of each of personal, which
+// are drawn whole and scrubbed. Fragments of the placeholders, or of macOS's
+// home directories, are common to everyone and left out.
+func newFragments(personal []string) fragments {
 	common := strings.ToLower(strings.Join([]string{placeholderDir, dashed(placeholderDir), placeholderTilde, placeholderEmail, "/Users/", "-Users-"}, "\n"))
 	var f fragments
-	keep := func(list *[]string, fragment string) {
-		if !strings.Contains(common, fragment) {
-			*list = append(*list, fragment)
-		}
-	}
-	add := func(v string, whole bool) {
+	for _, v := range personal {
 		v = strings.ToLower(v)
-		longest := len(v) - 1
-		if whole {
-			longest = len(v)
+		keep := func(list *[]string, fragment string) {
+			distinct := len(fragment) >= distinctFragment && 2*len(fragment) > len(v) || strings.ContainsAny(fragment, "/-.~@0123456789")
+			if distinct && !strings.Contains(common, fragment) {
+				*list = append(*list, fragment)
+			}
 		}
-		for n := minFragment; n <= longest; n++ {
+		for n := minFragment; n < len(v); n++ {
 			keep(&f.prefixes, v[:n])
 			keep(&f.suffixes, v[len(v)-n:])
 		}
-	}
-	for _, v := range personal {
-		add(v, false)
-		f.whole = append(f.whole, strings.ToLower(v))
-	}
-	for _, v := range starts {
-		add(v, true)
+		f.whole = append(f.whole, v)
 	}
 	return f
 }

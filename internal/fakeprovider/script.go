@@ -28,7 +28,7 @@ type step struct {
 	// expect is the input the fake waits for, byte for byte, before it goes on.
 	expect string
 	// hook is the name of the event whose payload is delivered to the hook
-	// command configured for it.
+	// commands configured for it.
 	hook    string
 	payload []byte
 	// run is a shell command the fake runs, as an agent's tool call would, and

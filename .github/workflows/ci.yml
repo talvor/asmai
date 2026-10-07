@@ -36,7 +36,7 @@ jobs:
       - name: License allow-list for every Go module compiled into asmai
         run: go run ./internal/cmd/check-licenses
 
-      - name: Embedded third-party notices match the Go modules compiled into asmai
+      - name: Embedded third-party notices match the Go toolchain and modules compiled into asmai
         run: go run ./internal/cmd/gen-notices -check
 
       - name: Development tests

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command gen-notices generates THIRD_PARTY_NOTICES, which asmai embeds, from
-// every Go module compiled into asmai for each target platform. With -check it
-// changes nothing and fails when THIRD_PARTY_NOTICES differs from what
-// generation produces. Run it from the repository root:
+// the Go distribution's LICENSE and every Go module compiled into asmai for
+// each target platform. It needs the Go toolchain go.mod pins, from an official
+// distribution with its LICENSE at GOROOT. With -check it changes nothing and
+// fails when THIRD_PARTY_NOTICES differs from what generation produces. Run it
+// from the repository root:
 //
 //	go run ./internal/cmd/gen-notices
 //	go run ./internal/cmd/gen-notices -check
@@ -24,7 +26,12 @@ func main() {
 	check := flag.Bool("check", false, "fail when "+file+" is not what generation produces, instead of writing it")
 	flag.Parse()
 
-	notices, err := licenses.Notices(".", "./cmd/asmai", licenses.Targets)
+	goDist, err := licenses.PinnedToolchain(".")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gen-notices:", err)
+		os.Exit(1)
+	}
+	notices, err := licenses.Notices(".", "./cmd/asmai", licenses.Targets, goDist)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen-notices:", err)
 		os.Exit(1)
@@ -42,8 +49,8 @@ func main() {
 		os.Exit(1)
 	}
 	if !bytes.Equal(embedded, notices) {
-		fmt.Fprintf(os.Stderr, "gen-notices: %s does not match the Go modules compiled into asmai; run `make notices` and commit it\n", file)
+		fmt.Fprintf(os.Stderr, "gen-notices: %s does not match the Go toolchain and modules compiled into asmai; run `make notices` and commit it\n", file)
 		os.Exit(1)
 	}
-	fmt.Printf("%s matches the Go modules compiled into asmai\n", file)
+	fmt.Printf("%s matches the Go toolchain and modules compiled into asmai\n", file)
 }

@@ -124,11 +124,63 @@ func Check(w io.Writer, dir, pkg string, platforms []Platform) (bool, error) {
 	return len(failures) == 0, nil
 }
 
+// Toolchain is the Go distribution that compiles asmai, whose standard
+// library and runtime are compiled into it, by version, with its LICENSE.
+type Toolchain struct {
+	Version string
+	License []byte
+}
+
+// PinnedToolchain returns the Go toolchain the go command runs in the main
+// module at dir, with the LICENSE at its GOROOT. It fails unless that
+// toolchain is the Go version the module's go.mod pins, so the notices
+// generated for a module set are the same with any toolchain that builds it.
+func PinnedToolchain(dir string) (Toolchain, error) {
+	modOut, err := goCommand(dir, "mod", "edit", "-json")
+	if err != nil {
+		return Toolchain{}, err
+	}
+	var mod struct{ Go string }
+	if err := json.Unmarshal(modOut, &mod); err != nil {
+		return Toolchain{}, fmt.Errorf("go mod edit: %v", err)
+	}
+	envOut, err := goCommand(dir, "env", "-json", "GOVERSION", "GOROOT")
+	if err != nil {
+		return Toolchain{}, err
+	}
+	var env struct{ GOVERSION, GOROOT string }
+	if err := json.Unmarshal(envOut, &env); err != nil {
+		return Toolchain{}, fmt.Errorf("go env: %v", err)
+	}
+	if pinned := "go" + mod.Go; env.GOVERSION != pinned {
+		return Toolchain{}, fmt.Errorf("go.mod pins %s, but the Go toolchain is %s", pinned, env.GOVERSION)
+	}
+	license, err := os.ReadFile(filepath.Join(env.GOROOT, "LICENSE"))
+	if err != nil {
+		return Toolchain{}, fmt.Errorf("the Go distribution's LICENSE: %v", err)
+	}
+	return Toolchain{Version: env.GOVERSION, License: license}, nil
+}
+
+func goCommand(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go %s: %v\n%s", args[0], err, stderr.Bytes())
+	}
+	return out, nil
+}
+
 // Notices returns the third-party notices for pkg, a package pattern resolved
-// in the main module at dir: every module other than the main module that is
-// compiled into pkg for any of platforms, by path, each followed by the text
-// of its license files. The same module set always gives the same bytes.
-func Notices(dir, pkg string, platforms []Platform) ([]byte, error) {
+// in the main module at dir: goDist, whose standard library and runtime are
+// compiled in, followed by its LICENSE, then every module
+// other than the main module that is compiled into pkg for any of platforms,
+// by path, each followed by the text of its license files. The same toolchain
+// and module set always give the same bytes.
+func Notices(dir, pkg string, platforms []Platform, goDist Toolchain) ([]byte, error) {
 	byPath := map[string]Module{}
 	for _, p := range platforms {
 		mods, err := CompiledIn(dir, pkg, p)
@@ -144,20 +196,23 @@ func Notices(dir, pkg string, platforms []Platform) ([]byte, error) {
 	rule := strings.Repeat("=", 80) + "\n"
 	var b bytes.Buffer
 	b.WriteString("Third-party notices\n\n")
-	b.WriteString("The Go modules compiled in, each followed by its license files.\n")
-	if len(byPath) == 0 {
-		b.WriteString("\nNone: only the standard library is compiled in.\n")
-	}
-	for _, path := range slices.Sorted(maps.Keys(byPath)) {
-		m := byPath[path]
-		fmt.Fprintf(&b, "\n%s%s %s\n%s", rule, m.Path, m.Version, rule)
-		for _, f := range m.LicenseFiles {
+	b.WriteString("The Go distribution, whose standard library and runtime are compiled in,\n")
+	b.WriteString("followed by its license, then the Go modules compiled in, each followed by\n")
+	b.WriteString("its license files.\n")
+	writeSection := func(title string, files []LicenseFile) {
+		fmt.Fprintf(&b, "\n%s%s\n%s", rule, title, rule)
+		for _, f := range files {
 			fmt.Fprintf(&b, "\n-- %s --\n\n", f.Name)
 			b.Write(f.Text)
 			if !bytes.HasSuffix(f.Text, []byte("\n")) {
 				b.WriteString("\n")
 			}
 		}
+	}
+	writeSection("Go "+goDist.Version+" (standard library and runtime)", []LicenseFile{{Name: "LICENSE", Text: goDist.License}})
+	for _, path := range slices.Sorted(maps.Keys(byPath)) {
+		m := byPath[path]
+		writeSection(m.Path+" "+m.Version, m.LicenseFiles)
 	}
 	return b.Bytes(), nil
 }

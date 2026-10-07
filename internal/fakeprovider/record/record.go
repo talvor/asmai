@@ -28,7 +28,13 @@ import (
 	"golang.org/x/term"
 )
 
-const usage = "usage: record-session --out FILE [--columns N] [--rows N] [--redact VALUE]... [-- CLAUDE [ARG]...]"
+const usage = "usage: record-session --out FILE [--redact VALUE]... [-- CLAUDE [ARG]...]"
+
+// columns and rows are the size of the terminal a session is recorded on.
+const (
+	columns = 80
+	rows    = 24
+)
 
 // Provider is the provider the recorder records, as a recording names it.
 const Provider = "Claude Code"
@@ -66,8 +72,6 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("record-session", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	out := flags.String("out", "", "write the recording to `FILE`")
-	columns := flags.Int("columns", 80, "the terminal's width")
-	rows := flags.Int("rows", 24, "the terminal's height")
 	var redact values
 	flags.Var(&redact, "redact", "scrub `VALUE` as personal data (repeatable)")
 	if err := flags.Parse(args); err != nil {
@@ -77,7 +81,7 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if len(command) == 0 {
 		command = []string{"claude"}
 	}
-	if *out == "" || *columns <= 0 || *rows <= 0 {
+	if *out == "" {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
@@ -94,12 +98,12 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	scrub := newScrubber(dir, redact)
 
-	steps, err := capture(command, *columns, *rows, stdin, stdout)
+	steps, err := capture(command, stdin, stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "record-session: %v\n", err)
 		return 1
 	}
-	header := recorded{Provider: Provider, Version: version, Columns: *columns, Rows: *rows}
+	header := recorded{Provider: Provider, Version: version, Columns: columns, Rows: rows}
 	script, err := write(header, steps, scrub)
 	if err != nil {
 		fmt.Fprintf(stderr, "record-session: refusing to write %s: %v; nothing was written\n", *out, err)
@@ -218,11 +222,11 @@ type event struct {
 	done chan struct{}
 }
 
-// capture runs command in a pseudo-terminal of the given size with a hook
+// capture runs command in a pseudo-terminal of columns by rows with a hook
 // command configured for each of hookEvents, and returns the session's steps
 // once it exits. It copies what the session draws to stdout and what is typed
 // on stdin to the session, so a person, or tmux, can drive it.
-func capture(command []string, columns, rows int, stdin *os.File, stdout io.Writer) ([]capturedStep, error) {
+func capture(command []string, stdin *os.File, stdout io.Writer) ([]capturedStep, error) {
 	tmp, err := os.MkdirTemp("", "record-session")
 	if err != nil {
 		return nil, err
@@ -389,13 +393,14 @@ type recorded struct {
 
 // write scrubs steps and writes them, after header, as a script for the fake
 // provider. It refuses, naming the step and what it holds but never the value,
-// when a step still holds a credential or personal data.
+// when a step still holds a credential or personal data, or when a screen as
+// Claude Code drew it holds a fragment of one around a cursor movement.
 func write(header recorded, captured []capturedStep, scrub *scrubber) ([]byte, error) {
 	var script bytes.Buffer
 	enc := json.NewEncoder(&script)
 	enc.SetEscapeHTML(false)
 	enc.Encode(map[string]recorded{"recorded": header})
-	var screens strings.Builder
+	var screens, drawn strings.Builder
 	for i, c := range captured {
 		var line any
 		var text string
@@ -412,6 +417,10 @@ func write(header recorded, captured []capturedStep, scrub *scrubber) ([]byte, e
 			line = map[string]string{c.kind: text}
 			if c.kind == kindScreen {
 				screens.WriteString(text)
+				drawn.Write(c.data)
+				if what := scrub.fragment(string(c.data)); what != "" {
+					return nil, fmt.Errorf("step %d (%s) holds %s", i+1, c.kind, what)
+				}
 			}
 		}
 		if what := scrub.problem(text); what != "" {
@@ -425,12 +434,17 @@ func write(header recorded, captured []capturedStep, scrub *scrubber) ([]byte, e
 	if what := scrub.problem(screens.String()); what != "" {
 		return nil, fmt.Errorf("the screens together hold %s", what)
 	}
+	if what := scrub.fragment(drawn.String()); what != "" {
+		return nil, fmt.Errorf("the screens together hold %s", what)
+	}
 	return script.Bytes(), nil
 }
 
 // Check reports what a recorded script holds that no recording may: a
-// credential, an email address that is not a placeholder, or an identifier
-// that is not a placeholder. It names the line, never the value.
+// credential or a fragment of one around a cursor movement, an email address
+// that is not a placeholder, an identifier that is not a placeholder, or a
+// home directory that is not the placeholder's. It names the line, never the
+// value.
 func Check(script []byte) error {
 	var screens strings.Builder
 	for n, line := range bytes.Split(script, []byte("\n")) {
@@ -448,6 +462,9 @@ func Check(script []byte) error {
 			}
 			if field == kindScreen {
 				screens.WriteString(text)
+				if credentialFragments.in(text) {
+					return fmt.Errorf("line %d holds %s", n+1, credentialFragment)
+				}
 			}
 			if what := genericProblem(text); what != "" {
 				return fmt.Errorf("line %d holds %s", n+1, what)
@@ -459,6 +476,9 @@ func Check(script []byte) error {
 	}
 	if what := genericProblem(ansiPattern.ReplaceAllString(screens.String(), "")); what != "" {
 		return fmt.Errorf("the screens together hold %s", what)
+	}
+	if credentialFragments.in(screens.String()) {
+		return fmt.Errorf("the screens together hold %s", credentialFragment)
 	}
 	return nil
 }

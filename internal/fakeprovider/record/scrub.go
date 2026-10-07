@@ -37,6 +37,13 @@ var (
 	// ansiPattern matches the escape sequences a terminal draws with, so a
 	// check can read the text they surround.
 	ansiPattern = regexp.MustCompile(`\x1b(\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|P[^\x1b]*\x1b\\|[@-Z\\-_])`)
+	// homePattern matches a home directory, as a path and as Claude Code
+	// names a project directory after it, with the name of its owner.
+	homePattern = regexp.MustCompile(`/(?:home|Users)/(\w+)|-(?:home|Users)-(\w+)`)
+	// cursorPattern matches what moves the cursor or erases. A renderer
+	// that redraws only the cells that changed writes it between the pieces
+	// of a line it draws.
+	cursorPattern = regexp.MustCompile("\x1b\\[[0-9;?]*[A-HJKSTXdf@P`]|[\r\n\b]")
 	// secretName is an environment variable whose value is likely a
 	// credential.
 	secretName = regexp.MustCompile(`(?i)TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE`)
@@ -59,6 +66,13 @@ var credentials = []struct {
 	{"a Slack token", regexp.MustCompile(`xox[abprs]-[A-Za-z0-9-]{10,}`)},
 }
 
+// credentialFragments are the fragments of the start every Anthropic
+// credential shares, which a redraw of only the cells that changed can draw
+// apart from the rest of it.
+var credentialFragments = newFragments(nil, []string{"sk-ant-"})
+
+const credentialFragment = "a fragment of a credential around a cursor movement"
+
 // A scrubber replaces the personal data of the host and session it records
 // with placeholders, and finds what must not be written at all.
 type scrubber struct {
@@ -68,6 +82,8 @@ type scrubber struct {
 	// variables: a recording holding one is refused.
 	secrets []string
 	uuids   map[string]string
+	// fragments are the pieces of the personal data a redraw can draw.
+	fragments fragments
 }
 
 type replacement struct {
@@ -139,6 +155,7 @@ func newScrubber(dir string, redact []string) *scrubber {
 	for _, v := range values {
 		s.replacements = append(s.replacements, replacement{value: v, pattern: valuePattern(v), placeholder: pairs[v]})
 	}
+	s.fragments = newFragments(values, nil)
 
 	for _, kv := range os.Environ() {
 		name, value, _ := strings.Cut(kv, "=")
@@ -237,9 +254,109 @@ func (s *scrubber) problem(text string) string {
 	return ""
 }
 
+// fragment names what text, a screen as Claude Code drew it before
+// scrubbing, holds in pieces around a cursor movement: a fragment of personal
+// data the scrubber knows, or of a credential. Claude Code redraws only the
+// cells that changed on its own screen, which shows the values themselves, so
+// such a fragment is neither scrubbed nor found whole. It returns "" when
+// text holds none, and never returns the fragment.
+func (s *scrubber) fragment(text string) string {
+	if s.fragments.in(text) {
+		return "a fragment of personal data from this host around a cursor movement"
+	}
+	if credentialFragments.in(text) {
+		return credentialFragment
+	}
+	return ""
+}
+
+// minFragment is the fewest characters a fragment has, so that ordinary
+// words do not look like one.
+const minFragment = 4
+
+// fragments are the prefixes and suffixes of values that, drawn just before
+// or just after a cursor movement, may be the rest of a value redrawn in part.
+type fragments struct {
+	prefixes, suffixes []string
+	// whole are the values drawn whole, which are scrubbed rather than
+	// refused.
+	whole []string
+}
+
+// newFragments collects the fragments of each of personal, which are drawn
+// whole and scrubbed, and of each of starts, which are refused even whole.
+// Fragments of the placeholders, or of macOS's home directories, are common
+// to everyone and left out.
+func newFragments(personal, starts []string) fragments {
+	common := strings.ToLower(strings.Join([]string{placeholderDir, dashed(placeholderDir), placeholderTilde, placeholderEmail, "/Users/", "-Users-"}, "\n"))
+	var f fragments
+	keep := func(list *[]string, fragment string) {
+		if !strings.Contains(common, fragment) {
+			*list = append(*list, fragment)
+		}
+	}
+	add := func(v string, whole bool) {
+		v = strings.ToLower(v)
+		longest := len(v) - 1
+		if whole {
+			longest = len(v)
+		}
+		for n := minFragment; n <= longest; n++ {
+			keep(&f.prefixes, v[:n])
+			keep(&f.suffixes, v[len(v)-n:])
+		}
+	}
+	for _, v := range personal {
+		add(v, false)
+		f.whole = append(f.whole, strings.ToLower(v))
+	}
+	for _, v := range starts {
+		add(v, true)
+	}
+	return f
+}
+
+// in reports whether text holds one of the fragments just before or just
+// after a cursor movement, other than as part of a value drawn whole.
+func (f fragments) in(text string) bool {
+	text = ansiPattern.ReplaceAllStringFunc(text, func(seq string) string {
+		if cursorPattern.FindString(seq) == seq {
+			return seq
+		}
+		return ""
+	})
+	pieces := cursorPattern.Split(text, -1)
+	for i := 0; i+1 < len(pieces); i++ {
+		before, after := strings.ToLower(pieces[i]), strings.ToLower(pieces[i+1])
+		for _, p := range f.prefixes {
+			start := len(before) - len(p)
+			if strings.HasSuffix(before, p) && !(isWord(p[0]) && start > 0 && isWord(before[start-1])) && !f.drawnWhole(before, len(p), strings.HasSuffix) {
+				return true
+			}
+		}
+		for _, s := range f.suffixes {
+			if strings.HasPrefix(after, s) && !(isWord(s[len(s)-1]) && len(after) > len(s) && isWord(after[len(s)])) && !f.drawnWhole(after, len(s), strings.HasPrefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// drawnWhole reports whether piece starts or ends, as at says, with a value
+// drawn whole that is at least n characters long.
+func (f fragments) drawnWhole(piece string, n int, at func(string, string) bool) bool {
+	for _, w := range f.whole {
+		if len(w) >= n && at(piece, w) {
+			return true
+		}
+	}
+	return false
+}
+
 // genericProblem finds what no recording may hold, whoever made it: a
-// credential, an email address that is not the placeholder's, or a UUID that
-// is not a placeholder.
+// credential, an email address that is not the placeholder's, a UUID that is
+// not a placeholder, or a home directory that is not the placeholder's.
 func genericProblem(text string) string {
 	for _, c := range credentials {
 		if c.pattern.MatchString(text) {
@@ -254,6 +371,11 @@ func genericProblem(text string) string {
 	for _, id := range uuidPattern.FindAllString(text, -1) {
 		if !placeholderUUIDPattern.MatchString(id) {
 			return "an identifier that is not a placeholder"
+		}
+	}
+	for _, m := range homePattern.FindAllStringSubmatch(text, -1) {
+		if m[1]+m[2] != placeholderUser {
+			return "a home directory that is not the placeholder's"
 		}
 	}
 	return ""

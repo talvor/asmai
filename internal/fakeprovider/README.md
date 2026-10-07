@@ -71,10 +71,10 @@ This session starts by delivering `SessionStart`, then clears the screen and dra
 
 ```sh
 go build -o record-session ./internal/fakeprovider/cmd/record-session
-record-session --out FILE [--columns N] [--rows N] [--redact VALUE]... [-- CLAUDE [ARG]...]
+record-session --out FILE [--redact VALUE]... [-- CLAUDE [ARG]...]
 ```
 
-Run it in a terminal, in the directory the session should work in, and use the session as usual. It runs `claude` (or `CLAUDE`, with its arguments) in a pseudo-terminal of `--columns` by `--rows`, 80 by 24 by default, and shows it on its own terminal. It asks `claude --version` for the version, and refuses to record anything that does not name a Claude Code version. It passes Claude Code a `--settings` file with a hook command for each event, so every payload comes back to the recorder before Claude Code goes on. The recording is written when Claude Code exits.
+Run it in a terminal, in the directory the session should work in, and use the session as usual. It runs `claude` (or `CLAUDE`, with its arguments) in an 80 by 24 pseudo-terminal, and shows it on its own terminal. It asks `claude --version` for the version, and refuses to record anything that does not name a Claude Code version. It passes Claude Code a `--settings` file with a hook command for each event, so every payload comes back to the recorder before Claude Code goes on. The recording is written when Claude Code exits.
 
 What is typed, including the terminal's answers to Claude Code's queries, becomes the script's expected input, so a test plays a recording by typing each expected input once the fake has drawn the screens before it. Consecutive output makes one screen, and consecutive input one expected input.
 
@@ -89,7 +89,9 @@ Before it writes anything, the recorder scrubs personal data, replacing it with 
 | Email addresses | `user@example.com` |
 | UUIDs, such as session, prompt, account and organization identifiers | `00000000-0000-4000-8000-000000000001`, `...002` and so on, the same one everywhere a UUID appears |
 
-Names are matched whatever their case, and not inside a longer word. The recorder then refuses to write the recording, exiting 1, if a step still holds a credential (an Anthropic, GitHub, AWS or Slack token, an API key, a JSON Web Token, a bearer token or a private key), the value of an environment variable whose name says it is a credential, an email address or UUID that is not a placeholder, or personal data it knows. It looks at each step as written and as a terminal shows it without escape sequences, and at the screens together, so a value split by styling or across screens is still found. It names the step and what it holds, never the value.
+Names are matched whatever their case, and not inside a longer word. The recorder then refuses to write the recording, exiting 1, if a step still holds a credential (an Anthropic, GitHub, AWS or Slack token, an API key, a JSON Web Token, a bearer token or a private key), the value of an environment variable whose name says it is a credential, an email address or UUID that is not a placeholder, a home directory (`/home/NAME`, `/Users/NAME`, `-home-NAME` or `-Users-NAME`) other than the placeholder's, or personal data it knows. It looks at each step as written and as a terminal shows it without escape sequences, and at the screens together, so a value split by styling or across screens is still found.
+
+Claude Code redraws only the cells of its screen that changed, and its screen shows the real values, not the placeholders, so a redraw can draw a value in pieces around cursor movements, which neither scrubbing nor the checks above find whole. The recorder therefore also refuses a recording when a screen, as Claude Code drew it, holds a fragment of personal data it knows or of `sk-ant-` just before or just after a cursor movement, an erase or a line break: a prefix or suffix of at least four characters, not one common to the placeholders. It names the step and what it holds, never the value.
 
 The recorder cannot see personal data it does not know of. Read a recording through before committing it, and `--redact` anything it shows that is yours.
 
@@ -99,6 +101,6 @@ The recorder cannot see personal data it does not know of. Read a recording thro
 | --- | --- |
 | [`claude-code-2.1.292-reply-ok.jsonl`](testdata/recorded/claude-code-2.1.292-reply-ok.jsonl) | Claude Code 2.1.292 on Linux, in a new empty directory: trust the directory, ask for the single word `ok`, get it, then `/exit`. It delivers `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd`. |
 
-Each recording is named `claude-code-VERSION-WHAT.jsonl`, after the version in its `"recorded"` line. The development tests check every recording for credentials and personal data, and replay it through the fake, checking that the fake draws every screen and delivers every payload in order.
+Each recording is named `claude-code-VERSION-WHAT.jsonl`, after the version in its `"recorded"` line. The development tests check every recording for credentials, fragments of `sk-ant-` around cursor movements, email addresses, UUIDs and home directories that are not placeholders, and replay it through the fake, checking that the fake draws every screen and delivers every payload in order.
 
 These recordings come from the Claude Code installed where they were made, not from a pinned version: nothing pins Claude Code until M1. Once M1 pins Claude Code, the recordings are remade at the pinned version. Codex recordings come with Codex, in M2.

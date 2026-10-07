@@ -2,7 +2,16 @@
 
 AsmAI (short for AssemblyAI) is a personal software engineering **factory**: a coordinated group of AI agents that does software engineering work for one user across the repositories they register with it.
 
-The project is at an early stage (milestone M0, groundwork). This repository holds the domain language and the architecture decisions so far. The code arrives with the M0 issues.
+The project is at an early stage (milestone M0, groundwork). This repository is the Go module `github.com/talvor/asmai`; so far it builds a minimal `asmai` executable that only prints its version.
+
+## Two repositories
+
+AsmAI was planned in [talvor/AssemblyAI](https://github.com/talvor/AssemblyAI) and is built here.
+
+- **talvor/AssemblyAI keeps the planning record**: the map, the decision tickets, the Lavish records and the specification (`docs/spec/`). It is not where AsmAI is built.
+- **talvor/asmai holds AsmAI's code**, its implementation tickets and its releases.
+
+Only [`GLOSSARY.md`](GLOSSARY.md) and ADRs 0001 to 0010 were copied across from talvor/AssemblyAI. They now evolve here, and new ADRs are numbered from 0011.
 
 ## What it does
 
@@ -32,10 +41,30 @@ A repository job ends in a **tested pull request**. Quality has validated its ex
 
 Switch with `scripts/ci-mode.sh <mode> [minutes]`, then commit and push. See the [fixture README](https://github.com/talvor/asmai-fixture#readme) for details.
 
+## Building
+
+AsmAI needs Go (the version in [`go.mod`](go.mod)) and no C compiler. Build `asmai` for Linux x86_64 and macOS on Apple silicon with CGo disabled, and run the development tests:
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux-amd64/asmai ./cmd/asmai
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o dist/darwin-arm64/asmai ./cmd/asmai
+CGO_ENABLED=0 go test ./...
+```
+
+[CI](.github/workflows/ci.yml) does the same on every pull request, on a hosted Linux runner and a hosted macOS runner.
+
 ## Repository layout
 
+- [`cmd/asmai/`](cmd/asmai/): the `asmai` executable.
+- [`internal/`](internal/): packages used only by AsmAI.
 - [`GLOSSARY.md`](GLOSSARY.md): the domain language. Use these terms in code, docs and issues.
-- [`docs/adr/`](docs/adr/): architecture decision records.
+- [`docs/adr/`](docs/adr/): architecture decision records. New ADRs are numbered from 0011.
 - [`docs/agents/`](docs/agents/): how coding agents work in this repository (issue tracker, triage labels, domain docs).
 
 Work is tracked in [GitHub Issues](https://github.com/talvor/asmai/issues).
+
+## Contributing and license
+
+Outside pull requests are welcome; only the maintainer merges. There is no contributor agreement and no sign-off. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the terms, including copying from Firstmate or OpenRig and package names.
+
+AsmAI is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Phillip Hall; see [`NOTICE`](NOTICE).

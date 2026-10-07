@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build for Linux x86_64 and macOS on Apple silicon
+        run: |
+          for platform in linux/amd64 darwin/arm64; do
+            GOOS="${platform%/*}" GOARCH="${platform#*/}" \
+              go build -trimpath -o "dist/${platform/\//-}/asmai" ./cmd/asmai
+            go version -m "dist/${platform/\//-}/asmai" | grep -q 'CGO_ENABLED=0' \
+              || { echo "dist/${platform/\//-}/asmai was built with CGo"; exit 1; }
+          done
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Development tests
+        run: go test ./...

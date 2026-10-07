@@ -132,11 +132,12 @@ func TestNoticesNameOnlyTheGoDistributionWhenNoModuleIsCompiledIn(t *testing.T) 
 	}
 }
 
-// pinnedModule writes a module whose go.mod pins goVersion, such as 1.26.7.
-func pinnedModule(t *testing.T, goVersion string) string {
+// pinnedModule writes a module whose go.mod has directives, such as
+// "go 1.26.7\n".
+func pinnedModule(t *testing.T, directives string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/pinned\n\ngo "+goVersion+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/pinned\n\n"+directives), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -150,7 +151,7 @@ func TestPinnedToolchainIsTheGoVersionGoModPinsWithTheLicenseAtGOROOT(t *testing
 		t.Fatal(err)
 	}
 	t.Setenv("GOROOT", goroot)
-	dir := pinnedModule(t, strings.TrimPrefix(runtime.Version(), "go"))
+	dir := pinnedModule(t, "go "+strings.TrimPrefix(runtime.Version(), "go")+"\n")
 
 	got, err := licenses.PinnedToolchain(dir)
 	if err != nil {
@@ -162,14 +163,34 @@ func TestPinnedToolchainIsTheGoVersionGoModPinsWithTheLicenseAtGOROOT(t *testing
 	}
 }
 
+func TestPinnedToolchainIsGoModsToolchainLineWhenItHasOne(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	goroot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(goroot, "LICENSE"), []byte("Go's license\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOROOT", goroot)
+	dir := pinnedModule(t, "go 1.21.0\n\ntoolchain "+runtime.Version()+"\n")
+
+	got, err := licenses.PinnedToolchain(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Version != runtime.Version() {
+		t.Errorf("PinnedToolchain() = %s, want %s", got.Version, runtime.Version())
+	}
+}
+
 func TestPinnedToolchainFailsWhenTheToolchainIsNotTheOneGoModPins(t *testing.T) {
 	t.Setenv("GOWORK", "off")
 	t.Setenv("GOTOOLCHAIN", "local")
-	dir := pinnedModule(t, "1.21.0")
+	dir := pinnedModule(t, "go 1.21.0\n")
 
 	_, err := licenses.PinnedToolchain(dir)
 
-	want := "go.mod pins go1.21.0, but the Go toolchain is " + runtime.Version()
+	want := "go.mod pins go1.21.0, but the Go toolchain is " + runtime.Version() + "; run with GOTOOLCHAIN=go1.21.0"
 	if err == nil || err.Error() != want {
 		t.Errorf("PinnedToolchain() error = %v, want %q", err, want)
 	}
@@ -179,7 +200,7 @@ func TestPinnedToolchainFailsWithoutTheGoDistributionsLicense(t *testing.T) {
 	t.Setenv("GOWORK", "off")
 	t.Setenv("GOTOOLCHAIN", "local")
 	t.Setenv("GOROOT", t.TempDir())
-	dir := pinnedModule(t, strings.TrimPrefix(runtime.Version(), "go"))
+	dir := pinnedModule(t, "go "+strings.TrimPrefix(runtime.Version(), "go")+"\n")
 
 	_, err := licenses.PinnedToolchain(dir)
 

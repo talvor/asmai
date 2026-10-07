@@ -133,14 +133,15 @@ type Toolchain struct {
 
 // PinnedToolchain returns the Go toolchain the go command runs in the main
 // module at dir, with the LICENSE at its GOROOT. It fails unless that
-// toolchain is the Go version the module's go.mod pins, so the notices
+// toolchain is the Go version the module's go.mod pins, its toolchain line or
+// else its go line, so the notices
 // generated for a module set are the same with any toolchain that builds it.
 func PinnedToolchain(dir string) (Toolchain, error) {
 	modOut, err := goCommand(dir, "mod", "edit", "-json")
 	if err != nil {
 		return Toolchain{}, err
 	}
-	var mod struct{ Go string }
+	var mod struct{ Go, Toolchain string }
 	if err := json.Unmarshal(modOut, &mod); err != nil {
 		return Toolchain{}, fmt.Errorf("go mod edit: %v", err)
 	}
@@ -152,8 +153,12 @@ func PinnedToolchain(dir string) (Toolchain, error) {
 	if err := json.Unmarshal(envOut, &env); err != nil {
 		return Toolchain{}, fmt.Errorf("go env: %v", err)
 	}
-	if pinned := "go" + mod.Go; env.GOVERSION != pinned {
-		return Toolchain{}, fmt.Errorf("go.mod pins %s, but the Go toolchain is %s", pinned, env.GOVERSION)
+	pinned := "go" + mod.Go
+	if mod.Toolchain != "" {
+		pinned = mod.Toolchain
+	}
+	if env.GOVERSION != pinned {
+		return Toolchain{}, fmt.Errorf("go.mod pins %s, but the Go toolchain is %s; run with GOTOOLCHAIN=%s", pinned, env.GOVERSION, pinned)
 	}
 	license, err := os.ReadFile(filepath.Join(env.GOROOT, "LICENSE"))
 	if err != nil {

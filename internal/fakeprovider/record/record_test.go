@@ -112,6 +112,9 @@ func stub(args []string) int {
 			}
 		}
 	}
+	// With STUB_ECHO=masked, the stub echoes each key typed as "*", as a
+	// password prompt does, and Ctrl-U erases what was typed.
+	masked := os.Getenv("STUB_ECHO") == "masked"
 	readLine := func() string {
 		var line []byte
 		b := make([]byte, 1)
@@ -119,8 +122,17 @@ func stub(args []string) int {
 			if _, err := os.Stdin.Read(b); err != nil || b[0] == '\r' {
 				return string(line)
 			}
-			line = append(line, b[0])
-			os.Stdout.Write(b)
+			switch {
+			case masked && b[0] == 0x15:
+				line = nil
+				os.Stdout.WriteString("\r\x1b[K> ")
+			case masked:
+				line = append(line, b[0])
+				os.Stdout.WriteString("*")
+			default:
+				line = append(line, b[0])
+				os.Stdout.Write(b)
+			}
 		}
 	}
 	// Like Claude Code, the stub reads its terminal raw and echoes what is
@@ -256,6 +268,13 @@ func eventually(cond func() bool) bool {
 // It returns the recorder's terminal and where the recording goes.
 func recordStub(t *testing.T, env ...string) (*terminal, string) {
 	t.Helper()
+	return recordStubTyping(t, "", env...)
+}
+
+// recordStubTyping is recordStub typing keys, one at a time and each after
+// the stub has drawn the last, before hello.
+func recordStubTyping(t *testing.T, keys string, env ...string) (*terminal, string) {
+	t.Helper()
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -280,6 +299,11 @@ func recordStub(t *testing.T, env ...string) (*terminal, string) {
 	cmd.Env = append(cmd.Env, env...)
 	term := startTerminal(t, cmd, 80, 24)
 	term.waitForScreen("\r\n> ")
+	for _, key := range keys {
+		drawn := len(term.drawn())
+		term.typeKeys(string(key))
+		term.waitFor(fmt.Sprintf("drew key %q", key), func() bool { return len(term.drawn()) > drawn })
+	}
 	term.typeKeys("hello\r")
 	// The second prompt comes after the Stop hook.
 	term.waitFor("drew a second prompt", func() bool { return strings.Count(term.drawn(), "\r\n> ") == 2 })
@@ -453,6 +477,36 @@ func TestTheRecorderRefusesToWriteARecordingHoldingACredentialOrPersonalData(t *
 	}
 }
 
+func TestTheRecorderRefusesToWriteACredentialOrPersonalDataTypedKeyByKey(t *testing.T) {
+	const token = "sk-ant-oat01-QQQQQQQQQQQQQQQQQQQQQQQQ"
+	for name, test := range map[string]struct{ keys, want string }{
+		// Typed and erased, the credential never reaches the prompt.
+		"an erased credential": {token + "\x15", "holds an Anthropic API key or OAuth token"},
+		"a redacted name":      {"say Caroline\x15", "holds personal data from this host"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			term, out := recordStubTyping(t, test.keys, "STUB_ECHO=masked")
+			if code := term.exit(); code != 1 {
+				t.Errorf("recorder exited %d, want 1", code)
+			}
+			stderr := term.stderr.String()
+			for _, want := range []string{"refusing to write", "the input typed up to step", test.want, "nothing was written"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr %q does not say %q", stderr, want)
+				}
+			}
+			for _, leaked := range []string{"sk-an", "Caroli"} {
+				if strings.Contains(stderr, leaked) {
+					t.Errorf("stderr %q repeats %q", stderr, leaked)
+				}
+			}
+			if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the recording was written (%v)", err)
+			}
+		})
+	}
+}
+
 func TestTheRecorderAcceptsOrdinaryWordsThatArePiecesOfPersonalData(t *testing.T) {
 	term, out := recordStub(t, "STUB_LEAK=wrapped reply")
 	if code := term.exit(); code != 0 {
@@ -534,6 +588,7 @@ func TestCheckRefusesHomeDirectoriesAndCredentialFragments(t *testing.T) {
 		"a project directory":    {script(map[string]any{"hook": "Stop", "payload": map[string]any{"transcript_path": "/home/user/.claude/projects/-Users-phillip-scratch/x.jsonl"}}), "line 1 holds a home directory that is not the placeholder's"},
 		"a credential redrawn":   {script(map[string]any{"screen": "key sk-ant\x1b[11G-oat01"}), "line 1 holds a fragment of a credential around a cursor movement"},
 		"a credential split":     {script(map[string]any{"screen": "key sk-ant"}, map[string]any{"screen": "\x1b[11G-oat01"}), "the screens together hold a fragment of a credential around a cursor movement"},
+		"a credential typed":     {script(map[string]any{"expect": "sk-ant-"}, map[string]any{"screen": "*"}, map[string]any{"expect": "oat01-QQQQQQQQ"}), "the input typed up to line 3 holds an Anthropic API key or OAuth token"},
 		"the placeholder's home": {script(map[string]any{"screen": "~/project /home/user/project\r\n"}, map[string]any{"hook": "Stop", "payload": map[string]any{"transcript_path": "/home/user/.claude/projects/-home-user-project/x.jsonl"}}), ""},
 	} {
 		t.Run(name, func(t *testing.T) {

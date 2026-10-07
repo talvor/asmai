@@ -400,7 +400,7 @@ func write(header recorded, captured []capturedStep, scrub *scrubber) ([]byte, e
 	enc := json.NewEncoder(&script)
 	enc.SetEscapeHTML(false)
 	enc.Encode(map[string]recorded{"recorded": header})
-	var screens, drawn strings.Builder
+	var screens, drawn, typed strings.Builder
 	for i, c := range captured {
 		var line any
 		var text string
@@ -422,6 +422,14 @@ func write(header recorded, captured []capturedStep, scrub *scrubber) ([]byte, e
 					return nil, fmt.Errorf("step %d (%s) holds %s", i+1, c.kind, what)
 				}
 			}
+			// Each key typed is a step of its own, and replay needs the
+			// keys as typed, so a value typed is refused, whole or erased.
+			if c.kind == kindExpect {
+				typed.Write(c.data)
+				if what := scrub.problem(typed.String()); what != "" {
+					return nil, fmt.Errorf("the input typed up to step %d holds %s", i+1, what)
+				}
+			}
 		}
 		if what := scrub.problem(text); what != "" {
 			return nil, fmt.Errorf("step %d (%s) holds %s", i+1, c.kind, what)
@@ -441,12 +449,13 @@ func write(header recorded, captured []capturedStep, scrub *scrubber) ([]byte, e
 }
 
 // Check reports what a recorded script holds that no recording may: a
-// credential or a fragment of one around a cursor movement, an email address
+// credential or a fragment of one around a cursor movement, a credential
+// typed in input of any number of steps, an email address
 // that is not a placeholder, an identifier that is not a placeholder, or a
 // home directory that is not the placeholder's. It names the line, never the
 // value.
 func Check(script []byte) error {
-	var screens strings.Builder
+	var screens, typed strings.Builder
 	for n, line := range bytes.Split(script, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -464,6 +473,12 @@ func Check(script []byte) error {
 				screens.WriteString(text)
 				if credentialFragments.in(text) {
 					return fmt.Errorf("line %d holds %s", n+1, credentialFragment)
+				}
+			}
+			if field == kindExpect {
+				typed.WriteString(text)
+				if what := genericProblem(typed.String()); what != "" {
+					return fmt.Errorf("the input typed up to line %d holds %s", n+1, what)
 				}
 			}
 			if what := genericProblem(text); what != "" {

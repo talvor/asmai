@@ -33,5 +33,8 @@ jobs:
               || { echo "dist/${platform/\//-}/asmai was built with CGo"; exit 1; }
           done
 
+      - name: License allow-list for every Go module compiled into asmai
+        run: go run ./internal/cmd/check-licenses
+
       - name: Development tests
         run: go test ./...

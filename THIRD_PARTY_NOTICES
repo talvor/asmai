@@ -1,0 +1,5 @@
+Third-party notices
+
+The Go modules compiled in, each followed by its license files.
+
+None: only the standard library is compiled in.

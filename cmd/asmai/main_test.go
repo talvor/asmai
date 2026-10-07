@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -17,6 +18,30 @@ func TestVersionPrintsTheBuildVersion(t *testing.T) {
 	}
 	if got, want := stdout.String(), "asmai dev\n"; got != want {
 		t.Errorf("asmai version printed %q, want %q", got, want)
+	}
+}
+
+// asmai notices prints AsmAI's LICENSE and the third-party notices file from
+// inside the executable: it reads no file, so needs no daemon or configuration.
+func TestNoticesPrintsTheLicenseAndTheThirdPartyNotices(t *testing.T) {
+	license, err := os.ReadFile("../../LICENSE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices, err := os.ReadFile("../../THIRD_PARTY_NOTICES")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"notices"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("asmai notices exited %d, want 0; stderr %q", code, stderr.String())
+	}
+	if got, want := stdout.String(), string(license)+"\n"+string(notices); got != want {
+		t.Errorf("asmai notices printed\n%s\nwant\n%s", got, want)
 	}
 }
 

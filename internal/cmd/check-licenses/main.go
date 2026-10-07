@@ -15,15 +15,8 @@ import (
 	"github.com/talvor/asmai/internal/licenses"
 )
 
-// platforms are asmai's target platforms: Linux x86_64 and macOS on Apple
-// silicon.
-var platforms = []licenses.Platform{
-	{GOOS: "linux", GOARCH: "amd64"},
-	{GOOS: "darwin", GOARCH: "arm64"},
-}
-
 func main() {
-	ok, err := licenses.Check(os.Stdout, ".", "./cmd/asmai", platforms)
+	ok, err := licenses.Check(os.Stdout, ".", "./cmd/asmai", licenses.Targets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "check-licenses:", err)
 		os.Exit(1)

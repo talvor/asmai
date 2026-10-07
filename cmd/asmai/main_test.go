@@ -9,15 +9,13 @@ import (
 )
 
 func TestVersionPrintsTheBuildVersion(t *testing.T) {
-	for _, arg := range []string{"version", "--version"} {
-		var stdout, stderr bytes.Buffer
-		code := run([]string{arg}, &stdout, &stderr)
-		if code != 0 {
-			t.Errorf("asmai %s exited %d, want 0", arg, code)
-		}
-		if got, want := stdout.String(), "asmai dev\n"; got != want {
-			t.Errorf("asmai %s printed %q, want %q", arg, got, want)
-		}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"version"}, &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("asmai version exited %d, want 0", code)
+	}
+	if got, want := stdout.String(), "asmai dev\n"; got != want {
+		t.Errorf("asmai version printed %q, want %q", got, want)
 	}
 }
 

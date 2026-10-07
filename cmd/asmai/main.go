@@ -29,7 +29,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
-	case "version", "--version":
+	case "version":
 		fmt.Fprintf(stdout, "asmai %s\n", version)
 		return 0
 	default:

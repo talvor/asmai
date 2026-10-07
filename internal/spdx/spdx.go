@@ -23,7 +23,8 @@ var commentMarkers = map[string]string{
 	".yaml": "#",
 }
 
-// skippedDirs are never searched: git's own files and local build output.
+// skippedDirs are never searched: git's own files and local build output at
+// the root of fsys.
 var skippedDirs = map[string]bool{
 	".git": true,
 	"dist": true,
@@ -39,7 +40,7 @@ func Missing(fsys fs.FS) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
-			if skippedDirs[d.Name()] {
+			if skippedDirs[name] {
 				return fs.SkipDir
 			}
 			return nil

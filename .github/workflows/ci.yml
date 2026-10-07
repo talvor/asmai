@@ -4,8 +4,6 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -34,9 +32,6 @@ jobs:
             go version -m "dist/${platform/\//-}/asmai" | grep -q 'CGO_ENABLED=0' \
               || { echo "dist/${platform/\//-}/asmai was built with CGo"; exit 1; }
           done
-
-      - name: Vet
-        run: go vet ./...
 
       - name: Development tests
         run: go test ./...

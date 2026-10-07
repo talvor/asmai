@@ -42,18 +42,21 @@ func TestMissingNamesSourceFilesWithoutTheLine(t *testing.T) {
 	}
 }
 
-func TestMissingSkipsGitAndBuildOutput(t *testing.T) {
+func TestMissingSkipsOnlyRootGitAndBuildOutput(t *testing.T) {
 	fsys := fstest.MapFS{
 		".git/hooks/pre-commit.sh": {Data: []byte("#!/bin/sh\n")},
 		"dist/linux-amd64/x.go":    {Data: []byte("package x\n")},
+		"internal/dist/x.go":       {Data: []byte("package dist\n")},
+		"internal/.git/x.sh":       {Data: []byte("#!/bin/sh\n")},
 	}
 
 	got, err := spdx.Missing(fsys)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 0 {
-		t.Errorf("Missing() = %q, want none", got)
+	want := []string{"internal/.git/x.sh", "internal/dist/x.go"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Missing() = %q, want %q", got, want)
 	}
 }
 

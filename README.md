@@ -26,7 +26,7 @@ A repository job ends in a **tested pull request**. Quality has validated its ex
 - **Agents coordinate through the `asmai` CLI.** The daemon is the only writer to the store: the current state plus an append-only journal ([ADR 0002](docs/adr/0002-agents-coordinate-through-asmai-cli.md)).
 - **Pinned providers and skills.** Agents never use your personal Claude Code, Codex or skills. AsmAI installs pinned, qualified copies and passes hooks, instructions and its pinned skill bundle to each session. Lavish ships as a Deno-compiled executable, so the host needs no Node ([ADR 0003](docs/adr/0003-go-executable-runs-pinned-providers.md), [ADR 0006](docs/adr/0006-agents-use-only-the-pinned-skill-bundle.md), [ADR 0010](docs/adr/0010-lavish-is-a-deno-compiled-executable-built-per-pin.md)).
 - **Jobs work in an AsmAI-owned clone.** Your checkout is never touched. The job branch moves only when a result is accepted ([ADR 0005](docs/adr/0005-jobs-work-in-an-asmai-owned-clone.md), [ADR 0007](docs/adr/0007-asmai-delivers-tested-prs-with-its-own-roles.md)).
-- **Releases are qualified, not just tested.** Qualification runs the real pinned provider CLIs on real hosts with deliberately injected faults. A release is the qualified commit plus its qualification record ([ADR 0008](docs/adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md), [ADR 0009](docs/adr/0009-a-release-is-the-qualified-commit-plus-its-record.md)).
+- **Releases are qualified, not just tested.** Qualification runs the real pinned provider CLIs on real hosts with deliberately injected faults. A release is the qualified commit plus its qualification record ([ADR 0008](docs/adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md), [ADR 0009](docs/adr/0009-a-release-is-the-qualified-commit-plus-its-record.md)). The hosts qualification runs on are listed in [`docs/qualification-hosts.md`](docs/qualification-hosts.md).
 
 ## Fixture repository
 
@@ -67,6 +67,7 @@ go run ./internal/cmd/gen-notices -check
 - [`internal/fakeprovider/`](internal/fakeprovider/): the scripted fake provider CLI the development tests drive, and its script format. It is never built into `asmai` and never counts toward qualification.
 - [`GLOSSARY.md`](GLOSSARY.md): the domain language. Use these terms in code, docs and issues.
 - [`docs/adr/`](docs/adr/): architecture decision records. New ADRs are numbered from 0011.
+- [`docs/qualification-hosts.md`](docs/qualification-hosts.md): the qualification hosts, their harness users and how to reach them.
 - [`docs/agents/`](docs/agents/): how coding agents work in this repository (issue tracker, triage labels, domain docs).
 
 Work is tracked in [GitHub Issues](https://github.com/talvor/asmai/issues).

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/talvor/asmai"
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
@@ -17,6 +19,7 @@ const usage = `usage: asmai <command>
 
 commands:
   asmai version    print the version of this executable
+  asmai notices    print AsmAI's license and the third-party notices
 `
 
 func main() {
@@ -31,6 +34,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "version":
 		fmt.Fprintf(stdout, "asmai %s\n", version)
+		return 0
+	case "notices":
+		stdout.Write(asmai.License)
+		fmt.Fprintln(stdout)
+		stdout.Write(asmai.ThirdPartyNotices)
 		return 0
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", args[0], usage)

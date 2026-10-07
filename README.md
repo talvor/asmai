@@ -63,6 +63,7 @@ go run ./internal/cmd/check-licenses
 
 - [`cmd/asmai/`](cmd/asmai/): the `asmai` executable.
 - [`internal/`](internal/): packages used only by AsmAI.
+- [`internal/fakeprovider/`](internal/fakeprovider/): the scripted fake provider CLI the development tests drive, and its script format. It is never built into `asmai` and never counts toward qualification.
 - [`GLOSSARY.md`](GLOSSARY.md): the domain language. Use these terms in code, docs and issues.
 - [`docs/adr/`](docs/adr/): architecture decision records. New ADRs are numbered from 0011.
 - [`docs/agents/`](docs/agents/): how coding agents work in this repository (issue tracker, triage labels, domain docs).

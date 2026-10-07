@@ -256,6 +256,35 @@ func TestTheFakeStopsAtInputTheScriptDoesNotExpect(t *testing.T) {
 	}
 }
 
+func TestTheFakeSkipsTheRecordedLineAndRefusesAnIncompleteOne(t *testing.T) {
+	recorded := `{"recorded": {"provider": "Claude Code", "version": "2.1.292", "columns": 80, "rows": 24}}`
+	s := start(t, "--script", writeScript(t, recorded, `{"screen": "ready\r\n"}`))
+	s.waitForScreen("ready")
+	if code := s.exit(); code != 0 {
+		t.Errorf("fake exited %d, want 0 (stderr %q)", code, s.stderr.String())
+	}
+	if drawn := s.drawn(); strings.Contains(drawn, "2.1.292") {
+		t.Errorf("fake drew the recorded line: %q", drawn)
+	}
+
+	for name, line := range map[string]string{
+		"without a version":     `{"recorded": {"provider": "Claude Code", "columns": 80, "rows": 24}}`,
+		"without a size":        `{"recorded": {"provider": "Claude Code", "version": "2.1.292"}}`,
+		"with a step":           `{"recorded": {"provider": "Claude Code", "version": "2.1.292", "columns": 80, "rows": 24}, "screen": "a"}`,
+		"with an unknown field": `{"recorded": {"provider": "Claude Code", "version": "2.1.292", "columns": 80, "rows": 24, "user": "x"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := start(t, "--script", writeScript(t, line, `{"screen": "fine"}`))
+			if code := s.exit(); code != 2 {
+				t.Errorf("fake exited %d, want 2", code)
+			}
+			if !strings.Contains(s.stderr.String(), "line 1: ") {
+				t.Errorf("stderr %q does not name line 1", s.stderr.String())
+			}
+		})
+	}
+}
+
 func TestTheFakeRefusesAScriptItCannotPlay(t *testing.T) {
 	for name, tc := range map[string]struct {
 		line, want string
@@ -266,6 +295,7 @@ func TestTheFakeRefusesAScriptItCannotPlay(t *testing.T) {
 		"an empty screen":        {`{"screen": ""}`, `a "screen" step draws something`},
 		"an unknown field":       {`{"screen": "a", "delay": 3}`, `unknown field "delay"`},
 		"not JSON":               {`screen: a`, `invalid character`},
+		"a late recorded line":   {`{"recorded": {"provider": "Claude Code", "version": "2.1.292", "columns": 80, "rows": 24}}`, `only the first line is "recorded"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := writeScript(t, `{"screen": "fine"}`, tc.line)

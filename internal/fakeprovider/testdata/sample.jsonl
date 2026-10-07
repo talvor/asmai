@@ -1,0 +1,8 @@
+{"hook": "SessionStart", "payload": {"session_id": "fake-session", "transcript_path": "/tmp/fake-session.jsonl", "cwd": "/tmp", "hook_event_name": "SessionStart", "source": "startup"}}
+{"screen": "\u001b[2J\u001b[H> \r\n"}
+{"expect": "hello\r"}
+{"screen": "\u001b[2J\u001b[H> hello\r\n"}
+{"hook": "UserPromptSubmit", "payload": {"session_id": "fake-session", "transcript_path": "/tmp/fake-session.jsonl", "cwd": "/tmp", "hook_event_name": "UserPromptSubmit", "prompt": "hello"}}
+{"screen": "\u001b[32m●\u001b[0m Hello! How can I help?\r\n\r\n> \r\n"}
+{"hook": "Stop", "payload": {"session_id": "fake-session", "transcript_path": "/tmp/fake-session.jsonl", "cwd": "/tmp", "hook_event_name": "Stop", "stop_hook_active": false}}
+{"expect": "/exit\r"}

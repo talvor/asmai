@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -43,5 +44,20 @@ func TestNoCommandPrintsUsage(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "asmai version") {
 		t.Errorf("stderr %q does not show usage", stderr.String())
+	}
+}
+
+// The scripted fake provider is for development tests only: the asmai
+// executable must never contain it.
+func TestTheFakeProviderIsNotBuiltIn(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", ".").Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	for pkg := range strings.Lines(string(out)) {
+		pkg = strings.TrimSpace(pkg)
+		if pkg == "github.com/talvor/asmai/internal/fakeprovider" || strings.HasPrefix(pkg, "github.com/talvor/asmai/internal/fakeprovider/") {
+			t.Errorf("asmai is built with %s", pkg)
+		}
 	}
 }

@@ -64,7 +64,7 @@ go run ./internal/cmd/gen-notices -check
 
 - [`cmd/asmai/`](cmd/asmai/): the `asmai` executable.
 - [`internal/`](internal/): packages used only by AsmAI.
-- [`internal/fakeprovider/`](internal/fakeprovider/): the scripted fake provider CLI the development tests drive, and its script format. It is never built into `asmai` and never counts toward qualification.
+- [`internal/fakeprovider/`](internal/fakeprovider/): the scripted fake provider CLI the development tests drive, its script format, and the recorder that records a real Claude Code session as a script. Neither is built into `asmai`, and the fake never counts toward qualification.
 - [`GLOSSARY.md`](GLOSSARY.md): the domain language. Use these terms in code, docs and issues.
 - [`docs/adr/`](docs/adr/): architecture decision records. New ADRs are numbered from 0011.
 - [`docs/qualification-hosts.md`](docs/qualification-hosts.md): the qualification hosts, their harness users and how to reach them.

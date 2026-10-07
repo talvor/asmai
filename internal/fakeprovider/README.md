@@ -37,6 +37,14 @@ A script is a [JSON Lines](https://jsonlines.org/) file: one JSON object per lin
 
 Any other field, or a step with no kind or with two, makes the script invalid. The fake then exits 2 and names the line.
 
+A script recorded from a real provider starts with a `"recorded"` line, which is not a step. It names the provider and the version the recording came from, and the size of the terminal it was recorded on, and has nothing else:
+
+```json
+{"recorded": {"provider": "Claude Code", "version": "2.1.292", "columns": 80, "rows": 24}}
+```
+
+The fake checks the line and plays nothing for it. A `"recorded"` line anywhere but first, or one missing a field, makes the script invalid.
+
 Write escape sequences as JSON escapes (`\u001b` for ESC). Because the terminal is raw, `\n` only moves down a line; write `\r\n` to start a new line.
 
 A hook step's event name is the provider's own, for example Claude Code's `SessionStart`, `UserPromptSubmit` or `Stop`. Its payload is what that provider passes on stdin, which for Claude Code repeats the event name as `hook_event_name`.
@@ -55,4 +63,42 @@ A hook step's event name is the provider's own, for example Claude Code's `Sessi
 
 This session starts by delivering `SessionStart`, then clears the screen and draws a prompt. It waits for `hello` and Enter, redraws the prompt with the text typed, delivers `UserPromptSubmit`, draws the reply and delivers `Stop`. Then it exits 0.
 
-[`testdata/sample.jsonl`](testdata/sample.jsonl) is the sample script the development tests play. It is written by hand in the shape of a Claude Code session; scripts recorded from the real pinned providers come later.
+[`testdata/sample.jsonl`](testdata/sample.jsonl) is the sample script the development tests play. It is written by hand in the shape of a Claude Code session. [`testdata/recorded/`](testdata/recorded/) holds the scripts recorded from the real Claude Code, which the development tests also play.
+
+## Recording a Claude Code session
+
+`record-session` records a real Claude Code session as a script: what Claude Code drew, the input it was given and the hook payloads it sent, in the order the recorder received them, with the Claude Code version they came from. Like the fake, it is for development tests only and is never built into the `asmai` executable.
+
+```sh
+go build -o record-session ./internal/fakeprovider/cmd/record-session
+record-session --out FILE [--columns N] [--rows N] [--redact VALUE]... [-- CLAUDE [ARG]...]
+```
+
+Run it in a terminal, in the directory the session should work in, and use the session as usual. It runs `claude` (or `CLAUDE`, with its arguments) in a pseudo-terminal of `--columns` by `--rows`, 80 by 24 by default, and shows it on its own terminal. It asks `claude --version` for the version, and refuses to record anything that does not name a Claude Code version. It passes Claude Code a `--settings` file with a hook command for each event, so every payload comes back to the recorder before Claude Code goes on. The recording is written when Claude Code exits.
+
+What is typed, including the terminal's answers to Claude Code's queries, becomes the script's expected input, so a test plays a recording by typing each expected input once the fake has drawn the screens before it. Consecutive output makes one screen, and consecutive input one expected input.
+
+Before it writes anything, the recorder scrubs personal data, replacing it with placeholders:
+
+| Personal data | Placeholder |
+| --- | --- |
+| The working directory, also as `~/...` and as Claude Code names its project directory (each `/` and `.` made `-`) | `/home/user/project`, `~/project`, `-home-user-project` |
+| The home directory, likewise | `/home/user`, `-home-user` |
+| The user's login and full name, and the host name | `user`, `redacted`, `host` |
+| Each `--redact VALUE`, for example a name the session shows | `redacted` |
+| Email addresses | `user@example.com` |
+| UUIDs, such as session, prompt, account and organization identifiers | `00000000-0000-4000-8000-000000000001`, `...002` and so on, the same one everywhere a UUID appears |
+
+Names are matched whatever their case, and not inside a longer word. The recorder then refuses to write the recording, exiting 1, if a step still holds a credential (an Anthropic, GitHub, AWS or Slack token, an API key, a JSON Web Token, a bearer token or a private key), the value of an environment variable whose name says it is a credential, an email address or UUID that is not a placeholder, or personal data it knows. It looks at each step as written and as a terminal shows it without escape sequences, and at the screens together, so a value split by styling or across screens is still found. It names the step and what it holds, never the value.
+
+The recorder cannot see personal data it does not know of. Read a recording through before committing it, and `--redact` anything it shows that is yours.
+
+### The recordings
+
+| Recording | Session |
+| --- | --- |
+| [`claude-code-2.1.292-reply-ok.jsonl`](testdata/recorded/claude-code-2.1.292-reply-ok.jsonl) | Claude Code 2.1.292 on Linux, in a new empty directory: trust the directory, ask for the single word `ok`, get it, then `/exit`. It delivers `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd`. |
+
+Each recording is named `claude-code-VERSION-WHAT.jsonl`, after the version in its `"recorded"` line. The development tests check every recording for credentials and personal data, and replay it through the fake, checking that the fake draws every screen and delivers every payload in order.
+
+These recordings come from the Claude Code installed where they were made, not from a pinned version: nothing pins Claude Code until M1. Once M1 pins Claude Code, the recordings are remade at the pinned version. Codex recordings come with Codex, in M2.

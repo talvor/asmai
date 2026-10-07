@@ -20,6 +20,7 @@ import (
 	"github.com/creack/pty"
 	xterm "golang.org/x/term"
 
+	"github.com/talvor/asmai/internal/fakeprovider"
 	"github.com/talvor/asmai/internal/fakeprovider/record"
 )
 
@@ -621,13 +622,21 @@ func replay(t *testing.T, path string) {
 	r := steps[0].Recorded
 
 	log := filepath.Join(t.TempDir(), "hooks.log")
-	args := []string{"--script", path}
-	events := map[string]bool{}
+	// The fake is started as Claude Code is: with a hook command for each
+	// event in the settings it is given, and the script in its environment.
+	type command struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+	}
+	hookSettings := map[string][]map[string][]command{}
 	for _, s := range steps[1:] {
-		if s.Hook != nil && !events[*s.Hook] {
-			events[*s.Hook] = true
-			args = append(args, "--hook", fmt.Sprintf(`%[1]s=printf '%%s\t' %[1]s >> '%[2]s'; cat >> '%[2]s'; echo >> '%[2]s'`, *s.Hook, log))
+		if s.Hook != nil && hookSettings[*s.Hook] == nil {
+			hookSettings[*s.Hook] = []map[string][]command{{"hooks": {{"command", fmt.Sprintf(`printf '%%s\t' %[1]s >> '%[2]s'; cat >> '%[2]s'; echo >> '%[2]s'`, *s.Hook, log)}}}}
 		}
+	}
+	settings, err := json.Marshal(map[string]any{"hooks": hookSettings})
+	if err != nil {
+		t.Fatal(err)
 	}
 	deliveries := func() []string {
 		data, err := os.ReadFile(log)
@@ -645,7 +654,9 @@ func replay(t *testing.T, path string) {
 		return strings.Split(strings.TrimSuffix(string(complete), "\n"), "\n")
 	}
 
-	fake := startTerminal(t, exec.Command(fakeProvider, args...), r.Columns, r.Rows)
+	cmd := exec.Command(fakeProvider, "--settings", string(settings))
+	cmd.Env = append(os.Environ(), fakeprovider.ScriptEnv+"="+path)
+	fake := startTerminal(t, cmd, r.Columns, r.Rows)
 	screens := banner
 	var hooks []string
 	for i, s := range steps[1:] {

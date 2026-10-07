@@ -4,15 +4,20 @@
 // development tests. It never counts toward qualification and is never built
 // into the asmai executable.
 //
-//	fake-provider --script FILE [--hook EVENT=COMMAND]...
+//	ASMAI_FAKE_PROVIDER_SCRIPT=FILE fake-provider [--settings FILE|JSON]
+//	fake-provider --script FILE [--settings FILE|JSON]
 //
 // Run in a pseudo-terminal, it names itself a fake, then plays the script:
-// it draws each screen, waits for each expected input, and delivers each hook
-// payload to the command configured for its event. A hook command runs
-// through /bin/sh with the payload on its stdin, the way Claude Code and Codex
-// run their hook commands; an event with no command is not delivered. The
-// fake exits 0 after the last step, 1 when the input differs from the script
-// or the terminal fails, and 2 when it is used wrongly.
+// it draws each screen, waits for each expected input, delivers each hook
+// payload to the commands configured for its event, and runs each command as
+// an agent's tool call would, in its own environment and working directory.
+// It reads its hook commands from Claude Code settings, given as Claude Code's
+// --settings takes them, and runs them through /bin/sh with the payload on
+// their stdin, the way Claude Code runs its hook commands; an event with no
+// command is not delivered. With the script in its environment, it starts
+// with the arguments Claude Code is started with. The fake exits 0 after the
+// last step, 1 when the input or a command differs from the script or the
+// terminal fails, and 2 when it is used wrongly.
 package main
 
 import (

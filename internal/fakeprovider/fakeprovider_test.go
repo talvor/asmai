@@ -101,13 +101,6 @@ func (s *session) typeKeys(keys string) {
 	}
 }
 
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	if !eventually(cond) {
-		t.Fatal("timed out")
-	}
-}
-
 // patience is how long a test waits for the fake to draw, deliver or exit.
 const patience = 10 * time.Second
 
@@ -188,7 +181,13 @@ func (l hookLog) deliveries(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	// A hook writes its line in several appends, so a line not yet ended by a
+	// newline is a delivery still being written.
+	complete := data[:bytes.LastIndexByte(data, '\n')+1]
+	if len(complete) == 0 {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(string(complete), "\n"), "\n")
 }
 
 // startSample starts the fake on the sample script, with a hook command for
@@ -218,8 +217,8 @@ func TestTheFakePlaysTheSampleScriptReactingToInputAndDeliveringHooks(t *testing
 	}
 	// The Stop hook comes after the screen just drawn, so it may still be on
 	// its way.
-	waitFor(t, func() bool { return len(log.deliveries(t)) == len(want) })
-	if got := log.deliveries(t); !slices.Equal(got, want) {
+	if !eventually(func() bool { return slices.Equal(log.deliveries(t), want) }) {
+		got := log.deliveries(t)
 		t.Errorf("hooks received\n%q\nwant\n%q", got, want)
 	}
 

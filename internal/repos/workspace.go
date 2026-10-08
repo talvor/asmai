@@ -95,6 +95,7 @@ func EnsureView(ctx context.Context, clone, dir, commit string) error {
 			return makeReadOnly(dir)
 		}
 		if err == nil {
+			makeWritable(dir)
 			if _, err := git(ctx, dir, "checkout", "--quiet", "--force", "--detach", commit); err != nil {
 				return fmt.Errorf("moving the view %s to %s: %w", dir, commit, err)
 			}
@@ -126,7 +127,7 @@ func makeReadOnly(dir string) error {
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() {
+		if !entry.Type().IsRegular() && !entry.IsDir() {
 			return nil
 		}
 		info, err := entry.Info()

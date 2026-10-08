@@ -289,6 +289,7 @@ func TestAViewIsDetachedAtACommitReadOnlyAndMovedWhenTheTipMoves(t *testing.T) {
 	second := run(t, clone, "rev-parse", "HEAD")
 
 	view := filepath.Join(realPath(t, t.TempDir()), "views", "job-1")
+	t.Cleanup(func() { makeWritable(view) })
 	if err := EnsureView(ctx, clone, view, first); err != nil {
 		t.Fatal(err)
 	}
@@ -308,6 +309,10 @@ func TestAViewIsDetachedAtACommitReadOnlyAndMovedWhenTheTipMoves(t *testing.T) {
 	if err != nil || info.Mode().Perm()&0o222 != 0 {
 		t.Errorf("the view's a.txt is %v (%v), want it read-only", info, err)
 	}
+	info, err = os.Stat(view)
+	if err != nil || info.Mode().Perm()&0o222 != 0 {
+		t.Errorf("the view directory is %v (%v), want it read-only", info, err)
+	}
 	if out := run(t, view, "status", "--porcelain"); out != "" {
 		t.Errorf("the view reads as changed: %q", out)
 	}
@@ -316,6 +321,7 @@ func TestAViewIsDetachedAtACommitReadOnlyAndMovedWhenTheTipMoves(t *testing.T) {
 	if err := EnsureView(ctx, clone, view, second); err != nil {
 		t.Fatal(err)
 	}
+	makeWritable(view)
 	if err := os.RemoveAll(filepath.Join(view, ".git")); err != nil {
 		t.Fatal(err)
 	}

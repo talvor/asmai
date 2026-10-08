@@ -329,11 +329,11 @@ func TestAnsweredNudgeDoesNotStarveLaterDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "second", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, at)
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "second", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, later, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, at)
+	_, later, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,11 +392,11 @@ func TestAcknowledgedUnfetchedDispatchDoesNotStarveLaterDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "second", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, at)
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "second", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, later, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, at)
+	_, later, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -73,8 +73,14 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 				fmt.Fprintf(o.stdout, "- %s\n", c)
 			}
 		}
-		if m.Kind != "handoff" {
+		if m.HandoffData != nil && m.Kind != "handoff" {
 			fmt.Fprintf(o.stdout, "Answer: %s\n", m.Body)
+		}
+		if a := m.AssignmentData; a != nil {
+			printAssignment(o.stdout, *a)
+		}
+		if r := m.ReportData; r != nil {
+			printReport(o.stdout, *r)
 		}
 	}
 	return 0

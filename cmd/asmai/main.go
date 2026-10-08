@@ -58,6 +58,14 @@ commands:
 	asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
 	asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text>
 	asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
+	asmai assign --job <number> --outcome <text> --criterion <text>
+	                            Engineering's leader gives a writing assignment to a worker, in a workspace of
+	                            AsmAI's clone on its own branch; repeat --criterion for each acceptance criterion
+	asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch
+	asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>]
+	                            a worker submits its assignment's result; repeat a flag for each value
+	asmai blocked --reason <text> [--needs <text>]
+	                            a worker reports that it cannot go on
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -88,15 +96,16 @@ var groups = map[string][]string{
 	"handoff":   {"send", "accept", "clarify", "decline"},
 }
 
-// positional are the commands that take one argument, with what to say when
-// it is missing.
-var positional = map[string]string{
-	"attach":      "name the agent, such as leader@coordination or coordination",
-	"repo add":    "name a local checkout or a URL",
-	"repo show":   "name the repository, as `asmai repo list` shows it",
-	"repo remove": "name the repository, as `asmai repo list` shows it",
-	"job show":    "name the job number, as `asmai jobs` shows it",
-	"brief":       "name the job number, as `asmai jobs` shows it",
+// positional are the commands that take arguments, with what to say when
+// each is missing.
+var positional = map[string][]string{
+	"attach":      {"name the agent, such as leader@coordination or coordination"},
+	"repo add":    {"name a local checkout or a URL"},
+	"repo show":   {"name the repository, as `asmai repo list` shows it"},
+	"repo remove": {"name the repository, as `asmai repo list` shows it"},
+	"job show":    {"name the job number, as `asmai jobs` shows it"},
+	"brief":       {"name the job number, as `asmai jobs` shows it"},
+	"effect":      {"name the kind of effect, one word such as commit or push", "name what the effect is of, such as the commit or the branch pushed"},
 }
 
 // logPoll is how often `asmai log --follow` looks for new lines.
@@ -148,6 +157,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var handoffJob, handoffID, dispatchID int64
 	var recipient, outcome, decisions, evidence, constraints, permissions, answer string
 	var criteria criteriaFlags
+	var assignJob int64
+	var assignOutcome, blockedReason, blockedNeeds string
+	var resultArgs resultFlags
 	switch name {
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
@@ -175,6 +187,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&answer, "answer", "", "answer, question or reason")
 	case "inbox":
 		flags.Int64Var(&dispatchID, "dispatch", 0, "fetch one dispatch")
+	case "assign":
+		flags.Int64Var(&assignJob, "job", 0, "job number")
+		flags.StringVar(&assignOutcome, "outcome", "", "the outcome the worker is to deliver")
+		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
+	case "effect":
+	case "result":
+		flags.Var(&resultArgs.evidence, "evidence", "what shows the work does; may be repeated")
+		flags.Var(&resultArgs.artifacts, "artifact", "a link to something the work produced; may be repeated")
+		flags.Var(&resultArgs.tests, "test", "a test added, or none; may be repeated")
+		flags.Var(&resultArgs.checks, "check", "a check run and its outcome at the commit, '<command> -> <outcome>', or none; may be repeated")
+		flags.Var(&resultArgs.gaps, "gap", "an unresolved gap, or none; may be repeated")
+		flags.StringVar(&resultArgs.prSection, "pr-section", "", "the worker's part of the pull request: what changed, with before-and-after evidence")
+	case "blocked":
+		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
+		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker")
 	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
@@ -183,24 +210,28 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	var arg string
-	if want, ok := positional[name]; ok {
+	var operands []string
+	for _, want := range positional[name] {
 		if flags.NArg() == 0 {
 			fmt.Fprintf(stderr, "asmai %s: %s\n\n%s", name, want, usage)
 			return 2
 		}
-		arg = flags.Arg(0)
-		// Flags may come after the argument too.
+		operands = append(operands, flags.Arg(0))
+		// Flags may come after an argument too.
 		if err := flags.Parse(flags.Args()[1:]); err != nil {
 			return 2
 		}
+	}
+	var arg string
+	if len(operands) > 0 {
+		arg = operands[0]
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "asmai %s: unexpected argument %q\n\n%s", name, flags.Arg(0), usage)
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked"}, name) {
 		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -254,6 +285,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return handoffSend(o, paths, handoffJob, recipient, outcome, decisions, evidence, constraints, permissions, criteria)
 	case "handoff accept", "handoff clarify", "handoff decline":
 		return handoffAnswer(o, paths, name, handoffID, answer)
+	case "assign":
+		return assign(o, paths, assignJob, assignOutcome, criteria)
+	case "effect":
+		return effect(o, paths, operands[0], operands[1])
+	case "result":
+		return result(o, paths, resultArgs)
+	case "blocked":
+		return blocked(o, paths, blockedReason, blockedNeeds)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":

@@ -84,8 +84,17 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 	}
 }
 
+// workFetchedReply moves the fetched dispatch of a message that is work to do
+// at once to working: a reply to a handoff, an assignment for its worker, and
+// a result or a blocked report for the assignment's owning leader. Unlike a
+// handoff, none of them is answered by a command that starts the work.
 func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
-	if m.Dispatch != l.currentDispatch || m.State != store.DispatchDelivered || (m.Kind != store.HandoffAccepted && m.Kind != store.HandoffClarified && m.Kind != store.HandoffDeclined) {
+	switch m.Kind {
+	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.ReportResult, store.ReportBlocked:
+	default:
+		return nil
+	}
+	if m.Dispatch != l.currentDispatch || m.State != store.DispatchDelivered {
 		return nil
 	}
 	if err := d.store.WorkFetchedDispatch(m.Dispatch, ref.address.String(), ref.generation, time.Now()); err != nil {

@@ -41,7 +41,9 @@ type Handoff struct {
 
 type Message struct {
 	ID          int64    `json:"id"`
-	Handoff     int64    `json:"handoff"`
+	Handoff     int64    `json:"handoff,omitempty"`
+	Assignment  int64    `json:"assignment,omitempty"`
+	Report      int64    `json:"report,omitempty"`
 	Job         int64    `json:"job"`
 	Sender      string   `json:"sender"`
 	Recipient   string   `json:"recipient"`
@@ -52,6 +54,11 @@ type Message struct {
 	Transcript  string   `json:"transcript,omitempty"`
 	Fetched     bool     `json:"fetched"`
 	HandoffData *Handoff `json:"handoff_data,omitempty"`
+	// AssignmentData is the assignment an assignment message gives its
+	// worker, or whose report a report message carries; ReportData is that
+	// report.
+	AssignmentData *Assignment `json:"assignment_data,omitempty"`
+	ReportData     *Report     `json:"report_data,omitempty"`
 }
 
 type Dispatch struct {
@@ -96,15 +103,22 @@ func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) 
 	if _, err = appendEntry(tx, at, KindHandoffSent, h); err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
-	d, err := createMessage(tx, h.ID, h.Job, h.Sender, h.Receiver, "handoff", h.Outcome, at)
+	d, err := createMessage(tx, messageRef{handoff: h.ID}, h.Job, h.Sender, h.Receiver, "handoff", h.Outcome, at)
 	if err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
 	return h, d, tx.Commit()
 }
 
-func createMessage(tx *sql.Tx, handoff, job int64, sender, recipient, kind, body string, at time.Time) (Dispatch, error) {
-	result, err := tx.Exec(`INSERT INTO messages(handoff,job,sender,recipient,kind,body) VALUES(?,?,?,?,?,?)`, handoff, job, sender, recipient, kind, body)
+// messageRef is what a message is about: a handoff, or an assignment and
+// the report it carries. A message is about one or the other; the ID of
+// what it is not about is zero.
+type messageRef struct {
+	handoff, assignment, report int64
+}
+
+func createMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kind, body string, at time.Time) (Dispatch, error) {
+	result, err := tx.Exec(`INSERT INTO messages(handoff,assignment,report,job,sender,recipient,kind,body) VALUES(NULLIF(?,0),NULLIF(?,0),NULLIF(?,0),?,?,?,?,?)`, ref.handoff, ref.assignment, ref.report, job, sender, recipient, kind, body)
 	if err != nil {
 		return Dispatch{}, err
 	}
@@ -121,7 +135,7 @@ func createMessage(tx *sql.Tx, handoff, job int64, sender, recipient, kind, body
 		return Dispatch{}, err
 	}
 	d := Dispatch{ID: id, Message: message, Agent: recipient, State: DispatchCreated}
-	if _, err = appendEntry(tx, at, KindMessageCreated, map[string]any{"message": message, "handoff": handoff, "job": job, "sender": sender, "recipient": recipient, "kind": kind, "dispatch": id}); err != nil {
+	if _, err = appendEntry(tx, at, KindMessageCreated, map[string]any{"message": message, "handoff": ref.handoff, "assignment": ref.assignment, "job": job, "sender": sender, "recipient": recipient, "kind": kind, "dispatch": id}); err != nil {
 		return Dispatch{}, err
 	}
 	if _, err = appendEntry(tx, at, KindDispatchChanged, d); err != nil {
@@ -186,7 +200,7 @@ func (s *Store) AnswerHandoff(id int64, agent string, currentDispatch int64, gen
 	if _, err = appendEntry(tx, at, KindDispatchChanged, map[string]any{"id": inbound, "from": DispatchDelivered, "state": DispatchWorking, "agent": agent, "generation": generation}); err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
-	d, err := createMessage(tx, id, h.Job, agent, h.Sender, state, answer, at)
+	d, err := createMessage(tx, messageRef{handoff: id}, h.Job, agent, h.Sender, state, answer, at)
 	if err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
@@ -242,7 +256,7 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT m.id,m.handoff,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.recipient=? AND (?=0 OR d.id=?) ORDER BY m.id`, agent, only, only)
+	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.recipient=? AND (?=0 OR d.id=?) ORDER BY m.id`, agent, only, only)
 	if err != nil {
 		return nil, err
 	}
@@ -250,9 +264,11 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 	for rows.Next() {
 		var m Message
 		var fetched sql.NullString
-		if err = rows.Scan(&m.ID, &m.Handoff, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Transcript, &fetched); err != nil {
+		var handoff, assignment, report sql.NullInt64
+		if err = rows.Scan(&m.ID, &handoff, &assignment, &report, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Transcript, &fetched); err != nil {
 			break
 		}
+		m.Handoff, m.Assignment, m.Report = handoff.Int64, assignment.Int64, report.Int64
 		m.Fetched = fetched.Valid
 		messages = append(messages, m)
 	}
@@ -268,11 +284,27 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 	}
 	for i := range messages {
 		m := &messages[i]
-		h, e := handoff(tx, m.Handoff)
-		if e != nil {
-			return nil, e
+		if m.Handoff != 0 {
+			h, e := handoff(tx, m.Handoff)
+			if e != nil {
+				return nil, e
+			}
+			m.HandoffData = &h
 		}
-		m.HandoffData = &h
+		if m.Assignment != 0 {
+			a, e := assignment(tx, m.Assignment)
+			if e != nil {
+				return nil, e
+			}
+			m.AssignmentData = &a
+		}
+		if m.Report != 0 {
+			r, e := report(tx, m.Report)
+			if e != nil {
+				return nil, e
+			}
+			m.ReportData = &r
+		}
 		if m.Fetched {
 			if m.State != DispatchNudged {
 				continue

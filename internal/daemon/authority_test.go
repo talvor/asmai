@@ -37,6 +37,21 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"old", CommandJobs, "unknown or superseded"},
 		{"unknown", CommandJobs, "unknown or superseded"},
 		{"", CommandJobOpen, "agent command"},
+		{"engineering", CommandAssign, ""},
+		{"current", CommandAssign, "only leader@engineering"},
+		{"worker", CommandAssign, "only leader@engineering"},
+		{"worker", CommandEffect, ""},
+		{"engineering", CommandEffect, ""},
+		{"current", CommandEffect, "only a worker, or the delivery owner"},
+		{"worker", CommandResult, ""},
+		{"worker", CommandBlocked, ""},
+		{"engineering", CommandResult, "only a worker"},
+		{"current", CommandBlocked, "only a worker"},
+		{"old", CommandEffect, "unknown or superseded"},
+		{"", CommandAssign, "asmai assign is an agent command"},
+		{"", CommandEffect, "asmai effect is an agent command"},
+		{"", CommandResult, "asmai result is an agent command"},
+		{"", CommandBlocked, "asmai blocked is an agent command"},
 	} {
 		err := d.authorize(Request{Command: tt.command, Session: tt.credential})
 		if tt.want == "" && err != nil {

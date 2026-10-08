@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +32,11 @@ import (
 // session's credential, which its CLI calls and hooks pass back to the daemon
 // so that it knows which session and generation made each call.
 const SessionCredential = "ASMAI_SESSION"
+
+// SlotVariable is the environment variable that carries a worker's slot: the
+// number of its workspace, which it can use to keep its checks from colliding
+// with those of workers in other workspaces.
+const SlotVariable = "ASMAI_SLOT"
 
 // The size of a new agent terminal, until an attach client gives its own.
 const (
@@ -108,12 +115,17 @@ const (
 	LeftBySessionEnd    = "session ended"
 )
 
-// leader is a role's leader, and its session while it runs.
+// leader is an agent's session while it runs: a role's leader, or a worker
+// that carries an assignment. It is kept under the agent's address, and the
+// daemon treats the two alike when it nudges them and takes their hooks.
 type leader struct {
 	address    roles.Address
 	session    *session.Session
 	generation int
 	startedAt  time.Time
+	// assignment is the assignment a worker's session carries, and zero for
+	// a leader's.
+	assignment int64
 	// restart is the timer that restarts the leader after its session ended
 	// on its own, and quickExits counts the sessions in a row that ended
 	// soon after they started.
@@ -201,7 +213,12 @@ type sessionRef struct {
 }
 
 func (d *daemon) leader(role string) *leader {
-	address := roles.LeaderOf(role)
+	return d.agent(roles.LeaderOf(role))
+}
+
+// agent returns the session slot of the agent at address, making it if the
+// agent has none yet. d.mu is held.
+func (d *daemon) agent(address roles.Address) *leader {
 	l, ok := d.leaders[address.String()]
 	if !ok {
 		l = &leader{address: address}
@@ -346,6 +363,15 @@ func (d *daemon) ensureCoordination() []Check {
 	return checks
 }
 
+// launch is what distinguishes one agent's session from another's: its
+// instructions, model, working directory and the variables it is given.
+type launch struct {
+	instructions string
+	model        string
+	dir          string
+	env          map[string]string
+}
+
 // startLeader starts l's session on the installed Claude Code, with
 // everything it is given on its command line, and journals it. d.mu is held.
 func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.ProviderInstall) error {
@@ -357,13 +383,42 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating the agent's directory: %w", err)
 	}
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.LeaderModel, dir: dir})
+}
+
+// startWorker starts the session of the worker l on the installed Claude
+// Code in the workspace of the assignment it carries, with that workspace's
+// slot and temporary directory, and journals it. d.mu is held.
+func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.ProviderInstall, a store.Assignment) error {
+	instructions, err := roles.WorkerInstructions(l.address.Role)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(a.Workspace.Path); err != nil {
+		return fmt.Errorf("the workspace of assignment %d is missing: %w", a.ID, err)
+	}
+	if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
+		return fmt.Errorf("creating the workspace's temporary directory: %w", err)
+	}
+	l.assignment = a.ID
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: map[string]string{
+		SlotVariable: strconv.Itoa(a.Workspace.Slot),
+		"TMPDIR":     a.Workspace.Tmp,
+	}})
+}
+
+// startSession starts l's session on the installed Claude Code as launch
+// says, and journals it. d.mu is held.
+func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch launch) error {
 	credential, err := newCredential()
 	if err != nil {
 		return err
 	}
-	args := providers.ClaudeCodeArgs(providers.HookCommand(d.cfg.Paths.Executable), staffing.LeaderModel, instructions)
-	env := providers.SessionEnv(os.Environ(), d.cfg.Paths.Bin, map[string]string{SessionCredential: credential})
-	s, err := session.Start(session.Spec{Path: install.Path, Args: args, Env: env, Dir: dir, Columns: terminalColumns, Rows: terminalRows})
+	args := providers.ClaudeCodeArgs(providers.HookCommand(d.cfg.Paths.Executable), launch.model, launch.instructions)
+	set := map[string]string{SessionCredential: credential}
+	maps.Copy(set, launch.env)
+	env := providers.SessionEnv(os.Environ(), d.cfg.Paths.Bin, set)
+	s, err := session.Start(session.Spec{Path: install.Path, Args: args, Env: env, Dir: launch.dir, Columns: terminalColumns, Rows: terminalRows})
 	if err != nil {
 		return err
 	}
@@ -373,10 +428,10 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 		Role:       l.address.Role,
 		Provider:   install.Name,
 		Version:    install.Version,
-		Model:      staffing.LeaderModel,
+		Model:      launch.model,
 		Executable: install.Path,
 		Args:       args,
-		Dir:        dir,
+		Dir:        launch.dir,
 		PID:        s.PID(),
 		At:         at,
 	})
@@ -388,7 +443,7 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, 0, 0, "", "", ""
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
-	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", staffing.LeaderModel)
+	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
 	d.agents.Add(1)
 	go d.watch(l, s, generation)
 	return nil
@@ -434,8 +489,8 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int) {
 		}
 		for _, agent := range pending {
 			if agent == l.address.String() {
-				if err := d.ensureRoleLeader(l.address.Role); err != nil {
-					d.log.Error("restarting agent with pending handoffs", "agent", agent, "error", err)
+				if err := d.ensureAgent(l.address); err != nil {
+					d.log.Error("restarting agent with pending dispatches", "agent", agent, "error", err)
 				}
 				return
 			}
@@ -619,12 +674,10 @@ func (d *daemon) running(agent string) (roles.Address, *session.Session, int, er
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if address.Name == roles.Leader && roles.Known(address.Role) {
-		if l := d.leaders[address.String()]; l != nil && l.session != nil {
-			return address, l.session, l.generation, nil
-		}
+	if l := d.leaders[address.String()]; l != nil && l.session != nil {
+		return address, l.session, l.generation, nil
 	}
-	return address, nil, 0, fmt.Errorf("%s is not running; `asmai status` shows the leaders", address)
+	return address, nil, 0, fmt.Errorf("%s is not running; `asmai status` shows the leaders and `asmai agents` the agents", address)
 }
 
 // attach streams the session of the agent the request addresses to conn,

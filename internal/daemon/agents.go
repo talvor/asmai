@@ -27,8 +27,8 @@ import (
 )
 
 // SessionCredential is the environment variable that carries an agent
-// session's credential, which its hooks pass back to the daemon so that it
-// knows which session and generation they report on.
+// session's credential, which its CLI calls and hooks pass back to the daemon
+// so that it knows which session and generation made each call.
 const SessionCredential = "ASMAI_SESSION"
 
 // The size of a new agent terminal, until an attach client gives its own.

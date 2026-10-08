@@ -41,6 +41,9 @@ func Call(socket string, req Request) (Response, error) {
 // the daemon could not be reached. A daemon that answers with an error makes
 // that the error.
 func Open(socket string, req Request) (net.Conn, *bufio.Reader, Response, error) {
+	if req.Session == "" {
+		req.Session = os.Getenv(SessionCredential)
+	}
 	conn, err := net.DialTimeout("unix", socket, 5*time.Second)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {

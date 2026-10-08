@@ -50,6 +50,11 @@ commands:
   asmai stop                  persist the factory's state and stop its daemon and agents
   asmai status                show the daemon, its version and each leader
   asmai agents                list the factory's agents
+	asmai jobs                  list numbered jobs
+	asmai job <number>          show a job and its witnessed request
+	asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr --criterion <text>
+	                            Coordination's leader opens a job; repeat --criterion for each acceptance criterion
+	asmai brief <number>        read a job's canonical brief
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -86,6 +91,8 @@ var positional = map[string]string{
 	"repo add":    "name a local checkout or a URL",
 	"repo show":   "name the repository, as `asmai repo list` shows it",
 	"repo remove": "name the repository, as `asmai repo list` shows it",
+	"job show":    "name the job number, as `asmai jobs` shows it",
+	"brief":       "name the job number, as `asmai jobs` shows it",
 }
 
 // logPoll is how often `asmai log --follow` looks for new lines.
@@ -100,7 +107,12 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	original := slices.Clone(args)
 	if len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+		if os.Getenv(daemon.SessionCredential) != "" {
+			fmt.Fprintln(stderr, "asmai: an agent may run only its coordination commands")
+			return 1
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
@@ -109,6 +121,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		args = append([]string{"chat"}, args...)
 	}
 	name, args := args[0], args[1:]
+	if name == "job" {
+		if len(args) > 0 && args[0] == "open" {
+			name, args = "job open", args[1:]
+		} else {
+			name = "job show"
+		}
+	}
 	if subcommands, ok := groups[name]; ok {
 		if len(args) == 0 || !slices.Contains(subcommands, args[0]) {
 			fmt.Fprintf(stderr, "asmai %s: want %s\n\n%s", name, strings.Join(subcommands[:len(subcommands)-1], ", ")+" or "+subcommands[len(subcommands)-1], usage)
@@ -120,6 +139,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")
 	foreground, follow, repoName := new(bool), new(bool), new(string)
+	var message string
+	var reading, mandate, repository string
+	var criteria criteriaFlags
 	switch name {
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
@@ -127,7 +149,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
 	case "repo add":
 		repoName = flags.String("name", "", "register the repository under this name, not one made from its origin")
-	case "chat", "stop", "status", "agents", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
+	case "job open":
+		flags.StringVar(&message, "message", "", "latest or the witnessed message's journal ID")
+		flags.StringVar(&repository, "repository", "", "registered repository name")
+		flags.StringVar(&reading, "reading", "", "Coordination's reading of the user's words")
+		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate")
+		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
+	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -152,6 +180,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook"}, name) {
+		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
+			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
+		}
+		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
+	}
 
 	switch name {
 	case "version":
@@ -186,6 +220,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return status(o, paths)
 	case "agents":
 		return agents(o, paths)
+	case "jobs":
+		return jobs(o, paths)
+	case "job show":
+		return jobShow(o, paths, arg)
+	case "job open":
+		return jobOpen(o, paths, message, repository, reading, mandate, criteria)
+	case "brief":
+		return jobBrief(o, paths, arg)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":

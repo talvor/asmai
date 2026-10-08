@@ -64,6 +64,10 @@ const (
 	CommandRepoList   = "repo.list"
 	CommandRepoShow   = "repo.show"
 	CommandRepoRemove = "repo.remove"
+	CommandJobOpen    = "job.open"
+	CommandJobs       = "jobs"
+	CommandJob        = "job"
+	CommandBrief      = "brief"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -82,16 +86,22 @@ type Request struct {
 	// Terminal names the user's terminal the conversation is opened in,
 	// such as /dev/pts/3.
 	Terminal string `json:"terminal,omitempty"`
-	// Session is the credential of the agent session a hook reports for,
-	// and Payload what the provider passed the hook.
+	// Session is the credential of the agent session making the call, and
+	// Payload is what the provider passed a hook.
 	Session string          `json:"session,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 	// Source is what repo.add registers: a local checkout's absolute path
 	// or a URL. Repository names the registered repository for the other
 	// repo commands, and for repo.add the name to register it as, when the
 	// user chose one.
-	Source     string `json:"source,omitempty"`
-	Repository string `json:"repository,omitempty"`
+	Source        string   `json:"source,omitempty"`
+	Repository    string   `json:"repository,omitempty"`
+	Job           int64    `json:"job,omitempty"`
+	Witness       int64    `json:"witness,omitempty"`
+	LatestWitness bool     `json:"latest_witness,omitempty"`
+	Reading       string   `json:"reading,omitempty"`
+	Mandate       string   `json:"mandate,omitempty"`
+	Criteria      []string `json:"criteria,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -112,6 +122,9 @@ type Response struct {
 	// a repo command added, showed or removed.
 	Repositories []store.Repository `json:"repositories,omitempty"`
 	Repository   *store.Repository  `json:"repository,omitempty"`
+	Jobs         []store.Job        `json:"jobs,omitempty"`
+	Job          *store.Job         `json:"job,omitempty"`
+	Brief        string             `json:"brief,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -336,6 +349,10 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		reply(conn, Response{Error: "the request is not a JSON line"})
 		return false
 	}
+	if err := d.authorize(req); err != nil {
+		reply(conn, Response{Error: err.Error()})
+		return false
+	}
 	switch req.Command {
 	case CommandStatus:
 		d.mu.Lock()
@@ -408,6 +425,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		reply(conn, Response{Providers: installs})
 	case CommandRepoAdd, CommandRepoList, CommandRepoShow, CommandRepoRemove:
 		d.repoCommand(conn, req)
+	case CommandJobOpen, CommandJobs, CommandJob, CommandBrief:
+		d.jobCommand(conn, req)
 	case CommandStop:
 		select {
 		case d.stop <- conn:

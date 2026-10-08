@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"slices"
 	"time"
 
 	"github.com/talvor/asmai/internal/roles"
@@ -30,7 +29,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 		address, e := roles.ParseAddress(req.Agent)
 		if e != nil {
 			err = e
-		} else if address.Name != roles.Leader || address.Role == ref.address.Role || !slices.Contains(roles.Staffed, address.Role) {
+		} else if address.Name != roles.Leader || address.Role != roles.Engineering {
 			err = errors.New("send a handoff to another role's leader")
 		} else {
 			h := store.Handoff{Job: req.Job, Sender: ref.address.String(), Receiver: address.String(), Outcome: req.Outcome, Decisions: req.Decisions, Evidence: req.Evidence, Constraints: req.Constraints, Permissions: req.Permissions, Criteria: req.Criteria}

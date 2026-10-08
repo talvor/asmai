@@ -104,6 +104,11 @@ func result(o *output, paths statedir.Paths, f resultFlags) int {
 	if input.Evidence = f.evidence; len(input.Evidence) == 0 {
 		return o.fail(errors.New("result needs --evidence: what shows the work does"))
 	}
+	for _, evidence := range input.Evidence {
+		if strings.TrimSpace(evidence) == "" {
+			return o.fail(errors.New("result evidence cannot be blank"))
+		}
+	}
 	if strings.TrimSpace(f.prSection) == "" {
 		return o.fail(errors.New("result needs --pr-section: your part of the pull request, what changed with before-and-after evidence"))
 	}

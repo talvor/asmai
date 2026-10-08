@@ -530,6 +530,11 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 		if strings.TrimSpace(in.PRSection) == "" || len(in.Evidence) == 0 {
 			return Report{}, Dispatch{}, errors.New("a result links its evidence and has a PR section: what changed, with before-and-after evidence")
 		}
+		for _, evidence := range in.Evidence {
+			if strings.TrimSpace(evidence) == "" {
+				return Report{}, Dispatch{}, errors.New("result evidence cannot be blank")
+			}
+		}
 	case ReportBlocked:
 		if strings.TrimSpace(in.Reason) == "" {
 			return Report{}, Dispatch{}, errors.New("a blocked report says why the worker cannot go on")

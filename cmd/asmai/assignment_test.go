@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/talvor/asmai/internal/fakeprovider"
+	"github.com/talvor/asmai/internal/statedir"
 )
 
 // writingFixture is a repository registered by its user's checkout: its
@@ -196,7 +198,9 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "(?s)changes that are not committed.*check.sh.*greeting.txt"),
 		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
 		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
-		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
+		fakeRun(`asmai effect push "origin/other-branch@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
+		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "origin does not have the assignment branch"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 3 recorded: push"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 at HEAD' --artifact 'greeting.txt' --test 'check.sh asserts greeting.txt says hello' --check './check.sh -> passed' --gap none --pr-section 'Adds greeting.txt, saying hello. Before: no greeting.txt. After: check.sh passes.'`, 0, "result recorded for assignment 1"),
 	}
 	leader := []string{
@@ -315,16 +319,16 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 
 	// Each effect is recorded, tagged with the worker's dispatch.
 	effects := journaled(t, "effect.recorded")
-	if len(effects) != 2 {
+	if len(effects) != 3 {
 		t.Fatalf("effects recorded: %+v", effects)
 	}
-	for i, kind := range []string{"commit", "push"} {
+	for i, kind := range []string{"commit", "push", "push"} {
 		e := decode[map[string]any](t, effects[i])
 		if e["kind"] != kind || e["dispatch"] != float64(3) || e["agent"] != "worker1@engineering" || e["assignment"] != float64(1) {
 			t.Errorf("effect %d is %v, want a %s in dispatch 3 by worker1@engineering", i+1, e, kind)
 		}
 	}
-	if e := decode[map[string]any](t, effects[1]); e["ref"] != "origin/"+branch+"@"+pushed {
+	if e := decode[map[string]any](t, effects[2]); e["ref"] != "origin/"+branch+"@"+pushed {
 		t.Errorf("the push is of %v, want origin/%s@%s", e["ref"], branch, pushed)
 	}
 
@@ -340,8 +344,8 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 	if got := fmt.Sprint(result["tests"], result["gaps"], result["checks"]); got != "[check.sh asserts greeting.txt says hello] [] [map[command:./check.sh outcome:passed]]" {
 		t.Errorf("the result's tests, gaps and checks are %s", got)
 	}
-	if got := len(result["effects"].([]any)); got != 2 {
-		t.Errorf("the result lists %d effects, want 2", got)
+	if got := len(result["effects"].([]any)); got != 3 {
+		t.Errorf("the result lists %d effects, want 3", got)
 	}
 
 	// The dispatches are correlated: the worker's went from created to
@@ -394,6 +398,17 @@ func TestAWorkerThatCannotGoOnReportsItBlockedAndItsAssignmentStaysActive(t *tes
 	reports := journaled(t, "blocked.reported")
 	if len(reports) != 1 || len(journaled(t, "result.submitted")) != 0 {
 		t.Errorf("blocked reports %+v and results %+v, want one blocked report and no result", reports, journaled(t, "result.submitted"))
+	}
+}
+
+func TestAResultRejectsBlankEvidenceBeforeCallingTheDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	o := &output{stdout: &stdout, stderr: &stderr}
+	code := result(o, statedir.Paths{}, resultFlags{
+		evidence: listFlags{" \t\n"}, tests: listFlags{"none"}, checks: listFlags{"none"}, gaps: listFlags{"none"}, prSection: "changes",
+	})
+	if code == 0 || !strings.Contains(stderr.String(), "evidence cannot be blank") {
+		t.Errorf("a blank-evidence result exited %d with stderr %q", code, stderr.String())
 	}
 }
 

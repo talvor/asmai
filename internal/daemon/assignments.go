@@ -322,6 +322,28 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	if !tookIn {
 		return store.Report{}, store.Dispatch{}, refuse("the assignment branch does not contain the job branch's tip %s; take it in and submit again", branch.Tip)
 	}
+	job, err := d.store.Job(a.Job)
+	if err != nil {
+		return store.Report{}, store.Dispatch{}, err
+	}
+	repository, err := d.store.Repository(job.Repository)
+	if err != nil {
+		return store.Report{}, store.Dispatch{}, err
+	}
+	if err := repos.Fetch(ctx, repository.Clone); err != nil {
+		return store.Report{}, store.Dispatch{}, err
+	}
+	remoteBranch := "refs/remotes/origin/" + a.Workspace.Branch
+	if _, err := repos.OriginTip(ctx, repository.Clone, a.Workspace.Branch); err != nil {
+		return store.Report{}, store.Dispatch{}, refuse("origin does not have the assignment branch %s; push it and submit again", a.Workspace.Branch)
+	}
+	pushedCommit, err := repos.Contains(ctx, repository.Clone, remoteBranch, commit)
+	if err != nil {
+		return store.Report{}, store.Dispatch{}, err
+	}
+	if !pushedCommit {
+		return store.Report{}, store.Dispatch{}, refuse("origin's assignment branch %s does not contain reported commit %s; push it and submit again", a.Workspace.Branch, commit)
+	}
 	input := *req.Report
 	input.Artifacts = append([]string{fmt.Sprintf("branch %s at %s", a.Workspace.Branch, commit)}, input.Artifacts...)
 

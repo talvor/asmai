@@ -254,6 +254,7 @@ func TestAResultSubmitsTheAssignmentAndGoesToItsOwningLeader(t *testing.T) {
 	for name, mutate := range map[string]func(*Submission){
 		"a PR section":       func(s *Submission) { s.Input.PRSection = " " },
 		"evidence":           func(s *Submission) { s.Input.Evidence = nil },
+		"nonblank evidence":  func(s *Submission) { s.Input.Evidence = []string{" \t\n"} },
 		"a commit":           func(s *Submission) { s.Commit = "" },
 		"its own worker":     func(s *Submission) { s.Agent = "worker2@engineering" },
 		"a live session":     func(s *Submission) { s.Generation = 2 },

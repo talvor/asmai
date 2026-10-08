@@ -190,6 +190,37 @@ func handoff(q queryer, id int64) (Handoff, error) {
 }
 func (s *Store) Handoff(id int64) (Handoff, error) { return handoff(s.db, id) }
 
+func (s *Store) HandoffsForJob(number int64) ([]Handoff, error) {
+	rows, err := s.db.Query(`SELECT id FROM handoffs WHERE job=? ORDER BY id`, number)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if e := rows.Err(); err == nil {
+		err = e
+	}
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var handoffs []Handoff
+	for _, id := range ids {
+		h, e := s.Handoff(id)
+		if e != nil {
+			return nil, e
+		}
+		handoffs = append(handoffs, h)
+	}
+	return handoffs, nil
+}
+
 func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -250,7 +281,7 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 
 func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 	var d Dispatch
-	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND m.fetched_at IS NULL AND d.state=? ORDER BY d.id LIMIT 1`, agent, DispatchCreated).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
+	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND m.fetched_at IS NULL AND d.state IN (?,?) ORDER BY d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
 	return d, err
 }
 

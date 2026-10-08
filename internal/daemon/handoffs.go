@@ -160,7 +160,7 @@ func (d *daemon) nudge(agent string) {
 	prompt := fmt.Sprintf("asmai inbox --dispatch %d", dispatch.ID)
 	// Record uncertainty before the PTY write. A crash or failed write cannot
 	// create a false submission, and the same dispatch will never be retyped.
-	if err = d.store.ChangeDispatch(dispatch.ID, l.generation, store.DispatchCreated, store.DispatchUnknown, l.transcript, time.Now()); err != nil {
+	if err = d.store.ChangeDispatch(dispatch.ID, l.generation, dispatch.State, store.DispatchUnknown, l.transcript, time.Now()); err != nil {
 		d.log.Error("recording nudge attempt", "error", err)
 		return
 	}

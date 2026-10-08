@@ -134,9 +134,9 @@ type leader struct {
 	// submits first, and from earlier only when submits is zero, so an Enter
 	// that submitted nothing, on a menu or an empty prompt, is never
 	// swapped for a newer one: it is forgotten at the next finished turn,
-	// and no surplus survives two finished turns. Automation types nothing
-	// into a session yet; once it does, its typing resets them, so that its
-	// own submissions are never taken for the user's.
+	// and no surplus survives two finished turns. An automated submission is
+	// matched to its pending dispatch before these user Enter counts, so a
+	// nudge is never recorded as a witnessed message.
 	submits        int
 	earlier        int
 	submitTerminal string

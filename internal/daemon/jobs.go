@@ -56,7 +56,11 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					entries, err = d.store.JobEntries(j.Number)
 				}
 				if err == nil {
-					resp.Brief = brief(j, repository, entries)
+					var handoffs []store.Handoff
+					handoffs, err = d.store.HandoffsForJob(j.Number)
+					if err == nil {
+						resp.Brief = brief(j, repository, entries, handoffs)
+					}
 				}
 			}
 		}
@@ -67,7 +71,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 	reply(conn, resp)
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
@@ -76,9 +80,16 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry) stri
 	if repository.Clone != "" {
 		fmt.Fprintf(&b, "Repository clone: %s\n", repository.Clone)
 	}
-	fmt.Fprintln(&b, "Open handoffs: none\nAssignments: none\nPending decisions: none\nGrants: none\nRecent journal:")
+	fmt.Fprintln(&b, "Handoffs:")
+	if len(handoffs) == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	for _, h := range handoffs {
+		fmt.Fprintf(&b, "- %d %s -> %s: %s\n", h.ID, h.Sender, h.Receiver, h.State)
+	}
+	fmt.Fprintln(&b, "Assignments: none\nPending decisions: none\nGrants: none\nRecent journal:")
 	for _, entry := range entries {
-		fmt.Fprintf(&b, "- %d %s role=%s job=%d\n", entry.ID, entry.Kind, j.Role, j.Number)
+		fmt.Fprintf(&b, "- %d %s\n", entry.ID, entry.Kind)
 	}
 	return b.String()
 }

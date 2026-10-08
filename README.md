@@ -2,7 +2,7 @@
 
 AsmAI (short for AssemblyAI) is a personal software engineering **factory**: a coordinated group of AI agents that does software engineering work for one user across the repositories they register with it.
 
-The project is at an early stage (milestone M1, the walking skeleton, is under way). This repository is the Go module `github.com/talvor/asmai`; so far `asmai` runs the per-user daemon and its store (see [Running the factory](#running-the-factory)), and prints its version (`asmai version`) and its license with the third-party notices (`asmai notices`).
+The project is at an early stage (milestone M1, the walking skeleton, is under way). This repository is the Go module `github.com/talvor/asmai`; so far `asmai` runs the per-user daemon and its store (see [Running the factory](#running-the-factory)), installs its pinned Claude Code (see [Pinned providers](#pinned-providers)), and prints its version (`asmai version`) and its license with the third-party notices (`asmai notices`).
 
 ## Two repositories
 
@@ -52,6 +52,8 @@ Switch with `scripts/ci-mode.sh <mode> [minutes]`, then commit and push. See the
 | `asmai status` | Whether the daemon is running, and its version |
 | `asmai log [--follow]` | The daemon's log, oldest first; `--follow` waits for new lines. It reads the log files, so it works while the daemon is stopped |
 | `asmai export` | The journal, written out for inspection |
+| `asmai providers install` | Fetch the pinned provider CLIs, once you confirm (see [Pinned providers](#pinned-providers)) |
+| `asmai providers list` | The provider CLIs AsmAI has installed |
 
 Every command prints readable tables, or JSON with `--json`.
 
@@ -61,8 +63,17 @@ Everything the factory keeps on the host is in the state directory, `~/.local/st
 - `daemon.sock`, the daemon's socket.
 - `daemon.log`, the daemon's log, which rotates through 5 files of 20 MB (`daemon.log`, then `daemon.log.1` to `daemon.log.4`, the oldest).
 - `daemon.lock`, held by the running daemon.
+- `providers/`, AsmAI's own copies of the provider CLIs, one directory per provider and version, such as `providers/claude-code/2.1.292/claude`.
 
 No journal entry or log line records environment variables.
+
+## Pinned providers
+
+Agents never run your own Claude Code. [`pins.json`](pins.json), the pins file, names the Claude Code version AsmAI runs, Claude Code's official release channel, and the size and SHA-256 of the download for each certified platform; `asmai` embeds it. Codex and Lavish join it in later milestones.
+
+With the factory running, `asmai providers install` shows what it will fetch, from where, how it checks it and where it keeps it, and asks before it fetches anything. Once you confirm, it downloads the pinned Claude Code from `https://downloads.claude.ai/claude-code-releases`, refuses a download whose size or SHA-256 differs from the pins file, and keeps it in `providers/` in the state directory. The store records the install, with a `provider.installed` journal entry, and `asmai providers list` shows it. Installing a pin that is already installed does nothing.
+
+AsmAI never redistributes Claude Code, and never runs, changes or replaces your own copy or touches `~/.claude`.
 
 ## Building
 
@@ -86,6 +97,7 @@ go run ./internal/cmd/gen-notices -check
 ## Repository layout
 
 - [`cmd/asmai/`](cmd/asmai/): the `asmai` executable.
+- [`pins.json`](pins.json): the pins file, embedded in `asmai`.
 - [`internal/`](internal/): packages used only by AsmAI.
 - [`internal/fakeprovider/`](internal/fakeprovider/): the scripted fake provider CLI the development tests drive, its script format, and the recorder that records a real Claude Code session as a script. Neither is built into `asmai`, and the fake never counts toward qualification.
 - [`GLOSSARY.md`](GLOSSARY.md): the domain language. Use these terms in code, docs and issues.

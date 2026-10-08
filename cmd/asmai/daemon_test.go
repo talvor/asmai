@@ -374,11 +374,11 @@ func TestStartForegroundKeepsTheDaemonAttachedUntilItIsStopped(t *testing.T) {
 
 func TestEveryCommandAcceptsJSON(t *testing.T) {
 	factoryHome(t)
-	for _, args := range [][]string{{"version"}, {"notices"}, {"status"}, {"start"}, {"export"}, {"stop"}} {
+	for _, args := range [][]string{{"version"}, {"notices"}, {"status"}, {"start"}, {"export"}, {"providers", "list"}, {"stop"}} {
 		var v map[string]any
 		asmaiJSON(t, &v, args...)
 		if len(v) == 0 {
-			t.Errorf("asmai %s --json printed an empty object", args[0])
+			t.Errorf("asmai %s --json printed an empty object", strings.Join(args, " "))
 		}
 	}
 	// With --json, a failure is a JSON error too.

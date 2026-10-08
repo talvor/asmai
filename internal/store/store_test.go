@@ -248,3 +248,76 @@ func TestJournalEntriesEncodeAsJSON(t *testing.T) {
 		t.Errorf("the journal encodes as\n%s\nwant\n%s", got, want)
 	}
 }
+
+func TestAProviderInstallIsRecordedAndJournaledOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s := open(t, path)
+	if got, err := s.Providers(); err != nil || len(got) != 0 {
+		t.Fatalf("a new store records providers %v (%v), want none", got, err)
+	}
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	install := ProviderInstall{Name: "claude-code", Version: "2.1.292", Path: "/state/providers/claude-code/2.1.292/claude", SHA256: strings.Repeat("a", 64), InstalledAt: at}
+
+	recorded, err := s.ProviderInstalled(install)
+	if err != nil || !recorded {
+		t.Fatalf("ProviderInstalled = %v, %v, want it recorded", recorded, err)
+	}
+	again := install
+	again.InstalledAt = at.Add(time.Hour)
+	if recorded, err := s.ProviderInstalled(again); err != nil || recorded {
+		t.Errorf("recording the same install again = %v, %v, want nothing recorded", recorded, err)
+	}
+	s.Close()
+
+	s = open(t, path)
+	got, err := s.Providers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != install {
+		t.Errorf("the store records %+v, want only %+v", got, install)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Kind != KindProviderInstalled {
+		t.Fatalf("the journal holds %+v, want one provider install", entries)
+	}
+	want := `{"name":"claude-code","path":"/state/providers/claude-code/2.1.292/claude","sha256":"` + strings.Repeat("a", 64) + `","version":"2.1.292"}`
+	if string(entries[0].Data) != want {
+		t.Errorf("the journal entry holds %s, want %s", entries[0].Data, want)
+	}
+}
+
+// A store an earlier asmai wrote, at schema 1, is migrated with everything it
+// holds.
+func TestOpenMigratesAStoreAnEarlierAsmaiWrote(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite3", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		migrations[0],
+		`INSERT INTO journal (at, kind, data) VALUES ('2026-10-08T09:00:00Z', 'daemon.started', '{}')`,
+		`PRAGMA user_version = 1`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	s := open(t, path)
+	if got := kinds(t, s); strings.Join(got, ",") != KindDaemonStarted {
+		t.Errorf("the migrated journal holds %v, want the earlier start", got)
+	}
+	if _, err := s.ProviderInstalled(ProviderInstall{Name: "claude-code", Version: "2.1.292", Path: "/p", SHA256: "s", InstalledAt: time.Now()}); err != nil {
+		t.Errorf("the migrated store cannot record a provider install: %v", err)
+	}
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Errorf("the migrated store is at schema %d (%v), want %d", version, err, schemaVersion)
+	}
+}

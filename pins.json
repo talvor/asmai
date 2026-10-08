@@ -1,0 +1,16 @@
+{
+  "claude-code": {
+    "version": "2.1.292",
+    "channel": "https://downloads.claude.ai/claude-code-releases",
+    "platforms": {
+      "darwin-arm64": {
+        "sha256": "97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f",
+        "size": 235017328
+      },
+      "linux-x64": {
+        "sha256": "a967e7b1d8b4e47ee421d5433027880347952b0c0857abf880e2c942a4ec93b3",
+        "size": 251456696
+      }
+    }
+  }
+}

@@ -297,6 +297,8 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 	return messages, tx.Commit()
 }
 
+// NextDispatch prefers unfetched messages, then the dispatch nudged least
+// recently, so an unanswered fetched handoff cannot starve a later dispatch.
 func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 	var d Dispatch
 	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND (
@@ -304,7 +306,7 @@ func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
 			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
 		))
-	) ORDER BY d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
+	) ORDER BY m.fetched_at IS NOT NULL, julianday(d.updated_at), d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
 	return d, err
 }
 

@@ -550,7 +550,9 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 			return err
 		}
 	}
-	if fields.Event == "SessionStart" || fields.Event == turnStopped {
+	if fields.Event == "SessionStart" {
+		d.initialBoundary(ref, fields.Transcript)
+	} else if fields.Event == turnStopped {
 		d.boundary(ref, fields.Transcript)
 	}
 	return nil

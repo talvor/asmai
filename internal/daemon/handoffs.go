@@ -112,6 +112,36 @@ func (d *daemon) boundary(ref sessionRef, transcript string) {
 	d.nudge(ref.address.String())
 }
 
+// SessionStart is emitted before Claude Code draws its editor. Wait for the
+// terminal's explicit input modes after that hook, rather than treating the
+// hook or screen text alone as an input-ready boundary.
+func (d *daemon) initialBoundary(ref sessionRef, transcript string) {
+	d.mu.Lock()
+	l := d.leaders[ref.address.String()]
+	if l == nil || l.session == nil || l.generation != ref.generation {
+		d.mu.Unlock()
+		return
+	}
+	s := l.session
+	d.mu.Unlock()
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			state := s.Screen()
+			if state.Modes.BracketedPaste && !state.Modes.HiddenCursor {
+				d.boundary(ref, transcript)
+				return
+			}
+			select {
+			case <-s.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
 func (d *daemon) nudge(agent string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

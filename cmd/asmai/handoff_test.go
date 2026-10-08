@@ -17,7 +17,8 @@ func TestHandoffInboxNudgeAndReplyWithCorrelatedEvidence(t *testing.T) {
 	t.Setenv("ASMAI_TEST_DIR", dir)
 	engineering := []string{
 		`{"hook":"SessionStart","payload":{"hook_event_name":"SessionStart","transcript_path":"/fake/engineering.jsonl"}}`,
-		`{"screen":"> "}`,
+		fakeRun(`touch "$ASMAI_TEST_DIR/engineering-before-boundary"; while [ ! -f "$ASMAI_TEST_DIR/boundary" ]; do sleep 0.02; done`, 0, ""),
+		`{"screen":"\u001b[?2004h> "}`,
 		`{"expect":"asmai inbox --dispatch 1\r"}`,
 		`{"hook":"UserPromptSubmit","payload":{"hook_event_name":"UserPromptSubmit","prompt_id":"nudge-1","prompt":"asmai inbox --dispatch 1","transcript_path":"/fake/engineering.jsonl"}}`,
 		fakeRun(`asmai inbox --dispatch 1`, 0, "(?s)job 1.*handoff.*Implement fixture.*Decision one.*Evidence one.*Constraint one.*Permission one.*Tests pass"),
@@ -64,6 +65,13 @@ func TestHandoffInboxNudgeAndReplyWithCorrelatedEvidence(t *testing.T) {
 	a := inTerminal(t, 100, 25)
 	waitFor(t, "Coordination prompt", a.shows(">"))
 	a.ptmx.WriteString("Please implement fixture\r")
+	waitFor(t, "Engineering before its input boundary", touched(dir, "engineering-before-boundary"))
+	if changes := journaled(t, "dispatch.changed"); len(changes) != 1 || !strings.Contains(string(changes[0].Data), `"state": "created"`) {
+		t.Fatalf("dispatch before input boundary: %+v", changes)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "boundary"), []byte("ready"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, "Engineering answer", touched(dir, "engineering-done"))
 	waitFor(t, "Coordination reply fetch", touched(dir, "coordination-done"))
 	var inbox []struct {

@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -78,8 +79,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := checkFactory(paths); err != nil {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return fail(err)
+	}
+	defaultPaths := statedir.At(filepath.Join(home, ".local", "state", "asmai"))
+	if err := checkFactory(defaultPaths); err != nil {
+		return fail(err)
+	}
+	if paths.Dir != defaultPaths.Dir {
+		if err := checkFactory(paths); err != nil {
+			return fail(err)
+		}
 	}
 
 	root, rev, err := resolveCommit(ctx, *repo, commitUnderTest(*commit))
@@ -100,6 +111,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
+	var qualificationPaths statedir.Paths
+	needsHandoffState := len(ids) == 0 || containsCase(ids, "C7") || containsCase(ids, "C11")
+	if needsHandoffState {
+		var cleanup func()
+		qualificationPaths, cleanup, err = createQualificationState(home)
+		if err != nil {
+			return fail(err)
+		}
+		defer cleanup()
+	}
 
 	host, _ := os.Hostname()
 	account := os.Getenv("USER")
@@ -107,16 +128,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		account = u.Username
 	}
 	h := &Harness{
-		Subject:    subject,
-		Provider:   ClaudeCode{},
-		Paths:      paths,
-		Env:        os.Environ(),
-		Host:       host,
-		User:       account,
-		Wait:       sessionWait,
-		Poll:       sessionPoll,
-		ShowScreen: *showScreen,
-		Log:        stderr,
+		Subject:            subject,
+		Provider:           ClaudeCode{},
+		Paths:              paths,
+		QualificationPaths: qualificationPaths,
+		Env:                os.Environ(),
+		Host:               host,
+		User:               account,
+		Wait:               sessionWait,
+		Poll:               sessionPoll,
+		ShowScreen:         *showScreen,
+		Log:                stderr,
 	}
 	report := h.Run(ctx, ids)
 	if ctx.Err() != nil {
@@ -133,6 +155,37 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func containsCase(ids []string, id string) bool {
+	for _, candidate := range ids {
+		if candidate == id {
+			return true
+		}
+	}
+	return false
+}
+
+func createQualificationState(home string) (statedir.Paths, func(), error) {
+	dir := filepath.Join(home, ".local", "state", "asmai", "qualification")
+	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
+		return statedir.Paths{}, nil, err
+	}
+	if err := os.Mkdir(dir, 0700); err != nil {
+		return statedir.Paths{}, nil, fmt.Errorf("creating disposable qualification state %s: %w; remove a stale qualification directory only after confirming no factory is using it", dir, err)
+	}
+	return statedir.At(dir), func() { _ = os.RemoveAll(dir) }, nil
+}
+
+func envValue(env []string, name, value string) []string {
+	result := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if key != name {
+			result = append(result, entry)
+		}
+	}
+	return append(result, name+"="+value)
 }
 
 // commitUnderTest is the revision to qualify: the one asked for, else the

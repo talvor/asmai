@@ -51,6 +51,9 @@ func (h *Harness) prepareEngineeringTrust(ctx context.Context, f *Factory, path 
 			return fmt.Errorf("Claude Code asked for a login while preparing Engineering's directory (%s)", marker)
 		}
 		if _, found := screenHas(lines, trustPromptMarker); found {
+			if !h.canAutoAcceptTrust(f, "leader@engineering") {
+				return errors.New("Claude Code needs Engineering's qualification directory trusted; automatic trust acceptance is limited to the authorized asmai-vm qualification directory")
+			}
 			if keys >= 8 {
 				return errors.New("Claude Code's Engineering directory trust prompt did not clear after eight keys")
 			}
@@ -74,6 +77,19 @@ func (h *Harness) prepareEngineeringTrust(ctx context.Context, f *Factory, path 
 		time.Sleep(h.Poll)
 	}
 	return errors.New("Claude Code showed no ready prompt while preparing Engineering's directory")
+}
+
+func (h *Harness) canAutoAcceptTrust(f *Factory, address string) bool {
+	if h.Host != "asmai-vm" || (address != "leader@coordination" && address != "leader@engineering") {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	root := filepath.Join(home, ".local", "state", "asmai", "qualification")
+	return filepath.Clean(f.paths.Dir) == filepath.Clean(root) &&
+		filepath.Clean(filepath.Join(f.paths.Agents, address)) == filepath.Clean(filepath.Join(root, "agents", address))
 }
 
 func promptSurface(lines []string) bool {

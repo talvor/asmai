@@ -23,8 +23,10 @@ import (
 type Harness struct {
 	Subject  Subject
 	Provider Provider
-	// Paths are the harness user's own state directory.
+	// Paths is the configured state directory used by C3 and C4.
 	Paths statedir.Paths
+	// QualificationPaths is the disposable state directory used by C7 and C11.
+	QualificationPaths statedir.Paths
 	// Env is the harness's own environment, which each case's factory starts
 	// from.
 	Env []string
@@ -102,7 +104,7 @@ func (h *Harness) Run(ctx context.Context, ids []string) Report {
 
 func (h *Harness) runCase(ctx context.Context, c Case) Result {
 	r := Result{ID: c.ID, Title: c.Title, Outcome: Passed}
-	f := NewFactory(h.Subject.Asmai, h.Paths, c.Env(h.Env, &r))
+	f := h.factoryForCase(c, &r)
 	err := c.Run(h, ctx, f, &r)
 	// The factory is the harness user's own, so each case leaves it stopped.
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
@@ -114,6 +116,16 @@ func (h *Harness) runCase(ctx context.Context, c Case) Result {
 		r.Outcome, r.Failure = Failed, err.Error()
 	}
 	return r
+}
+
+func (h *Harness) factoryForCase(c Case, r *Result) *Factory {
+	paths := h.Paths
+	env := c.Env(h.Env, r)
+	if c.ID == "C7" || c.ID == "C11" {
+		paths = h.QualificationPaths
+		env = envValue(env, "ASMAI_STATE_DIR", paths.Dir)
+	}
+	return NewFactory(h.Subject.Asmai, paths, env)
 }
 
 // withoutAPIKeys returns environ less any provider API-key variable, and the
@@ -187,7 +199,7 @@ func (h *Harness) ready(ctx context.Context, f *Factory) (path string, err error
 	if !ok {
 		return "", fmt.Errorf("%s/%s is not a platform Claude Code is published for", runtime.GOOS, runtime.GOARCH)
 	}
-	plan, err := h.Subject.Pins.ClaudeCodePlan(platform, h.Paths.Providers)
+	plan, err := h.Subject.Pins.ClaudeCodePlan(platform, f.paths.Providers)
 	if err != nil {
 		return "", err
 	}
@@ -321,6 +333,9 @@ func (h *Harness) awaitSessionStart(ctx context.Context, f *Factory, leader stor
 			return pressed, nil
 		}
 		if _, found := screenHas(lines, trustPromptMarker); found && keys < maxKeys && time.Since(lastKey) >= keyGap {
+			if !h.canAutoAcceptTrust(f, leader.Agent) {
+				return pressed, errors.New("Claude Code needs the Coordination qualification directory trusted; automatic trust acceptance is limited to the authorized asmai-vm qualification directory")
+			}
 			switch selected := selectedOption(lines); {
 			case strings.Contains(selected, trustPromptMarker):
 				h.logf("confirming Claude Code's trust prompt")

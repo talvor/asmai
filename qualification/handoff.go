@@ -19,9 +19,9 @@ import (
 const qualificationRepository = "qualification-handoff"
 
 func (h *Harness) prepareHandoffRepository(ctx context.Context, f *Factory) error {
-	// This fixture is kept in the harness user's own factory state because jobs
-	// retain their registered repository. It is not a temporary build directory.
-	origin := filepath.Join(h.Paths.Dir, "qualification-fixtures", qualificationRepository+".git")
+	// Jobs retain their registered repository, so this fixture lives in the
+	// disposable factory state for the handoff cases.
+	origin := filepath.Join(f.paths.Dir, "qualification-fixtures", qualificationRepository+".git")
 	if _, err := os.Stat(origin); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(origin), 0700); err != nil {
 			return err

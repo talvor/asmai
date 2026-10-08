@@ -118,6 +118,34 @@ func TestTheHarnessAcceptsScratchConfigAndStatePaths(t *testing.T) {
 	}
 }
 
+func TestQualificationStateIsDisposableAndDoesNotReuseAnExistingDirectory(t *testing.T) {
+	home := t.TempDir()
+	paths, cleanup, err := createQualificationState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.Dir != filepath.Join(home, ".local", "state", "asmai", "qualification") {
+		t.Fatalf("qualification state = %s", paths.Dir)
+	}
+	if err := os.WriteFile(filepath.Join(paths.Dir, "fixture"), []byte("temporary"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if _, err := os.Stat(paths.Dir); !os.IsNotExist(err) {
+		t.Fatalf("qualification state remains after cleanup: %v", err)
+	}
+
+	if err := os.Mkdir(paths.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := createQualificationState(home); err == nil {
+		t.Fatal("an existing qualification directory was reused")
+	}
+	if _, err := os.Stat(paths.Dir); err != nil {
+		t.Fatalf("existing qualification directory was removed: %v", err)
+	}
+}
+
 func TestACommitIsBuiltFromExactlyItsOwnFiles(t *testing.T) {
 	repo := t.TempDir()
 	gitIn := func(args ...string) string {

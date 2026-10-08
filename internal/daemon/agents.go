@@ -128,9 +128,11 @@ type leader struct {
 	// turn, earlier those typed before, which a message queued in that turn
 	// may still be submitting. Each confirmation the session reports while
 	// either is above zero is the user's own message, and submitTerminal is
-	// the user's terminal the last was typed in. An Enter that submitted
-	// nothing, on a menu or an empty prompt, is forgotten once a second turn
-	// has finished after it. Automation types nothing into a session yet;
+	// the user's terminal the last was typed in. A confirmation takes from
+	// submits first, and from earlier only when submits is zero, so an Enter
+	// that submitted nothing, on a menu or an empty prompt, is never
+	// swapped for a newer one: it is forgotten at the next finished turn,
+	// and no surplus survives two finished turns. Automation types nothing into a session yet;
 	// once it does, its typing resets them, so that its own submissions are
 	// never taken for the user's.
 	submits        int
@@ -140,14 +142,15 @@ type leader struct {
 
 // submitted reports whether a prompt submission the leader's session
 // reports confirms an Enter key the user typed in the conversation, and the
-// user's terminal they typed it in. Each confirmation of the user's message
+// user's terminal they typed it in: one typed since the last finished turn,
+// or else one typed before it. Each confirmation of the user's message
 // returns the input to automation.
 func (l *leader) submitted() (terminal string, ok bool) {
 	switch {
-	case l.earlier > 0:
-		l.earlier--
 	case l.submits > 0:
 		l.submits--
+	case l.earlier > 0:
+		l.earlier--
 	default:
 		return "", false
 	}
@@ -156,8 +159,9 @@ func (l *leader) submitted() (terminal string, ok bool) {
 }
 
 // finished ages the user's unconfirmed Enter keys once the leader's session
-// reports its turn finished: those typed before its previous turn finished
-// submitted nothing, as a message queued then has been submitted since. With
+// reports its turn finished: those still unconfirmed from before its previous
+// turn finished submitted nothing, as a message queued then has been
+// submitted since, and are forgotten. With
 // no Enter left that may yet submit, the input returns to automation.
 func (l *leader) finished() {
 	if l.earlier > 0 && l.submits == 0 {

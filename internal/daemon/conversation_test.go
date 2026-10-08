@@ -43,6 +43,8 @@ func TestTheUsersSubmissionsAreToldApartByTheEnterKeysTheyTyped(t *testing.T) {
 		{"a message queued during the turn", []step{{"enter", false}, {"submit", true}, {"enter", false}, {"stop", false}, {"submit", true}}},
 		{"two messages typed before the first is confirmed", []step{{"enter", false}, {"enter", false}, {"submit", true}, {"stop", false}, {"submit", true}}},
 		{"an Enter on a menu, then a message", []step{{"enter", false}, {"enter", false}, {"submit", true}, {"stop", false}, {"stop", false}, {"submit", false}}},
+		{"an Enter on a menu in one turn, then a message", []step{{"enter", false}, {"stop", false}, {"enter", false}, {"submit", true}, {"stop", false}, {"submit", false}}},
+		{"two messages queued during the turn, submitted together", []step{{"enter", false}, {"submit", true}, {"enter", false}, {"enter", false}, {"stop", false}, {"submit", true}, {"stop", false}, {"submit", false}}},
 		{"an Enter on a menu in a turn that queues nothing", []step{{"enter", false}, {"stop", false}, {"stop", false}, {"submit", false}}},
 	} {
 		l := &leader{}
@@ -61,6 +63,9 @@ func TestTheUsersSubmissionsAreToldApartByTheEnterKeysTheyTyped(t *testing.T) {
 					t.Errorf("%s: after the submission at step %d the user still owns the input", tc.name, i)
 				}
 			}
+		}
+		if last := tc.steps[len(tc.steps)-1]; last.do == "submit" && !last.want && (l.submits != 0 || l.earlier != 0 || l.userInput) {
+			t.Errorf("%s: %d Enter keys since the last finished turn and %d before it are left over, and the user owns the input: %v; want none left over", tc.name, l.submits, l.earlier, l.userInput)
 		}
 	}
 }

@@ -505,11 +505,24 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if _, err := s.Inbox(engineering.Agent, inbound.ID, at); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID+1, 1, HandoffAccepted, "accepted", at); err == nil {
+	pending, err := s.PendingLeaders()
+	if err != nil || len(pending) != 1 || pending[0] != engineering.Agent {
+		t.Fatalf("the fetched pending handoff recovery lists %v (%v), want %s", pending, err, engineering.Agent)
+	}
+	engineering.PID = 3
+	engineering.At = at.Add(time.Minute)
+	if generation, err := s.SessionStarted(engineering); err != nil || generation != 2 {
+		t.Fatalf("the restarted Engineering generation is %d (%v), want 2", generation, err)
+	}
+	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID+1, 2, HandoffAccepted, "accepted", at); err == nil {
 		t.Fatal("a different current dispatch answered the handoff")
 	}
-	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID, 1, HandoffAccepted, "accepted", at); err != nil {
+	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID, 2, HandoffAccepted, "accepted", at); err != nil {
 		t.Fatal(err)
+	}
+	pending, err = s.PendingLeaders()
+	if err != nil || len(pending) != 1 || pending[0] != coordination.Agent {
+		t.Fatalf("answering the fetched handoff left recipients %v (%v), want only %s", pending, err, coordination.Agent)
 	}
 	coordination.PID = 3
 	coordination.At = at.Add(time.Minute)

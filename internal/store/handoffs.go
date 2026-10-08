@@ -301,7 +301,11 @@ func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 }
 
 func (s *Store) PendingLeaders() ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT m.recipient FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.fetched_at IS NULL AND d.state IN (?,?,?) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown)
+	rows, err := s.db.Query(`SELECT DISTINCT m.recipient FROM messages m JOIN dispatches d ON d.message=m.id WHERE
+		(m.fetched_at IS NULL AND d.state IN (?,?,?)) OR
+		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state=? AND EXISTS (
+			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
+		)) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, HandoffPending)
 	if err != nil {
 		return nil, err
 	}

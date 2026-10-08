@@ -60,6 +60,7 @@ type Check struct {
 const (
 	InputAutomation = "automation"
 	InputUser       = "user"
+	InputUnknown    = "unknown"
 )
 
 // Leader is a role's leader as `asmai status` shows it.
@@ -139,6 +140,15 @@ type leader struct {
 	submits        int
 	earlier        int
 	submitTerminal string
+	// ready is set only by a provider lifecycle boundary. A submission
+	// attempt consumes it until its matching acknowledgment and Stop.
+	ready           bool
+	inputUnknown    bool
+	pendingDispatch int64
+	currentDispatch int64
+	currentPromptID string
+	pendingPrompt   string
+	transcript      string
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -376,6 +386,7 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 	}
 	l.session, l.generation, l.startedAt = s, generation, at
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
+	l.ready, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, 0, 0, "", "", ""
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", staffing.LeaderModel)
 	d.agents.Add(1)
@@ -467,7 +478,9 @@ func (d *daemon) leaderStates() []Leader {
 		if l.session != nil {
 			state.State, state.Generation, state.PID = store.AgentRunning, l.generation, l.session.PID()
 			state.Input = InputAutomation
-			if l.userInput {
+			if l.inputUnknown {
+				state.Input = InputUnknown
+			} else if l.userInput {
 				state.Input = InputUser
 			}
 			if c := d.conversation; c != nil && c.leader == l {
@@ -498,8 +511,10 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 		return errors.New("the hook is not from an agent session this daemon started")
 	}
 	var fields struct {
-		Event  string  `json:"hook_event_name"`
-		Prompt *string `json:"prompt"`
+		Event      string  `json:"hook_event_name"`
+		Prompt     *string `json:"prompt"`
+		PromptID   string  `json:"prompt_id"`
+		Transcript string  `json:"transcript_path"`
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, payload); err != nil || json.Unmarshal(payload, &fields) != nil {
@@ -508,10 +523,15 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	if fields.Event == "" {
 		return errors.New("the hook's payload names no hook_event_name")
 	}
-	if fields.Event == turnStopped {
-		d.turnFinished(ref)
-	}
 	if fields.Event == promptSubmitted {
+		if fields.Prompt != nil {
+			if handled, err := d.automatedSubmitted(ref, *fields.Prompt, fields.PromptID, fields.Transcript, compact.Bytes()); handled || err != nil {
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+		}
 		if terminal, ok := d.userSubmitted(ref); ok {
 			if fields.Prompt == nil {
 				d.log.Warn("the user's prompt submission does not say what was submitted, so no witnessed message is journaled", "agent", ref.address.String(), "generation", ref.generation)
@@ -523,6 +543,15 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	if err := d.store.Observed(ref.address.String(), ref.address.Role, ref.generation, fields.Event, compact.Bytes(), time.Now()); err != nil {
 		d.log.Error("journaling an observation", "agent", ref.address.String(), "error", err.Error())
 		return fmt.Errorf("journaling the observation: %w", err)
+	}
+	if fields.Event == turnStopped {
+		d.turnFinished(ref)
+		if err := d.stopCurrentDispatch(ref, fields.PromptID, fields.Transcript); err != nil {
+			return err
+		}
+	}
+	if fields.Event == "SessionStart" || fields.Event == turnStopped {
+		d.boundary(ref, fields.Transcript)
 	}
 	return nil
 }

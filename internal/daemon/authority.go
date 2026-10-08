@@ -14,7 +14,7 @@ import (
 // user's own access, so it is not a security boundary.
 func (d *daemon) authorize(req Request) error {
 	if req.Session == "" {
-		if req.Command == CommandJobOpen || req.Command == CommandHook || req.Command == CommandBrief {
+		if req.Command == CommandJobOpen || req.Command == CommandHook || req.Command == CommandBrief || req.Command == CommandInbox || req.Command == CommandHandoffSend || req.Command == CommandHandoffAccept || req.Command == CommandHandoffClarify || req.Command == CommandHandoffDecline {
 			return fmt.Errorf("asmai %s is an agent command", commandName(req.Command))
 		}
 		return nil
@@ -30,8 +30,13 @@ func (d *daemon) authorize(req Request) error {
 		return fmt.Errorf("unknown or superseded agent session credential; this session can no longer call asmai")
 	}
 	switch req.Command {
-	case CommandStatus, CommandAgents, CommandJobs, CommandBrief, CommandHook:
+	case CommandStatus, CommandAgents, CommandJobs, CommandBrief, CommandHook, CommandInbox, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		return nil
+	case CommandHandoffSend:
+		if ref.address.Name == roles.Leader {
+			return nil
+		}
+		return fmt.Errorf("only a role's leader may send a handoff")
 	case CommandJobOpen:
 		if ref.address.Role == roles.Coordination && ref.address.Name == roles.Leader {
 			return nil
@@ -59,6 +64,10 @@ func commandName(command string) string {
 		return "job open"
 	case CommandJob:
 		return "job <number>"
+	case CommandInbox:
+		return "inbox"
+	case CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
+		return "handoff " + strings.TrimPrefix(command, "handoff.")
 	default:
 		return ""
 	}

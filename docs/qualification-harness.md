@@ -2,12 +2,14 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has two cases, both from M1:
+So far it has four cases from M1:
 
 | Case | What it qualifies |
 |---|---|
 | C3 | The pinned Claude Code reuses the user's existing sign-in without a new login |
 | C4 | Every agent session starts without provider API-key variables |
+| C7 | An automated nudge counts only after the receiving provider acknowledges its exact prompt |
+| C11 | The user's witnessed request is journaled, while the daemon's nudge is not |
 
 Later milestones add the other cases to the same harness.
 
@@ -45,7 +47,7 @@ The harness qualifies the commit it was built from, and refuses to run when `--c
 
 | Flag | |
 |---|---|
-| `--cases C3,C4` | Run only these cases; by default all |
+| `--cases C7,C11` | Run only these cases; by default all |
 | `--json` | Print the report as JSON |
 | `--commit REV`, `--repo DIR` | The commit under test, and a directory in the repository holding it |
 | `--show-screen` | Include the leader's last screen in a failure. It may show the signed-in account, so it is your choice |
@@ -79,6 +81,10 @@ The first session in a directory Claude Code has not seen asks the user to trust
 
 The harness sets a canary in every provider API-key variable AsmAI lists, and in one for each `*_API_KEY` pattern, in the daemon's own environment, and checks that the daemon holds them. It then reads the names of the environment variables of the running leader session from the operating system (`/proc` on Linux, `ps` on macOS) and requires that it holds none of them, and no other name that is a provider API-key variable. It also requires that the process it read is the agent session, by `ASMAI_SESSION`. The canaries are not keys, and no value is read, kept or reported.
 
+### C7 and C11: an acknowledged handoff nudge
+
+The harness keeps a small fixture repository in its own factory state, opens the conversation, and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
+
 ## Reading the report
 
 ```
@@ -92,8 +98,12 @@ C3  passed  The pinned provider copy reuses the user's existing sign-in without 
     - ...
 C4  passed  Every agent session starts without provider API-key variables
     - ...
+C7  passed  Every automated submission has a correlated positive acknowledgment
+    - ...
+C11 passed  Witnessed user messages are distinct from daemon nudges
+    - ...
 
-2 of 2 cases passed.
+4 of 4 cases passed.
 ```
 
 Each case is `passed` or `failed`. The report names the platform, the pinned version from the commit's pins file, the version the installed copy reports, and the commit. It holds no credential and no environment variable's value.
@@ -105,6 +115,7 @@ A case passes when AsmAI behaves as decided, through the provider's own signal o
 Only the qualification user's own files, and only what a factory and Claude Code write there:
 
 - `~/.local/state/asmai`, the factory's state directory, including the pinned Claude Code under `providers/`. It is kept between runs, so later runs do not fetch again. Remove it, after `asmai stop`, to start from nothing.
+- `~/.local/state/asmai/qualification-fixtures/qualification-handoff.git`, the fixture for C7 and C11, and the factory's corresponding repository and job records.
 - `~/.claude.json`, where Claude Code records its trust of the leader's directory.
 - The Go module and build caches, for building the commit.
 

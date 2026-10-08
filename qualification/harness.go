@@ -61,8 +61,7 @@ type Case struct {
 	Run func(h *Harness, ctx context.Context, f *Factory, r *Result) error
 }
 
-// Cases are the cases the harness runs so far: C3 and C4 of M1's walking
-// skeleton. Later milestones add the others.
+// Cases are the qualification cases implemented so far.
 var Cases = []Case{
 	{
 		ID:    "C3",
@@ -76,6 +75,8 @@ var Cases = []Case{
 		Env:   withAPIKeyCanaries,
 		Run:   (*Harness).c4,
 	},
+	{ID: "C7", Title: "Every automated submission has a correlated positive acknowledgment", Env: signedInOnly, Run: (*Harness).c7},
+	{ID: "C11", Title: "Witnessed user messages are distinct from daemon nudges", Env: signedInOnly, Run: (*Harness).c11},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in

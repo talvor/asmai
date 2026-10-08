@@ -55,6 +55,9 @@ commands:
 	asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr --criterion <text>
 	                            Coordination's leader opens a job; repeat --criterion for each acceptance criterion
 	asmai brief <number>        read a job's canonical brief
+	asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
+	asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text>
+	asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -82,6 +85,7 @@ agent's screen as it is now, and asmai chat --json Coordination's.
 var groups = map[string][]string{
 	"providers": {"install", "list"},
 	"repo":      {"add", "list", "show", "remove"},
+	"handoff":   {"send", "accept", "clarify", "decline"},
 }
 
 // positional are the commands that take one argument, with what to say when
@@ -141,6 +145,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	foreground, follow, repoName := new(bool), new(bool), new(string)
 	var message string
 	var reading, mandate, repository string
+	var handoffJob, handoffID, dispatchID int64
+	var recipient, outcome, decisions, evidence, constraints, permissions, answer string
 	var criteria criteriaFlags
 	switch name {
 	case "start":
@@ -155,6 +161,20 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&reading, "reading", "", "Coordination's reading of the user's words")
 		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate")
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
+	case "handoff send":
+		flags.Int64Var(&handoffJob, "job", 0, "job number")
+		flags.StringVar(&recipient, "to", "", "receiving leader")
+		flags.StringVar(&outcome, "outcome", "", "requested outcome")
+		flags.StringVar(&decisions, "decisions", "", "relevant decisions")
+		flags.StringVar(&evidence, "evidence", "", "relevant evidence")
+		flags.StringVar(&constraints, "constraints", "", "constraints")
+		flags.StringVar(&permissions, "permissions", "", "permissions granted")
+		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
+	case "handoff accept", "handoff clarify", "handoff decline":
+		flags.Int64Var(&handoffID, "handoff", 0, "handoff ID")
+		flags.StringVar(&answer, "answer", "", "answer, question or reason")
+	case "inbox":
+		flags.Int64Var(&dispatchID, "dispatch", 0, "fetch one dispatch")
 	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
@@ -180,7 +200,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline"}, name) {
 		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -228,6 +248,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return jobOpen(o, paths, message, repository, reading, mandate, criteria)
 	case "brief":
 		return jobBrief(o, paths, arg)
+	case "inbox":
+		return inbox(o, paths, dispatchID)
+	case "handoff send":
+		return handoffSend(o, paths, handoffJob, recipient, outcome, decisions, evidence, constraints, permissions, criteria)
+	case "handoff accept", "handoff clarify", "handoff decline":
+		return handoffAnswer(o, paths, name, handoffID, answer)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":

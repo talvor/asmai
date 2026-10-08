@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -162,11 +163,13 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// attachedTerminal is `asmai attach` running in a terminal of its own, with
-// what that terminal shows.
+// attachedTerminal is asmai running in a terminal of its own, such as
+// `asmai attach` or the conversation, with what that terminal shows and its
+// name.
 type attachedTerminal struct {
 	cmd  *exec.Cmd
 	ptmx *os.File
+	name string
 	mu   sync.Mutex
 	term *vt.Terminal
 	done chan error
@@ -174,12 +177,28 @@ type attachedTerminal struct {
 
 func attachInTerminal(t *testing.T, agent string, columns, rows int) *attachedTerminal {
 	t.Helper()
-	a := &attachedTerminal{cmd: exec.Command(filepath.Join(asmaiBin, "asmai"), "attach", agent), term: vt.New(columns, rows), done: make(chan error, 1)}
-	ptmx, err := pty.StartWithSize(a.cmd, &pty.Winsize{Cols: uint16(columns), Rows: uint16(rows)})
+	return inTerminal(t, columns, rows, "attach", agent)
+}
+
+// inTerminal runs asmai with args in a new terminal of columns by rows, as
+// the controlling terminal of a session of its own.
+func inTerminal(t *testing.T, columns, rows int, args ...string) *attachedTerminal {
+	t.Helper()
+	ptmx, tty, err := pty.Open()
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.ptmx = ptmx
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(columns), Rows: uint16(rows)}); err != nil {
+		t.Fatal(err)
+	}
+	a := &attachedTerminal{cmd: exec.Command(filepath.Join(asmaiBin, "asmai"), args...), ptmx: ptmx, name: tty.Name(), term: vt.New(columns, rows), done: make(chan error, 1)}
+	a.cmd.Stdin, a.cmd.Stdout, a.cmd.Stderr = tty, tty, tty
+	a.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	err = a.cmd.Start()
+	tty.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		a.cmd.Process.Kill()
 		ptmx.Close()
@@ -218,7 +237,7 @@ func (a *attachedTerminal) cell(x, y int) vt.Cell {
 var leaderScript = []string{
 	`{"hook": "SessionStart", "payload": {"session_id": "fake-session", "hook_event_name": "SessionStart", "source": "startup", "transcript_path": "/tmp/fake-session.jsonl"}}`,
 	`{"run": "env > \"$ASMAI_TEST_DIR/session.env\" && command -v asmai > \"$ASMAI_TEST_DIR/asmai.path\"", "status": 0}`,
-	`{"run": "asmai status", "status": 0, "output": "(?m)^leader@coordination +running$"}`,
+	`{"run": "asmai status", "status": 0, "output": "(?m)^leader@coordination +running +input: automation$"}`,
 	`{"screen": "\u001b[2J\u001b[H\u001b[1mCoordination\u001b[22m is ready\r\n\u001b[5;10Hplaced"}`,
 	`{"hook": "UserPromptSubmit", "payload": {"session_id": "fake-session", "hook_event_name": "UserPromptSubmit", "prompt": "hello"}}`,
 	`{"hook": "PermissionRequest", "payload": {"session_id": "fake-session", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "rm -rf build"}}}`,
@@ -380,6 +399,11 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 	}
 	if want := []string{"SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"}; !slices.Equal(events, want) {
 		t.Errorf("the journal observes %v, want %v", events, want)
+	}
+	// No one typed the prompt the leader reported submitted, so it is no
+	// witnessed message.
+	if witnessed := entries(t, "message.witnessed"); len(witnessed) != 0 {
+		t.Errorf("the journal holds the witnessed messages %s, want none: the user typed nothing", witnessed)
 	}
 
 	// asmai agents lists the leader, and asmai status shows each leader.

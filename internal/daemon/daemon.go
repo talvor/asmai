@@ -54,6 +54,9 @@ const (
 	CommandAttach = "attach"
 	// CommandHook journals what an agent session's hook reported.
 	CommandHook = "hook"
+	// CommandConversation attaches the user's terminal to Coordination's
+	// leader with input: the conversation.
+	CommandConversation = "conversation"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -69,6 +72,9 @@ type Request struct {
 	// Snapshot asks attach for the agent's screen as it is, without
 	// following it.
 	Snapshot bool `json:"snapshot,omitempty"`
+	// Terminal names the user's terminal the conversation is opened in,
+	// such as /dev/pts/3.
+	Terminal string `json:"terminal,omitempty"`
 	// Session is the credential of the agent session a hook reports for,
 	// and Payload what the provider passed the hook.
 	Session string          `json:"session,omitempty"`
@@ -259,12 +265,15 @@ type daemon struct {
 	wg   sync.WaitGroup
 
 	// mu guards the agents and the checks.
-	mu         sync.Mutex
-	leaders    map[string]*leader
-	sessions   map[string]sessionRef
-	lastChecks []Check
-	stopping   bool
-	stoppedBy  string
+	mu      sync.Mutex
+	leaders map[string]*leader
+	// conversation is the user's conversation with Coordination, while it
+	// is open.
+	conversation *conversation
+	sessions     map[string]sessionRef
+	lastChecks   []Check
+	stopping     bool
+	stoppedBy    string
 	// agents counts the agent sessions whose end is not yet journaled.
 	agents sync.WaitGroup
 }
@@ -318,6 +327,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		reply(conn, Response{Agents: agents})
 	case CommandAttach:
 		d.attach(conn, r, req)
+	case CommandConversation:
+		d.converse(conn, r, req)
 	case CommandHook:
 		if err := d.observe(req.Session, req.Payload); err != nil {
 			reply(conn, Response{Error: err.Error()})

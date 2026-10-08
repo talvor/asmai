@@ -76,7 +76,7 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed(resp.Checks) || resp.Leaders[0] != (Leader{Agent: "leader@coordination", State: store.AgentRunning, Generation: 1, PID: resp.Leaders[0].PID}) {
+	if failed(resp.Checks) || resp.Leaders[0] != (Leader{Agent: "leader@coordination", State: store.AgentRunning, Generation: 1, PID: resp.Leaders[0].PID, Input: InputAutomation}) {
 		t.Fatalf("starting a ready factory answered %+v, %+v, want leader@coordination running", resp.Checks, resp.Leaders)
 	}
 

@@ -211,3 +211,21 @@ func TestTheRendererDrawsTheScreenAndThenOnlyWhatChanged(t *testing.T) {
 	small.Write(r.Render(term, 3, 1))
 	checkLines(t, small, "ab")
 }
+
+func TestBracketedPasteIsKeptAcrossAState(t *testing.T) {
+	term := screen(t, 10, 3, "\x1b[?2004h")
+	if !term.BracketedPaste() {
+		t.Fatal("after DECSET 2004 the terminal does not bracket pasted text")
+	}
+	copied, err := FromState(term.State())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !copied.BracketedPaste() {
+		t.Error("a terminal made from the State does not bracket pasted text, want it to as the one it was taken from does")
+	}
+	copied.Write([]byte("\x1b[?2004l"))
+	if copied.BracketedPaste() {
+		t.Error("after DECRST 2004 the terminal still brackets pasted text")
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/talvor/asmai/internal/config"
@@ -55,29 +56,56 @@ type Check struct {
 	Fix     string `json:"fix,omitempty"`
 }
 
+// The input owners of an agent session.
+const (
+	InputAutomation = "automation"
+	InputUser       = "user"
+)
+
 // Leader is a role's leader as `asmai status` shows it.
 type Leader struct {
 	Agent      string `json:"agent"`
 	State      string `json:"state"`
 	Generation int    `json:"generation,omitempty"`
 	PID        int    `json:"pid,omitempty"`
+	// Input is who owns a running leader's input: InputAutomation, or
+	// InputUser while the user has a message under way in the
+	// conversation.
+	Input string `json:"input,omitempty"`
+	// Conversation is the user's terminal the conversation is open in,
+	// when it is open with this leader.
+	Conversation string `json:"conversation,omitempty"`
 }
 
 // Frame is one line of an attach stream after the daemon's answer: a State
 // for the client to start again from, output to feed the terminal it made
-// from the last State, or the end of the session.
+// from the last State, the end of the session, or, once the user asked to
+// leave the conversation, that they have left it.
 type Frame struct {
 	State  *vt.State `json:"state,omitempty"`
 	Output []byte    `json:"output,omitempty"`
 	Ended  string    `json:"ended,omitempty"`
+	Left   bool      `json:"left,omitempty"`
 }
 
-// Resize is what an attach client sends the daemon when its terminal's size
-// changes: the size the agent's terminal is made.
-type Resize struct {
-	Columns int `json:"columns"`
-	Rows    int `json:"rows"`
+// ClientMessage is what an attach client sends the daemon after its
+// request, one JSON line each: the size to make the agent's terminal when
+// the client's changes, and, in the conversation, the keys the user typed or
+// that they leave.
+type ClientMessage struct {
+	Columns int    `json:"columns,omitempty"`
+	Rows    int    `json:"rows,omitempty"`
+	Keys    []byte `json:"keys,omitempty"`
+	Leave   bool   `json:"leave,omitempty"`
 }
+
+// How the user stops following an agent's terminal, as the journal records
+// leaving the conversation.
+const (
+	LeftByDetaching     = "detached"
+	LeftByTerminalClose = "terminal closed"
+	LeftBySessionEnd    = "session ended"
+)
 
 // leader is a role's leader, and its session while it runs.
 type leader struct {
@@ -90,6 +118,70 @@ type leader struct {
 	// soon after they started.
 	restart    *time.Timer
 	quickExits int
+	// userInput is set while the user owns the session's input: from the
+	// first key they type in the conversation until the provider confirms
+	// their message submitted, a finished turn leaves none of their Enter
+	// keys that may yet submit, or they leave.
+	userInput bool
+	// submits and earlier count the Enter keys the user typed in the
+	// conversation that the provider has not yet confirmed as a prompt
+	// submission: submits those typed since the provider last finished a
+	// turn, earlier those typed before, which a message queued in that turn
+	// may still be submitting. Each confirmation the session reports while
+	// either is above zero is the user's own message, and submitTerminal is
+	// the user's terminal the last was typed in. A confirmation takes from
+	// submits first, and from earlier only when submits is zero, so an Enter
+	// that submitted nothing, on a menu or an empty prompt, is never
+	// swapped for a newer one: it is forgotten at the next finished turn,
+	// and no surplus survives two finished turns. Automation types nothing
+	// into a session yet; once it does, its typing resets them, so that its
+	// own submissions are never taken for the user's.
+	submits        int
+	earlier        int
+	submitTerminal string
+}
+
+// submitted reports whether a prompt submission the leader's session
+// reports confirms an Enter key the user typed in the conversation, and the
+// user's terminal they typed it in: one typed since the last finished turn,
+// or else one typed before it. Each confirmation of the user's message
+// returns the input to automation.
+func (l *leader) submitted() (terminal string, ok bool) {
+	switch {
+	case l.submits > 0:
+		l.submits--
+	case l.earlier > 0:
+		l.earlier--
+	default:
+		return "", false
+	}
+	l.userInput = false
+	return l.submitTerminal, true
+}
+
+// finished ages the user's unconfirmed Enter keys once the leader's session
+// reports its turn finished: those still unconfirmed from before its previous
+// turn finished submitted nothing, as a message queued then has been
+// submitted since, and are forgotten. With no Enter left that may yet
+// submit, the input returns to automation.
+func (l *leader) finished() {
+	if l.earlier > 0 && l.submits == 0 {
+		l.userInput = false
+	}
+	l.earlier, l.submits = l.submits, 0
+}
+
+// conversation is the user's conversation with Coordination's leader: the
+// session it was opened with, and the user's terminal it is open in.
+type conversation struct {
+	leader     *leader
+	session    *session.Session
+	generation int
+	terminal   string
+	// pasting is set inside a bracketed paste, and carry holds the start
+	// of a paste's bracket that the next keys may finish.
+	pasting bool
+	carry   []byte
 }
 
 // sessionRef is the session an agent session's credential belongs to.
@@ -283,6 +375,7 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 		return fmt.Errorf("journaling the session's start: %w", err)
 	}
 	l.session, l.generation, l.startedAt = s, generation, at
+	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", staffing.LeaderModel)
 	d.agents.Add(1)
@@ -373,14 +466,30 @@ func (d *daemon) leaderStates() []Leader {
 		state := Leader{Agent: l.address.String(), State: store.AgentStopped}
 		if l.session != nil {
 			state.State, state.Generation, state.PID = store.AgentRunning, l.generation, l.session.PID()
+			state.Input = InputAutomation
+			if l.userInput {
+				state.Input = InputUser
+			}
+			if c := d.conversation; c != nil && c.leader == l {
+				state.Conversation = c.terminal
+			}
 		}
 		states = append(states, state)
 	}
 	return states
 }
 
+// The Claude Code hook events that confirm a prompt was submitted, and that
+// a turn finished.
+const (
+	promptSubmitted = "UserPromptSubmit"
+	turnStopped     = "Stop"
+)
+
 // observe journals the hook payload a session's hook reported, as an
-// observation of that session.
+// observation of that session. A prompt submission confirming an Enter key
+// the user typed in the conversation is also journaled as a witnessed
+// message, with the user's words as the provider reports them submitted.
 func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	d.mu.Lock()
 	ref, ok := d.sessions[credential]
@@ -389,7 +498,8 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 		return errors.New("the hook is not from an agent session this daemon started")
 	}
 	var fields struct {
-		Event string `json:"hook_event_name"`
+		Event  string  `json:"hook_event_name"`
+		Prompt *string `json:"prompt"`
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, payload); err != nil || json.Unmarshal(payload, &fields) != nil {
@@ -398,10 +508,59 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	if fields.Event == "" {
 		return errors.New("the hook's payload names no hook_event_name")
 	}
+	if fields.Event == turnStopped {
+		d.turnFinished(ref)
+	}
+	if fields.Event == promptSubmitted {
+		if terminal, ok := d.userSubmitted(ref); ok {
+			if fields.Prompt == nil {
+				d.log.Warn("the user's prompt submission does not say what was submitted, so no witnessed message is journaled", "agent", ref.address.String(), "generation", ref.generation)
+			} else {
+				return d.witness(ref, terminal, *fields.Prompt, compact.Bytes())
+			}
+		}
+	}
 	if err := d.store.Observed(ref.address.String(), ref.address.Role, ref.generation, fields.Event, compact.Bytes(), time.Now()); err != nil {
 		d.log.Error("journaling an observation", "agent", ref.address.String(), "error", err.Error())
 		return fmt.Errorf("journaling the observation: %w", err)
 	}
+	return nil
+}
+
+// userSubmitted reports whether a prompt submission ref's session reports
+// confirms an Enter key the user typed in the conversation, and the user's
+// terminal they typed it in.
+func (d *daemon) userSubmitted(ref sessionRef) (terminal string, ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l := d.leaders[ref.address.String()]
+	if l == nil || l.session == nil || l.generation != ref.generation {
+		return "", false
+	}
+	return l.submitted()
+}
+
+// turnFinished ages the user's unconfirmed Enter keys in ref's session,
+// which reports its turn finished.
+func (d *daemon) turnFinished(ref sessionRef) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if l := d.leaders[ref.address.String()]; l != nil && l.session != nil && l.generation == ref.generation {
+		l.finished()
+	}
+}
+
+// witness journals the prompt submission ref's session reported with
+// payload as an observation, and text, what it submitted, as the user's
+// witnessed message typed in terminal.
+func (d *daemon) witness(ref sessionRef, terminal, text string, payload json.RawMessage) error {
+	w := store.Witnessed{Agent: ref.address.String(), Role: ref.address.Role, Generation: ref.generation, Terminal: terminal, Text: text}
+	observation, message, err := d.store.ObservedWitnessed(w, promptSubmitted, payload, time.Now())
+	if err != nil {
+		d.log.Error("journaling a witnessed message", "agent", w.Agent, "error", err.Error())
+		return fmt.Errorf("journaling the witnessed message: %w", err)
+	}
+	d.log.Info("message witnessed", "agent", w.Agent, "generation", w.Generation, "terminal", terminal, "message", message, "observation", observation)
 	return nil
 }
 
@@ -437,15 +596,140 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 		reply(conn, Response{Attached: attached, Screen: &screen})
 		return
 	}
+	d.log.Info("attached", "agent", address.String(), "generation", generation)
+	defer d.log.Info("detached", "agent", address.String(), "generation", generation)
+	d.stream(conn, r, req, s, attached, nil)
+}
+
+// converse opens the conversation: it attaches the user's terminal, named
+// in the request, to Coordination's leader with input, and streams the
+// leader's session to conn as attach does, while the keys the client sends
+// are typed into it. The conversation is not an intervention: leaving it,
+// however the user leaves, returns the leader's input to automation at once
+// and pauses nothing. One terminal at a time holds the conversation.
+func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
+	address := roles.LeaderOf(roles.Coordination)
+	d.mu.Lock()
+	if c := d.conversation; c != nil {
+		d.mu.Unlock()
+		reply(conn, Response{Error: fmt.Sprintf("the conversation is open in another terminal (%s); leave it there with Ctrl-] first", c.terminal)})
+		return
+	}
+	l := d.leaders[address.String()]
+	if l == nil || l.session == nil {
+		d.mu.Unlock()
+		reply(conn, Response{Error: fmt.Sprintf("%s is not running; `asmai start` shows why", address)})
+		return
+	}
+	terminal := req.Terminal
+	if terminal == "" {
+		terminal = "a terminal asmai could not name"
+	}
+	c := &conversation{leader: l, session: l.session, generation: l.generation, terminal: terminal}
+	d.conversation = c
+	d.mu.Unlock()
+
+	if err := d.store.ConversationEntered(address.String(), address.Role, c.generation, c.terminal, time.Now()); err != nil {
+		d.log.Error("journaling the conversation's start", "error", err.Error())
+	}
+	d.log.Info("the user entered the conversation", "agent", address.String(), "generation", c.generation, "terminal", c.terminal)
+	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: c.generation, PID: c.session.PID(), Conversation: c.terminal}
+	how := d.stream(conn, r, req, c.session, attached, func(keys []byte) { d.typed(c, keys) })
+	d.leave(c, how)
+	if how == LeftByDetaching {
+		json.NewEncoder(conn).Encode(Frame{Left: true})
+	}
+}
+
+// typed types the keys the user typed in the conversation c into its
+// session. From the first key the user owns its input, and each Enter that
+// can submit their message is counted, so that the provider's confirmation
+// of it can be told apart from automation's submissions.
+func (d *daemon) typed(c *conversation, keys []byte) {
+	d.mu.Lock()
+	l := c.leader
+	if l.session != c.session {
+		d.mu.Unlock()
+		return
+	}
+	l.userInput = true
+	if n := c.enters(keys); n > 0 {
+		l.submits += n
+		l.submitTerminal = c.terminal
+	}
+	d.mu.Unlock()
+	if err := c.session.Input(keys); err != nil {
+		d.log.Warn("typing the user's keys into the conversation", "agent", l.address.String(), "error", err.Error())
+	}
+}
+
+// The brackets a terminal puts around pasted text.
+const (
+	pasteStart = "\x1b[200~"
+	pasteEnd   = "\x1b[201~"
+)
+
+// enters counts the Enter keys in keys, the next the user typed in c, that
+// can submit a message: a carriage return that is neither pasted text nor
+// part of Alt-Enter (ESC CR, which a terminal sends in one write), which
+// starts a new line instead.
+func (c *conversation) enters(keys []byte) int {
+	b := append(c.carry, keys...)
+	c.carry = nil
+	n := 0
+	for i := 0; i < len(b); i++ {
+		rest := string(b[i:])
+		switch {
+		case strings.HasPrefix(rest, pasteStart):
+			c.pasting = true
+			i += len(pasteStart) - 1
+		case strings.HasPrefix(rest, pasteEnd):
+			c.pasting = false
+			i += len(pasteEnd) - 1
+		case len(rest) >= 2 && len(rest) < len(pasteStart) && (strings.HasPrefix(pasteStart, rest) || strings.HasPrefix(pasteEnd, rest)):
+			// The bracket may end in the next keys.
+			c.carry = []byte(rest)
+			return n
+		case b[i] == '\r' && !c.pasting && (i == 0 || b[i-1] != 0x1b):
+			n++
+		}
+	}
+	return n
+}
+
+// leave closes the conversation c, which the user left as how says: the
+// leader's input returns to automation at once, and nothing is paused.
+func (d *daemon) leave(c *conversation, how string) {
+	d.mu.Lock()
+	if d.conversation == c {
+		d.conversation = nil
+	}
+	l := c.leader
+	if l.session == c.session {
+		l.userInput = false
+	}
+	d.mu.Unlock()
+	if err := d.store.ConversationLeft(l.address.String(), l.address.Role, c.generation, c.terminal, how, InputAutomation, time.Now()); err != nil {
+		d.log.Error("journaling leaving the conversation", "error", err.Error())
+	}
+	d.log.Info("the user left the conversation", "agent", l.address.String(), "generation", c.generation, "terminal", c.terminal, "how", how)
+}
+
+// stream answers the client on conn, which r reads, with attached, then
+// sends it session s's State and its output as it comes until the session
+// ends or the client goes, and returns which it was. The client may resize
+// the agent's terminal. Only given keys may it also type: each key it sends
+// is passed to keys, and it may ask to leave, which ends the stream with
+// LeftByDetaching for the caller to answer.
+func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, keys func([]byte)) (how string) {
 	if req.Columns > 0 && req.Rows > 0 {
 		s.Resize(req.Columns, req.Rows)
 	}
 	conn.SetDeadline(time.Time{})
 	reply(conn, Response{Attached: attached})
-	d.log.Info("attached", "agent", address.String(), "generation", generation)
-	defer d.log.Info("detached", "agent", address.String(), "generation", generation)
 
 	gone := make(chan struct{})
+	leaving := false
 	go func() {
 		defer close(gone)
 		for {
@@ -453,9 +737,22 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 			if err != nil {
 				return
 			}
-			var size Resize
-			if json.Unmarshal(line, &size) == nil && size.Columns > 0 && size.Rows > 0 {
-				s.Resize(size.Columns, size.Rows)
+			var m ClientMessage
+			if json.Unmarshal(line, &m) != nil {
+				continue
+			}
+			if m.Columns > 0 && m.Rows > 0 {
+				s.Resize(m.Columns, m.Rows)
+			}
+			if keys == nil {
+				continue
+			}
+			if len(m.Keys) > 0 {
+				keys(m.Keys)
+			}
+			if m.Leave {
+				leaving = true
+				return
 			}
 		}
 	}()
@@ -469,18 +766,21 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	for {
 		select {
 		case <-gone:
-			return
+			if leaving {
+				return LeftByDetaching
+			}
+			return LeftByTerminalClose
 		case e, ok := <-events:
 			if ok {
 				if !send(Frame{State: e.State, Output: e.Output}) {
-					return
+					return LeftByTerminalClose
 				}
 				continue
 			}
 			select {
 			case <-s.Done():
 				send(Frame{Ended: describeExit(s.Exit())})
-				return
+				return LeftBySessionEnd
 			default:
 				// The client fell behind; it starts again from a new State.
 				events, stop = s.Follow()

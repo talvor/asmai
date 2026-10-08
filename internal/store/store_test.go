@@ -382,3 +382,43 @@ func TestEachSessionOfAnAgentIsTheNextGenerationAndIsJournaled(t *testing.T) {
 		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	if err := s.ConversationEntered("leader@coordination", "coordination", 1, "/dev/pts/3", at); err != nil {
+		t.Fatal(err)
+	}
+	w := Witnessed{Agent: "leader@coordination", Role: "coordination", Generation: 1, Terminal: "/dev/pts/3", Text: "open a job"}
+	payload := json.RawMessage(`{"hook_event_name":"UserPromptSubmit","prompt":"open a job"}`)
+	observation, message, err := s.ObservedWitnessed(w, "UserPromptSubmit", payload, at.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation != 2 || message != 3 {
+		t.Errorf("the observation and the witnessed message are entries %d and %d, want 2 and 3", observation, message)
+	}
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Kind+" "+string(e.Data))
+	}
+	want := []string{
+		`conversation.entered {"agent":"leader@coordination","generation":1,"role":"coordination","terminal":"/dev/pts/3"}`,
+		`observation {"agent":"leader@coordination","event":"UserPromptSubmit","generation":1,"payload":{"hook_event_name":"UserPromptSubmit","prompt":"open a job"},"role":"coordination"}`,
+		`message.witnessed {"agent":"leader@coordination","role":"coordination","generation":1,"terminal":"/dev/pts/3","text":"open a job","observation":2}`,
+		`conversation.left {"agent":"leader@coordination","generation":1,"how":"detached","input":"automation","role":"coordination","terminal":"/dev/pts/3"}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if !entries[2].At.Equal(at.Add(time.Second)) {
+		t.Errorf("the witnessed message is journaled at %v, want %v", entries[2].At, at.Add(time.Second))
+	}
+}

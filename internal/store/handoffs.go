@@ -67,6 +67,9 @@ func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) 
 	if h.Job <= 0 || h.Sender == "" || h.Receiver == "" || strings.TrimSpace(h.Outcome) == "" || len(h.Criteria) == 0 {
 		return Handoff{}, Dispatch{}, errors.New("handoff needs a job, sender, receiving leader, outcome and acceptance criteria")
 	}
+	if strings.TrimSpace(h.Decisions) == "" || strings.TrimSpace(h.Evidence) == "" || strings.TrimSpace(h.Constraints) == "" || strings.TrimSpace(h.Permissions) == "" {
+		return Handoff{}, Dispatch{}, errors.New("handoff needs decisions, evidence, constraints and permissions; use none when empty")
+	}
 	for _, criterion := range h.Criteria {
 		if strings.TrimSpace(criterion) == "" {
 			return Handoff{}, Dispatch{}, errors.New("handoff acceptance criteria cannot be empty")

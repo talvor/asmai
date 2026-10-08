@@ -37,7 +37,7 @@ func addPendingDispatch(t *testing.T, s *store.Store, agent, state string, gener
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, dispatch, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Criteria: []string{"complete"}}, at)
+	_, dispatch, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, at)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,24 @@ import (
 	"github.com/talvor/asmai/internal/fakeprovider"
 )
 
+func TestHandoffSendRequiresExplicitContextFields(t *testing.T) {
+	fields := []string{"--decisions", "--evidence", "--constraints", "--permissions"}
+	for _, missing := range fields {
+		t.Run(missing, func(t *testing.T) {
+			args := []string{"handoff", "send", "--job", "1", "--to", "engineering", "--outcome", "implement", "--criterion", "complete"}
+			for _, field := range fields {
+				if field != missing {
+					args = append(args, field, "none")
+				}
+			}
+			_, stderr, code := runAsmai(t, args...)
+			if code != 1 || !strings.Contains(stderr, "use 'none' when empty") {
+				t.Fatalf("handoff send without %s exited %d with %q", missing, code, stderr)
+			}
+		})
+	}
+}
+
 func TestHandoffInboxNudgeAndReplyWithCorrelatedEvidence(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", dir)
@@ -88,7 +106,7 @@ func TestHandoffInboxNudgeAndReplyWithCorrelatedEvidence(t *testing.T) {
 	if got := strings.Join(states[1], ","); got != "created,unknown,nudged,delivered,working,stopped" {
 		t.Errorf("inbound dispatch states: %s", got)
 	}
-	if got := strings.Join(states[2], ","); got != "created,unknown,nudged,delivered" {
+	if got := strings.Join(states[2], ","); got != "created,unknown,nudged,delivered,working" {
 		t.Errorf("reply dispatch states: %s", got)
 	}
 	if got := journaled(t, "message.witnessed"); len(got) != 1 || !strings.Contains(string(got[0].Data), "Please implement fixture") {

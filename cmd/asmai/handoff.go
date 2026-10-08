@@ -15,6 +15,9 @@ func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisi
 	if job <= 0 || strings.TrimSpace(to) == "" || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(fmt.Errorf("handoff send needs --job, --to, --outcome and --criterion"))
 	}
+	if strings.TrimSpace(decisions) == "" || strings.TrimSpace(evidence) == "" || strings.TrimSpace(constraints) == "" || strings.TrimSpace(permissions) == "" {
+		return o.fail(fmt.Errorf("handoff send needs --decisions, --evidence, --constraints and --permissions; use 'none' when empty"))
+	}
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandHandoffSend, Session: os.Getenv(daemon.SessionCredential), Job: job, Agent: to, Outcome: outcome, Decisions: decisions, Evidence: evidence, Constraints: constraints, Permissions: permissions, Criteria: criteria})
 	if err != nil {
 		return o.fail(err)

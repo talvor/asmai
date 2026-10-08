@@ -23,6 +23,29 @@ func open(t *testing.T, path string) *Store {
 	return s
 }
 
+func TestSendHandoffRequiresExplicitContextFields(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	base := Handoff{Job: 1, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "implement", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}
+	fields := []struct {
+		name  string
+		clear func(*Handoff)
+	}{
+		{"decisions", func(h *Handoff) { h.Decisions = "" }},
+		{"evidence", func(h *Handoff) { h.Evidence = "" }},
+		{"constraints", func(h *Handoff) { h.Constraints = "" }},
+		{"permissions", func(h *Handoff) { h.Permissions = "" }},
+	}
+	for _, field := range fields {
+		t.Run(field.name, func(t *testing.T) {
+			h := base
+			field.clear(&h)
+			if _, _, err := s.SendHandoff(h, time.Now()); err == nil || !strings.Contains(err.Error(), "decisions, evidence, constraints and permissions") {
+				t.Fatalf("SendHandoff with missing %s returned %v", field.name, err)
+			}
+		})
+	}
+}
+
 func kinds(t *testing.T, s *Store) []string {
 	t.Helper()
 	entries, err := s.Journal()
@@ -468,7 +491,7 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, inbound, err := s.SendHandoff(Handoff{Job: job.Number, Sender: coordination.Agent, Receiver: engineering.Agent, Outcome: "implement", Criteria: []string{"complete"}}, at)
+	h, inbound, err := s.SendHandoff(Handoff{Job: job.Number, Sender: coordination.Agent, Receiver: engineering.Agent, Outcome: "implement", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, at)
 	if err != nil {
 		t.Fatal(err)
 	}

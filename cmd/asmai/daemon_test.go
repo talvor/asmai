@@ -46,11 +46,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// envMarker is an environment variable's value that must never be recorded.
-const envMarker = "env-value-asmai-must-never-record"
+// envSentinel is an environment variable's value that must never be recorded.
+const envSentinel = "asmai-env-sentinel-value"
 
 // factoryHome gives the test a home directory of its own, so the factory's
-// state directory is new, with asmai on the PATH and a marker in the
+// state directory is new, with asmai on the PATH and a sentinel in the
 // environment. It stops any daemon left when the test ends.
 func factoryHome(t *testing.T) (stateDir string) {
 	t.Helper()
@@ -61,7 +61,7 @@ func factoryHome(t *testing.T) (stateDir string) {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", asmaiBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ASMAI_E2E_MARKER", envMarker)
+	t.Setenv("ASMAI_E2E_SENTINEL", envSentinel)
 	t.Cleanup(func() {
 		exec.Command(filepath.Join(asmaiBin, "asmai"), "stop").Run()
 		os.RemoveAll(home)
@@ -312,7 +312,7 @@ func TestTheFactoryStartsStopsAndKeepsItsStoreWithAnAgentLookingOn(t *testing.T)
 		t.Fatal(err)
 	}
 	for where, text := range recorded {
-		for _, env := range []string{envMarker, "ASMAI_E2E_MARKER", "PATH="} {
+		for _, env := range []string{envSentinel, "ASMAI_E2E_SENTINEL", "PATH="} {
 			if strings.Contains(text, env) {
 				t.Errorf("%s records the environment: it holds %q", where, env)
 			}

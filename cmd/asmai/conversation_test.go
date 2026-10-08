@@ -18,7 +18,7 @@ import (
 // user types but never submits.
 var conversationScript = []string{
 	`{"hook": "SessionStart", "payload": {"session_id": "fake-session", "hook_event_name": "SessionStart", "source": "startup"}}`,
-	`{"screen": "\u001b[2J\u001b[H> "}`,
+	`{"screen": "\u001b[?2004h\u001b[2J\u001b[H> "}`,
 	`{"expect": "hello coordination\r"}`,
 	`{"screen": "hello coordination\r\n"}`,
 	`{"hook": "UserPromptSubmit", "payload": {"session_id": "fake-session", "hook_event_name": "UserPromptSubmit", "prompt": "hello coordination"}}`,
@@ -80,6 +80,12 @@ func (a *attachedTerminal) shows(text string) func() bool {
 	}
 }
 
+func (a *attachedTerminal) bracketsPastes() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.term.BracketedPaste()
+}
+
 // exited waits for asmai to exit, and returns its exit code.
 func (a *attachedTerminal) exited(t *testing.T) int {
 	t.Helper()
@@ -106,6 +112,7 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 		lines := a.lines()
 		return lines[0] == ">" && strings.Contains(lines[24], "leader@coordination · conversation · Ctrl-] leaves · started the factory")
 	})
+	waitFor(t, "this terminal to bracket pasted text, as Coordination's does", a.bracketsPastes)
 	leader := coordination(t)
 	if leader.State != "running" || leader.Generation != 1 || leader.Conversation != a.name || leader.Input != "automation" {
 		t.Errorf("in the conversation, asmai status shows %+v, want generation 1 running, the conversation open in %s and automation owning the input", leader, a.name)
@@ -169,6 +176,7 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 	if leader := coordination(t); leader.State != "running" || leader.Generation != 1 || leader.Input != "automation" || leader.Conversation != "" {
 		t.Errorf("after the user left the conversation, asmai status shows %+v, want generation 1 running under automation with no conversation", leader)
 	}
+	waitFor(t, "the user's terminal to stop bracketing pasted text", func() bool { return !a.bracketsPastes() })
 	for _, want := range []string{"Started the factory: it was not running.", "Left the conversation. Nothing is paused: Coordination is back under automation."} {
 		if !a.shows(want)() {
 			t.Errorf("the terminal shows\n%s\nwant it to say %q", strings.Join(a.lines(), "\n"), want)

@@ -122,15 +122,48 @@ type leader struct {
 	// first key they type in the conversation until the provider confirms
 	// their message submitted, or they leave.
 	userInput bool
-	// submits counts the Enter keys the user typed in the conversation
-	// that the provider has not yet confirmed as a prompt submission, and
-	// submitTerminal is the user's terminal the last was typed in. Each
-	// confirmation the session reports while submits is above zero is the
-	// user's own message. Automation types nothing into a session yet; once
-	// it does, its typing resets submits, so that its own submissions are
+	// submits and earlier count the Enter keys the user typed in the
+	// conversation that the provider has not yet confirmed as a prompt
+	// submission: submits those typed since the provider last finished a
+	// turn, earlier those typed before, which a message queued in that turn
+	// may still be submitting. Each confirmation the session reports while
+	// either is above zero is the user's own message, and submitTerminal is
+	// the user's terminal the last was typed in. An Enter that submitted
+	// nothing, on a menu or an empty prompt, is forgotten once a second turn
+	// has finished after it. Automation types nothing into a session yet;
+	// once it does, its typing resets them, so that its own submissions are
 	// never taken for the user's.
 	submits        int
+	earlier        int
 	submitTerminal string
+}
+
+// submitted reports whether a prompt submission the leader's session
+// reports confirms an Enter key the user typed in the conversation, and the
+// user's terminal they typed it in. Each confirmation of the user's message
+// returns the input to automation.
+func (l *leader) submitted() (terminal string, ok bool) {
+	switch {
+	case l.earlier > 0:
+		l.earlier--
+	case l.submits > 0:
+		l.submits--
+	default:
+		return "", false
+	}
+	l.userInput = false
+	return l.submitTerminal, true
+}
+
+// finished ages the user's unconfirmed Enter keys once the leader's session
+// reports its turn finished: those typed before its previous turn finished
+// submitted nothing, as a message queued then has been submitted since. With
+// no Enter left that may yet submit, the input returns to automation.
+func (l *leader) finished() {
+	if l.earlier > 0 && l.submits == 0 {
+		l.userInput = false
+	}
+	l.earlier, l.submits = l.submits, 0
 }
 
 // conversation is the user's conversation with Coordination's leader: the
@@ -337,7 +370,7 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 		return fmt.Errorf("journaling the session's start: %w", err)
 	}
 	l.session, l.generation, l.startedAt = s, generation, at
-	l.userInput, l.submits, l.submitTerminal = false, 0, ""
+	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", staffing.LeaderModel)
 	d.agents.Add(1)
@@ -441,9 +474,12 @@ func (d *daemon) leaderStates() []Leader {
 	return states
 }
 
-// promptSubmitted is the Claude Code hook event that confirms a prompt was
-// submitted.
-const promptSubmitted = "UserPromptSubmit"
+// The Claude Code hook events that confirm a prompt was submitted, and that
+// a turn finished.
+const (
+	promptSubmitted = "UserPromptSubmit"
+	turnStopped     = "Stop"
+)
 
 // observe journals the hook payload a session's hook reported, as an
 // observation of that session. A prompt submission confirming an Enter key
@@ -467,6 +503,9 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	if fields.Event == "" {
 		return errors.New("the hook's payload names no hook_event_name")
 	}
+	if fields.Event == turnStopped {
+		d.turnFinished(ref)
+	}
 	if fields.Event == promptSubmitted {
 		if terminal, ok := d.userSubmitted(ref); ok {
 			if fields.Prompt == nil {
@@ -485,20 +524,25 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 
 // userSubmitted reports whether a prompt submission ref's session reports
 // confirms an Enter key the user typed in the conversation, and the user's
-// terminal they typed it in. Once the provider has confirmed each, the user
-// has no message under way, and automation owns the input again.
+// terminal they typed it in.
 func (d *daemon) userSubmitted(ref sessionRef) (terminal string, ok bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	l := d.leaders[ref.address.String()]
-	if l == nil || l.session == nil || l.generation != ref.generation || l.submits == 0 {
+	if l == nil || l.session == nil || l.generation != ref.generation {
 		return "", false
 	}
-	l.submits--
-	if l.submits == 0 {
-		l.userInput = false
+	return l.submitted()
+}
+
+// turnFinished ages the user's unconfirmed Enter keys in ref's session,
+// which reports its turn finished.
+func (d *daemon) turnFinished(ref sessionRef) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if l := d.leaders[ref.address.String()]; l != nil && l.session != nil && l.generation == ref.generation {
+		l.finished()
 	}
-	return l.submitTerminal, true
 }
 
 // witness journals the prompt submission ref's session reported with

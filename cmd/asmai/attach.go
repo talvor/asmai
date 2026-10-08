@@ -103,6 +103,9 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 	go c.followSize(int(out.Fd()))
 	why := c.draw()
 
+	if c.paste {
+		out.WriteString("\x1b[?2004l")
+	}
 	out.WriteString("\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l")
 	term.Restore(int(in.Fd()), restore)
 	fmt.Fprintln(o.stderr, why)
@@ -127,6 +130,10 @@ type attachClient struct {
 	renderer      vt.Renderer
 	dirty         chan struct{}
 	end           chan string
+	// paste is whether this terminal brackets pasted text, as the agent's
+	// does while the user is in the conversation, so that a pasted line
+	// break reaches the agent as pasted rather than as Enter.
+	paste bool
 }
 
 func (c *attachClient) markDirty() {
@@ -274,6 +281,14 @@ func (c *attachClient) draw() string {
 		if c.term != nil {
 			frame = c.renderer.Render(c.term, c.columns, max(c.rows-1, 0))
 			frame = append(frame, c.statusLine()...)
+			if c.conversation && c.term.BracketedPaste() != c.paste {
+				c.paste = !c.paste
+				if c.paste {
+					frame = append(frame, "\x1b[?2004h"...)
+				} else {
+					frame = append(frame, "\x1b[?2004l"...)
+				}
+			}
 		}
 		c.mu.Unlock()
 		if _, err := c.out.Write(frame); err != nil {

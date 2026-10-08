@@ -144,6 +144,9 @@ type Modes struct {
 	Insert bool `json:"insert,omitempty"`
 	// HiddenCursor is DECTCEM reset.
 	HiddenCursor bool `json:"hidden_cursor,omitempty"`
+	// BracketedPaste is mode 2004: the program asks for pasted text between
+	// brackets.
+	BracketedPaste bool `json:"bracketed_paste,omitempty"`
 }
 
 // Parser is where the escape-sequence parser is between two writes, so that
@@ -270,6 +273,10 @@ func (t *Terminal) Cell(x, y int) Cell {
 func (t *Terminal) Cursor() (x, y int, visible bool) {
 	return t.s.Cursor.X, t.s.Cursor.Y, !t.s.Modes.HiddenCursor
 }
+
+// BracketedPaste reports whether the program asks for pasted text between
+// brackets.
+func (t *Terminal) BracketedPaste() bool { return t.s.Modes.BracketedPaste }
 
 // Title is the window title the program last set.
 func (t *Terminal) Title() string { return t.s.Title }

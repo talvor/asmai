@@ -423,6 +423,8 @@ func (t *Terminal) privateMode(mode int, set bool) {
 		}
 	case 25:
 		t.s.Modes.HiddenCursor = !set
+	case 2004:
+		t.s.Modes.BracketedPaste = set
 	case 47, 1047:
 		if !set && mode == 1047 && t.s.AltActive {
 			t.s.Alt.Lines = blankLines(t.s.Columns, t.s.Rows)

@@ -3,12 +3,18 @@
 package statedir
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestScratchStateDirectoryOverride(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "state")
+	root, err := os.MkdirTemp("/tmp", "asmai-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	dir := filepath.Join(root, "state")
 	t.Setenv("ASMAI_STATE_DIR", dir)
 	p, err := Default()
 	if err != nil || p.Dir != dir {

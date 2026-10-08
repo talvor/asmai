@@ -252,18 +252,25 @@ func TestAResultSubmitsTheAssignmentAndGoesToItsOwningLeader(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*Submission){
-		"a PR section":   func(s *Submission) { s.Input.PRSection = " " },
-		"evidence":       func(s *Submission) { s.Input.Evidence = nil },
-		"a commit":       func(s *Submission) { s.Commit = "" },
-		"its own worker": func(s *Submission) { s.Agent = "worker2@engineering" },
-		"a live session": func(s *Submission) { s.Generation = 2 },
-		"a known kind":   func(s *Submission) { s.Kind = "done" },
+		"a PR section":       func(s *Submission) { s.Input.PRSection = " " },
+		"evidence":           func(s *Submission) { s.Input.Evidence = nil },
+		"a commit":           func(s *Submission) { s.Commit = "" },
+		"its own worker":     func(s *Submission) { s.Agent = "worker2@engineering" },
+		"a live session":     func(s *Submission) { s.Generation = 2 },
+		"a known kind":       func(s *Submission) { s.Kind = "done" },
+		"the job branch tip": func(s *Submission) { s.TookInTip = false },
 	} {
 		sub := submission(d, ReportResult)
 		mutate(&sub)
 		if _, _, err := s.ReportSubmitted(sub, assignmentsAt); err == nil {
 			t.Errorf("a result without %s was recorded", name)
 		}
+	}
+	if _, _, err := s.ReportSubmitted(submission(d, ReportResult), assignmentsAt); err == nil || !strings.Contains(err.Error(), "push") {
+		t.Errorf("a result without a recorded push returned %v", err)
+	}
+	if _, err := s.EffectRecorded("worker1@engineering", 1, d.ID, "push", "origin/asmai/job-1/1", assignmentsAt); err != nil {
+		t.Fatal(err)
 	}
 	if got, _ := s.Assignment(a.ID); got.State != AssignmentActive {
 		t.Fatalf("a refused result moved the assignment to %s", got.State)
@@ -273,7 +280,7 @@ func TestAResultSubmitsTheAssignmentAndGoesToItsOwningLeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.ID != 1 || r.Kind != ReportResult || r.Assignment != a.ID || r.Commit != otherCommit || len(r.Effects) != 1 || r.Effects[0].Kind != "commit" || r.Gaps == nil || r.Artifacts == nil {
+	if r.ID != 1 || r.Kind != ReportResult || r.Assignment != a.ID || r.Commit != otherCommit || len(r.Effects) != 2 || r.Effects[0].Kind != "commit" || r.Effects[1].Kind != "push" || r.Gaps == nil || r.Artifacts == nil {
 		t.Errorf("the result is %+v", r)
 	}
 	if got, _ := s.Assignment(a.ID); got.State != AssignmentSubmitted {
@@ -306,6 +313,17 @@ func TestABlockedReportLeavesTheAssignmentActiveAndEndsItsDispatchOnce(t *testin
 	working(t, s, d)
 	if _, _, err := s.ReportSubmitted(Submission{Agent: "worker1@engineering", Generation: 1, Dispatch: d.ID, Kind: ReportBlocked, Commit: otherCommit}, assignmentsAt); err == nil {
 		t.Error("a blocked report that says nothing was recorded")
+	}
+	if _, _, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt); err == nil || !strings.Contains(err.Error(), "push") {
+		t.Errorf("a blocked report without a recorded push returned %v", err)
+	}
+	withoutTip := submission(d, ReportBlocked)
+	withoutTip.TookInTip = false
+	if _, _, err := s.ReportSubmitted(withoutTip, assignmentsAt); err == nil || !strings.Contains(err.Error(), "tip") {
+		t.Errorf("a blocked report that has not taken in the job tip returned %v", err)
+	}
+	if _, err := s.EffectRecorded("worker1@engineering", 1, d.ID, "push", "origin/asmai/job-1/1", assignmentsAt); err != nil {
+		t.Fatal(err)
 	}
 	r, leaderDispatch, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt)
 	if err != nil {

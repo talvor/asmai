@@ -308,18 +308,19 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	if err != nil {
 		return store.Report{}, store.Dispatch{}, fmt.Errorf("reading the commit of %s: %w", a.Workspace.Path, err)
 	}
-	if kind == store.ReportResult {
-		uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
-		if err != nil {
-			return store.Report{}, store.Dispatch{}, err
-		}
-		if len(uncommitted) > 0 {
-			return store.Report{}, store.Dispatch{}, refuse("the workspace has changes that are not committed, so the result would not be at its commit: commit them, push %s, record the push with `asmai effect`, and submit again\n%s", a.Workspace.Branch, strings.Join(uncommitted, "\n"))
-		}
+	uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
+	if err != nil {
+		return store.Report{}, store.Dispatch{}, err
+	}
+	if len(uncommitted) > 0 {
+		return store.Report{}, store.Dispatch{}, refuse("the workspace has changes that are not committed, so the report would not be at its commit: commit them, push %s, record the push with `asmai effect`, and submit again\n%s", a.Workspace.Branch, strings.Join(uncommitted, "\n"))
 	}
 	tookIn, err := repos.Contains(ctx, a.Workspace.Path, "HEAD", branch.Tip)
 	if err != nil {
 		return store.Report{}, store.Dispatch{}, err
+	}
+	if !tookIn {
+		return store.Report{}, store.Dispatch{}, refuse("the assignment branch does not contain the job branch's tip %s; take it in and submit again", branch.Tip)
 	}
 	input := *req.Report
 	input.Artifacts = append([]string{fmt.Sprintf("branch %s at %s", a.Workspace.Branch, commit)}, input.Artifacts...)

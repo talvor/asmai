@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -539,6 +540,9 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if sub.Commit == "" {
 		return Report{}, Dispatch{}, errors.New("a report names the commit the workspace is at")
 	}
+	if !sub.TookInTip {
+		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Report{}, Dispatch{}, err
@@ -581,6 +585,9 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	effects, err := dispatchEffects(tx, sub.Dispatch)
 	if err != nil {
 		return Report{}, Dispatch{}, err
+	}
+	if !slices.ContainsFunc(effects, func(e Effect) bool { return e.Kind == "push" }) {
+		return Report{}, Dispatch{}, errors.New("a result or blocked report records its assignment branch push")
 	}
 	// A list that is empty is still given, so that a record never says null.
 	in.Artifacts, in.Evidence, in.Tests, in.Gaps = nonNil(in.Artifacts), nonNil(in.Evidence), nonNil(in.Tests), nonNil(in.Gaps)

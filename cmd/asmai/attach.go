@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,9 +24,13 @@ import (
 	"github.com/talvor/asmai/internal/vt"
 )
 
-// detachKey is the key that detaches an attach client: Ctrl-]. In M4 it
-// opens a menu instead.
+// detachKey is the key that detaches an attach client, and leaves the
+// conversation: Ctrl-]. In M4 it opens a menu instead.
 const detachKey = 0x1d
+
+// leaveWait is how long the conversation waits for the daemon to say the
+// user has left before it detaches anyway.
+const leaveWait = 5 * time.Second
 
 // frameInterval is the shortest time between two frames the attach client
 // draws.
@@ -48,18 +53,31 @@ func attach(o *output, paths statedir.Paths, agent string, stdin io.Reader) int 
 		}
 		return o.fail(errors.New("asmai attach draws the agent's screen on a terminal: run it in one, or with --json for the screen as text"))
 	}
+	return show(o, paths, daemon.Request{Command: daemon.CommandAttach, Agent: agent}, in, out, "")
+}
+
+// show sends the daemon req, attach or the conversation, and draws the
+// agent's terminal it streams on out, which is in's terminal, until the user
+// detaches or the session ends. In the conversation, the keys typed on in
+// reach the agent; otherwise none does. notice, if any, shows on the status
+// line until the user's first key.
+func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File, notice string) int {
 	columns, rows, err := term.GetSize(int(out.Fd()))
 	if err != nil {
 		return o.fail(fmt.Errorf("finding the terminal's size: %w", err))
 	}
 	// The agent's terminal is one row shorter than this one: the last row is
 	// the status line.
-	conn, r, resp, err := daemon.Open(paths.Socket, daemon.Request{Command: daemon.CommandAttach, Agent: agent, Columns: columns, Rows: max(rows-1, 1)})
+	req.Columns, req.Rows = columns, max(rows-1, 1)
+	conn, r, resp, err := daemon.Open(paths.Socket, req)
 	if conn != nil {
 		defer conn.Close()
 	}
 	if err != nil {
 		return o.fail(err)
+	}
+	if resp.Attached == nil {
+		return o.fail(errors.New("the daemon did not answer with the agent it attached"))
 	}
 	restore, err := term.MakeRaw(int(in.Fd()))
 	if err != nil {
@@ -67,13 +85,15 @@ func attach(o *output, paths statedir.Paths, agent string, stdin io.Reader) int 
 	}
 
 	c := &attachClient{
-		out:     out,
-		conn:    conn,
-		agent:   resp.Attached.Agent,
-		columns: columns,
-		rows:    rows,
-		dirty:   make(chan struct{}, 1),
-		end:     make(chan string, 1),
+		out:          out,
+		conn:         conn,
+		agent:        resp.Attached.Agent,
+		conversation: req.Command == daemon.CommandConversation,
+		notice:       notice,
+		columns:      columns,
+		rows:         rows,
+		dirty:        make(chan struct{}, 1),
+		end:          make(chan string, 1),
 	}
 	// The alternate screen keeps the user's own screen to come back to, and
 	// without autowrap the status line's last cell cannot scroll it.
@@ -90,13 +110,18 @@ func attach(o *output, paths statedir.Paths, agent string, stdin io.Reader) int 
 }
 
 // attachClient draws an agent's terminal, which it emulates from the
-// daemon's frames, on the user's terminal.
+// daemon's frames, on the user's terminal. In the conversation it also sends
+// the daemon the user's keys.
 type attachClient struct {
-	out   *os.File
-	conn  net.Conn
-	agent string
+	out          *os.File
+	conn         net.Conn
+	agent        string
+	conversation bool
+	// sending keeps each line sent to the daemon whole.
+	sending sync.Mutex
 
 	mu            sync.Mutex
+	notice        string
 	term          *vt.Terminal
 	columns, rows int
 	renderer      vt.Renderer
@@ -149,17 +174,38 @@ func (c *attachClient) readFrames(r io.Reader) {
 			c.finish(fmt.Sprintf("%s's session ended (%s).", c.agent, f.Ended))
 			return
 		}
+		if f.Left {
+			c.finish(leftConversation)
+			return
+		}
 		c.markDirty()
 	}
 }
 
-// readKeys reads the user's keys. None reaches the agent; Ctrl-] detaches.
+// leftConversation is what the conversation says once the user has left it.
+const leftConversation = "Left the conversation. Nothing is paused: Coordination is back under automation."
+
+// readKeys reads the user's keys until Ctrl-]. Outside the conversation none
+// reaches the agent, and Ctrl-] detaches. In the conversation every other
+// key is sent on as typed, Esc included, and Ctrl-] leaves it.
 func (c *attachClient) readKeys(in *os.File) {
 	buf := make([]byte, 256)
 	for {
 		n, err := in.Read(buf)
-		if strings.IndexByte(string(buf[:n]), detachKey) >= 0 {
-			c.finish(fmt.Sprintf("Detached from %s.", c.agent))
+		keys := buf[:n]
+		detach := bytes.IndexByte(keys, detachKey)
+		if detach >= 0 {
+			keys = keys[:detach]
+		}
+		if c.conversation && len(keys) > 0 {
+			c.mu.Lock()
+			c.notice = ""
+			c.mu.Unlock()
+			c.markDirty()
+			c.send(daemon.ClientMessage{Keys: keys})
+		}
+		if detach >= 0 {
+			c.leave()
 			return
 		}
 		if err != nil {
@@ -167,6 +213,29 @@ func (c *attachClient) readKeys(in *os.File) {
 			return
 		}
 	}
+}
+
+// leave detaches: from the conversation, once the daemon says the user has
+// left it.
+func (c *attachClient) leave() {
+	if !c.conversation {
+		c.finish(fmt.Sprintf("Detached from %s.", c.agent))
+		return
+	}
+	if !c.send(daemon.ClientMessage{Leave: true}) {
+		c.finish(leftConversation)
+		return
+	}
+	time.AfterFunc(leaveWait, func() { c.finish(leftConversation) })
+}
+
+// send sends the daemon one line.
+func (c *attachClient) send(m daemon.ClientMessage) bool {
+	line, _ := json.Marshal(m)
+	c.sending.Lock()
+	defer c.sending.Unlock()
+	_, err := c.conn.Write(append(line, '\n'))
+	return err == nil
 }
 
 // followSize gives the agent's terminal this terminal's size, less the
@@ -185,8 +254,7 @@ func (c *attachClient) followSize(fd int) {
 		c.renderer.Invalidate()
 		c.mu.Unlock()
 		if resized {
-			line, _ := json.Marshal(daemon.Resize{Columns: columns, Rows: max(rows-1, 1)})
-			c.conn.Write(append(line, '\n'))
+			c.send(daemon.ClientMessage{Columns: columns, Rows: max(rows-1, 1)})
 		}
 		c.markDirty()
 	}
@@ -223,6 +291,12 @@ func (c *attachClient) draw() string {
 // cursor back where the agent's is.
 func (c *attachClient) statusLine() string {
 	text := fmt.Sprintf(" %s · observing · Ctrl-] detaches", c.agent)
+	if c.conversation {
+		text = fmt.Sprintf(" %s · conversation · Ctrl-] leaves", c.agent)
+		if c.notice != "" {
+			text += " · " + c.notice
+		}
+	}
 	if title := strings.Map(printable, c.term.Title()); title != "" {
 		text += " · " + title
 	}
@@ -245,20 +319,30 @@ func printable(r rune) rune {
 
 // screenJSON prints the agent's screen as it is now.
 func screenJSON(o *output, paths statedir.Paths, agent string) int {
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAttach, Agent: agent, Snapshot: true})
+	screen, err := snapshot(paths, agent)
 	if err != nil {
 		return o.fail(err)
 	}
+	return o.printJSON(screen)
+}
+
+// snapshot returns the agent and its screen as it is now, as --json prints
+// them.
+func snapshot(paths statedir.Paths, agent string) (map[string]any, error) {
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAttach, Agent: agent, Snapshot: true})
+	if err != nil {
+		return nil, err
+	}
 	if resp.Screen == nil || resp.Attached == nil {
-		return o.fail(errors.New("the daemon did not answer with the agent's screen"))
+		return nil, errors.New("the daemon did not answer with the agent's screen")
 	}
 	t, err := vt.FromState(*resp.Screen)
 	if err != nil {
-		return o.fail(err)
+		return nil, err
 	}
 	columns, rows := t.Size()
 	x, y, visible := t.Cursor()
-	return o.printJSON(map[string]any{
+	return map[string]any{
 		"agent": resp.Attached,
 		"screen": map[string]any{
 			"columns": columns,
@@ -267,5 +351,5 @@ func screenJSON(o *output, paths statedir.Paths, agent string) int {
 			"cursor":  map[string]any{"x": x, "y": y, "visible": visible},
 			"title":   t.Title(),
 		},
-	})
+	}, nil
 }

@@ -38,9 +38,13 @@ import (
 // Development builds keep "dev".
 var version = "dev"
 
-const usage = `usage: asmai <command> [--json]
+const usage = `usage: asmai [<command>] [--json]
 
 commands:
+  asmai, asmai chat           talk with Coordination: attach this terminal to Coordination's leader,
+                              starting the factory first if it is stopped. What you type reaches
+                              Coordination, and each message you submit is journaled word for word.
+                              Ctrl-] leaves the conversation, which pauses nothing
   asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
                               the daemon runs in the background unless --foreground
   asmai stop                  persist the factory's state and stop its daemon and agents
@@ -57,7 +61,7 @@ commands:
   asmai notices               print AsmAI's license and the third-party notices
 
 Every command accepts --json to print JSON instead of tables; asmai attach --json prints the
-agent's screen as it is now.
+agent's screen as it is now, and asmai chat --json Coordination's.
 `
 
 // logPoll is how often `asmai log --follow` looks for new lines.
@@ -72,9 +76,13 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
+	if len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+		fmt.Fprint(stdout, usage)
+		return 0
+	}
+	// A bare asmai, flags and all, is the conversation.
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		args = append([]string{"chat"}, args...)
 	}
 	name, args := args[0], args[1:]
 	if name == "providers" {
@@ -93,7 +101,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
 	case "log":
 		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
-	case "stop", "status", "agents", "attach", "hook", "export", "version", "notices", "providers install", "providers list":
+	case "chat", "stop", "status", "agents", "attach", "hook", "export", "version", "notices", "providers install", "providers list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -152,6 +160,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return status(o, paths)
 	case "agents":
 		return agents(o, paths)
+	case "chat":
+		return chat(o, paths, stdin)
 	case "attach":
 		return attach(o, paths, agent, stdin)
 	case "hook":
@@ -287,7 +297,14 @@ func plural(n int, one, many string) string {
 func leaderRows(leaders []daemon.Leader) [][]string {
 	var rows [][]string
 	for _, l := range leaders {
-		rows = append(rows, []string{l.Agent, l.State})
+		row := []string{l.Agent, l.State}
+		if l.Input != "" {
+			row = append(row, "input: "+l.Input)
+		}
+		if l.Conversation != "" {
+			row = append(row, "conversation open in "+l.Conversation)
+		}
+		rows = append(rows, row)
 	}
 	return rows
 }

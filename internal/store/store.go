@@ -89,6 +89,14 @@ const (
 	KindSessionEnded   = "session.ended"
 	// KindObservation records a lifecycle event a session's hooks reported.
 	KindObservation = "observation"
+	// KindMessageWitnessed records a witnessed message: what the user
+	// submitted from their own keyboard in an agent's terminal, word for
+	// word, citing the prompt-submission observation that confirmed it.
+	KindMessageWitnessed = "message.witnessed"
+	// KindConversationEntered and KindConversationLeft record the user
+	// entering and leaving the conversation with Coordination.
+	KindConversationEntered = "conversation.entered"
+	KindConversationLeft    = "conversation.left"
 )
 
 // The states an agent can be in.
@@ -425,6 +433,61 @@ func (s *Store) Observed(agent, role string, generation int, event string, paylo
 	})
 }
 
+// Witnessed is a message the user submitted from their own keyboard in an
+// agent's terminal: Text is their words, as the provider reported them
+// submitted, and Terminal the user's terminal they typed them in.
+type Witnessed struct {
+	Agent      string `json:"agent"`
+	Role       string `json:"role"`
+	Generation int    `json:"generation"`
+	Terminal   string `json:"terminal"`
+	Text       string `json:"text"`
+}
+
+// ObservedWitnessed journals a prompt-submission observation of
+// w.Generation of w.Agent's session that was the user's own submission, and
+// in the same transaction the witnessed message w, citing it. payload is what
+// the provider passed the hook, kept as it is. It returns the two entries'
+// IDs; the witnessed message's is the ID it is cited by.
+func (s *Store) ObservedWitnessed(w Witnessed, event string, payload json.RawMessage, at time.Time) (observation, message int64, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	observed := map[string]any{"agent": w.Agent, "role": w.Role, "generation": w.Generation, "event": event, "payload": payload}
+	if observation, err = appendEntry(tx, at, KindObservation, observed); err != nil {
+		return 0, 0, err
+	}
+	data := struct {
+		Witnessed
+		Observation int64 `json:"observation"`
+	}{w, observation}
+	if message, err = appendEntry(tx, at, KindMessageWitnessed, data); err != nil {
+		return 0, 0, err
+	}
+	return observation, message, tx.Commit()
+}
+
+// ConversationEntered journals that the user entered the conversation with
+// generation of agent's session, from their terminal.
+func (s *Store) ConversationEntered(agent, role string, generation int, terminal string, at time.Time) error {
+	return s.change(at, func(tx *sql.Tx) (string, any, error) {
+		data := map[string]any{"agent": agent, "role": role, "generation": generation, "terminal": terminal}
+		return KindConversationEntered, data, nil
+	})
+}
+
+// ConversationLeft journals that the user left the conversation with
+// generation of agent's session, from their terminal: how is how they left,
+// and input who owns the session's input now.
+func (s *Store) ConversationLeft(agent, role string, generation int, terminal, how, input string, at time.Time) error {
+	return s.change(at, func(tx *sql.Tx) (string, any, error) {
+		data := map[string]any{"agent": agent, "role": role, "generation": generation, "terminal": terminal, "how": how, "input": input}
+		return KindConversationLeft, data, nil
+	})
+}
+
 // Agents returns every agent the store records, by address.
 func (s *Store) Agents() ([]Agent, error) {
 	rows, err := s.db.Query(`SELECT agent, role, state, generation, provider, version, model, pid, started_at, ended_at, exit FROM agents ORDER BY agent`)
@@ -467,14 +530,23 @@ func (s *Store) change(at time.Time, apply func(tx *sql.Tx) (kind string, data a
 	if err != nil || kind == "" {
 		return err
 	}
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO journal (at, kind, data) VALUES (?, ?, ?)`, timestamp(at), kind, string(encoded)); err != nil {
+	if _, err := appendEntry(tx, at, kind, data); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// appendEntry appends a journal entry in tx and returns its ID.
+func appendEntry(tx *sql.Tx, at time.Time, kind string, data any) (int64, error) {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return 0, err
+	}
+	result, err := tx.Exec(`INSERT INTO journal (at, kind, data) VALUES (?, ?, ?)`, timestamp(at), kind, string(encoded))
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
 }
 
 // Journal returns every journal entry, oldest first.

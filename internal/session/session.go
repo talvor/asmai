@@ -3,7 +3,7 @@
 // Package session runs an agent's provider CLI in a pseudo-terminal the
 // daemon owns. The session emulates the terminal with AsmAI's own emulation,
 // answering the provider's queries about it, and lets attach clients follow
-// its screen. Nothing is ever typed into it here: attaching observes.
+// its screen. Nothing is typed into it but what the daemon passes to Input.
 package session
 
 import (
@@ -42,6 +42,9 @@ type Event struct {
 type Session struct {
 	cmd  *exec.Cmd
 	ptmx *os.File
+	// writing keeps each write to the terminal whole: the terminal's
+	// answers and the input passed to Input never interleave.
+	writing sync.Mutex
 
 	mu        sync.Mutex
 	term      *vt.Terminal
@@ -119,13 +122,25 @@ func (s *Session) readOutput() {
 			}
 			s.mu.Unlock()
 			if len(answers) > 0 {
-				s.ptmx.Write(answers)
+				s.write(answers)
 			}
 		}
 		if err != nil {
 			return
 		}
 	}
+}
+
+// Input types p into the session's terminal, as keys typed into it.
+func (s *Session) Input(p []byte) error {
+	return s.write(p)
+}
+
+func (s *Session) write(p []byte) error {
+	s.writing.Lock()
+	defer s.writing.Unlock()
+	_, err := s.ptmx.Write(p)
+	return err
 }
 
 // wait waits for the provider CLI to exit, then for the rest of its output,

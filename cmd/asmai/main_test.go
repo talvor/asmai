@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,14 +66,38 @@ func TestUnknownCommandIsRefusedWithUsage(t *testing.T) {
 	}
 }
 
-func TestNoCommandPrintsUsage(t *testing.T) {
+// A bare asmai is the conversation, which needs a terminal: without one it
+// says so and starts nothing.
+func TestNoCommandIsTheConversation(t *testing.T) {
+	// os.MkdirTemp keeps the socket's path short enough on macOS.
+	home, err := os.MkdirTemp("", "home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	t.Setenv("HOME", home)
 	var stdout, stderr bytes.Buffer
 	code := run(nil, strings.NewReader(""), &stdout, &stderr)
-	if code != 2 {
-		t.Errorf("exited %d, want 2", code)
+	if code != 1 {
+		t.Errorf("exited %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "asmai version") {
-		t.Errorf("stderr %q does not show usage", stderr.String())
+	if !strings.Contains(stderr.String(), "the conversation with Coordination needs a terminal") {
+		t.Errorf("stderr %q does not say the conversation needs a terminal", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local")); err == nil {
+		t.Error("without a terminal, a bare asmai made the state directory")
+	}
+}
+
+func TestHelpPrintsUsage(t *testing.T) {
+	for _, arg := range []string{"help", "-h", "--help"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{arg}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+			t.Errorf("asmai %s exited %d, want 0", arg, code)
+		}
+		if !strings.Contains(stdout.String(), "asmai, asmai chat") {
+			t.Errorf("asmai %s printed %q, want the usage", arg, stdout.String())
+		}
 	}
 }
 

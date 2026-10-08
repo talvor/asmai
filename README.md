@@ -54,6 +54,7 @@ Every start then runs the checks that exist: the roles are staffed in the config
 | `asmai stop` | Stop the agents, persist the factory's state and stop the daemon |
 | `asmai status` | Whether the daemon is running, its version, each leader as running or stopped, who owns a running leader's input, where the conversation is open, and any check that failed |
 | `asmai agents` | The agents that have run: each one's state, generation, provider, model and process |
+| `asmai jobs`, `asmai job <number>` | List numbered jobs or show one with the user's words and Coordination's reading |
 | `asmai attach <agent>` | Show an agent's terminal and observe it. Ctrl-] detaches |
 | `asmai log [--follow]` | The daemon's log, oldest first; `--follow` waits for new lines. It reads the log files, so it works while the daemon is stopped |
 | `asmai export` | The journal, written out for inspection |
@@ -115,6 +116,8 @@ Coordination's leader runs the pinned Claude Code in a pseudo-terminal the daemo
 
 The session starts with the daemon's environment, less any provider API-key variable such as `ANTHROPIC_API_KEY`, so it runs on your subscription. Each hook runs the daemon's copy of `asmai` at its fixed path, `bin/asmai` in the state directory, which reports the event to the daemon; the daemon journals it as an observation of that session's generation. A `session.started` journal entry records the provider version, the command line passed (never the environment) and the generation, and a `session.ended` entry records how the session ended.
 
+Each agent session receives `ASMAI_SESSION` in its environment. The CLI sends it with each daemon request; without it the caller is the user. The daemon checks the credential against the running session's role, leader or worker kind, and generation. A stale or unknown credential is refused. An agent can run only its coordination commands; for a factory-changing command, AsmAI tells it what to ask the user to run. This guard and the witnessed-message attribution prevent mistakes and keep authority clear. They are not a security boundary against a process running with the user's own access.
+
 Agents are addressed `name@role`, and a role alone means its leader: `asmai attach coordination` is `asmai attach leader@coordination`. `asmai attach` draws the agent's screen itself from AsmAI's own terminal emulation, with the agent's terminal one row shorter than yours and a status line on the last row. Attaching only observes: what you type does not reach the agent. Only the conversation carries your keys, to Coordination.
 
 ### The conversation
@@ -122,6 +125,8 @@ Agents are addressed `name@role`, and a role alone means its leader: `asmai atta
 A bare `asmai`, or `asmai chat`, is your conversation with Coordination. If the factory is stopped, it starts it first and says so, then attaches your terminal to `leader@coordination` the way `asmai attach` does, except that what you type reaches Coordination exactly as typed, Esc included, even in the middle of its turn. The status line reads `leader@coordination · conversation · Ctrl-] leaves`.
 
 Every message you submit there is journaled word for word as a `message.witnessed` entry: your words, the agent and session generation you typed them into, your terminal (such as `/dev/pts/3`) and when. The daemon relays your keys, so it knows which Enter keys you typed, and journals a message only when Claude Code confirms a prompt submission after one of them; the entry cites that `observation` by its journal ID. Text you typed but never submitted is never a witnessed message, and neither is a prompt submission no key of yours caused.
+
+Coordination opens a tested-PR job with `asmai job open --message latest --repository <name> --reading <text> --mandate tested-pr --criterion <text>`, repeating `--criterion` for each acceptance criterion. `latest` resolves to the newest witnessed message submitted to Coordination's leader and records its journal ID; a specific ID can also be cited. An observation or nudge is refused, as is a repository you have not registered; Coordination tells you to run `asmai repo add <path-or-url>` in that case. The numbered job records your words beside Coordination's reading, its mandate, acceptance criteria, repository, role and state. `asmai jobs` and `asmai job <number>` show it to you; agents load `asmai brief <number>`, generated from the store, when they switch jobs.
 
 From your first key until Claude Code confirms your message submitted, you own Coordination's input; otherwise automation does, so delivery never waits on your being there. Ctrl-] leaves the conversation: it is not an intervention, so leaving pauses nothing and returns Coordination's input to automation at once. `conversation.entered` and `conversation.left` entries record each visit. One terminal at a time holds the conversation; `asmai chat` in another is refused until you leave the first.
 

@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package daemon
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/session"
+)
+
+func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
+	coordination := roles.LeaderOf(roles.Coordination)
+	engineering := roles.LeaderOf(roles.Engineering)
+	worker := roles.Address{Name: "worker-1", Role: roles.Coordination}
+	d := &daemon{
+		leaders: map[string]*leader{
+			coordination.String(): {address: coordination, session: &session.Session{}, generation: 2},
+			engineering.String():  {address: engineering, session: &session.Session{}, generation: 1},
+			worker.String():       {address: worker, session: &session.Session{}, generation: 1},
+		},
+		sessions: map[string]sessionRef{
+			"current":     {address: coordination, generation: 2},
+			"old":         {address: coordination, generation: 1},
+			"engineering": {address: engineering, generation: 1},
+			"worker":      {address: worker, generation: 1},
+		},
+	}
+	for _, tt := range []struct{ credential, command, want string }{
+		{"current", CommandJobOpen, ""},
+		{"current", CommandBrief, ""},
+		{"current", CommandStatus, ""},
+		{"current", CommandRepoAdd, "ask the user to run `asmai repo add`"},
+		{"engineering", CommandJobOpen, "only leader@coordination"},
+		{"worker", CommandJobOpen, "only leader@coordination"},
+		{"old", CommandJobs, "unknown or superseded"},
+		{"unknown", CommandJobs, "unknown or superseded"},
+		{"", CommandJobOpen, "agent command"},
+	} {
+		err := d.authorize(Request{Command: tt.command, Session: tt.credential})
+		if tt.want == "" && err != nil {
+			t.Errorf("%s %s: %v", tt.credential, tt.command, err)
+		}
+		if tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+			t.Errorf("%s %s: %v, want %s", tt.credential, tt.command, err, tt.want)
+		}
+	}
+}

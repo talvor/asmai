@@ -88,6 +88,15 @@ CREATE TABLE jobs (
 	state      TEXT NOT NULL
 );
 `,
+	`
+ALTER TABLE jobs ADD COLUMN role TEXT NOT NULL DEFAULT 'coordination';
+ALTER TABLE jobs ADD COLUMN witness INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN words TEXT NOT NULL DEFAULT '';
+ALTER TABLE jobs ADD COLUMN reading TEXT NOT NULL DEFAULT '';
+ALTER TABLE jobs ADD COLUMN mandate TEXT NOT NULL DEFAULT '';
+ALTER TABLE jobs ADD COLUMN criteria TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE jobs ADD COLUMN opened_at TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -116,6 +125,7 @@ const (
 	// registering and removing a repository.
 	KindRepositoryAdded   = "repository.added"
 	KindRepositoryRemoved = "repository.removed"
+	KindJobOpened         = "job.opened"
 )
 
 // The states an agent can be in.

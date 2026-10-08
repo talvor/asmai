@@ -24,11 +24,11 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
-// schemaVersion is the version of the schema this asmai writes, kept in the
+// migrations takes a store from each schema version to the next: the first
+// creates a new store's schema 1. The version a store is at is kept in the
 // database's user_version.
-const schemaVersion = 1
-
-const schema = `
+var migrations = []string{
+	`
 CREATE TABLE factory (
 	id         INTEGER PRIMARY KEY CHECK (id = 1),
 	state      TEXT NOT NULL,
@@ -47,12 +47,27 @@ CREATE TRIGGER journal_is_append_only_update BEFORE UPDATE ON journal
 BEGIN SELECT RAISE(ABORT, 'the journal is append-only'); END;
 CREATE TRIGGER journal_is_append_only_delete BEFORE DELETE ON journal
 BEGIN SELECT RAISE(ABORT, 'the journal is append-only'); END;
-`
+`,
+	`
+CREATE TABLE providers (
+	name         TEXT NOT NULL,
+	version      TEXT NOT NULL,
+	path         TEXT NOT NULL,
+	sha256       TEXT NOT NULL,
+	installed_at TEXT NOT NULL,
+	PRIMARY KEY (name, version)
+);
+`,
+}
+
+// schemaVersion is the version of the schema this asmai writes.
+var schemaVersion = len(migrations)
 
 // The kinds of journal entry.
 const (
-	KindDaemonStarted = "daemon.started"
-	KindDaemonStopped = "daemon.stopped"
+	KindDaemonStarted     = "daemon.started"
+	KindDaemonStopped     = "daemon.stopped"
+	KindProviderInstalled = "provider.installed"
 )
 
 // The states the factory can be left in.
@@ -78,6 +93,16 @@ type Factory struct {
 	PID       int
 	StartedAt time.Time
 	StoppedAt time.Time
+}
+
+// ProviderInstall is one pinned provider version AsmAI installed, and where
+// it keeps it.
+type ProviderInstall struct {
+	Name        string    `json:"name"`
+	Version     string    `json:"version"`
+	Path        string    `json:"path"`
+	SHA256      string    `json:"sha256"`
+	InstalledAt time.Time `json:"installed_at"`
 }
 
 // Entry is one journal entry.
@@ -123,20 +148,24 @@ func (s *Store) migrate() error {
 	case version > schemaVersion:
 		return fmt.Errorf("it was written by a later asmai (store schema %d; this asmai knows %d)", version, schemaVersion)
 	}
-	var objects int
-	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_schema`).Scan(&objects); err != nil {
-		return err
-	}
-	if objects != 0 {
-		return errors.New("it is a database, but not an AsmAI store")
+	if version == 0 {
+		var objects int
+		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_schema`).Scan(&objects); err != nil {
+			return err
+		}
+		if objects != 0 {
+			return errors.New("it is a database, but not an AsmAI store")
+		}
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(schema); err != nil {
-		return err
+	for _, migration := range migrations[version:] {
+		if _, err := tx.Exec(migration); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return err
@@ -216,9 +245,56 @@ func (s *Store) Stopped(by string, at time.Time) error {
 	})
 }
 
+// ProviderInstalled records that AsmAI installed p, and journals it. Recording
+// an install the store already holds, at the same path with the same SHA-256,
+// changes nothing and journals nothing, and returns false.
+func (s *Store) ProviderInstalled(p ProviderInstall) (recorded bool, err error) {
+	err = s.change(p.InstalledAt, func(tx *sql.Tx) (string, any, error) {
+		var path, digest string
+		err := tx.QueryRow(`SELECT path, sha256 FROM providers WHERE name = ? AND version = ?`, p.Name, p.Version).Scan(&path, &digest)
+		if err == nil && path == p.Path && digest == p.SHA256 {
+			return "", nil, nil
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", nil, err
+		}
+		_, err = tx.Exec(`INSERT INTO providers (name, version, path, sha256, installed_at) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT (name, version) DO UPDATE SET path = excluded.path, sha256 = excluded.sha256, installed_at = excluded.installed_at`,
+			p.Name, p.Version, p.Path, p.SHA256, timestamp(p.InstalledAt))
+		recorded = err == nil
+		data := map[string]any{"name": p.Name, "version": p.Version, "path": p.Path, "sha256": p.SHA256}
+		return KindProviderInstalled, data, err
+	})
+	return recorded && err == nil, err
+}
+
+// Providers returns the provider installs the store records, by name and
+// version.
+func (s *Store) Providers() ([]ProviderInstall, error) {
+	rows, err := s.db.Query(`SELECT name, version, path, sha256, installed_at FROM providers ORDER BY name, version`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	installs := []ProviderInstall{}
+	for rows.Next() {
+		var p ProviderInstall
+		var at string
+		if err := rows.Scan(&p.Name, &p.Version, &p.Path, &p.SHA256, &at); err != nil {
+			return nil, err
+		}
+		if p.InstalledAt, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return nil, err
+		}
+		installs = append(installs, p)
+	}
+	return installs, rows.Err()
+}
+
 // change makes a change to the current state at at and journals it in one
 // transaction. apply makes the change and returns the journal entry's kind
-// and data.
+// and data; an empty kind means there was nothing to change, and nothing is
+// written.
 func (s *Store) change(at time.Time, apply func(tx *sql.Tx) (kind string, data any, err error)) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -226,7 +302,7 @@ func (s *Store) change(at time.Time, apply func(tx *sql.Tx) (kind string, data a
 	}
 	defer tx.Rollback()
 	kind, data, err := apply(tx)
-	if err != nil {
+	if err != nil || kind == "" {
 		return err
 	}
 	encoded, err := json.Marshal(data)

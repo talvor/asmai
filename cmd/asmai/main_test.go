@@ -12,7 +12,7 @@ import (
 
 func TestVersionPrintsTheBuildVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"version"}, &stdout, &stderr)
+	code := run([]string{"version"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("asmai version exited %d, want 0", code)
 	}
@@ -35,7 +35,7 @@ func TestNoticesPrintsTheLicenseAndTheThirdPartyNotices(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"notices"}, &stdout, &stderr)
+	code := run([]string{"notices"}, strings.NewReader(""), &stdout, &stderr)
 
 	if code != 0 {
 		t.Errorf("asmai notices exited %d, want 0; stderr %q", code, stderr.String())
@@ -47,7 +47,7 @@ func TestNoticesPrintsTheLicenseAndTheThirdPartyNotices(t *testing.T) {
 
 func TestUnknownCommandIsRefusedWithUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"frobnicate"}, &stdout, &stderr)
+	code := run([]string{"frobnicate"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("exited %d, want 2", code)
 	}
@@ -63,7 +63,7 @@ func TestUnknownCommandIsRefusedWithUsage(t *testing.T) {
 
 func TestNoCommandPrintsUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run(nil, &stdout, &stderr)
+	code := run(nil, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("exited %d, want 2", code)
 	}

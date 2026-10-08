@@ -158,3 +158,46 @@ func TestTheDaemonRefusesWhatItDoesNotServe(t *testing.T) {
 		t.Errorf("an unknown command got %v, want it refused", err)
 	}
 }
+
+func TestTheDaemonRecordsAndListsProviderInstalls(t *testing.T) {
+	p := stateDir(t)
+	runDaemon(t, p)
+	install := store.ProviderInstall{Name: "claude-code", Version: "2.1.292", Path: filepath.Join(p.Providers, "claude-code", "2.1.292", "claude"), SHA256: strings.Repeat("a", 64)}
+
+	resp, err := Call(p.Socket, Request{Command: CommandProviders})
+	if err != nil || len(resp.Providers) != 0 {
+		t.Fatalf("a new factory lists providers %+v (%v), want none", resp.Providers, err)
+	}
+	first, err := Call(p.Socket, Request{Command: CommandProviderInstalled, Provider: &install})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Providers) != 1 || first.Providers[0].Path != install.Path || first.Providers[0].InstalledAt.IsZero() {
+		t.Fatalf("recording answered %+v, want the install with its time", first.Providers)
+	}
+	again, err := Call(p.Socket, Request{Command: CommandProviderInstalled, Provider: &install})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Providers) != 1 || !again.Providers[0].InstalledAt.Equal(first.Providers[0].InstalledAt) {
+		t.Errorf("recording it again answered %+v, want the install as first recorded", again.Providers)
+	}
+	resp, err = Call(p.Socket, Request{Command: CommandProviders})
+	if err != nil || len(resp.Providers) != 1 || resp.Providers[0].Version != "2.1.292" {
+		t.Errorf("the factory lists providers %+v (%v), want the install", resp.Providers, err)
+	}
+
+	for name, bad := range map[string]*store.ProviderInstall{
+		"no install":      nil,
+		"no name":         {Version: "1", Path: "/p", SHA256: "s"},
+		"a relative path": {Name: "claude-code", Version: "1", Path: "claude", SHA256: "s"},
+	} {
+		if _, err := Call(p.Socket, Request{Command: CommandProviderInstalled, Provider: bad}); err == nil {
+			t.Errorf("%s: the daemon recorded %+v", name, bad)
+		}
+	}
+	got := journal(t, p)
+	if len(got) != 2 || !strings.HasPrefix(got[1], `provider.installed {"name":"claude-code"`) {
+		t.Errorf("the journal holds %q, want the start then one provider install", got)
+	}
+}

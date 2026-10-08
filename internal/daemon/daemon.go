@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -35,18 +37,25 @@ const (
 	CommandStatus = "status"
 	CommandStop   = "stop"
 	CommandExport = "export"
+	// CommandProviders lists the provider installs the store records.
+	CommandProviders = "providers"
+	// CommandProviderInstalled records the provider install in the request,
+	// which `asmai providers install` has fetched and checked.
+	CommandProviderInstalled = "provider.installed"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
 type Request struct {
-	Command string `json:"command"`
+	Command  string                 `json:"command"`
+	Provider *store.ProviderInstall `json:"provider,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
 type Response struct {
-	Error   string        `json:"error,omitempty"`
-	Status  *Status       `json:"status,omitempty"`
-	Journal []store.Entry `json:"journal,omitempty"`
+	Error     string                  `json:"error,omitempty"`
+	Status    *Status                 `json:"status,omitempty"`
+	Journal   []store.Entry           `json:"journal,omitempty"`
+	Providers []store.ProviderInstall `json:"providers,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -231,6 +240,41 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			return false
 		}
 		reply(conn, Response{Journal: entries})
+	case CommandProviders:
+		installs, err := d.store.Providers()
+		if err != nil {
+			d.log.Error("reading the provider installs", "error", err.Error())
+			reply(conn, Response{Error: "reading the provider installs: " + err.Error()})
+			return false
+		}
+		reply(conn, Response{Providers: installs})
+	case CommandProviderInstalled:
+		p := req.Provider
+		if p == nil || p.Name == "" || p.Version == "" || p.SHA256 == "" || !filepath.IsAbs(p.Path) {
+			reply(conn, Response{Error: "a provider install needs a name, a version, a SHA-256 and an absolute path"})
+			return false
+		}
+		p.InstalledAt = time.Now()
+		recorded, err := d.store.ProviderInstalled(*p)
+		if err != nil {
+			d.log.Error("recording a provider install", "error", err.Error())
+			reply(conn, Response{Error: "recording the provider install: " + err.Error()})
+			return false
+		}
+		if recorded {
+			d.log.Info("provider installed", "name", p.Name, "version", p.Version, "path", p.Path)
+		}
+		// Answer with the install as the store holds it, which is older than
+		// this request when it was already recorded.
+		installs, err := d.store.Providers()
+		if err != nil {
+			reply(conn, Response{Error: "reading the provider installs: " + err.Error()})
+			return false
+		}
+		installs = slices.DeleteFunc(installs, func(i store.ProviderInstall) bool {
+			return i.Name != p.Name || i.Version != p.Version
+		})
+		reply(conn, Response{Providers: installs})
 	case CommandStop:
 		select {
 		case d.stop <- conn:

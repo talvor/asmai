@@ -133,6 +133,13 @@ The recorder cannot see personal data it does not know of. Read a recording thro
 | --- | --- |
 | [`claude-code-2.1.292-reply-ok.jsonl`](testdata/recorded/claude-code-2.1.292-reply-ok.jsonl) | Claude Code 2.1.292 on Linux, in a new empty directory: trust the directory, ask for the single word `ok`, get it, then `/exit`. It delivers `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd`. |
 
-Each recording is named `claude-code-VERSION-WHAT.jsonl`, after the version in its `"recorded"` line. The development tests check every recording for credentials, `sk-ant` before a cursor movement, email addresses, UUIDs and home directories that are not placeholders, and replay it through the fake, checking that the fake draws every screen and delivers every payload in order.
+Each recording is named `claude-code-VERSION-WHAT.jsonl`, after the version in its `"recorded"` line. The development tests check every recording for credentials, `sk-ant` before a cursor movement, email addresses, UUIDs and home directories that are not placeholders, and replay it through the fake, checking that the fake draws every screen and delivers every payload in order. They also check that every recording is from the Claude Code version the [pins file](../../pins.json) pins.
 
-These recordings come from the Claude Code installed where they were made, not from a pinned version: nothing pins Claude Code until M1. Once M1 pins Claude Code, the recordings are remade at the pinned version. Codex recordings come with Codex, in M2.
+The recordings are at the pinned Claude Code, 2.1.292. The recording above was made with Claude Code 2.1.292 from its official channel before the pins file existed, and is kept as the recording at that pin. When the pin moves, remake every recording with AsmAI's pinned copy, in a new empty directory, and replace the old ones:
+
+```sh
+asmai providers install
+record-session --out internal/fakeprovider/testdata/recorded/claude-code-VERSION-WHAT.jsonl -- ~/.local/state/asmai/providers/claude-code/VERSION/claude
+```
+
+Codex recordings come with Codex, in M2.

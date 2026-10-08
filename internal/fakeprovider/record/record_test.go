@@ -20,8 +20,10 @@ import (
 	"github.com/creack/pty"
 	xterm "golang.org/x/term"
 
+	"github.com/talvor/asmai"
 	"github.com/talvor/asmai/internal/fakeprovider"
 	"github.com/talvor/asmai/internal/fakeprovider/record"
+	"github.com/talvor/asmai/internal/providers"
 )
 
 // recordSession and fakeProvider are the recorder and the fake provider,
@@ -538,9 +540,15 @@ func TestTheRecorderRefusesWhatIsNotClaudeCode(t *testing.T) {
 // recordings are the sessions recorded from the real Claude Code.
 var recordings, _ = filepath.Glob("../testdata/recorded/*.jsonl")
 
-func TestARealClaudeCodeSessionIsRecorded(t *testing.T) {
+// Every recording is from the Claude Code the pins file pins, and is named
+// after its version.
+func TestARealClaudeCodeSessionIsRecordedAtThePin(t *testing.T) {
 	if len(recordings) == 0 {
 		t.Fatal("no recording in ../testdata/recorded")
+	}
+	pins, err := providers.ParsePins(asmai.Pins)
+	if err != nil {
+		t.Fatal(err)
 	}
 	name := regexp.MustCompile(`^claude-code-([0-9]+\.[0-9]+\.[0-9]+)-[a-z0-9-]+\.jsonl$`)
 	for _, path := range recordings {
@@ -552,6 +560,9 @@ func TestARealClaudeCodeSessionIsRecorded(t *testing.T) {
 		r := readRecording(t, path)[0].Recorded
 		if r.Provider != "Claude Code" || r.Version != m[1] {
 			t.Errorf("%s is recorded from %s %s, not Claude Code %s as its name says", path, r.Provider, r.Version, m[1])
+		}
+		if r.Version != pins.ClaudeCode.Version {
+			t.Errorf("%s is recorded from Claude Code %s, not the pinned %s; remake it at the pin", path, r.Version, pins.ClaudeCode.Version)
 		}
 	}
 }

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,10 +14,13 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -24,6 +28,7 @@ import (
 	"github.com/talvor/asmai"
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/logfile"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 )
@@ -40,6 +45,8 @@ commands:
   asmai status                show whether the daemon is running, and its version
   asmai log [--follow]        print the daemon's log; --follow waits for more
   asmai export                write the journal out for inspection
+  asmai providers install     fetch the pinned provider CLIs, after you confirm
+  asmai providers list        show the provider CLIs AsmAI has installed
   asmai version               print the version of this executable
   asmai notices               print AsmAI's license and the third-party notices
 
@@ -49,16 +56,27 @@ Every command accepts --json to print JSON instead of tables.
 // logPoll is how often `asmai log --follow` looks for new lines.
 const logPoll = 200 * time.Millisecond
 
+// pins is the pins file asmai installs providers from: the one embedded in
+// it, except in tests.
+var pins = asmai.Pins
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
 	name, args := args[0], args[1:]
+	if name == "providers" {
+		if len(args) == 0 || (args[0] != "install" && args[0] != "list") {
+			fmt.Fprintf(stderr, "asmai providers: want install or list\n\n%s", usage)
+			return 2
+		}
+		name, args = name+" "+args[0], args[1:]
+	}
 	flags := flag.NewFlagSet("asmai "+name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")
@@ -68,7 +86,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
 	case "log":
 		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
-	case "stop", "status", "export", "version", "notices":
+	case "stop", "status", "export", "version", "notices", "providers install", "providers list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -115,6 +133,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return status(o, paths)
 	case "log":
 		return printLog(o, paths, *follow)
+	case "providers install":
+		return providersInstall(o, paths, stdin)
+	case "providers list":
+		return providersList(o, paths)
 	default: // export
 		return export(o, paths)
 	}
@@ -286,6 +308,134 @@ func export(o *output, paths statedir.Paths) int {
 	return 0
 }
 
+// providersInstall installs the pinned Claude Code: it shows what it will
+// fetch and from where, and once the user confirms, fetches it from Claude
+// Code's official channel, checks it against the pins file, keeps it in the
+// state directory and has the daemon record it. A pin already installed is
+// left as it is. It never runs or changes the user's own Claude Code, and
+// never touches ~/.claude.
+func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
+	p, err := providers.ParsePins(pins)
+	if err != nil {
+		return o.fail(err)
+	}
+	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		return o.fail(fmt.Errorf("Claude Code is not published for %s/%s", runtime.GOOS, runtime.GOARCH))
+	}
+	plan, err := p.ClaudeCodePlan(platform, paths.Providers)
+	if err != nil {
+		return o.fail(err)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandProviders})
+	if err != nil {
+		return o.fail(err)
+	}
+	for _, installed := range resp.Providers {
+		if installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && exists(plan.Path) {
+			if o.json {
+				return o.printJSON(map[string]any{"installed": false, "provider": installed})
+			}
+			fmt.Fprintf(o.stdout, "%s %s is already installed; nothing to do.\n", plan.Title, plan.Version)
+			o.table(installRows(installed))
+			return 0
+		}
+	}
+
+	// With --json, stdout carries only the result.
+	w := o.stdout
+	if o.json {
+		w = o.stderr
+	}
+	fmt.Fprintf(w, "asmai will install %s %s, as pinned in this asmai:\n", plan.Title, plan.Version)
+	writeTable(w, [][]string{
+		{"  fetch", plan.URL},
+		{"  from", fmt.Sprintf("%s's official channel (%d MB)", plan.Title, (plan.Download.Size+1<<20-1)>>20)},
+		{"  check", "SHA-256 " + plan.Download.SHA256},
+		{"  keep at", plan.Path},
+	})
+	fmt.Fprintf(w, "It is AsmAI's own copy: your own %s and ~/.claude are not touched.\n", plan.Title)
+	fmt.Fprint(w, "Install it? [y/N] ")
+	answer, _ := bufio.NewReader(stdin).ReadString('\n')
+	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+		if !strings.HasSuffix(answer, "\n") {
+			fmt.Fprintln(w)
+		}
+		return o.fail(errors.New("not confirmed; nothing was fetched or installed"))
+	}
+
+	present, err := providers.Present(plan)
+	if err != nil {
+		return o.fail(err)
+	}
+	if !present {
+		fmt.Fprintf(w, "Fetching %s...\n", plan.URL)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := providers.Fetch(ctx, http.DefaultClient, plan); err != nil {
+			return o.fail(fmt.Errorf("%w; nothing was installed", err))
+		}
+	}
+	resp, err = daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandProviderInstalled, Provider: &store.ProviderInstall{
+		Name:    plan.Name,
+		Version: plan.Version,
+		Path:    plan.Path,
+		SHA256:  plan.Download.SHA256,
+	}})
+	if err != nil {
+		return o.fail(err)
+	}
+	if len(resp.Providers) != 1 {
+		return o.fail(errors.New("the daemon did not answer with the install it recorded"))
+	}
+	installed := resp.Providers[0]
+	if o.json {
+		return o.printJSON(map[string]any{"installed": true, "provider": installed})
+	}
+	fmt.Fprintf(o.stdout, "Installed %s %s.\n", plan.Title, plan.Version)
+	o.table(installRows(installed))
+	return 0
+}
+
+func installRows(p store.ProviderInstall) [][]string {
+	return [][]string{
+		{"provider", p.Name},
+		{"version", p.Version},
+		{"path", p.Path},
+		{"installed", p.InstalledAt.Local().Format(time.RFC3339)},
+	}
+}
+
+// providersList shows the provider installs the store records.
+func providersList(o *output, paths statedir.Paths) int {
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandProviders})
+	if err != nil {
+		return o.fail(err)
+	}
+	installs := resp.Providers
+	if installs == nil {
+		installs = []store.ProviderInstall{}
+	}
+	if o.json {
+		return o.printJSON(map[string]any{"providers": installs})
+	}
+	if len(installs) == 0 {
+		fmt.Fprintln(o.stdout, "No providers are installed; install the pinned ones with `asmai providers install`.")
+		return 0
+	}
+	rows := [][]string{{"NAME", "VERSION", "PATH", "INSTALLED"}}
+	for _, p := range installs {
+		rows = append(rows, []string{p.Name, p.Version, p.Path, p.InstalledAt.Local().Format(time.RFC3339)})
+	}
+	o.table(rows)
+	return 0
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // details renders a journal entry's data as key=value pairs.
 func details(data json.RawMessage) string {
 	var fields map[string]any
@@ -326,7 +476,11 @@ func (o *output) printJSON(v any) int {
 }
 
 func (o *output) table(rows [][]string) {
-	w := tabwriter.NewWriter(o.stdout, 0, 0, 2, ' ', 0)
+	writeTable(o.stdout, rows)
+}
+
+func writeTable(out io.Writer, rows [][]string) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, row := range rows {
 		for i, cell := range row {
 			if i > 0 {

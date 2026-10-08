@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package asmai holds what the asmai executable carries from the repository
-// root: AsmAI's LICENSE and the generated third-party notices.
+// root: AsmAI's LICENSE, the generated third-party notices and the pins file.
 package asmai
 
 import _ "embed"

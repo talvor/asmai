@@ -321,6 +321,25 @@ func (s *Store) ChangeDispatch(id int64, generation int, from, to, transcript st
 	})
 }
 
+func (s *Store) WorkFetchedDispatch(id int64, agent string, generation int, at time.Time) error {
+	return s.change(at, func(tx *sql.Tx) (string, any, error) {
+		result, err := tx.Exec(`UPDATE dispatches SET state=?,updated_at=? WHERE id=? AND agent=? AND generation=? AND state=? AND EXISTS (
+			SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NOT NULL
+		)`, DispatchWorking, timestamp(at), id, agent, generation, DispatchDelivered)
+		if err != nil {
+			return "", nil, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return "", nil, err
+		}
+		if n != 1 {
+			return "", nil, fmt.Errorf("dispatch %d is not delivered from a fetched message in generation %d", id, generation)
+		}
+		return KindDispatchChanged, map[string]any{"id": id, "agent": agent, "generation": generation, "from": DispatchDelivered, "state": DispatchWorking}, nil
+	})
+}
+
 // ObservedAutomated journals the provider's exact prompt-submission payload
 // and the dispatch transition together. The transition cites that evidence.
 func (s *Store) ObservedAutomated(d Dispatch, role string, payload json.RawMessage, transcript string, at time.Time) error {

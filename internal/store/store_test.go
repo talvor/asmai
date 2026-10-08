@@ -443,6 +443,80 @@ func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
 	}
 }
 
+func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	coordination := SessionStart{Agent: "leader@coordination", Role: "coordination", Provider: "claude-code", Version: "v", Model: "m", Executable: "/p", Args: []string{}, Dir: "/c", PID: 1, At: at}
+	engineering := SessionStart{Agent: "leader@engineering", Role: "engineering", Provider: "claude-code", Version: "v", Model: "m", Executable: "/p", Args: []string{}, Dir: "/e", PID: 2, At: at}
+	if _, err := s.SessionStarted(coordination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionStarted(engineering); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationEntered(coordination.Agent, coordination.Role, 1, "/dev/pts/3", at); err != nil {
+		t.Fatal(err)
+	}
+	_, witness, err := s.ObservedWitnessed(Witnessed{Agent: coordination.Agent, Role: coordination.Role, Generation: 1, Terminal: "/dev/pts/3", Text: "open a job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a job"}`), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RepositoryAdded(Repository{Name: "fixture", Origin: "https://example.test/fixture", DefaultBranch: "main", Clone: "/fixture", AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobOpened(Job{Repository: "fixture", Witness: witness, Reading: "test", Mandate: MandateTestedPR, Criteria: []string{"complete"}}, false, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, inbound, err := s.SendHandoff(Handoff{Job: job.Number, Sender: coordination.Agent, Receiver: engineering.Agent, Outcome: "implement", Criteria: []string{"complete"}}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Inbox(engineering.Agent, inbound.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, HandoffAccepted, "accepted", at); err != nil {
+		t.Fatal(err)
+	}
+	coordination.PID = 3
+	coordination.At = at.Add(time.Minute)
+	if generation, err := s.SessionStarted(coordination); err != nil || generation != 2 {
+		t.Fatalf("the restarted Coordination generation is %d (%v), want 2", generation, err)
+	}
+	reply, err := s.NextDispatch(coordination.Agent)
+	if err != nil || reply.Generation != 2 {
+		t.Fatalf("the reply dispatch is %+v (%v), want generation 2", reply, err)
+	}
+	if err := s.ChangeDispatch(reply.ID, 2, DispatchCreated, DispatchUnknown, "transcript", at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	payload := json.RawMessage(`{"prompt":"asmai inbox --dispatch 2"}`)
+	if err := s.ObservedAutomated(reply, coordination.Role, payload, "transcript", at.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := s.Inbox(coordination.Agent, reply.ID, at.Add(4*time.Minute))
+	if err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
+		t.Fatalf("fetching the reply returned %+v (%v), want one delivered message", messages, err)
+	}
+	if err := s.WorkFetchedDispatch(reply.ID, coordination.Agent, 1, at.Add(5*time.Minute)); err == nil {
+		t.Fatal("a different session generation advanced the reply to working")
+	}
+	messages, err = s.Inbox(coordination.Agent, reply.ID, at.Add(6*time.Minute))
+	if err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
+		t.Fatalf("after the uncorrelated transition, the reply is %+v (%v), want delivered", messages, err)
+	}
+	if err := s.WorkFetchedDispatch(reply.ID, coordination.Agent, 2, at.Add(7*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StopDispatchIfWorking(reply.ID, 2, "transcript", at.Add(8*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	messages, err = s.Inbox(coordination.Agent, reply.ID, at.Add(9*time.Minute))
+	if err != nil || len(messages) != 1 || messages[0].State != DispatchStopped {
+		t.Fatalf("the correlated Stop left reply %+v (%v), want stopped", messages, err)
+	}
+}
+
 func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)

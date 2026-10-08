@@ -18,7 +18,8 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 	var resp Response
 	d.mu.Lock()
 	ref, ok := d.sessions[req.Session]
-	if !ok || d.leaders[ref.address.String()] == nil || d.leaders[ref.address.String()].session == nil || d.leaders[ref.address.String()].generation != ref.generation || d.stopping {
+	l := d.leaders[ref.address.String()]
+	if !ok || l == nil || l.session == nil || l.generation != ref.generation || d.stopping {
 		d.mu.Unlock()
 		reply(conn, Response{Error: "unknown or superseded agent session credential"})
 		return
@@ -63,6 +64,13 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 		}
 	case CommandInbox:
 		resp.Messages, err = d.store.Inbox(ref.address.String(), req.Dispatch, time.Now())
+		if err == nil {
+			for i := range resp.Messages {
+				if err = d.workFetchedReply(l, ref, &resp.Messages[i]); err != nil {
+					break
+				}
+			}
+		}
 	default:
 		err = errors.New("unknown handoff command")
 	}
@@ -74,6 +82,17 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 	if err == nil && (req.Command == CommandHandoffSend || req.Command == CommandHandoffAccept || req.Command == CommandHandoffClarify || req.Command == CommandHandoffDecline) && resp.Dispatch != nil {
 		d.nudge(resp.Dispatch.Agent)
 	}
+}
+
+func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
+	if m.Dispatch != l.currentDispatch || m.State != store.DispatchDelivered || (m.Kind != store.HandoffAccepted && m.Kind != store.HandoffClarified && m.Kind != store.HandoffDeclined) {
+		return nil
+	}
+	if err := d.store.WorkFetchedDispatch(m.Dispatch, ref.address.String(), ref.generation, time.Now()); err != nil {
+		return err
+	}
+	m.State = store.DispatchWorking
+	return nil
 }
 
 // ensureRoleLeader is called with d.mu held. One role address has one leader.

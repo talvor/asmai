@@ -168,3 +168,74 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 	}
 	t.Fatal("the exited recipient was not restarted for its pending dispatch")
 }
+
+func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	at := time.Now()
+	for _, start := range []store.SessionStart{
+		{Agent: "leader@coordination", Role: roles.Coordination, Provider: "claude-code", Version: "v", Model: "m", Executable: "/p", Dir: "/c", PID: 1, At: at},
+		{Agent: "leader@engineering", Role: roles.Engineering, Provider: "claude-code", Version: "v", Model: "m", Executable: "/p", Dir: "/e", PID: 2, At: at},
+	} {
+		if _, err := s.SessionStarted(start); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inbound := addPendingDispatch(t, s, "leader@engineering", store.DispatchCreated, 1)
+	messages, err := s.Inbox("leader@engineering", inbound, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := s.Handoff(messages[0].Handoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, reply, err := s.AnswerHandoff(h.ID, "leader@engineering", store.HandoffAccepted, "accepted", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeDispatch(reply.ID, 1, store.DispatchCreated, store.DispatchUnknown, "transcript", at); err != nil {
+		t.Fatal(err)
+	}
+	reply.Generation = 1
+	if err := s.ObservedAutomated(reply, roles.Coordination, json.RawMessage(`{"prompt":"asmai inbox --dispatch 2"}`), "transcript", at); err != nil {
+		t.Fatal(err)
+	}
+	messages, err = s.Inbox("leader@coordination", reply.ID, at)
+	if err != nil || len(messages) != 1 || messages[0].State != store.DispatchDelivered {
+		t.Fatalf("fetching the reply returned %+v (%v), want delivered", messages, err)
+	}
+	d := &daemon{store: s}
+	l := &leader{currentDispatch: inbound}
+	ref := sessionRef{address: roles.LeaderOf(roles.Coordination), generation: 1}
+	if err := d.workFetchedReply(l, ref, &messages[0]); err != nil {
+		t.Fatal(err)
+	}
+	if messages[0].State != store.DispatchDelivered {
+		t.Fatalf("a different dispatch moved the reply to %s, want delivered", messages[0].State)
+	}
+	l.currentDispatch = reply.ID
+	if err := d.workFetchedReply(l, ref, &messages[0]); err != nil {
+		t.Fatal(err)
+	}
+	if messages[0].State != store.DispatchWorking {
+		t.Fatalf("the current reply moved to %s, want working", messages[0].State)
+	}
+	messages, err = s.Inbox("leader@coordination", reply.ID, at)
+	if err != nil || len(messages) != 1 || messages[0].State != store.DispatchWorking {
+		t.Fatalf("re-reading the reply returned %+v (%v), want the same working dispatch", messages, err)
+	}
+	if err := d.workFetchedReply(l, ref, &messages[0]); err != nil {
+		t.Fatalf("re-reading the current reply was not idempotent: %v", err)
+	}
+	if err := s.StopDispatchIfWorking(reply.ID, ref.generation, "transcript", at); err != nil {
+		t.Fatal(err)
+	}
+	messages, err = s.Inbox("leader@coordination", reply.ID, at)
+	if err != nil || len(messages) != 1 || messages[0].State != store.DispatchStopped {
+		t.Fatalf("the correlated Stop left the reply %+v (%v), want stopped", messages, err)
+	}
+}

@@ -56,6 +56,15 @@ commands:
   asmai export                write the journal out for inspection
   asmai providers install     fetch the pinned provider CLIs, after you confirm
   asmai providers list        show the provider CLIs AsmAI has installed
+  asmai repo add <path-or-url> [--name <name>]
+                              register a repository: record its location, origin and default
+                              branch in the store and the configuration file, and make AsmAI's
+                              own clone of it, fetched from origin. Your own checkout is never
+                              used for work
+  asmai repo list             list the registered repositories
+  asmai repo show <name>      show what is recorded for a registered repository
+  asmai repo remove <name>    remove a repository's record, its configuration entry and its
+                              clone; refused while it has an open job
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
   asmai version               print the version of this executable
   asmai notices               print AsmAI's license and the third-party notices
@@ -63,6 +72,21 @@ commands:
 Every command accepts --json to print JSON instead of tables; asmai attach --json prints the
 agent's screen as it is now, and asmai chat --json Coordination's.
 `
+
+// groups are the commands that are grouped by noun, with their subcommands.
+var groups = map[string][]string{
+	"providers": {"install", "list"},
+	"repo":      {"add", "list", "show", "remove"},
+}
+
+// positional are the commands that take one argument, with what to say when
+// it is missing.
+var positional = map[string]string{
+	"attach":      "name the agent, such as leader@coordination or coordination",
+	"repo add":    "name a local checkout or a URL",
+	"repo show":   "name the repository, as `asmai repo list` shows it",
+	"repo remove": "name the repository, as `asmai repo list` shows it",
+}
 
 // logPoll is how often `asmai log --follow` looks for new lines.
 const logPoll = 200 * time.Millisecond
@@ -85,9 +109,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		args = append([]string{"chat"}, args...)
 	}
 	name, args := args[0], args[1:]
-	if name == "providers" {
-		if len(args) == 0 || (args[0] != "install" && args[0] != "list") {
-			fmt.Fprintf(stderr, "asmai providers: want install or list\n\n%s", usage)
+	if subcommands, ok := groups[name]; ok {
+		if len(args) == 0 || !slices.Contains(subcommands, args[0]) {
+			fmt.Fprintf(stderr, "asmai %s: want %s\n\n%s", name, strings.Join(subcommands[:len(subcommands)-1], ", ")+" or "+subcommands[len(subcommands)-1], usage)
 			return 2
 		}
 		name, args = name+" "+args[0], args[1:]
@@ -95,13 +119,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("asmai "+name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")
-	foreground, follow := new(bool), new(bool)
+	foreground, follow, repoName := new(bool), new(bool), new(string)
 	switch name {
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
 	case "log":
 		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
-	case "chat", "stop", "status", "agents", "attach", "hook", "export", "version", "notices", "providers install", "providers list":
+	case "repo add":
+		repoName = flags.String("name", "", "register the repository under this name, not one made from its origin")
+	case "chat", "stop", "status", "agents", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -109,14 +135,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	var agent string
-	if name == "attach" {
+	var arg string
+	if want, ok := positional[name]; ok {
 		if flags.NArg() == 0 {
-			fmt.Fprintf(stderr, "asmai attach: name the agent, such as leader@coordination or coordination\n\n%s", usage)
+			fmt.Fprintf(stderr, "asmai %s: %s\n\n%s", name, want, usage)
 			return 2
 		}
-		agent = flags.Arg(0)
-		// Flags may come after the agent too.
+		arg = flags.Arg(0)
+		// Flags may come after the argument too.
 		if err := flags.Parse(flags.Args()[1:]); err != nil {
 			return 2
 		}
@@ -163,7 +189,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":
-		return attach(o, paths, agent, stdin)
+		return attach(o, paths, arg, stdin)
 	case "hook":
 		return hook(o, paths, stdin)
 	case "log":
@@ -172,6 +198,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return providersInstall(o, paths, stdin)
 	case "providers list":
 		return providersList(o, paths)
+	case "repo add":
+		return repoAdd(o, paths, arg, *repoName)
+	case "repo list":
+		return repoList(o, paths)
+	case "repo show":
+		return repoShow(o, paths, arg)
+	case "repo remove":
+		return repoRemove(o, paths, arg)
 	default: // export
 		return export(o, paths)
 	}

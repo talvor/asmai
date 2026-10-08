@@ -59,12 +59,16 @@ Every start then runs the checks that exist: the roles are staffed in the config
 | `asmai export` | The journal, written out for inspection |
 | `asmai providers install` | Fetch the pinned provider CLIs, once you confirm (see [Pinned providers](#pinned-providers)) |
 | `asmai providers list` | The provider CLIs AsmAI has installed |
+| `asmai repo add <path-or-url> [--name <name>]` | Register a repository and make AsmAI's clone of it (see [Repositories](#repositories)) |
+| `asmai repo list` | The registered repositories: each one's origin, default branch, location and clone |
+| `asmai repo show <name>` | What is recorded for a registered repository, and its clone's path |
+| `asmai repo remove <name>` | Remove a repository's record, its entry in the configuration file and its clone; refused while it has an open job |
 
 Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now, and `asmai chat --json` Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
 
 ### The configuration file
 
-The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and you edit it by hand. So far it holds only the staffing of the roles M1 runs: a table for each of Coordination, Engineering and Quality, with the provider and model of the role's leader and of its workers. Claude is the only provider so far.
+The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and you edit it by hand. So far it holds the staffing of the roles M1 runs: a table for each of Coordination, Engineering and Quality, with the provider and model of the role's leader and of its workers. Claude is the only provider so far. It also holds a `[repositories.<name>]` table for each registered repository, which `asmai repo add` writes (see [Repositories](#repositories)).
 
 ```toml
 [roles.coordination]
@@ -87,6 +91,23 @@ worker_model = "opus"
 ```
 
 `asmai start` refuses a file it cannot honour, naming the line and the fix: TOML that does not parse, a table or field it does not read, a provider other than `"claude"`, or a role or field left out.
+
+### Repositories
+
+Jobs can target only repositories you have registered, and only you register them. `asmai repo add <path-or-url>` takes a local checkout (from anywhere inside it), a URL, or a bare repository on this host standing in for one. It records the repository's name, its location on the host, its origin remote and its default branch, in the store and as `location`, `origin` and `default_branch` in the repository's `[repositories.<name>]` table, which it appends to the configuration file without touching anything else in it:
+
+```toml
+[repositories.otman]
+location = "/home/me/src/otman"
+origin = "git@github.com:me/otman.git"
+default_branch = "main"
+```
+
+The name is the last part of the origin without `.git`, or what `--name` says. The origin is the checkout's `origin` remote, or the URL itself; a checkout with no `origin` is refused, and so is a URL that carries a password, because AsmAI handles no tokens: git's own credential helpers and SSH keys do. The default branch is the one the origin names. `location` is empty for a repository registered by its URL.
+
+`asmai repo add` also makes AsmAI's own clone of the repository in `repositories/<name>` in the state directory, cloned from the origin with your git and its configuration, never prompting for a password. Jobs work in that clone; your own checkout is recorded and never used, so it stays as it is. A registration that fails leaves no clone, entry or record.
+
+`asmai repo remove <name>` removes the record, the entry in the configuration file (with the comment lines right above it) and the clone, and is refused while the repository has an open job. Your checkout is not touched. An entry you wrote by hand in another form than a `[repositories.<name>]` table is yours to remove. The journal records each `repository.added` and `repository.removed`.
 
 ### Agents
 
@@ -113,6 +134,7 @@ Everything the factory keeps on the host is in the state directory, `~/.local/st
 - `providers/`, AsmAI's own copies of the provider CLIs, one directory per provider and version, such as `providers/claude-code/2.1.292/claude`.
 - `bin/asmai`, the daemon's copy of `asmai`, which each start replaces: agent sessions run it, first on their `PATH`, and their hooks name it.
 - `agents/`, each agent's working directory, by its address, such as `agents/leader@coordination`.
+- `repositories/`, AsmAI's own clone of each registered repository, in a directory named for it.
 
 No journal entry or log line records environment variables.
 

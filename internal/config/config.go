@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package config reads the factory's configuration file,
-// ~/.config/asmai/config.toml, which the user edits by hand. This asmai reads
-// only the fields M1 uses: each role's staffing, in [roles.<role>]. A file it
-// cannot honour is refused with the line and the fix.
+// ~/.config/asmai/config.toml, which the user edits by hand, and edits the
+// entries `asmai repo add` and `remove` own. This asmai reads only the fields
+// M1 uses: each role's staffing, in [roles.<role>], and each registered
+// repository's entry, in [repositories.<name>]. A file it cannot honour is
+// refused with the line and the fix.
 package config
 
 import (
@@ -27,7 +29,37 @@ type Config struct {
 	// Roles holds each role's staffing, by role name, for the roles the file
 	// has a table for.
 	Roles map[string]Staffing
+	// Repositories holds each registered repository's entry, by name.
+	Repositories map[string]Repository
 }
+
+// Repository is a registered repository's entry, which `asmai repo add`
+// writes.
+type Repository struct {
+	// Location is where the user's own checkout is; empty for a repository
+	// registered by its URL. It is never used for work.
+	Location string `toml:"location"`
+	// Origin is the origin remote.
+	Origin string `toml:"origin"`
+	// DefaultBranch is the branch jobs start from unless the user names
+	// another.
+	DefaultBranch string `toml:"default_branch"`
+}
+
+func (r *Repository) field(name string) *string {
+	switch name {
+	case "location":
+		return &r.Location
+	case "origin":
+		return &r.Origin
+	case "default_branch":
+		return &r.DefaultBranch
+	}
+	return nil
+}
+
+// The repository fields, in the order the file is documented.
+var repositoryFields = []string{"location", "origin", "default_branch"}
 
 // Staffing is what a role's agents run on.
 type Staffing struct {
@@ -111,7 +143,7 @@ func Parse(data []byte) (Config, []Problem) {
 		return Config{}, []Problem{{Line: line, Problem: "the file is not valid TOML: " + message, Fix: "correct the TOML on that line"}}
 	}
 
-	cfg := Config{Roles: map[string]Staffing{}}
+	cfg := Config{Roles: map[string]Staffing{}, Repositories: map[string]Repository{}}
 	var problems []Problem
 	p := &unstable.Parser{}
 	p.Reset(data)
@@ -136,15 +168,11 @@ func Parse(data []byte) (Config, []Problem) {
 				skipping = true
 				continue
 			}
-			if len(table) == 2 {
-				if _, ok := cfg.Roles[table[1]]; !ok {
-					cfg.Roles[table[1]] = Staffing{}
-				}
-			}
+			cfg.declare(table)
 		case unstable.ArrayTable:
 			problems = append(problems, Problem{Line: line,
 				Problem: fmt.Sprintf("[[%s]] is an array of tables, which this asmai does not read", strings.Join(keyPath(e.Key()), ".")),
-				Fix:     "write each role as its own table, such as [roles.coordination]"})
+				Fix:     "write each role or repository as its own table, such as [roles.coordination]"})
 			skipping = true
 		case unstable.KeyValue:
 			if skipping {
@@ -177,24 +205,66 @@ func keyPath(it unstable.Iterator) []string {
 	return path
 }
 
+// declare notes that the table at path is in the file, so that a role or
+// repository with a table and no fields is still there.
+func (c *Config) declare(path []string) {
+	if len(path) != 2 {
+		return
+	}
+	switch path[0] {
+	case "roles":
+		if _, ok := c.Roles[path[1]]; !ok {
+			c.Roles[path[1]] = Staffing{}
+		}
+	case "repositories":
+		if _, ok := c.Repositories[path[1]]; !ok {
+			c.Repositories[path[1]] = Repository{}
+		}
+	}
+}
+
+// CheckRepositoryName returns why name cannot name a registered repository,
+// or nil. A name is the key of its [repositories.<name>] table and the name
+// of its clone's directory, so it is letters, digits, "-" and "_", and starts
+// with a letter or digit.
+func CheckRepositoryName(name string) error {
+	if name == "" {
+		return errors.New("a repository's name is empty")
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case (r == '-' || r == '_') && i > 0:
+		default:
+			return fmt.Errorf("%q is not a repository name: a name is letters, digits, \"-\" and \"_\", starting with a letter or digit", name)
+		}
+	}
+	return nil
+}
+
 // checkTable checks a table header of path on line.
 func checkTable(path []string, line int) (Problem, bool) {
 	header := "[" + strings.Join(path, ".") + "]"
+	notRead := Problem{Line: line,
+		Problem: fmt.Sprintf("%s is not a table this asmai reads; it reads only [roles.<role>] and [repositories.<name>]", header),
+		Fix:     fmt.Sprintf("remove %s and its fields", header)}
 	switch {
-	case path[0] != "roles":
-		return Problem{Line: line,
-			Problem: fmt.Sprintf("%s is not a table this asmai reads; it reads only [roles.<role>]", header),
-			Fix:     fmt.Sprintf("remove %s and its fields", header)}, false
+	case path[0] != "roles" && path[0] != "repositories":
+		return notRead, false
 	case len(path) == 1:
 		return Problem{}, true
 	case len(path) > 2:
-		return Problem{Line: line,
-			Problem: fmt.Sprintf("%s is not a table this asmai reads; it reads only [roles.<role>]", header),
-			Fix:     fmt.Sprintf("remove %s and its fields", header)}, false
-	case !roles.Known(path[1]):
+		return notRead, false
+	case path[0] == "roles" && !roles.Known(path[1]):
 		return Problem{Line: line,
 			Problem: fmt.Sprintf("%s names no role; the roles are %s", header, strings.Join(roles.All, ", ")),
 			Fix:     "name one of the roles, such as [roles.coordination]"}, false
+	case path[0] == "repositories":
+		if err := CheckRepositoryName(path[1]); err != nil {
+			return Problem{Line: line,
+				Problem: fmt.Sprintf("%s: %v", header, err),
+				Fix:     "rename the repository, such as [repositories.otman]"}, false
+		}
 	}
 	return Problem{}, true
 }
@@ -209,11 +279,7 @@ func keyValue(p *unstable.Parser, cfg *Config, path []string, value *unstable.No
 				return []Problem{problem}
 			}
 		}
-		if len(path) == 2 {
-			if _, ok := cfg.Roles[path[1]]; !ok {
-				cfg.Roles[path[1]] = Staffing{}
-			}
-		}
+		cfg.declare(path)
 		it := value.Children()
 		for it.Next() {
 			kv := it.Node()
@@ -222,17 +288,28 @@ func keyValue(p *unstable.Parser, cfg *Config, path []string, value *unstable.No
 		}
 		return problems
 	}
-	key := strings.Join(path, ".")
-	if len(path) != 3 || path[0] != "roles" {
-		if len(path) >= 2 && path[0] == "roles" {
-			if problem, ok := checkTable(path[:2], line); !ok {
-				return []Problem{problem}
-			}
+	if len(path) == 3 {
+		switch path[0] {
+		case "roles":
+			return staffingField(cfg, path, value, line)
+		case "repositories":
+			return repositoryField(cfg, path, value, line)
 		}
-		return []Problem{{Line: line,
-			Problem: fmt.Sprintf("%s is not a setting this asmai reads; it reads only %s under [roles.<role>]", key, joinFields()),
-			Fix:     fmt.Sprintf("remove %s", key)}}
 	}
+	key := strings.Join(path, ".")
+	if len(path) >= 2 && (path[0] == "roles" || path[0] == "repositories") {
+		if problem, ok := checkTable(path[:2], line); !ok {
+			return []Problem{problem}
+		}
+	}
+	return []Problem{{Line: line,
+		Problem: fmt.Sprintf("%s is not a setting this asmai reads; it reads only %s under [roles.<role>] and %s under [repositories.<name>]", key, joinFields(), joinFieldNames(repositoryFields)),
+		Fix:     fmt.Sprintf("remove %s", key)}}
+}
+
+// staffingField sets the staffing field at path, [roles.<role>] and its
+// name, to value.
+func staffingField(cfg *Config, path []string, value *unstable.Node, line int) []Problem {
 	if problem, ok := checkTable(path[:2], line); !ok {
 		return []Problem{problem}
 	}
@@ -269,8 +346,43 @@ func keyValue(p *unstable.Parser, cfg *Config, path []string, value *unstable.No
 	return nil
 }
 
+// repositoryField sets the repository field at path, [repositories.<name>]
+// and its field, to value.
+func repositoryField(cfg *Config, path []string, value *unstable.Node, line int) []Problem {
+	if problem, ok := checkTable(path[:2], line); !ok {
+		return []Problem{problem}
+	}
+	repo, name := path[1], path[2]
+	entry := cfg.Repositories[repo]
+	field := entry.field(name)
+	if field == nil {
+		return []Problem{{Line: line,
+			Problem: fmt.Sprintf("%s in [repositories.%s] is not a setting this asmai reads; the fields are %s", name, repo, joinFieldNames(repositoryFields)),
+			Fix:     fmt.Sprintf("remove %s, or correct its name", name)}}
+	}
+	if value.Kind != unstable.String {
+		return []Problem{{Line: line,
+			Problem: fmt.Sprintf("%s in [repositories.%s] is %s, not a string", name, repo, kindName(value.Kind)),
+			Fix:     fmt.Sprintf("write %s as a string in double quotes", name)}}
+	}
+	text := string(value.Data)
+	// Only a repository registered by its URL has no location.
+	if name != "location" && strings.TrimSpace(text) == "" {
+		return []Problem{{Line: line,
+			Problem: fmt.Sprintf("%s in [repositories.%s] is empty", name, repo),
+			Fix:     fmt.Sprintf("write the repository's %s, or remove [repositories.%s] and register it again with `asmai repo add`", strings.ReplaceAll(name, "_", " "), repo)}}
+	}
+	*field = text
+	cfg.Repositories[repo] = entry
+	return nil
+}
+
 func joinFields() string {
-	return strings.Join(staffingFields[:len(staffingFields)-1], ", ") + " and " + staffingFields[len(staffingFields)-1]
+	return joinFieldNames(staffingFields)
+}
+
+func joinFieldNames(names []string) string {
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 func example(name string) string {

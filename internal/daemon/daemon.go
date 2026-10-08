@@ -57,6 +57,13 @@ const (
 	// CommandConversation attaches the user's terminal to Coordination's
 	// leader with input: the conversation.
 	CommandConversation = "conversation"
+	// CommandRepoAdd registers the repository the request names, with
+	// AsmAI's clone of it; CommandRepoList, CommandRepoShow and
+	// CommandRepoRemove list, show and remove registered repositories.
+	CommandRepoAdd    = "repo.add"
+	CommandRepoList   = "repo.list"
+	CommandRepoShow   = "repo.show"
+	CommandRepoRemove = "repo.remove"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -79,6 +86,12 @@ type Request struct {
 	// and Payload what the provider passed the hook.
 	Session string          `json:"session,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// Source is what repo.add registers: a local checkout's absolute path
+	// or a URL. Repository names the registered repository for the other
+	// repo commands, and for repo.add the name to register it as, when the
+	// user chose one.
+	Source     string `json:"source,omitempty"`
+	Repository string `json:"repository,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -95,6 +108,10 @@ type Response struct {
 	// a snapshot was asked for.
 	Attached *Leader   `json:"attached,omitempty"`
 	Screen   *vt.State `json:"screen,omitempty"`
+	// Repositories are the registered repositories, and Repository the one
+	// a repo command added, showed or removed.
+	Repositories []store.Repository `json:"repositories,omitempty"`
+	Repository   *store.Repository  `json:"repository,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -182,7 +199,12 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 	}
 
+	// work is what the daemon's long work, such as a clone, runs under: it
+	// ends when the daemon is asked to stop.
+	work, stopWork := context.WithCancel(context.Background())
+	defer stopWork()
 	d := &daemon{
+		work:     work,
 		cfg:      cfg,
 		leaders:  map[string]*leader{},
 		sessions: map[string]sessionRef{},
@@ -228,6 +250,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// End the agents, then stop serving, wait for the commands being
 	// served, and persist.
+	stopWork()
 	d.stopAgents(by)
 	listener.Close()
 	<-served
@@ -255,6 +278,7 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 type daemon struct {
+	work   context.Context
 	cfg    Config
 	store  *store.Store
 	log    *slog.Logger
@@ -263,6 +287,10 @@ type daemon struct {
 	// answered once it has.
 	stop chan *net.UnixConn
 	wg   sync.WaitGroup
+
+	// repoMu makes registering and removing repositories one at a time: each
+	// changes the configuration file, the store and the state directory.
+	repoMu sync.Mutex
 
 	// mu guards the agents and the checks.
 	mu      sync.Mutex
@@ -378,6 +406,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			return i.Name != p.Name || i.Version != p.Version
 		})
 		reply(conn, Response{Providers: installs})
+	case CommandRepoAdd, CommandRepoList, CommandRepoShow, CommandRepoRemove:
+		d.repoCommand(conn, req)
 	case CommandStop:
 		select {
 		case d.stop <- conn:

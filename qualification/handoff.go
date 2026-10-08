@@ -85,6 +85,9 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 	if err = h.prepareHandoffRepository(ctx, f); err != nil {
 		return handoffEvidence{}, err
 	}
+	if err = h.awaitPromptSurface(ctx, f); err != nil {
+		return handoffEvidence{}, err
+	}
 	before, err := factoryJournal(f)
 	if err != nil {
 		return handoffEvidence{}, err
@@ -93,8 +96,8 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 	if len(before) > 0 {
 		baseline = before[len(before)-1].ID
 	}
-	prompt := fmt.Sprintf("Qualification exercise %d. Please open a tested-pr job from this witnessed message for registered repository %s. Read it as 'Exercise handoff'; acceptance criterion 'Engineering acknowledges the handoff'. Then immediately send Engineering a handoff for that job: outcome 'Acknowledge this qualification job', decisions 'none', evidence 'this witnessed message', constraints 'no code changes', permissions 'none', and the same acceptance criterion. Use asmai commands now. This is a communication exercise only.", time.Now().UnixNano(), qualificationRepository)
-	if err = f.Press(prompt + "\r"); err != nil {
+	prompt := fmt.Sprintf("Qualification exercise %d. In registered repository %s, open a tested-pr job from this witnessed message with reading 'Handoff test' and criterion 'Engineering confirms'. Then send Engineering a handoff for that job to acknowledge it. Use 'none' for decisions, constraints and permissions, and cite this message as evidence. Execute the asmai commands now.", time.Now().UnixNano(), qualificationRepository)
+	if err = f.Submit(prompt); err != nil {
 		return handoffEvidence{}, err
 	}
 	deadline := time.Now().Add(h.Wait)
@@ -167,6 +170,26 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 		time.Sleep(h.Poll)
 	}
 	return evidence, fmt.Errorf("handoff did not reach acknowledged inbox delivery within %s (witnessed=%t dispatch=%d acknowledged=%t fetched=%t)", h.Wait, evidence.witness != "", evidence.dispatch, evidence.observed, evidence.fetched)
+}
+
+func (h *Harness) awaitPromptSurface(ctx context.Context, f *Factory) error {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		lines, err := f.Screen()
+		if err != nil {
+			return err
+		}
+		for _, line := range lines {
+			if strings.Contains(line, "❯") || strings.TrimSpace(line) == ">" {
+				return nil
+			}
+		}
+		time.Sleep(h.Poll)
+	}
+	return errors.New("Claude Code reported SessionStart but showed no input prompt within 30s")
 }
 
 func factoryJournal(f *Factory) ([]store.Entry, error) {

@@ -205,3 +205,34 @@ func (f *Factory) Press(keys string) error {
 	}
 	return nil
 }
+
+// Submit types a user's prompt and Enter as separate input events in one
+// conversation. Claude Code can treat a long single terminal write as a
+// paste, where its trailing Enter is part of the paste instead of submit.
+func (f *Factory) Submit(prompt string) error {
+	conn, r, _, err := daemon.Open(f.paths.Socket, daemon.Request{Command: daemon.CommandConversation, Terminal: "the qualification harness"})
+	if conn != nil {
+		defer conn.Close()
+	}
+	if err != nil {
+		return err
+	}
+	closed := make(chan struct{})
+	go func() { io.Copy(io.Discard, r); close(closed) }()
+	enc := json.NewEncoder(conn)
+	if err = enc.Encode(daemon.ClientMessage{Keys: []byte(prompt)}); err != nil {
+		return err
+	}
+	time.Sleep(750 * time.Millisecond)
+	if err = enc.Encode(daemon.ClientMessage{Keys: []byte("\r")}); err != nil {
+		return err
+	}
+	if err = enc.Encode(daemon.ClientMessage{Leave: true}); err != nil {
+		return err
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+	}
+	return nil
+}

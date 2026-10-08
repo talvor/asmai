@@ -63,6 +63,12 @@ On 2026-10-07, at commit 76b3d80, on the VM as the harness user:
 
 These are observations from that day, not requirements. Versions on the VM will move.
 
+On 2026-10-08, at commit 6b52e97, on the VM as the harness user, the first runs of [the qualification harness](qualification-harness.md):
+
+- `make qualify` built it, and `./bin/qualify` ran C3 and C4 against the real pinned Claude Code 2.1.292, signed in under the harness user's subscription. Both passed.
+- It installed the pinned copy into a new `~/.local/state/asmai` and ran in a staffed `~/.config/asmai/config.toml`. The account had neither before, and both were removed afterwards, along with the harness's scratch clone.
+- Claude Code's trust prompt for the leader's directory selected "No, exit" first, so the harness moves to "Yes, I trust this folder" before it confirms. Claude Code now records that trust in the account's `~/.claude.json`.
+
 ### Later
 
 From M1, delivery cases watch CI through `gh`, so the harness user will also need `gh` installed and signed in. It is not installed yet.

@@ -318,11 +318,15 @@ func startForeground(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(fmt.Errorf("finding the configuration file: %w", err))
 	}
+	configFile, err := config.ActivePath(home)
+	if err != nil {
+		return o.fail(err)
+	}
 	p, err := providers.ParsePins(asmai.Pins)
 	if err != nil {
 		return o.fail(err)
 	}
-	cfg := daemon.Config{Paths: paths, Version: version, ConfigFile: config.DefaultPath(home), Executable: executable, Pins: p}
+	cfg := daemon.Config{Paths: paths, Version: version, ConfigFile: configFile, Executable: executable, Pins: p}
 	// Started in the background, the daemon's stderr is its log, which needs
 	// no copy.
 	if !isFile(o.stderr, paths.Log) {

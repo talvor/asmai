@@ -89,6 +89,35 @@ func TestTheFactoryMustBeConfiguredAndNotRunning(t *testing.T) {
 	}
 }
 
+func TestTheHarnessAcceptsScratchConfigAndStatePaths(t *testing.T) {
+	harness(t, signedIn, startsDirectly)
+	config := filepath.Join(t.TempDir(), "config.toml")
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(config, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ASMAI_CONFIG_FILE", config)
+	state, err := os.MkdirTemp("", "a25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(state) })
+	t.Setenv("ASMAI_STATE_DIR", state)
+	paths, err := statedir.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.Dir != state {
+		t.Fatalf("state dir = %s, want %s", paths.Dir, state)
+	}
+	if err = checkFactory(paths); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestACommitIsBuiltFromExactlyItsOwnFiles(t *testing.T) {
 	repo := t.TempDir()
 	gitIn := func(args ...string) string {

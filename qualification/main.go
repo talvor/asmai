@@ -190,7 +190,10 @@ func checkFactory(paths statedir.Paths) error {
 	if err != nil {
 		return err
 	}
-	path := config.DefaultPath(home)
+	path, err := config.ActivePath(home)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("%s is missing: the harness's factory needs the roles staffed, as docs/qualification-harness.md describes", path)
 	}

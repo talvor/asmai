@@ -27,6 +27,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
 
 1. Sign Claude Code in with its own login, as that user, and check it: `claude auth status` reports `claude.ai`. The harness never starts a sign-in.
 2. Staff the roles in `~/.config/asmai/config.toml` ([the configuration file](../README.md#the-configuration-file)). The harness refuses to run without it and never writes it.
+   For an isolated run, set `ASMAI_CONFIG_FILE` to an absolute path to a scratch config with Coordination, Engineering and Quality staffed, and set `ASMAI_STATE_DIR` to an absolute scratch state directory. The harness and its `asmai` processes use those paths without changing the account's default config or factory state.
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
 

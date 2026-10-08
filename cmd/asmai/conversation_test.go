@@ -91,6 +91,11 @@ func (a *attachedTerminal) exited(t *testing.T) int {
 	t.Helper()
 	select {
 	case <-a.done:
+		// The output asmai wrote before exiting may still be in the pty.
+		select {
+		case <-a.read:
+		case <-time.After(5 * time.Second):
+		}
 		return a.cmd.ProcessState.ExitCode()
 	case <-time.After(10 * time.Second):
 		t.Fatalf("asmai in %s did not exit", a.name)

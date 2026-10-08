@@ -297,8 +297,13 @@ func (h *Harness) awaitSessionStart(ctx context.Context, f *Factory, leader stor
 		if running {
 			// The last screen seen is what a session that then ends leaves to
 			// explain itself.
-			if lines, err = f.Screen(); err != nil {
+			// The session may end between reading the leader and its screen.
+			if screen, err := f.Screen(); err == nil {
+				lines = screen
+			} else if current, ok, lerr := f.Leader(); lerr != nil || (ok && current.State == store.AgentRunning && current.Generation == leader.Generation) {
 				return pressed, err
+			} else {
+				running = false
 			}
 		}
 		if !running {

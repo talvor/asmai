@@ -173,6 +173,7 @@ type attachedTerminal struct {
 	mu   sync.Mutex
 	term *vt.Terminal
 	done chan error
+	read chan struct{} // closed once everything asmai wrote has reached term
 }
 
 func attachInTerminal(t *testing.T, agent string, columns, rows int) *attachedTerminal {
@@ -191,7 +192,7 @@ func inTerminal(t *testing.T, columns, rows int, args ...string) *attachedTermin
 	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(columns), Rows: uint16(rows)}); err != nil {
 		t.Fatal(err)
 	}
-	a := &attachedTerminal{cmd: exec.Command(filepath.Join(asmaiBin, "asmai"), args...), ptmx: ptmx, name: tty.Name(), term: vt.New(columns, rows), done: make(chan error, 1)}
+	a := &attachedTerminal{cmd: exec.Command(filepath.Join(asmaiBin, "asmai"), args...), ptmx: ptmx, name: tty.Name(), term: vt.New(columns, rows), done: make(chan error, 1), read: make(chan struct{})}
 	a.cmd.Stdin, a.cmd.Stdout, a.cmd.Stderr = tty, tty, tty
 	a.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	err = a.cmd.Start()
@@ -204,6 +205,7 @@ func inTerminal(t *testing.T, columns, rows int, args ...string) *attachedTermin
 		ptmx.Close()
 	})
 	go func() {
+		defer close(a.read)
 		buf := make([]byte, 4096)
 		for {
 			n, err := ptmx.Read(buf)

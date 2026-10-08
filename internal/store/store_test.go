@@ -472,10 +472,20 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.ChangeDispatch(inbound.ID, 1, DispatchCreated, DispatchUnknown, "transcript", at); err != nil {
+		t.Fatal(err)
+	}
+	inbound.Generation = 1
+	if err := s.ObservedAutomated(inbound, engineering.Role, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Inbox(engineering.Agent, inbound.ID, at); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, HandoffAccepted, "accepted", at); err != nil {
+	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID+1, 1, HandoffAccepted, "accepted", at); err == nil {
+		t.Fatal("a different current dispatch answered the handoff")
+	}
+	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID, 1, HandoffAccepted, "accepted", at); err != nil {
 		t.Fatal(err)
 	}
 	coordination.PID = 3

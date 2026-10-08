@@ -185,6 +185,13 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 		}
 	}
 	inbound := addPendingDispatch(t, s, "leader@engineering", store.DispatchCreated, 1)
+	if err := s.ChangeDispatch(inbound, 1, store.DispatchCreated, store.DispatchUnknown, "transcript", at); err != nil {
+		t.Fatal(err)
+	}
+	incoming := store.Dispatch{ID: inbound, Agent: "leader@engineering", Generation: 1}
+	if err := s.ObservedAutomated(incoming, roles.Engineering, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at); err != nil {
+		t.Fatal(err)
+	}
 	messages, err := s.Inbox("leader@engineering", inbound, at)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +200,7 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, reply, err := s.AnswerHandoff(h.ID, "leader@engineering", store.HandoffAccepted, "accepted", at)
+	_, reply, err := s.AnswerHandoff(h.ID, "leader@engineering", inbound, 1, store.HandoffAccepted, "accepted", at)
 	if err != nil {
 		t.Fatal(err)
 	}

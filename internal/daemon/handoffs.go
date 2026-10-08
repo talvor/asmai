@@ -54,7 +54,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 		}
 		var h store.Handoff
 		var dispatch store.Dispatch
-		h, dispatch, err = d.store.AnswerHandoff(req.Handoff, ref.address.String(), state, req.Answer, time.Now())
+		h, dispatch, err = d.store.AnswerHandoff(req.Handoff, ref.address.String(), l.currentDispatch, ref.generation, state, req.Answer, time.Now())
 		if err == nil {
 			resp.Handoff = &h
 			resp.Dispatch = &dispatch

@@ -127,7 +127,7 @@ func createMessage(tx *sql.Tx, handoff, job int64, sender, recipient, kind, body
 	return d, nil
 }
 
-func (s *Store) AnswerHandoff(id int64, agent, state, answer string, at time.Time) (Handoff, Dispatch, error) {
+func (s *Store) AnswerHandoff(id int64, agent string, currentDispatch int64, generation int, state, answer string, at time.Time) (Handoff, Dispatch, error) {
 	if state != HandoffAccepted && state != HandoffClarified && state != HandoffDeclined {
 		return Handoff{}, Dispatch{}, errors.New("answer must accept, clarify or decline")
 	}
@@ -151,12 +151,14 @@ func (s *Store) AnswerHandoff(id int64, agent, state, answer string, at time.Tim
 	}
 	var inbound int64
 	var fetched sql.NullString
-	err = tx.QueryRow(`SELECT d.id,m.fetched_at FROM dispatches d JOIN messages m ON m.id=d.message WHERE m.handoff=? AND m.kind='handoff'`, id).Scan(&inbound, &fetched)
+	var dispatchState string
+	var dispatchGeneration int
+	err = tx.QueryRow(`SELECT d.id,m.fetched_at,d.state,d.generation FROM dispatches d JOIN messages m ON m.id=d.message WHERE m.handoff=? AND m.kind='handoff'`, id).Scan(&inbound, &fetched, &dispatchState, &dispatchGeneration)
 	if err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
-	if !fetched.Valid {
-		return Handoff{}, Dispatch{}, errors.New("fetch the handoff with asmai inbox before answering")
+	if !fetched.Valid || inbound != currentDispatch || dispatchGeneration != generation || dispatchState != DispatchDelivered {
+		return Handoff{}, Dispatch{}, errors.New("answer the handoff for the current fetched dispatch")
 	}
 	if _, err = tx.Exec(`UPDATE handoffs SET state=?,answer=? WHERE id=?`, state, answer, id); err != nil {
 		return Handoff{}, Dispatch{}, err
@@ -165,10 +167,20 @@ func (s *Store) AnswerHandoff(id int64, agent, state, answer string, at time.Tim
 	if _, err = appendEntry(tx, at, KindHandoffAnswered, h); err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
-	if _, err = tx.Exec(`UPDATE dispatches SET state=?,updated_at=? WHERE id=? AND state=?`, DispatchWorking, timestamp(at), inbound, DispatchDelivered); err != nil {
+	result, err := tx.Exec(`UPDATE dispatches SET state=?,updated_at=? WHERE id=? AND agent=? AND generation=? AND state=? AND EXISTS (
+		SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NOT NULL
+	)`, DispatchWorking, timestamp(at), inbound, agent, generation, DispatchDelivered)
+	if err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
-	if _, err = appendEntry(tx, at, KindDispatchChanged, map[string]any{"id": inbound, "state": DispatchWorking, "agent": agent}); err != nil {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return Handoff{}, Dispatch{}, err
+	}
+	if n != 1 {
+		return Handoff{}, Dispatch{}, fmt.Errorf("dispatch %d is not the current fetched dispatch in generation %d", inbound, generation)
+	}
+	if _, err = appendEntry(tx, at, KindDispatchChanged, map[string]any{"id": inbound, "from": DispatchDelivered, "state": DispatchWorking, "agent": agent, "generation": generation}); err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
 	d, err := createMessage(tx, id, h.Job, agent, h.Sender, state, answer, at)

@@ -21,7 +21,7 @@ func (d *daemon) authorize(req Request) error {
 	}
 	d.mu.Lock()
 	ref, ok := d.sessions[req.Session]
-	if ok {
+	if ok && req.Command != CommandHook {
 		l := d.leaders[ref.address.String()]
 		ok = l != nil && l.session != nil && l.generation == ref.generation && !d.stopping
 	}

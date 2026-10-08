@@ -125,3 +125,76 @@ func TestLoadReadsTheFileOrSaysItIsMissing(t *testing.T) {
 		t.Errorf("the configuration file is %s, want ~/.config/asmai/config.toml", path)
 	}
 }
+
+func TestTheRepositoriesOfTheFileAreRead(t *testing.T) {
+	cfg, problems := Parse([]byte(`[repositories.otman]
+location = "/home/me/src/otman"
+origin = "git@github.com:me/otman.git"
+default_branch = "main"
+
+[repositories.fixture]
+location = ""
+origin = 'https://example.test/fixture.git'
+default_branch = "trunk"
+
+[repositories]
+inline = { origin = "o", default_branch = "main" }
+`))
+	if len(problems) != 0 {
+		t.Fatalf("Parse found %v", problems)
+	}
+	want := map[string]Repository{
+		"otman":   {"/home/me/src/otman", "git@github.com:me/otman.git", "main"},
+		"fixture": {"", "https://example.test/fixture.git", "trunk"},
+		"inline":  {"", "o", "main"},
+	}
+	for name, r := range want {
+		if cfg.Repositories[name] != r {
+			t.Errorf("[repositories.%s] is %+v, want %+v", name, cfg.Repositories[name], r)
+		}
+	}
+}
+
+func TestARepositoryEntryThisAsmaiCannotHonourNamesTheLineAndTheFix(t *testing.T) {
+	for name, tc := range map[string]struct {
+		file    string
+		line    int
+		problem string
+		fix     string
+	}{
+		"a later field": {"[repositories.otman]\norigin = \"o\"\nnotes = \"x\"\n", 3,
+			"notes in [repositories.otman] is not a setting this asmai reads; the fields are location, origin and default_branch", "remove notes"},
+		"not a string": {"[repositories.otman]\ndefault_branch = 4\n", 2,
+			"default_branch in [repositories.otman] is a number, not a string", "in double quotes"},
+		"an empty origin": {"[repositories.otman]\norigin = \"\"\n", 2,
+			"origin in [repositories.otman] is empty", "asmai repo add"},
+		"a name that cannot be a directory": {"[repositories.\"a/b\"]\norigin = \"o\"\n", 1,
+			`"a/b" is not a repository name`, "rename the repository"},
+		"a nested table": {"[repositories.otman.extra]\norigin = \"o\"\n", 1,
+			"[repositories.otman.extra] is not a table this asmai reads", "remove [repositories.otman.extra]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, problems := Parse([]byte(tc.file))
+			if len(problems) != 1 {
+				t.Fatalf("Parse found %v, want one problem", problems)
+			}
+			p := problems[0]
+			if p.Line != tc.line || !strings.Contains(p.Problem, tc.problem) || !strings.Contains(p.Fix, tc.fix) {
+				t.Errorf("the problem is line %d: %q, fix %q; want line %d: %q, fix %q", p.Line, p.Problem, p.Fix, tc.line, tc.problem, tc.fix)
+			}
+		})
+	}
+}
+
+func TestRepositoryNames(t *testing.T) {
+	for _, name := range []string{"otman", "my-repo_2", "A1"} {
+		if err := CheckRepositoryName(name); err != nil {
+			t.Errorf("CheckRepositoryName(%q) = %v, want it valid", name, err)
+		}
+	}
+	for _, name := range []string{"", "a.b", "a/b", "-a", "_a", "a b", "..", "é"} {
+		if err := CheckRepositoryName(name); err == nil {
+			t.Errorf("CheckRepositoryName(%q) is valid, want it refused", name)
+		}
+	}
+}

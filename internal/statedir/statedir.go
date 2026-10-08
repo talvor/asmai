@@ -37,6 +37,9 @@ type Paths struct {
 	Executable string
 	// Agents holds each agent's working directory, by its address.
 	Agents string
+	// Repositories holds AsmAI's own clone of each registered repository,
+	// in a directory named for it.
+	Repositories string
 }
 
 // Default returns the paths in the user's state directory,
@@ -56,15 +59,16 @@ func Default() (Paths, error) {
 // At returns the paths in the state directory dir.
 func At(dir string) Paths {
 	return Paths{
-		Dir:        dir,
-		Socket:     filepath.Join(dir, "daemon.sock"),
-		Lock:       filepath.Join(dir, "daemon.lock"),
-		Store:      filepath.Join(dir, "store.db"),
-		Log:        filepath.Join(dir, "daemon.log"),
-		Providers:  filepath.Join(dir, "providers"),
-		Bin:        filepath.Join(dir, "bin"),
-		Executable: filepath.Join(dir, "bin", "asmai"),
-		Agents:     filepath.Join(dir, "agents"),
+		Dir:          dir,
+		Socket:       filepath.Join(dir, "daemon.sock"),
+		Lock:         filepath.Join(dir, "daemon.lock"),
+		Store:        filepath.Join(dir, "store.db"),
+		Log:          filepath.Join(dir, "daemon.log"),
+		Providers:    filepath.Join(dir, "providers"),
+		Bin:          filepath.Join(dir, "bin"),
+		Executable:   filepath.Join(dir, "bin", "asmai"),
+		Agents:       filepath.Join(dir, "agents"),
+		Repositories: filepath.Join(dir, "repositories"),
 	}
 }
 

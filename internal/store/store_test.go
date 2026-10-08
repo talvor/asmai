@@ -422,3 +422,85 @@ func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
 		t.Errorf("the witnessed message is journaled at %v, want %v", entries[2].At, at.Add(time.Second))
 	}
 }
+
+func TestARegisteredRepositoryIsRecordedJournaledAndListedByName(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	otman := Repository{Name: "otman", Location: "/home/me/src/otman", Origin: "git@github.com:me/otman.git", DefaultBranch: "main", Clone: "/state/repositories/otman", AddedAt: at}
+	fixture := Repository{Name: "fixture", Origin: "https://example.test/fixture.git", DefaultBranch: "trunk", Clone: "/state/repositories/fixture", AddedAt: at.Add(time.Minute)}
+	for _, r := range []Repository{otman, fixture} {
+		if err := s.RepositoryAdded(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got, err := s.Repository("otman"); err != nil || got != otman {
+		t.Errorf("Repository(otman) is %+v (%v), want %+v", got, err, otman)
+	}
+	list, err := s.Repositories()
+	if err != nil || len(list) != 2 || list[0] != fixture || list[1] != otman {
+		t.Errorf("Repositories is %+v (%v), want fixture then otman", list, err)
+	}
+	if _, err := s.Repository("nope"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("Repository of an unregistered name returned %v, want sql.ErrNoRows", err)
+	}
+	if got := strings.Join(kinds(t, s), ","); got != KindRepositoryAdded+","+KindRepositoryAdded {
+		t.Errorf("the journal holds %s, want both registrations", got)
+	}
+	entries, _ := s.Journal()
+	var journaled Repository
+	if err := json.Unmarshal(entries[0].Data, &journaled); err != nil || journaled != otman {
+		t.Errorf("the journal entry holds %+v (%v), want the repository as recorded", journaled, err)
+	}
+}
+
+func TestARepositoryCannotBeRegisteredTwice(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	r := Repository{Name: "otman", Origin: "o", DefaultBranch: "main", Clone: "/c", AddedAt: time.Now()}
+	if err := s.RepositoryAdded(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RepositoryAdded(r); !errors.Is(err, ErrRepositoryRegistered) {
+		t.Errorf("registering the name again returned %v, want ErrRepositoryRegistered", err)
+	}
+	if got := strings.Join(kinds(t, s), ","); got != KindRepositoryAdded {
+		t.Errorf("the journal holds %s, want the one registration", got)
+	}
+}
+
+func TestARepositoryIsRemovedAndJournaledUnlessItHasAnOpenJob(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	for _, name := range []string{"otman", "fixture"} {
+		if err := s.RepositoryAdded(Repository{Name: name, Origin: "o", DefaultBranch: "main", Clone: "/c/" + name, AddedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, job := range []struct{ repository, state string }{{"otman", "open"}, {"otman", "paused"}, {"otman", JobEnded}, {"fixture", JobEnded}} {
+		if _, err := s.db.Exec(`INSERT INTO jobs (repository, state) VALUES (?, ?)`, job.repository, job.state); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var open *OpenJobsError
+	if _, err := s.RepositoryRemoved("otman", at); !errors.As(err, &open) || len(open.Jobs) != 2 || open.Jobs[0] != 1 || open.Jobs[1] != 2 {
+		t.Errorf("removing a repository with an open and a paused job returned %v, want its jobs 1 and 2", err)
+	}
+	if _, err := s.Repository("otman"); err != nil {
+		t.Errorf("the refused removal left the repository %v", err)
+	}
+
+	removed, err := s.RepositoryRemoved("fixture", at.Add(time.Hour))
+	if err != nil || removed.Name != "fixture" || removed.Clone != "/c/fixture" {
+		t.Errorf("removing a repository whose job ended returned %+v, %v", removed, err)
+	}
+	if _, err := s.Repository("fixture"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("after its removal the repository is still there (%v)", err)
+	}
+	if _, err := s.RepositoryRemoved("fixture", at); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("removing it again returned %v, want sql.ErrNoRows", err)
+	}
+	if got := strings.Join(kinds(t, s), ","); got != strings.Join([]string{KindRepositoryAdded, KindRepositoryAdded, KindRepositoryRemoved}, ",") {
+		t.Errorf("the journal holds %s, want two registrations and the one removal", got)
+	}
+}

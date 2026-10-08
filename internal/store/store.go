@@ -73,6 +73,21 @@ CREATE TABLE agents (
 	exit       TEXT NOT NULL DEFAULT ''
 );
 `,
+	`
+CREATE TABLE repositories (
+	name           TEXT PRIMARY KEY,
+	location       TEXT NOT NULL,
+	origin         TEXT NOT NULL,
+	default_branch TEXT NOT NULL,
+	clone          TEXT NOT NULL,
+	added_at       TEXT NOT NULL
+);
+CREATE TABLE jobs (
+	number     INTEGER PRIMARY KEY AUTOINCREMENT,
+	repository TEXT,
+	state      TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -97,6 +112,10 @@ const (
 	// entering and leaving the conversation with Coordination.
 	KindConversationEntered = "conversation.entered"
 	KindConversationLeft    = "conversation.left"
+	// KindRepositoryAdded and KindRepositoryRemoved record the user
+	// registering and removing a repository.
+	KindRepositoryAdded   = "repository.added"
+	KindRepositoryRemoved = "repository.removed"
 )
 
 // The states an agent can be in.

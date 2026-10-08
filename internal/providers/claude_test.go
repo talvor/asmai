@@ -68,3 +68,19 @@ func TestASessionsEnvironmentHasNoProviderAPIKey(t *testing.T) {
 		t.Errorf("the session's environment is\n%s\nwant\n%s", strings.Join(env, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestEveryListedAPIKeyVariableIsOneAndTheListIsACopy(t *testing.T) {
+	names := APIKeyVariables()
+	if len(names) == 0 {
+		t.Fatal("no API-key variable is listed")
+	}
+	for _, name := range names {
+		if !IsAPIKeyVariable(name) {
+			t.Errorf("%s is listed as an API-key variable, but IsAPIKeyVariable disagrees", name)
+		}
+	}
+	names[0] = "CHANGED"
+	if APIKeyVariables()[0] == "CHANGED" {
+		t.Error("changing the list APIKeyVariables returned changed the list itself")
+	}
+}

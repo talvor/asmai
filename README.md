@@ -156,7 +156,7 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o dist/darwin-arm64/a
 CGO_ENABLED=0 go test ./...
 ```
 
-The [`Makefile`](Makefile) wraps these and other everyday tasks: `make dist` runs the two builds above, `make test` the tests, `make notices` regenerates `THIRD_PARTY_NOTICES` (see [`CONTRIBUTING.md`](CONTRIBUTING.md#third-party-notices)), and `make build`, `fmt`, `vet`, `tidy` and `clean` do what they say. Run `make` or `make help` to list them.
+The [`Makefile`](Makefile) wraps these and other everyday tasks: `make dist` runs the two builds above, `make test` the tests, `make notices` regenerates `THIRD_PARTY_NOTICES` (see [`CONTRIBUTING.md`](CONTRIBUTING.md#third-party-notices)), and `make qualify` builds the [qualification harness](docs/qualification-harness.md) into `bin/qualify` (development builds only), and `make build`, `fmt`, `vet`, `tidy` and `clean` do what they say. Run `make` or `make help` to list them.
 
 [CI](.github/workflows/ci.yml) does the same on every pull request, on a hosted Linux runner and a hosted macOS runner. It also checks every Go module compiled into `asmai` against the license allow-list (see [`CONTRIBUTING.md`](CONTRIBUTING.md#the-license-allow-list)), and that the embedded third-party notices match what generation produces (see [`CONTRIBUTING.md`](CONTRIBUTING.md#third-party-notices)):
 
@@ -168,12 +168,14 @@ go run ./internal/cmd/gen-notices -check
 ## Repository layout
 
 - [`cmd/asmai/`](cmd/asmai/): the `asmai` executable.
+- [`qualification/`](qualification/): the qualification harness, its own executable that runs the qualification cases against the real pinned providers on a qualification host. It is built only into development builds, never into `asmai`, and never runs in hosted CI.
 - [`pins.json`](pins.json): the pins file, embedded in `asmai`.
 - [`internal/`](internal/): packages used only by AsmAI.
 - [`internal/fakeprovider/`](internal/fakeprovider/): the scripted fake provider CLI the development tests drive, its script format, and the recorder that records a real Claude Code session as a script. Neither is built into `asmai`, and the fake never counts toward qualification.
 - [`GLOSSARY.md`](GLOSSARY.md): the domain language. Use these terms in code, docs and issues.
 - [`docs/adr/`](docs/adr/): architecture decision records. New ADRs are numbered from 0011.
 - [`docs/qualification-hosts.md`](docs/qualification-hosts.md): the qualification hosts, their harness users and how to reach them.
+- [`docs/qualification-harness.md`](docs/qualification-harness.md): what the qualification harness checks, how to prepare a host and run it, and how to read its report.
 - [`docs/agents/`](docs/agents/): how coding agents work in this repository (issue tracker, triage labels, domain docs).
 
 Work is tracked in [GitHub Issues](https://github.com/talvor/asmai/issues).

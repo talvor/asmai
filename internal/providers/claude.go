@@ -87,6 +87,13 @@ var apiKeyVariables = []string{
 	"AZURE_OPENAI_API_KEY",
 }
 
+// APIKeyVariables returns the names of the provider variables that would
+// switch an agent away from the user's subscription, which no agent session
+// starts with. IsAPIKeyVariable also covers names that follow their pattern.
+func APIKeyVariables() []string {
+	return slices.Clone(apiKeyVariables)
+}
+
 // IsAPIKeyVariable reports whether the environment variable name is a
 // provider API-key variable, which no agent session starts with.
 func IsAPIKeyVariable(name string) bool {

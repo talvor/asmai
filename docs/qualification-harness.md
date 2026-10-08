@@ -1,0 +1,115 @@
+# The qualification harness
+
+The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
+
+So far it has two cases, both from M1:
+
+| Case | What it qualifies |
+|---|---|
+| C3 | The pinned Claude Code reuses the user's existing sign-in without a new login |
+| C4 | Every agent session starts without provider API-key variables |
+
+Later milestones add the other cases to the same harness.
+
+## Where it lives
+
+The harness is [`qualification/`](../qualification/), its own directory in this repository, so it and the code it qualifies always share a commit. It is a separate executable, `bin/qualify`, built only by `make qualify`:
+
+- It is never part of the `asmai` executable or a release. A development test fails if `asmai` for either release platform is built with a package of the harness, or its executable holds one's symbols.
+- There is no `asmai qualify` command, and a development test fails if there is.
+- It never runs in hosted CI. No workflow builds or runs it, a development test fails if one does, and the harness itself refuses to start when `CI` or `GITHUB_ACTIONS` is set. Provider sign-in never leaves the user's host.
+
+## Preparing a host
+
+Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualification-hosts.md`](qualification-hosts.md)):
+
+1. Sign Claude Code in with its own login, as that user, and check it: `claude auth status` reports `claude.ai`. The harness never starts a sign-in.
+2. Staff the roles in `~/.config/asmai/config.toml` ([the configuration file](../README.md#the-configuration-file)). The harness refuses to run without it and never writes it.
+3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
+4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
+
+## Running it
+
+In a clone of this repository on the host, as the qualification user, check out the commit to qualify, build the harness from it and run it:
+
+```sh
+cd ~/asmai
+git fetch origin && git checkout COMMIT
+make qualify
+./bin/qualify
+```
+
+On the Mac, build with the Go version [`go.mod`](../go.mod) pins, as [`qualification-hosts.md`](qualification-hosts.md) describes: `GOTOOLCHAIN=go1.26.7 make qualify`.
+
+The harness qualifies the commit it was built from, and refuses to run when `--commit` names another or the tree it was built from had uncommitted changes. Run under `go run` instead, which records no commit, it qualifies the repository's `HEAD`. Either way it builds exactly that commit's files, whatever the working tree holds.
+
+| Flag | |
+|---|---|
+| `--cases C3,C4` | Run only these cases; by default all |
+| `--json` | Print the report as JSON |
+| `--commit REV`, `--repo DIR` | The commit under test, and a directory in the repository holding it |
+| `--show-screen` | Include the leader's last screen in a failure. It may show the signed-in account, so it is your choice |
+
+It exits 0 when every case passed, 1 when a case failed, which leaves the combination unqualified, and 2 when it could not run.
+
+Over SSH, in one command:
+
+```sh
+ssh phillip@192.168.1.184 'cd ~/asmai && git fetch origin && git checkout COMMIT && make qualify && ./bin/qualify'
+```
+
+## What a run does
+
+1. It checks the account: not in CI, not root, and `HOME` a directory the running user owns. It checks that the user's factory is configured and not already running.
+2. It exports the commit under test with `git archive` into a scratch directory, reads that commit's pins file, and builds `asmai` from it as a development build. The scratch directory is removed when the run ends.
+3. For each case, it starts a factory of its own, the user's own: the state directory `~/.local/state/asmai`, the user's `~/.claude` sign-in, and no other user's. It drives the factory only through `asmai` commands and the daemon's socket, as a user's terminal does, and stops it afterwards. If the pinned Claude Code is not installed yet, it runs `asmai providers install` and answers yes: the pinned copy is fetched from Claude Code's official channel and checked against the pins file, about 250 MB the first time.
+4. It prints the report.
+
+### C3: the sign-in is reused
+
+The harness removes provider API-key variables and `CLAUDE_CODE_OAUTH_TOKEN` from its own environment, so that only the sign-in the user already made can serve the session. It starts the factory, so Coordination's leader runs on the pinned Claude Code, and then requires:
+
+- the pinned copy's own `claude auth status --json` reports it signed in with the `claude.ai` subscription. Only whether it is signed in and its sign-in method are read; the account is never read or kept;
+- the leader's session reports `SessionStart` through its hook. Claude Code does that only once it is signed in and the session has started;
+- the leader's screen never shows a login prompt.
+
+The first session in a directory Claude Code has not seen asks the user to trust it. The harness answers that prompt as a user would, from the conversation: it moves to "Yes, I trust this folder" if the prompt starts elsewhere (in Claude Code 2.1.292 it starts on "No, exit"), and confirms only while that option is selected, so it never chooses to exit. Claude Code records the trust in the user's `~/.claude.json`, as it does for any directory; the harness does not write it. The directory is the leader's, `~/.local/state/asmai/agents/leader@coordination`.
+
+### C4: no API-key variables in a session
+
+The harness sets a canary in every provider API-key variable AsmAI lists, and in one for each `*_API_KEY` pattern, in the daemon's own environment, and checks that the daemon holds them. It then reads the names of the environment variables of the running leader session from the operating system (`/proc` on Linux, `ps` on macOS) and requires that it holds none of them, and no other name that is a provider API-key variable. It also requires that the process it read is the agent session, by `ASMAI_SESSION`. The canaries are not keys, and no value is read, kept or reported.
+
+## Reading the report
+
+```
+AsmAI qualification harness (a development build; its results are not a qualification record)
+  commit    <commit>
+  platform  linux/amd64
+  host      asmai-vm, as phillip
+  provider  Claude Code 2.1.292 (pinned), the installed copy reports 2.1.292 (Claude Code)
+
+C3  passed  The pinned provider copy reuses the user's existing sign-in without a new login
+    - ...
+C4  passed  Every agent session starts without provider API-key variables
+    - ...
+
+2 of 2 cases passed.
+```
+
+Each case is `passed` or `failed`. The report names the platform, the pinned version from the commit's pins file, the version the installed copy reports, and the commit. It holds no credential and no environment variable's value.
+
+A case passes when AsmAI behaves as decided, through the provider's own signal or, when that signal is missing, through AsmAI's safe default. A missing signal that the safe default covers is listed under the passed case as a `known limitation`, never as a failure. For C3, the pinned copy giving no sign-in status is one: the case still requires the session itself to start signed in. The report is the result of one run, not the qualification record ([ADR 0009](adr/0009-a-release-is-the-qualified-commit-plus-its-record.md)).
+
+## What it touches
+
+Only the qualification user's own files, and only what a factory and Claude Code write there:
+
+- `~/.local/state/asmai`, the factory's state directory, including the pinned Claude Code under `providers/`. It is kept between runs, so later runs do not fetch again. Remove it, after `asmai stop`, to start from nothing.
+- `~/.claude.json`, where Claude Code records its trust of the leader's directory.
+- The Go module and build caches, for building the commit.
+
+It never signs the user out, never writes `~/.claude`, and removes its scratch directory.
+
+## macOS
+
+The cases run on the Mac the same way. Reading a session's environment with `ps` for C4 is written for macOS but has not been run there yet; until it has, C4 on the Mac may fail with the error `ps` gave.

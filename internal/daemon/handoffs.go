@@ -222,9 +222,10 @@ func (d *daemon) stopCurrentDispatch(ref sessionRef, promptID, transcript string
 	}
 	id := l.currentDispatch
 	l.currentPromptID = ""
-	stopped, err := d.store.StopDispatchIfWorking(id, ref.generation, transcript, time.Now())
-	if stopped {
-		l.currentDispatch = 0
-	}
+	_, err := d.store.StopDispatchIfWorking(id, ref.generation, transcript, time.Now())
+	// A correlated Stop ends this submitted prompt even when it did not fetch
+	// the inbox. Keep the durable dispatch eligible for another nudge, but do
+	// not leave the finished prompt as the leader's current dispatch.
+	l.currentDispatch = 0
 	return err
 }

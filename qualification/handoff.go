@@ -16,7 +16,10 @@ import (
 	"github.com/talvor/asmai/internal/store"
 )
 
-const qualificationRepository = "qualification-handoff"
+const (
+	qualificationRepository = "qualification-handoff"
+	engineeringLeader       = "leader@engineering"
+)
 
 func (h *Harness) prepareHandoffRepository(ctx context.Context, f *Factory) error {
 	// Jobs retain their registered repository, so this fixture lives in the
@@ -115,56 +118,8 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 			return evidence, e
 		}
 		for _, entry := range entries {
-			if entry.ID <= baseline {
-				continue
-			}
-			switch entry.Kind {
-			case store.KindMessageWitnessed:
-				var data struct {
-					Text string `json:"text"`
-				}
-				json.Unmarshal(entry.Data, &data)
-				if data.Text == prompt {
-					evidence.witness = prompt
-				}
-				if strings.HasPrefix(data.Text, "asmai inbox --dispatch ") {
-					evidence.nudgeWitnessed = true
-				}
-			case store.KindMessageFetched:
-				var data struct {
-					Dispatch int64 `json:"dispatch"`
-				}
-				json.Unmarshal(entry.Data, &data)
-				if data.Dispatch == evidence.dispatch {
-					evidence.fetched = true
-				}
-			case store.KindDispatchChanged:
-				var data struct {
-					ID          int64  `json:"id"`
-					State       string `json:"state"`
-					Transcript  string `json:"transcript"`
-					Observation int64  `json:"observation"`
-				}
-				json.Unmarshal(entry.Data, &data)
-				if data.State == store.DispatchCreated && evidence.dispatch == 0 {
-					evidence.dispatch = data.ID
-				}
-				if data.ID == evidence.dispatch && data.State == store.DispatchNudged {
-					evidence.transcript = data.Transcript
-					evidence.nudgedObservation = data.Observation
-				}
-			case store.KindObservation:
-				var data struct {
-					Agent   string `json:"agent"`
-					Event   string `json:"event"`
-					Payload struct {
-						Prompt string `json:"prompt"`
-					} `json:"payload"`
-				}
-				json.Unmarshal(entry.Data, &data)
-				if data.Agent == "leader@engineering" && data.Event == "UserPromptSubmit" && evidence.dispatch > 0 && data.Payload.Prompt == fmt.Sprintf("asmai inbox --dispatch %d", evidence.dispatch) {
-					evidence.ackObservation = entry.ID
-				}
+			if entry.ID > baseline {
+				evidence.record(entry, prompt)
 			}
 		}
 		evidence.observed = evidence.ackObservation > 0 && evidence.ackObservation == evidence.nudgedObservation
@@ -174,6 +129,63 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 		time.Sleep(h.Poll)
 	}
 	return evidence, fmt.Errorf("handoff did not reach acknowledged inbox delivery within %s (witnessed=%t dispatch=%d acknowledged=%t fetched=%t)", h.Wait, evidence.witness != "", evidence.dispatch, evidence.observed, evidence.fetched)
+}
+
+// record folds one journal entry made after the case began into the evidence.
+// The case's handoff is the first dispatch created for Engineering's leader:
+// a session shared with an earlier case may also create dispatches for other
+// agents, such as the reply to that case's handoff for Coordination, which
+// the leader this case watches never receives.
+func (e *handoffEvidence) record(entry store.Entry, prompt string) {
+	switch entry.Kind {
+	case store.KindMessageWitnessed:
+		var data struct {
+			Text string `json:"text"`
+		}
+		json.Unmarshal(entry.Data, &data)
+		if data.Text == prompt {
+			e.witness = prompt
+		}
+		if strings.HasPrefix(data.Text, "asmai inbox --dispatch ") {
+			e.nudgeWitnessed = true
+		}
+	case store.KindMessageFetched:
+		var data struct {
+			Dispatch int64 `json:"dispatch"`
+		}
+		json.Unmarshal(entry.Data, &data)
+		if e.dispatch > 0 && data.Dispatch == e.dispatch {
+			e.fetched = true
+		}
+	case store.KindDispatchChanged:
+		var data struct {
+			ID          int64  `json:"id"`
+			Agent       string `json:"agent"`
+			State       string `json:"state"`
+			Transcript  string `json:"transcript"`
+			Observation int64  `json:"observation"`
+		}
+		json.Unmarshal(entry.Data, &data)
+		if data.State == store.DispatchCreated && e.dispatch == 0 && data.Agent == engineeringLeader {
+			e.dispatch = data.ID
+		}
+		if data.ID == e.dispatch && data.State == store.DispatchNudged {
+			e.transcript = data.Transcript
+			e.nudgedObservation = data.Observation
+		}
+	case store.KindObservation:
+		var data struct {
+			Agent   string `json:"agent"`
+			Event   string `json:"event"`
+			Payload struct {
+				Prompt string `json:"prompt"`
+			} `json:"payload"`
+		}
+		json.Unmarshal(entry.Data, &data)
+		if data.Agent == engineeringLeader && data.Event == "UserPromptSubmit" && e.dispatch > 0 && data.Payload.Prompt == fmt.Sprintf("asmai inbox --dispatch %d", e.dispatch) {
+			e.ackObservation = entry.ID
+		}
+	}
 }
 
 func (h *Harness) awaitPromptSurface(ctx context.Context, f *Factory) error {

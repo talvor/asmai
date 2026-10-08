@@ -275,3 +275,130 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 		t.Fatalf("the correlated Stop left the reply %+v (%v), want stopped", messages, err)
 	}
 }
+
+// A handoff the recipient has fetched but not answered stays eligible for
+// another nudge. It must not starve a later handoff to the same leader: the
+// qualification run sends two handoffs in one session and needs the second
+// acknowledged.
+func TestAnsweredNudgeDoesNotStarveLaterDispatch(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	const agent = "leader@engineering"
+	at := time.Now()
+	if _, err := s.SessionStarted(store.SessionStart{Agent: agent, Role: roles.Engineering, Provider: "claude-code", Version: "v", Model: "m", Executable: "/bin/sh", Dir: t.TempDir(), PID: 1, At: at}); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sess.Stop(100 * time.Millisecond) })
+	first := addPendingDispatch(t, s, agent, store.DispatchCreated, 1)
+	l := &leader{address: roles.LeaderOf(roles.Engineering), session: sess, generation: 1, ready: true}
+	d := &daemon{leaders: map[string]*leader{agent: l}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ref := sessionRef{address: l.address, generation: 1}
+	deliver := func(dispatch int64, promptID string) {
+		t.Helper()
+		d.nudge(agent)
+		prompt := fmt.Sprintf("asmai inbox --dispatch %d", dispatch)
+		d.mu.Lock()
+		pending := l.pendingPrompt
+		d.mu.Unlock()
+		if pending != prompt {
+			t.Fatalf("the daemon nudged %q, want %q", pending, prompt)
+		}
+		if matched, err := d.automatedSubmitted(ref, prompt, promptID, "transcript", json.RawMessage(`{"prompt":"`+prompt+`"}`)); err != nil || !matched {
+			t.Fatalf("acknowledging %q matched=%v, err=%v", prompt, matched, err)
+		}
+		if messages, err := s.Inbox(agent, dispatch, time.Now()); err != nil || len(messages) != 1 || !messages[0].Fetched {
+			t.Fatalf("fetching dispatch %d returned %+v (%v)", dispatch, messages, err)
+		}
+		if err := d.stopCurrentDispatch(ref, promptID, "transcript"); err != nil {
+			t.Fatal(err)
+		}
+		d.mu.Lock()
+		l.ready = true
+		d.mu.Unlock()
+	}
+	deliver(first, "prompt-1")
+
+	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "open a second job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a second job"}`), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "second", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, later, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliver(later.ID, "prompt-2")
+	// Both handoffs remain unanswered, so both keep being nudged in turn.
+	deliver(first, "prompt-3")
+	deliver(later.ID, "prompt-4")
+}
+
+// The qualification run's first handoff is nudged and acknowledged but its
+// leader never fetches it before the second handoff is created. The second
+// dispatch must still get its nudge ahead of another nudge for the first.
+func TestAcknowledgedUnfetchedDispatchDoesNotStarveLaterDispatch(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	const agent = "leader@engineering"
+	at := time.Now()
+	if _, err := s.SessionStarted(store.SessionStart{Agent: agent, Role: roles.Engineering, Provider: "claude-code", Version: "v", Model: "m", Executable: "/bin/sh", Dir: t.TempDir(), PID: 1, At: at}); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sess.Stop(100 * time.Millisecond) })
+	first := addPendingDispatch(t, s, agent, store.DispatchCreated, 1)
+	l := &leader{address: roles.LeaderOf(roles.Engineering), session: sess, generation: 1, ready: true}
+	d := &daemon{leaders: map[string]*leader{agent: l}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ref := sessionRef{address: l.address, generation: 1}
+	nudge := func(dispatch int64, promptID string) {
+		t.Helper()
+		d.nudge(agent)
+		prompt := fmt.Sprintf("asmai inbox --dispatch %d", dispatch)
+		d.mu.Lock()
+		pending := l.pendingPrompt
+		d.mu.Unlock()
+		if pending != prompt {
+			t.Fatalf("the daemon nudged %q, want %q", pending, prompt)
+		}
+		if matched, err := d.automatedSubmitted(ref, prompt, promptID, "transcript", json.RawMessage(`{"prompt":"`+prompt+`"}`)); err != nil || !matched {
+			t.Fatalf("acknowledging %q matched=%v, err=%v", prompt, matched, err)
+		}
+		if err := d.stopCurrentDispatch(ref, promptID, "transcript"); err != nil {
+			t.Fatal(err)
+		}
+		d.mu.Lock()
+		l.ready = true
+		d.mu.Unlock()
+	}
+	nudge(first, "prompt-1")
+
+	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "open a second job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a second job"}`), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "second", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, later, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nudge(later.ID, "prompt-2")
+}

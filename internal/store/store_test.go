@@ -514,6 +514,26 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if generation, err := s.SessionStarted(engineering); err != nil || generation != 2 {
 		t.Fatalf("the restarted Engineering generation is %d (%v), want 2", generation, err)
 	}
+	resumed, err := s.NextDispatch(engineering.Agent)
+	if err != nil || resumed.ID != inbound.ID || resumed.Generation != 2 || resumed.State != DispatchDelivered {
+		t.Fatalf("recovered handoff nudge is %+v (%v), want dispatch %d in generation 2 delivered", resumed, err, inbound.ID)
+	}
+	if err := s.ChangeDispatch(resumed.ID, 2, DispatchDelivered, DispatchUnknown, "transcript", at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := s.PendingLeaders(); err != nil || len(pending) != 0 {
+		t.Fatalf("an unacknowledged recovery nudge remained eligible for restart: %v (%v)", pending, err)
+	}
+	if _, err := s.NextDispatch(engineering.Agent); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("an unacknowledged recovery nudge remained eligible to retype: %v", err)
+	}
+	resumed.Generation = 2
+	if err := s.ObservedAutomated(resumed, engineering.Role, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if messages, err := s.Inbox(engineering.Agent, inbound.ID, at.Add(4*time.Minute)); err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
+		t.Fatalf("re-fetch after the acknowledged recovery nudge returned %+v (%v)", messages, err)
+	}
 	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID+1, 2, HandoffAccepted, "accepted", at); err == nil {
 		t.Fatal("a different current dispatch answered the handoff")
 	}
@@ -554,8 +574,8 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if err := s.WorkFetchedDispatch(reply.ID, coordination.Agent, 2, at.Add(7*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StopDispatchIfWorking(reply.ID, 2, "transcript", at.Add(8*time.Minute)); err != nil {
-		t.Fatal(err)
+	if stopped, err := s.StopDispatchIfWorking(reply.ID, 2, "transcript", at.Add(8*time.Minute)); err != nil || !stopped {
+		t.Fatalf("stopping the working reply returned stopped=%v, err=%v", stopped, err)
 	}
 	messages, err = s.Inbox(coordination.Agent, reply.ID, at.Add(9*time.Minute))
 	if err != nil || len(messages) != 1 || messages[0].State != DispatchStopped {

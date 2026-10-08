@@ -274,15 +274,18 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 		}
 		m.HandoffData = &h
 		if m.Fetched {
-			continue
+			if m.State != DispatchNudged {
+				continue
+			}
+		} else {
+			if _, err = tx.Exec(`UPDATE messages SET fetched_at=? WHERE id=?`, timestamp(at), m.ID); err != nil {
+				return nil, err
+			}
+			if _, err = appendEntry(tx, at, KindMessageFetched, map[string]any{"message": m.ID, "dispatch": m.Dispatch, "agent": agent, "job": m.Job}); err != nil {
+				return nil, err
+			}
 		}
-		if _, err = tx.Exec(`UPDATE messages SET fetched_at=? WHERE id=?`, timestamp(at), m.ID); err != nil {
-			return nil, err
-		}
-		if _, err = appendEntry(tx, at, KindMessageFetched, map[string]any{"message": m.ID, "dispatch": m.Dispatch, "agent": agent, "job": m.Job}); err != nil {
-			return nil, err
-		}
-		if _, err = tx.Exec(`UPDATE dispatches SET state=?,updated_at=? WHERE id=?`, DispatchDelivered, timestamp(at), m.Dispatch); err != nil {
+		if _, err = tx.Exec(`UPDATE dispatches SET state=?,updated_at=? WHERE id=? AND state=?`, DispatchDelivered, timestamp(at), m.Dispatch, m.State); err != nil {
 			return nil, err
 		}
 		m.Fetched = true
@@ -296,16 +299,21 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 
 func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 	var d Dispatch
-	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND m.fetched_at IS NULL AND d.state IN (?,?) ORDER BY d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
+	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND (
+		(m.fetched_at IS NULL AND d.state IN (?,?)) OR
+		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
+			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
+		))
+	) ORDER BY d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
 	return d, err
 }
 
 func (s *Store) PendingLeaders() ([]string, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT m.recipient FROM messages m JOIN dispatches d ON d.message=m.id WHERE
 		(m.fetched_at IS NULL AND d.state IN (?,?,?)) OR
-		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state=? AND EXISTS (
+		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
 			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
-		)) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, HandoffPending)
+		)) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
 	if err != nil {
 		return nil, err
 	}
@@ -389,17 +397,20 @@ func (s *Store) ObservedAutomated(d Dispatch, role string, payload json.RawMessa
 	return tx.Commit()
 }
 
-func (s *Store) StopDispatchIfWorking(id int64, generation int, transcript string, at time.Time) error {
+func (s *Store) StopDispatchIfWorking(id int64, generation int, transcript string, at time.Time) (bool, error) {
 	var state string
 	err := s.db.QueryRow(`SELECT state FROM dispatches WHERE id=? AND generation=?`, id, generation).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if state != DispatchWorking {
-		return nil
+		return false, nil
 	}
-	return s.ChangeDispatch(id, generation, DispatchWorking, DispatchStopped, transcript, at)
+	if err := s.ChangeDispatch(id, generation, DispatchWorking, DispatchStopped, transcript, at); err != nil {
+		return false, err
+	}
+	return true, nil
 }

@@ -141,7 +141,13 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.mu.Unlock()
-	addPendingDispatch(t, s, agent, store.DispatchNudged, 1)
+	dispatchID := addPendingDispatch(t, s, agent, store.DispatchUnknown, 1)
+	if err := s.ObservedAutomated(store.Dispatch{ID: dispatchID, Agent: agent, Generation: 1}, roles.Engineering, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if messages, err := s.Inbox(agent, dispatchID, time.Now()); err != nil || len(messages) != 1 || !messages[0].Fetched {
+		t.Fatalf("fetching the pending handoff returned %+v (%v)", messages, err)
+	}
 	old := l.session
 	old.Stop(100 * time.Millisecond)
 	deadline := time.Now().Add(5 * time.Second)
@@ -154,8 +160,31 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if dispatch.Generation != 2 {
-				t.Fatalf("the pending dispatch belongs to generation %d, want 2", dispatch.Generation)
+			if dispatch.ID != dispatchID || dispatch.Generation != 2 || dispatch.State != store.DispatchDelivered {
+				t.Fatalf("the recovered dispatch is %+v, want dispatch %d in generation 2 delivered", dispatch, dispatchID)
+			}
+			d.mu.Lock()
+			l.ready = true
+			d.mu.Unlock()
+			d.nudge(agent)
+			ref := sessionRef{address: l.address, generation: 2}
+			prompt := fmt.Sprintf("asmai inbox --dispatch %d", dispatchID)
+			if matched, err := d.automatedSubmitted(ref, prompt, "recovery-prompt", "transcript", json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`)); err != nil || !matched {
+				t.Fatalf("acknowledging the recovery nudge matched=%v, err=%v", matched, err)
+			}
+			messages, err := s.Inbox(agent, dispatchID, time.Now())
+			if err != nil || len(messages) != 1 || messages[0].State != store.DispatchDelivered {
+				t.Fatalf("re-fetching the handoff returned %+v (%v), want delivered", messages, err)
+			}
+			h, err := s.Handoff(messages[0].Handoff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := s.AnswerHandoff(h.ID, agent, l.currentDispatch, 2, store.HandoffAccepted, "accepted", time.Now()); err != nil {
+				t.Fatalf("answering the recovered handoff with its current dispatch failed: %v", err)
+			}
+			if err := d.stopCurrentDispatch(ref, "recovery-prompt", "transcript"); err != nil {
+				t.Fatalf("stopping the recovered handoff dispatch: %v", err)
 			}
 			d.mu.Lock()
 			d.stopping = true
@@ -238,8 +267,8 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 	if err := d.workFetchedReply(l, ref, &messages[0]); err != nil {
 		t.Fatalf("re-reading the current reply was not idempotent: %v", err)
 	}
-	if err := s.StopDispatchIfWorking(reply.ID, ref.generation, "transcript", at); err != nil {
-		t.Fatal(err)
+	if stopped, err := s.StopDispatchIfWorking(reply.ID, ref.generation, "transcript", at); err != nil || !stopped {
+		t.Fatalf("stopping the working reply returned stopped=%v, err=%v", stopped, err)
 	}
 	messages, err = s.Inbox("leader@coordination", reply.ID, at)
 	if err != nil || len(messages) != 1 || messages[0].State != store.DispatchStopped {

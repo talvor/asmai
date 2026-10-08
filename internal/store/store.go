@@ -436,11 +436,11 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 		_, err = tx.Exec(`UPDATE dispatches SET generation=? WHERE agent=? AND (
 			(state IN (?,?,?) AND EXISTS (
 				SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NULL
-			)) OR (state=? AND EXISTS (
+			)) OR (state IN (?,?) AND EXISTS (
 				SELECT 1 FROM messages JOIN handoffs ON handoffs.id=messages.handoff
 				WHERE messages.id=dispatches.message AND messages.kind='handoff' AND messages.fetched_at IS NOT NULL AND handoffs.state=?
 			))
-		)`, generation, start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, HandoffPending)
+		)`, generation, start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
 		if err != nil {
 			return "", nil, err
 		}

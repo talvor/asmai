@@ -164,7 +164,7 @@ func (d *daemon) nudge(agent string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	l := d.leaders[agent]
-	if l == nil || l.session == nil || l.userInput || !l.ready || l.inputUnknown || l.pendingDispatch != 0 || d.stopping {
+	if l == nil || l.session == nil || l.userInput || !l.ready || l.inputUnknown || l.pendingDispatch != 0 || l.currentDispatch != 0 || d.stopping {
 		return
 	}
 	dispatch, err := d.store.NextDispatch(agent)
@@ -221,7 +221,10 @@ func (d *daemon) stopCurrentDispatch(ref sessionRef, promptID, transcript string
 		return nil
 	}
 	id := l.currentDispatch
-	l.currentDispatch = 0
 	l.currentPromptID = ""
-	return d.store.StopDispatchIfWorking(id, ref.generation, transcript, time.Now())
+	stopped, err := d.store.StopDispatchIfWorking(id, ref.generation, transcript, time.Now())
+	if stopped {
+		l.currentDispatch = 0
+	}
+	return err
 }

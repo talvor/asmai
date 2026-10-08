@@ -40,6 +40,17 @@ make build test
 
 The VM has make and Go installed. With `GOTOOLCHAIN=auto`, the default, the installed Go fetches and runs the version [`go.mod`](../go.mod) pins.
 
+### The harness
+
+The qualification harness builds the commit under test itself and runs its cases here as `phillip`, against the real pinned Claude Code signed in under this account. How to prepare the account and run it is in [`qualification-harness.md`](qualification-harness.md); in short, in `~/asmai`, after `git checkout COMMIT`:
+
+```sh
+make qualify
+./bin/qualify
+```
+
+It never runs in hosted CI.
+
 ### Verified
 
 On 2026-10-07, at commit 76b3d80, on the VM as the harness user:
@@ -51,6 +62,12 @@ On 2026-10-07, at commit 76b3d80, on the VM as the harness user:
   - `./bin/asmai version` printed `asmai dev`.
 
 These are observations from that day, not requirements. Versions on the VM will move.
+
+On 2026-10-08, at commit 6b52e97, on the VM as the harness user, the first runs of [the qualification harness](qualification-harness.md):
+
+- `make qualify` built it, and `./bin/qualify` ran C3 and C4 against the real pinned Claude Code 2.1.292, signed in under the harness user's subscription. Both passed.
+- It installed the pinned copy into a new `~/.local/state/asmai` and ran in a staffed `~/.config/asmai/config.toml`. The account had neither before, and both were removed afterwards, along with the harness's scratch clone.
+- Claude Code's trust prompt for the leader's directory selected "No, exit" first, so the harness moves to "Yes, I trust this folder" before it confirms. Claude Code now records that trust in the account's `~/.claude.json`.
 
 ### Later
 
@@ -101,6 +118,17 @@ The tools are installed as follows:
 - make (GNU Make 3.81) and git come with Apple's Command Line Tools.
 
 A command passed straight to `ssh`, rather than run in an interactive session, may need `~/.local/bin` and `/opt/homebrew/bin` added to its `PATH`.
+
+### The harness
+
+The qualification harness builds the commit under test itself and runs its cases here as `phillip`, against the real pinned Claude Code signed in under this account. How to prepare the account and run it is in [`qualification-harness.md`](qualification-harness.md); in short, in `~/asmai`, after `git checkout COMMIT`:
+
+```sh
+GOTOOLCHAIN=go1.26.7 make qualify
+./bin/qualify
+```
+
+It never runs in hosted CI.
 
 ### Verified
 

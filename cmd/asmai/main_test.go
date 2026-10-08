@@ -116,6 +116,53 @@ func TestTheFakeProviderIsNotBuiltIn(t *testing.T) {
 	}
 }
 
+// The qualification harness is for development only: no release executable
+// may contain it, on any platform a release is built for. It lives in its own
+// directory, which asmai must never import, and the executables the tests
+// build must hold none of its symbols.
+func TestTheQualificationHarnessIsNotBuiltIntoAnyReleaseExecutable(t *testing.T) {
+	const harness = "github.com/talvor/asmai/qualification"
+	for _, platform := range [][2]string{{"linux", "amd64"}, {"darwin", "arm64"}} {
+		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", ".")
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+platform[0], "GOARCH="+platform[1])
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list for %s/%s: %v", platform[0], platform[1], err)
+		}
+		for pkg := range strings.Lines(string(out)) {
+			pkg = strings.TrimSpace(pkg)
+			if pkg == harness || strings.HasPrefix(pkg, harness+"/") {
+				t.Errorf("asmai for %s/%s is built with %s", platform[0], platform[1], pkg)
+			}
+		}
+	}
+
+	// The executable itself: go tool nm lists every symbol it was linked with.
+	nm, err := exec.Command("go", "tool", "nm", filepath.Join(asmaiBin, "asmai")).Output()
+	if err != nil {
+		t.Fatalf("go tool nm: %v", err)
+	}
+	if !strings.Contains(string(nm), "github.com/talvor/asmai/internal/daemon.") {
+		t.Fatal("go tool nm lists none of the daemon's symbols, so it cannot show the harness is absent")
+	}
+	if strings.Contains(string(nm), harness) {
+		t.Errorf("the asmai executable holds symbols of %s", harness)
+	}
+}
+
+// There is no `asmai qualify` command: nothing qualifies through asmai itself,
+// and the harness has its own executable (11 rule 16).
+func TestThereIsNoQualifyCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"qualify"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), `unknown command "qualify"`) {
+		t.Errorf("asmai qualify exited %d printing %q, want 2 and an unknown command", code, stderr.String())
+	}
+	if strings.Contains(usage, "qualify") {
+		t.Errorf("the usage mentions qualify:\n%s", usage)
+	}
+}
+
 func TestAFailedCheckDoesNotSayARunningLeaderIsNotStarted(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	o := &output{stdout: &stdout, stderr: &stderr}

@@ -120,7 +120,8 @@ type leader struct {
 	quickExits int
 	// userInput is set while the user owns the session's input: from the
 	// first key they type in the conversation until the provider confirms
-	// their message submitted, or they leave.
+	// their message submitted, a finished turn leaves none of their Enter
+	// keys that may yet submit, or they leave.
 	userInput bool
 	// submits and earlier count the Enter keys the user typed in the
 	// conversation that the provider has not yet confirmed as a prompt
@@ -132,9 +133,9 @@ type leader struct {
 	// submits first, and from earlier only when submits is zero, so an Enter
 	// that submitted nothing, on a menu or an empty prompt, is never
 	// swapped for a newer one: it is forgotten at the next finished turn,
-	// and no surplus survives two finished turns. Automation types nothing into a session yet;
-	// once it does, its typing resets them, so that its own submissions are
-	// never taken for the user's.
+	// and no surplus survives two finished turns. Automation types nothing
+	// into a session yet; once it does, its typing resets them, so that its
+	// own submissions are never taken for the user's.
 	submits        int
 	earlier        int
 	submitTerminal string
@@ -161,8 +162,8 @@ func (l *leader) submitted() (terminal string, ok bool) {
 // finished ages the user's unconfirmed Enter keys once the leader's session
 // reports its turn finished: those still unconfirmed from before its previous
 // turn finished submitted nothing, as a message queued then has been
-// submitted since, and are forgotten. With
-// no Enter left that may yet submit, the input returns to automation.
+// submitted since, and are forgotten. With no Enter left that may yet
+// submit, the input returns to automation.
 func (l *leader) finished() {
 	if l.earlier > 0 && l.submits == 0 {
 		l.userInput = false

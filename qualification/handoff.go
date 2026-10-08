@@ -69,7 +69,8 @@ type handoffEvidence struct {
 }
 
 func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (handoffEvidence, error) {
-	if _, err := h.ready(ctx, f); err != nil {
+	path, err := h.ready(ctx, f)
+	if err != nil {
 		return handoffEvidence{}, err
 	}
 	leader, ok, err := f.Leader()
@@ -80,6 +81,9 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 		return handoffEvidence{}, errors.New("Coordination leader did not start")
 	}
 	if _, err = h.awaitSessionStart(ctx, f, leader); err != nil {
+		return handoffEvidence{}, err
+	}
+	if err = h.prepareEngineeringTrust(ctx, f, path); err != nil {
 		return handoffEvidence{}, err
 	}
 	if err = h.prepareHandoffRepository(ctx, f); err != nil {
@@ -182,10 +186,8 @@ func (h *Harness) awaitPromptSurface(ctx context.Context, f *Factory) error {
 		if err != nil {
 			return err
 		}
-		for _, line := range lines {
-			if strings.Contains(line, "❯") || strings.TrimSpace(line) == ">" {
-				return nil
-			}
+		if promptSurface(lines) {
+			return nil
 		}
 		time.Sleep(h.Poll)
 	}

@@ -84,7 +84,7 @@ The harness sets a canary in every provider API-key variable AsmAI lists, and in
 
 ### C7 and C11: an acknowledged handoff nudge
 
-The harness keeps a small fixture repository in its own factory state, opens the conversation, and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
+The harness keeps a small fixture repository in its own factory state and answers Claude Code's first-use trust prompt in Engineering's scratch agent directory before the daemon starts that leader. It then opens the conversation and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
 
 ## Reading the report
 

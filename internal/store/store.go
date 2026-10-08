@@ -430,6 +430,15 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 				provider = excluded.provider, version = excluded.version, model = excluded.model, pid = excluded.pid,
 				started_at = excluded.started_at, ended_at = NULL, exit = ''`,
 			start.Agent, start.Role, AgentRunning, generation, start.Provider, start.Version, start.Model, start.PID, timestamp(start.At))
+		if err != nil {
+			return "", nil, err
+		}
+		_, err = tx.Exec(`UPDATE dispatches SET generation=? WHERE agent=? AND state IN (?,?,?) AND EXISTS (
+			SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NULL
+		)`, generation, start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown)
+		if err != nil {
+			return "", nil, err
+		}
 		data := struct {
 			SessionStart
 			Generation int `json:"generation"`

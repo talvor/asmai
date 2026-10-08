@@ -423,7 +423,23 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int) {
 		return
 	}
 	l.session = nil
-	if d.stopping || l.address.Role != roles.Coordination {
+	if d.stopping {
+		return
+	}
+	if l.address.Role != roles.Coordination {
+		pending, err := d.store.PendingLeaders()
+		if err != nil {
+			d.log.Error("reading pending leaders after agent exit", "agent", l.address.String(), "error", err)
+			return
+		}
+		for _, agent := range pending {
+			if agent == l.address.String() {
+				if err := d.ensureRoleLeader(l.address.Role); err != nil {
+					d.log.Error("restarting agent with pending handoffs", "agent", agent, "error", err)
+				}
+				return
+			}
+		}
 		return
 	}
 	if time.Since(l.startedAt) > restartWaitMax {
@@ -744,6 +760,7 @@ func (d *daemon) leave(c *conversation, how string) {
 		d.log.Error("journaling leaving the conversation", "error", err.Error())
 	}
 	d.log.Info("the user left the conversation", "agent", l.address.String(), "generation", c.generation, "terminal", c.terminal, "how", how)
+	d.nudge(l.address.String())
 }
 
 // stream answers the client on conn, which r reads, with attached, then

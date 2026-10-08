@@ -45,7 +45,7 @@ Switch with `scripts/ci-mode.sh <mode> [minutes]`, then commit and push. See the
 
 `asmai start` starts the per-user daemon in the background and returns once it answers; `asmai start --foreground` keeps it attached to the terminal, showing its log, until `asmai stop` or Ctrl-C. Each user runs at most one daemon: a second start reports the running factory. Every other command is a thin client that reaches the daemon over a Unix socket in the state directory; the daemon opens no network listener.
 
-Every start then runs the checks that exist: the roles are staffed in the configuration file, and the pinned Claude Code is installed. If they pass, the daemon starts Coordination's leader, which runs for as long as the factory runs. If one fails, `asmai start` names it and the fix and exits 1, and the daemon keeps running without agents, so that you can fix it, for example with `asmai providers install`, and run `asmai start` again.
+Every start then runs the checks that exist: the roles are staffed in the configuration file, and the pinned Claude Code is installed. If they pass, the daemon starts Coordination's leader, which runs for as long as the factory runs. If one fails, `asmai start` names it and the fix and exits 1, and the daemon keeps running without starting the leader (a leader already running keeps running), so that you can fix it, for example with `asmai providers install`, and run `asmai start` again.
 
 | Command | What it does |
 | --- | --- |

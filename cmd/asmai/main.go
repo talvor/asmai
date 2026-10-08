@@ -244,6 +244,11 @@ func (o *output) started(st daemon.Status, already bool, paths statedir.Paths, r
 			daemonState = "The factory's daemon is running"
 		}
 		message := daemonState + ", but not Coordination's leader: " + plural(len(failures), "a check failed", "checks failed")
+		for _, l := range resp.Leaders {
+			if l.Agent == "leader@coordination" && l.State == store.AgentRunning {
+				message = daemonState + " and so is Coordination's leader, but " + plural(len(failures), "a check failed", "checks failed")
+			}
+		}
 		if o.json {
 			o.printJSON(map[string]any{"error": message, "started": !already, "daemon": runningJSON(st), "checks": resp.Checks, "leaders": resp.Leaders, "state_dir": paths.Dir})
 			return 1

@@ -8,6 +8,10 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/store"
 )
 
 func TestVersionPrintsTheBuildVersion(t *testing.T) {
@@ -84,5 +88,21 @@ func TestTheFakeProviderIsNotBuiltIn(t *testing.T) {
 		if pkg == "github.com/talvor/asmai/internal/fakeprovider" || strings.HasPrefix(pkg, "github.com/talvor/asmai/internal/fakeprovider/") {
 			t.Errorf("asmai is built with %s", pkg)
 		}
+	}
+}
+
+func TestAFailedCheckDoesNotSayARunningLeaderIsNotStarted(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	o := &output{stdout: &stdout, stderr: &stderr}
+	resp := daemon.Response{
+		Checks:  []daemon.Check{{Name: "staffing", Problem: "the configuration file is not valid", Fix: "fix it"}},
+		Leaders: []daemon.Leader{{Agent: "leader@coordination", State: store.AgentRunning, Generation: 1}},
+	}
+	if code := o.started(daemon.Status{}, true, statedir.Paths{}, resp); code != 1 {
+		t.Errorf("asmai start exited %d, want 1 for a failed check", code)
+	}
+	got := stderr.String()
+	if strings.Contains(got, "but not Coordination's leader") || !strings.Contains(got, "so is Coordination's leader, but a check failed") || !strings.Contains(got, "failed  staffing") {
+		t.Errorf("asmai start said %q, want the failed check named and the leader not called stopped", got)
 	}
 }

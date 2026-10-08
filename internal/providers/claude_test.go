@@ -38,6 +38,9 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
 		t.Fatal(err)
 	}
+	if len(settings.Hooks) != 4 {
+		t.Errorf("the settings have hooks for %d events, want the four an agent's session reports", len(settings.Hooks))
+	}
 	for _, event := range []string{"SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"} {
 		m := settings.Hooks[event]
 		if len(m) != 1 || m[0].Matcher != "" || len(m[0].Hooks) != 1 || m[0].Hooks[0].Type != "command" || m[0].Hooks[0].Command != hook {

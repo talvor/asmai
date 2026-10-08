@@ -14,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"golang.org/x/term"
 
@@ -222,7 +223,7 @@ func (c *attachClient) draw() string {
 // cursor back where the agent's is.
 func (c *attachClient) statusLine() string {
 	text := fmt.Sprintf(" %s · observing · Ctrl-] detaches", c.agent)
-	if title := c.term.Title(); title != "" {
+	if title := strings.Map(printable, c.term.Title()); title != "" {
 		text += " · " + title
 	}
 	runes := []rune(text)
@@ -233,6 +234,13 @@ func (c *attachClient) statusLine() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\x1b[?2026h\x1b7\x1b[%d;1H\x1b[0;7m%s\x1b[0m\x1b8\x1b[?2026l", c.rows, line)
 	return b.String()
+}
+
+func printable(r rune) rune {
+	if unicode.IsControl(r) {
+		return -1
+	}
+	return r
 }
 
 // screenJSON prints the agent's screen as it is now.

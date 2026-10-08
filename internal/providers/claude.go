@@ -12,7 +12,7 @@ import (
 
 // HookEvents are the Claude Code lifecycle events an agent session's hooks
 // report to the daemon.
-var HookEvents = []string{"SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop", "SessionEnd"}
+var HookEvents = []string{"SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"}
 
 // AllowedAsmai is the permission rule that lets an agent run `asmai` without
 // a native permission prompt.

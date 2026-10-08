@@ -220,8 +220,8 @@ func Run(ctx context.Context, cfg Config) error {
 		defer asker.Close()
 	}
 
-	// End the agents, while their hooks can still report, then stop
-	// serving, wait for the commands being served, and persist.
+	// End the agents, then stop serving, wait for the commands being
+	// served, and persist.
 	d.stopAgents(by)
 	listener.Close()
 	<-served

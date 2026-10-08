@@ -28,33 +28,46 @@ const startTimeout = 30 * time.Second
 // Call sends req to the daemon on socket and returns its answer. A daemon
 // that answers with an error makes that the error.
 func Call(socket string, req Request) (Response, error) {
+	conn, _, resp, err := Open(socket, req)
+	if conn != nil {
+		conn.Close()
+	}
+	return resp, err
+}
+
+// Open sends req to the daemon on socket and returns its answer, with the
+// connection and its reader for what the daemon sends after the answer, as
+// it does to attach. The caller closes the connection, which is nil when
+// the daemon could not be reached. A daemon that answers with an error makes
+// that the error.
+func Open(socket string, req Request) (net.Conn, *bufio.Reader, Response, error) {
 	conn, err := net.DialTimeout("unix", socket, 5*time.Second)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
-			return Response{}, ErrNotRunning
+			return nil, nil, Response{}, ErrNotRunning
 		}
-		return Response{}, fmt.Errorf("reaching the daemon: %w", err)
+		return nil, nil, Response{}, fmt.Errorf("reaching the daemon: %w", err)
 	}
-	defer conn.Close()
 	line, err := json.Marshal(req)
 	if err != nil {
-		return Response{}, err
+		return conn, nil, Response{}, err
 	}
 	if _, err := conn.Write(append(line, '\n')); err != nil {
-		return Response{}, fmt.Errorf("reaching the daemon: %w", err)
+		return conn, nil, Response{}, fmt.Errorf("reaching the daemon: %w", err)
 	}
-	answer, err := bufio.NewReader(conn).ReadBytes('\n')
+	r := bufio.NewReader(conn)
+	answer, err := r.ReadBytes('\n')
 	if err != nil {
-		return Response{}, fmt.Errorf("the daemon did not answer: %w", err)
+		return conn, r, Response{}, fmt.Errorf("the daemon did not answer: %w", err)
 	}
 	var resp Response
 	if err := json.Unmarshal(answer, &resp); err != nil {
-		return Response{}, fmt.Errorf("the daemon's answer is not JSON: %w", err)
+		return conn, r, Response{}, fmt.Errorf("the daemon's answer is not JSON: %w", err)
 	}
 	if resp.Error != "" {
-		return resp, errors.New(resp.Error)
+		return conn, r, resp, errors.New(resp.Error)
 	}
-	return resp, nil
+	return conn, r, resp, nil
 }
 
 // Start starts the daemon in the background, as executable started with

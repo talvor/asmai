@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai"
+	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
@@ -40,17 +41,23 @@ var version = "dev"
 const usage = `usage: asmai <command> [--json]
 
 commands:
-  asmai start [--foreground]  start the factory's daemon, in the background unless --foreground
-  asmai stop                  persist the factory's state and stop its daemon
-  asmai status                show whether the daemon is running, and its version
+  asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
+                              the daemon runs in the background unless --foreground
+  asmai stop                  persist the factory's state and stop its daemon and agents
+  asmai status                show the daemon, its version and each leader
+  asmai agents                list the factory's agents
+  asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
+                              Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
   asmai export                write the journal out for inspection
   asmai providers install     fetch the pinned provider CLIs, after you confirm
   asmai providers list        show the provider CLIs AsmAI has installed
+  asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
   asmai version               print the version of this executable
   asmai notices               print AsmAI's license and the third-party notices
 
-Every command accepts --json to print JSON instead of tables.
+Every command accepts --json to print JSON instead of tables; asmai attach --json prints the
+agent's screen as it is now.
 `
 
 // logPoll is how often `asmai log --follow` looks for new lines.
@@ -86,13 +93,25 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
 	case "log":
 		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
-	case "stop", "status", "export", "version", "notices", "providers install", "providers list":
+	case "stop", "status", "agents", "attach", "hook", "export", "version", "notices", "providers install", "providers list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
 	}
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	var agent string
+	if name == "attach" {
+		if flags.NArg() == 0 {
+			fmt.Fprintf(stderr, "asmai attach: name the agent, such as leader@coordination or coordination\n\n%s", usage)
+			return 2
+		}
+		agent = flags.Arg(0)
+		// Flags may come after the agent too.
+		if err := flags.Parse(flags.Args()[1:]); err != nil {
+			return 2
+		}
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "asmai %s: unexpected argument %q\n\n%s", name, flags.Arg(0), usage)
@@ -131,6 +150,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return stop(o, paths)
 	case "status":
 		return status(o, paths)
+	case "agents":
+		return agents(o, paths)
+	case "attach":
+		return attach(o, paths, agent, stdin)
+	case "hook":
+		return hook(o, paths, stdin)
 	case "log":
 		return printLog(o, paths, *follow)
 	case "providers install":
@@ -152,18 +177,40 @@ func start(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	return o.started(st, already, paths)
+	return o.startFactory(st, already, paths)
+}
+
+// startFactory has the running daemon run the checks and start Coordination's
+// leader, and reports what happened.
+func (o *output) startFactory(st daemon.Status, already bool, paths statedir.Paths) int {
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStart})
+	if err != nil {
+		return o.fail(err)
+	}
+	return o.started(st, already, paths, resp)
 }
 
 // startForeground runs the daemon in this process, showing its log on
 // stderr, until `asmai stop`, an interrupt or a termination signal.
 func startForeground(o *output, paths statedir.Paths) int {
 	if resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStatus}); err == nil {
-		return o.started(*resp.Status, true, paths)
+		return o.startFactory(*resp.Status, true, paths)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	cfg := daemon.Config{Paths: paths, Version: version}
+	executable, err := os.Executable()
+	if err != nil {
+		return o.fail(fmt.Errorf("finding this executable: %w", err))
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return o.fail(fmt.Errorf("finding the configuration file: %w", err))
+	}
+	p, err := providers.ParsePins(asmai.Pins)
+	if err != nil {
+		return o.fail(err)
+	}
+	cfg := daemon.Config{Paths: paths, Version: version, ConfigFile: config.DefaultPath(home), Executable: executable, Pins: p}
 	// Started in the background, the daemon's stderr is its log, which needs
 	// no copy.
 	if !isFile(o.stderr, paths.Log) {
@@ -172,10 +219,10 @@ func startForeground(o *output, paths statedir.Paths) int {
 			cfg.Mirror = &rendered{w: o.stderr}
 		}
 	}
-	err := daemon.Run(ctx, cfg)
+	err = daemon.Run(ctx, cfg)
 	if errors.Is(err, daemon.ErrAlreadyRunning) {
 		if resp, callErr := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStatus}); callErr == nil {
-			return o.started(*resp.Status, true, paths)
+			return o.startFactory(*resp.Status, true, paths)
 		}
 	}
 	if err != nil {
@@ -184,17 +231,65 @@ func startForeground(o *output, paths statedir.Paths) int {
 	return 0
 }
 
-func (o *output) started(st daemon.Status, already bool, paths statedir.Paths) int {
+func (o *output) started(st daemon.Status, already bool, paths statedir.Paths, resp daemon.Response) int {
+	var failures []daemon.Check
+	for _, c := range resp.Checks {
+		if !c.OK {
+			failures = append(failures, c)
+		}
+	}
+	if len(failures) > 0 {
+		daemonState := "Started the factory's daemon"
+		if already {
+			daemonState = "The factory's daemon is running"
+		}
+		message := daemonState + ", but not Coordination's leader: " + plural(len(failures), "a check failed", "checks failed")
+		for _, l := range resp.Leaders {
+			if l.Agent == "leader@coordination" && l.State == store.AgentRunning {
+				message = daemonState + " and so is Coordination's leader, but " + plural(len(failures), "a check failed", "checks failed")
+			}
+		}
+		if o.json {
+			o.printJSON(map[string]any{"error": message, "started": !already, "daemon": runningJSON(st), "checks": resp.Checks, "leaders": resp.Leaders, "state_dir": paths.Dir})
+			return 1
+		}
+		fmt.Fprintf(o.stderr, "asmai: %s.\n", message)
+		for _, c := range resp.Checks {
+			if c.OK {
+				fmt.Fprintf(o.stderr, "  ok      %s\n", c.Name)
+				continue
+			}
+			fmt.Fprintf(o.stderr, "  failed  %s: %s\n", c.Name, c.Problem)
+			fmt.Fprintf(o.stderr, "          fix: %s\n", strings.ReplaceAll(c.Fix, "\n", "\n            "))
+		}
+		fmt.Fprintln(o.stderr, "Fix what failed, then run `asmai start` again.")
+		return 1
+	}
 	if o.json {
-		return o.printJSON(map[string]any{"started": !already, "daemon": runningJSON(st), "state_dir": paths.Dir})
+		return o.printJSON(map[string]any{"started": !already, "daemon": runningJSON(st), "checks": resp.Checks, "leaders": resp.Leaders, "state_dir": paths.Dir})
 	}
 	if already {
 		fmt.Fprintln(o.stdout, "The factory is already running; no second daemon was started.")
 	} else {
 		fmt.Fprintln(o.stdout, "Started the factory.")
 	}
-	o.table(runningRows(st, paths))
+	o.table(append(runningRows(st, paths), leaderRows(resp.Leaders)...))
 	return 0
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+func leaderRows(leaders []daemon.Leader) [][]string {
+	var rows [][]string
+	for _, l := range leaders {
+		rows = append(rows, []string{l.Agent, l.State})
+	}
+	return rows
 }
 
 func stop(o *output, paths statedir.Paths) int {
@@ -234,10 +329,80 @@ func status(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"daemon": runningJSON(*resp.Status), "state_dir": paths.Dir})
+	checks := resp.Checks
+	if checks == nil {
+		checks = []daemon.Check{}
 	}
-	o.table(runningRows(*resp.Status, paths))
+	if o.json {
+		return o.printJSON(map[string]any{"daemon": runningJSON(*resp.Status), "leaders": resp.Leaders, "checks": checks, "state_dir": paths.Dir})
+	}
+	rows := append(runningRows(*resp.Status, paths), leaderRows(resp.Leaders)...)
+	failed := false
+	for _, c := range checks {
+		if !c.OK {
+			rows = append(rows, []string{"check failed", c.Name + ": " + c.Problem})
+			failed = true
+		}
+	}
+	o.table(rows)
+	if failed {
+		fmt.Fprintln(o.stdout, "`asmai start` shows how to fix what failed.")
+	}
+	return 0
+}
+
+// agents lists the agents the store records.
+func agents(o *output, paths statedir.Paths) int {
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAgents})
+	if err != nil {
+		return o.fail(err)
+	}
+	list := resp.Agents
+	if list == nil {
+		list = []store.Agent{}
+	}
+	if o.json {
+		return o.printJSON(map[string]any{"agents": list})
+	}
+	if len(list) == 0 {
+		fmt.Fprintln(o.stdout, "No agent has run yet; `asmai start` starts Coordination's leader.")
+		return 0
+	}
+	rows := [][]string{{"AGENT", "STATE", "GENERATION", "PROVIDER", "VERSION", "MODEL", "PID", "STARTED"}}
+	for _, a := range list {
+		pid := "-"
+		if a.State == store.AgentRunning {
+			pid = strconv.Itoa(a.PID)
+		}
+		rows = append(rows, []string{a.Agent, a.State, strconv.Itoa(a.Generation), a.Provider, a.Version, a.Model, pid, a.StartedAt.Local().Format(time.RFC3339)})
+	}
+	o.table(rows)
+	return 0
+}
+
+// hook reports what an agent session's hook was given on stdin to the
+// daemon, which journals it as an observation of the session named by the
+// credential in the environment. It prints nothing on stdout, because Claude
+// Code adds what some hooks print to the session, and it never exits 2,
+// which would make Claude Code block what the hook reports.
+func hook(o *output, paths statedir.Paths, stdin io.Reader) int {
+	credential := os.Getenv(daemon.SessionCredential)
+	if credential == "" {
+		return o.fail(fmt.Errorf("hook: there is no %s: only an agent session's hooks run asmai hook", daemon.SessionCredential))
+	}
+	payload, err := io.ReadAll(stdin)
+	if err != nil {
+		return o.fail(fmt.Errorf("hook: reading the payload: %w", err))
+	}
+	if !json.Valid(payload) {
+		return o.fail(errors.New("hook: the payload on stdin is not JSON"))
+	}
+	if _, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandHook, Session: credential, Payload: payload}); err != nil {
+		return o.fail(fmt.Errorf("hook: %w", err))
+	}
+	if o.json {
+		return o.printJSON(map[string]bool{"journaled": true})
+	}
 	return 0
 }
 

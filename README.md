@@ -2,7 +2,7 @@
 
 AsmAI (short for AssemblyAI) is a personal software engineering **factory**: a coordinated group of AI agents that does software engineering work for one user across the repositories they register with it.
 
-The project is at an early stage (milestone M1, the walking skeleton, is under way). This repository is the Go module `github.com/talvor/asmai`; so far `asmai` runs the per-user daemon and its store (see [Running the factory](#running-the-factory)), installs its pinned Claude Code (see [Pinned providers](#pinned-providers)), and prints its version (`asmai version`) and its license with the third-party notices (`asmai notices`).
+The project is at an early stage (milestone M1, the walking skeleton, is under way). This repository is the Go module `github.com/talvor/asmai`; so far `asmai` runs the per-user daemon and its store, with Coordination's leader in a terminal the daemon owns (see [Running the factory](#running-the-factory)), installs its pinned Claude Code (see [Pinned providers](#pinned-providers)), and prints its version (`asmai version`) and its license with the third-party notices (`asmai notices`).
 
 ## Two repositories
 
@@ -45,17 +45,55 @@ Switch with `scripts/ci-mode.sh <mode> [minutes]`, then commit and push. See the
 
 `asmai start` starts the per-user daemon in the background and returns once it answers; `asmai start --foreground` keeps it attached to the terminal, showing its log, until `asmai stop` or Ctrl-C. Each user runs at most one daemon: a second start reports the running factory. Every other command is a thin client that reaches the daemon over a Unix socket in the state directory; the daemon opens no network listener.
 
+Every start then runs the checks that exist: the roles are staffed in the configuration file, and the pinned Claude Code is installed. If they pass, the daemon starts Coordination's leader, which runs for as long as the factory runs. If one fails, `asmai start` names it and the fix and exits 1, and the daemon keeps running without starting the leader (a leader already running keeps running), so that you can fix it, for example with `asmai providers install`, and run `asmai start` again.
+
 | Command | What it does |
 | --- | --- |
-| `asmai start [--foreground]` | Start the daemon |
-| `asmai stop` | Persist the factory's state and stop the daemon |
-| `asmai status` | Whether the daemon is running, and its version |
+| `asmai start [--foreground]` | Start the daemon, run the checks, and start Coordination's leader |
+| `asmai stop` | Stop the agents, persist the factory's state and stop the daemon |
+| `asmai status` | Whether the daemon is running, its version, each leader as running or stopped, and any check that failed |
+| `asmai agents` | The agents that have run: each one's state, generation, provider, model and process |
+| `asmai attach <agent>` | Show an agent's terminal and observe it. Ctrl-] detaches |
 | `asmai log [--follow]` | The daemon's log, oldest first; `--follow` waits for new lines. It reads the log files, so it works while the daemon is stopped |
 | `asmai export` | The journal, written out for inspection |
 | `asmai providers install` | Fetch the pinned provider CLIs, once you confirm (see [Pinned providers](#pinned-providers)) |
 | `asmai providers list` | The provider CLIs AsmAI has installed |
 
-Every command prints readable tables, or JSON with `--json`.
+Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
+
+### The configuration file
+
+The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and you edit it by hand. So far it holds only the staffing of the roles M1 runs: a table for each of Coordination, Engineering and Quality, with the provider and model of the role's leader and of its workers. Claude is the only provider so far.
+
+```toml
+[roles.coordination]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
+[roles.engineering]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
+[roles.quality]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+```
+
+`asmai start` refuses a file it cannot honour, naming the line and the fix: TOML that does not parse, a table or field it does not read, a provider other than `"claude"`, or a role or field left out.
+
+### Agents
+
+Coordination's leader runs the pinned Claude Code in a pseudo-terminal the daemon owns. Everything the session is given is on its command line: `--settings` with a hook for each lifecycle event (session start, prompt submission, permission request and stop) and the permission rule `Bash(asmai:*)` that lets it run `asmai` without a prompt; `--setting-sources user`; its model; and Coordination's instructions, appended to its system prompt. AsmAI never writes `~/.claude`, and keeps Claude Code's native permission prompts and hook review: it passes no flag that skips them, and the settings set the default permission mode and disable bypassing permissions, whatever your own settings say.
+
+The session starts with the daemon's environment, less any provider API-key variable such as `ANTHROPIC_API_KEY`, so it runs on your subscription. Each hook runs the daemon's copy of `asmai` at its fixed path, `bin/asmai` in the state directory, which reports the event to the daemon; the daemon journals it as an observation of that session's generation. A `session.started` journal entry records the provider version, the command line passed (never the environment) and the generation, and a `session.ended` entry records how the session ended.
+
+Agents are addressed `name@role`, and a role alone means its leader: `asmai attach coordination` is `asmai attach leader@coordination`. `asmai attach` draws the agent's screen itself from AsmAI's own terminal emulation, with the agent's terminal one row shorter than yours and a status line on the last row. Attaching only observes: what you type does not reach the agent.
 
 Everything the factory keeps on the host is in the state directory, `~/.local/state/asmai`, readable only by the user:
 
@@ -64,6 +102,8 @@ Everything the factory keeps on the host is in the state directory, `~/.local/st
 - `daemon.log`, the daemon's log, which rotates through 5 files of 20 MB (`daemon.log`, then `daemon.log.1` to `daemon.log.4`, the oldest).
 - `daemon.lock`, held by the running daemon.
 - `providers/`, AsmAI's own copies of the provider CLIs, one directory per provider and version, such as `providers/claude-code/2.1.292/claude`.
+- `bin/asmai`, the daemon's copy of `asmai`, which each start replaces: agent sessions run it, first on their `PATH`, and their hooks name it.
+- `agents/`, each agent's working directory, by its address, such as `agents/leader@coordination`.
 
 No journal entry or log line records environment variables.
 

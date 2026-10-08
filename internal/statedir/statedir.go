@@ -30,6 +30,13 @@ type Paths struct {
 	// Providers holds AsmAI's own copies of the provider CLIs, one directory
 	// per provider and version, apart from the user's own installations.
 	Providers string
+	// Bin holds Executable, and is first on every agent session's PATH.
+	Bin string
+	// Executable is the daemon's copy of the asmai executable, at one fixed
+	// path: every agent session runs it, and its hooks name it.
+	Executable string
+	// Agents holds each agent's working directory, by its address.
+	Agents string
 }
 
 // Default returns the paths in the user's state directory,
@@ -49,12 +56,15 @@ func Default() (Paths, error) {
 // At returns the paths in the state directory dir.
 func At(dir string) Paths {
 	return Paths{
-		Dir:       dir,
-		Socket:    filepath.Join(dir, "daemon.sock"),
-		Lock:      filepath.Join(dir, "daemon.lock"),
-		Store:     filepath.Join(dir, "store.db"),
-		Log:       filepath.Join(dir, "daemon.log"),
-		Providers: filepath.Join(dir, "providers"),
+		Dir:        dir,
+		Socket:     filepath.Join(dir, "daemon.sock"),
+		Lock:       filepath.Join(dir, "daemon.lock"),
+		Store:      filepath.Join(dir, "store.db"),
+		Log:        filepath.Join(dir, "daemon.log"),
+		Providers:  filepath.Join(dir, "providers"),
+		Bin:        filepath.Join(dir, "bin"),
+		Executable: filepath.Join(dir, "bin", "asmai"),
+		Agents:     filepath.Join(dir, "agents"),
 	}
 }
 

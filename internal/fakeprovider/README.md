@@ -12,13 +12,17 @@ The fake is for tests only:
 
 ```sh
 go build -o fake-provider ./internal/fakeprovider/cmd/fake-provider
-ASMAI_FAKE_PROVIDER_SCRIPT=FILE fake-provider [--settings FILE|JSON]
-fake-provider --script FILE [--settings FILE|JSON]
+ASMAI_FAKE_PROVIDER_SCRIPT=FILE fake-provider [CLAUDE CODE FLAGS]
+fake-provider --script FILE [CLAUDE CODE FLAGS]
 ```
+
+The Claude Code flags it takes are the ones the daemon starts Claude Code with: `--settings FILE|JSON`, `--setting-sources SOURCES`, `--model MODEL` and `--append-system-prompt TEXT`. Any other flag makes it exit 2, as an unknown option makes Claude Code exit.
 
 Run it in a pseudo-terminal, the way the daemon runs a provider CLI. Like the real providers, it puts its terminal in raw mode. Keys arrive exactly as typed, Enter arrives as `\r`, and nothing is echoed unless a scripted screen draws it.
 
 The fake plays the script named by `--script`, or else by the `ASMAI_FAKE_PROVIDER_SCRIPT` environment variable. With the script in the environment, a test starts the fake in place of the pinned Claude Code with the arguments the daemon passes to Claude Code and no fake-only flags.
+
+`--setting-sources` takes the setting sources Claude Code loads, separated by commas, each of `user`, `project` and `local`; any other makes the fake exit 2. The fake plays the same whatever `--setting-sources`, `--model` and `--append-system-prompt` are. With `ASMAI_FAKE_PROVIDER_ARGS` naming a file in its environment, the fake writes the arguments it was started with to that file as a JSON array before it plays, so that a test can see the command line a session was given.
 
 `--settings` takes Claude Code settings the way Claude Code's own `--settings` does: the path of a settings file, or the settings as JSON when the argument starts with `{`. The fake reads only their `"hooks"`, in Claude Code's shape, and leaves everything else alone:
 
@@ -33,7 +37,7 @@ The fake delivers a payload the way Claude Code delivers it: it runs each hook c
 | --- | --- |
 | 0 | Every step was played |
 | 1 | The input differed from what the script expected, the input ended first, a command's exit status or output differed from what the script requires, or the terminal failed |
-| 2 | Bad arguments, settings it cannot read or run, or a script it cannot read or parse |
+| 2 | Bad arguments, settings it cannot read or run, a script it cannot read or parse, or an arguments file it cannot write |
 
 ## The script format
 

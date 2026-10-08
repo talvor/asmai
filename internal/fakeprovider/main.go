@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 
 	"golang.org/x/term"
@@ -21,7 +22,15 @@ import (
 // arguments the daemon passes to Claude Code.
 const ScriptEnv = "ASMAI_FAKE_PROVIDER_SCRIPT"
 
-const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON]"
+// ArgsEnv is the environment variable that names a file the fake writes the
+// arguments it was started with to, as a JSON array, before it plays, so
+// that a test can see the command line a session was given.
+const ArgsEnv = "ASMAI_FAKE_PROVIDER_ARGS"
+
+const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--model MODEL] [--append-system-prompt TEXT]"
+
+// settingSources are the sources Claude Code's --setting-sources takes.
+var settingSources = []string{"user", "project", "local"}
 
 // Main runs the fake provider CLI with args, the command line without the
 // program name, and returns its exit code.
@@ -30,8 +39,26 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	scriptPath := flags.String("script", "", "the script to play (default $"+ScriptEnv+")")
 	settingsArg := flags.String("settings", "", "Claude Code settings, as a file or as JSON, whose hook commands receive the payloads")
+	// The fake takes these as Claude Code does, and plays the same whatever
+	// they are.
+	sources := flags.String("setting-sources", "", "the setting sources Claude Code loads, separated by commas")
+	flags.String("model", "", "the model Claude Code uses")
+	flags.String("append-system-prompt", "", "text Claude Code appends to its system prompt")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	for _, source := range strings.Split(*sources, ",") {
+		if source != "" && !slices.Contains(settingSources, strings.TrimSpace(source)) {
+			fmt.Fprintf(stderr, "fake-provider: --setting-sources: %q is not one of %s\n", source, strings.Join(settingSources, ", "))
+			return 2
+		}
+	}
+	if path := os.Getenv(ArgsEnv); path != "" {
+		encoded, _ := json.Marshal(args)
+		if err := os.WriteFile(path, encoded, 0o600); err != nil {
+			fmt.Fprintf(stderr, "fake-provider: $%s: %v\n", ArgsEnv, err)
+			return 2
+		}
 	}
 	if *scriptPath == "" {
 		*scriptPath = os.Getenv(ScriptEnv)

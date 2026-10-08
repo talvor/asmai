@@ -40,6 +40,7 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 			resp.Effect = &e
 		}
 	case CommandResult, CommandBlocked:
+		conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
 		var r store.Report
 		var dispatch store.Dispatch
 		if r, dispatch, err = d.report(req); err == nil {
@@ -302,7 +303,7 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	}
 
 	// What the daemon sees of the workspace is the commit the report is at.
-	ctx, cancel := context.WithTimeout(d.work, time.Minute)
+	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
 	commit, err := repos.Commit(ctx, a.Workspace.Path, "HEAD")
 	if err != nil {

@@ -149,7 +149,7 @@ func (s *Store) Jobs() ([]Job, error) {
 
 // JobEntries returns journal records belonging to this job, newest first.
 func (s *Store) JobEntries(number int64) ([]Entry, error) {
-	rows, err := s.db.Query(`SELECT id, at, kind, data FROM journal WHERE kind = ? AND json_extract(data, '$.number') = ? ORDER BY id DESC LIMIT 20`, KindJobOpened, number)
+	rows, err := s.db.Query(`SELECT id, at, kind, data FROM journal WHERE (kind = ? AND json_extract(data, '$.number') = ?) OR json_extract(data, '$.job') = ? ORDER BY id DESC LIMIT 20`, KindJobOpened, number, number)
 	if err != nil {
 		return nil, err
 	}

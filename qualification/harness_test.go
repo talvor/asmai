@@ -151,17 +151,24 @@ func harness(t *testing.T, provider Provider, script []string) *Harness {
 		t.Fatal(err)
 	}
 	h := &Harness{
-		Subject:  Subject{Commit: "0123456789abcdef0123456789abcdef01234567", Asmai: asmaiBin, Pins: pins},
-		Provider: provider,
-		Paths:    statedir.At(filepath.Join(home, ".local", "state", "asmai")),
-		Env:      append(os.Environ(), "HOME="+home, fakeprovider.ScriptEnv+"="+scriptFile),
-		Host:     "test-host", User: "tester",
+		Subject:            Subject{Commit: "0123456789abcdef0123456789abcdef01234567", Asmai: asmaiBin, Pins: pins},
+		Provider:           provider,
+		Paths:              statedir.At(filepath.Join(home, ".local", "state", "asmai")),
+		QualificationPaths: statedir.At(filepath.Join(home, ".local", "state", "asmai", "qualification")),
+		Env:                append(os.Environ(), "HOME="+home, fakeprovider.ScriptEnv+"="+scriptFile),
+		Host:               "asmai-vm", User: "tester",
 		Wait: 30 * time.Second, Poll: 50 * time.Millisecond,
 	}
 	// A failing test must not leave its daemon running.
 	t.Cleanup(func() {
-		f := NewFactory(h.Subject.Asmai, h.Paths, h.Env)
-		f.Stop(context.Background())
+		for _, paths := range []statedir.Paths{h.Paths, h.QualificationPaths} {
+			env := h.Env
+			if paths.Dir == h.QualificationPaths.Dir {
+				env = envValue(env, "ASMAI_STATE_DIR", paths.Dir)
+			}
+			f := NewFactory(h.Subject.Asmai, paths, env)
+			f.Stop(context.Background())
+		}
 	})
 	return h
 }
@@ -207,28 +214,61 @@ var startsDirectly = []string{
 	`{"expect": "only typed by a test that means to"}`,
 }
 
-func TestC3PassesWhenTheSessionStartsSignedInAfterTheTrustPrompt(t *testing.T) {
+func TestC3RefusesToAutomaticallyTrustItsDefaultDirectory(t *testing.T) {
 	h := harness(t, signedIn, startsAfterTrust)
 
 	r := result(t, h, "C3")
 
-	if r.Outcome != Passed {
-		t.Fatalf("C3 %s: %s", r.Outcome, r.Failure)
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "automatic trust acceptance is limited") {
+		t.Fatalf("C3 %s: %s, want trust prompt refusal", r.Outcome, r.Failure)
 	}
-	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"signed in with claude.ai", "answered it as a user does", "reported SessionStart through its hook, with no login prompt"} {
-		if !strings.Contains(evidence, want) {
-			t.Errorf("C3's evidence\n%s\ndoes not say %q", evidence, want)
+}
+
+func TestAutomaticTrustAcceptanceIsLimitedToQualificationDirectoriesOnTheVM(t *testing.T) {
+	h := harness(t, signedIn, startsDirectly)
+	f := NewFactory(h.Subject.Asmai, h.QualificationPaths, h.Env)
+	for _, address := range []string{"leader@coordination", "leader@engineering"} {
+		if !h.canAutoAcceptTrust(f, address) {
+			t.Errorf("authorized qualification directory %s was not allowed", address)
 		}
 	}
-	if len(r.Limitations) != 0 {
-		t.Errorf("C3 recorded the known limitations %+v, want none", r.Limitations)
+	h.Host = "Phillips-MacBook-Pro"
+	if h.canAutoAcceptTrust(f, "leader@engineering") {
+		t.Error("automatic trust acceptance was allowed outside asmai-vm")
 	}
-	if h.reported == "" {
-		t.Error("the harness did not record the version the installed copy reports")
+	h.Host = "asmai-vm"
+	if h.canAutoAcceptTrust(f, "leader@quality") {
+		t.Error("automatic trust acceptance was allowed for an unsupported role")
 	}
-	if _, running := NewFactory(h.Subject.Asmai, h.Paths, h.Env).Running(); running {
-		t.Error("the factory is still running after the case")
+	f.paths.Dir = filepath.Join(h.Paths.Dir, "other")
+	f.paths.Agents = filepath.Join(f.paths.Dir, "agents")
+	if h.canAutoAcceptTrust(f, "leader@engineering") {
+		t.Error("automatic trust acceptance was allowed outside the qualification state")
+	}
+}
+
+func TestHandoffCasesUseTheDisposableFactoryState(t *testing.T) {
+	h := harness(t, signedIn, startsDirectly)
+	callerState := filepath.Join(t.TempDir(), "caller-state")
+	h.Env = envValue(h.Env, "ASMAI_STATE_DIR", callerState)
+	for _, id := range []string{"C7", "C11"} {
+		f := h.factoryForCase(Case{ID: id, Env: signedInOnly}, &Result{})
+		if f.paths.Dir != h.QualificationPaths.Dir {
+			t.Errorf("%s factory state = %s, want disposable state %s", id, f.paths.Dir, h.QualificationPaths.Dir)
+		}
+		got := ""
+		for _, entry := range f.env {
+			if strings.HasPrefix(entry, "ASMAI_STATE_DIR=") {
+				got = strings.TrimPrefix(entry, "ASMAI_STATE_DIR=")
+			}
+		}
+		if got != h.QualificationPaths.Dir {
+			t.Errorf("%s process state environment = %q, want %s", id, got, h.QualificationPaths.Dir)
+		}
+	}
+	f := h.factoryForCase(Case{ID: "C3", Env: signedInOnly}, &Result{})
+	if f.paths.Dir != h.Paths.Dir {
+		t.Errorf("C3 state = %s, want configured state %s", f.paths.Dir, h.Paths.Dir)
 	}
 }
 
@@ -237,8 +277,8 @@ func TestC3ConfirmsTheTrustPromptWithoutMovingWhenYesIsAlreadySelected(t *testin
 
 	r := result(t, h, "C3")
 
-	if r.Outcome != Passed {
-		t.Fatalf("C3 %s: %s", r.Outcome, r.Failure)
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "automatic trust acceptance is limited") {
+		t.Fatalf("C3 %s: %s, want trust prompt refusal", r.Outcome, r.Failure)
 	}
 }
 

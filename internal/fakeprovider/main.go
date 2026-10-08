@@ -43,7 +43,7 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// they are.
 	sources := flags.String("setting-sources", "", "the setting sources Claude Code loads, separated by commas")
 	flags.String("model", "", "the model Claude Code uses")
-	flags.String("append-system-prompt", "", "text Claude Code appends to its system prompt")
+	instructions := flags.String("append-system-prompt", "", "text Claude Code appends to its system prompt")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -62,6 +62,9 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	if *scriptPath == "" {
 		*scriptPath = os.Getenv(ScriptEnv)
+		if strings.Contains(*instructions, "Engineering's leader") && os.Getenv(ScriptEnv+"_ENGINEERING") != "" {
+			*scriptPath = os.Getenv(ScriptEnv + "_ENGINEERING")
+		}
 	}
 	if *scriptPath == "" || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, usage)

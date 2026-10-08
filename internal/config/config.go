@@ -109,6 +109,18 @@ func DefaultPath(home string) string {
 	return filepath.Join(home, ".config", "asmai", "config.toml")
 }
 
+// ActivePath selects an explicit configuration file for a disposable
+// qualification run, while ordinary use keeps the user's default path.
+func ActivePath(home string) (string, error) {
+	if path := os.Getenv("ASMAI_CONFIG_FILE"); path != "" {
+		if !filepath.IsAbs(path) {
+			return "", fmt.Errorf("ASMAI_CONFIG_FILE must be an absolute path")
+		}
+		return filepath.Clean(path), nil
+	}
+	return DefaultPath(home), nil
+}
+
 // ErrMissing is returned by Load for a configuration file that does not exist.
 var ErrMissing = errors.New("the configuration file does not exist")
 

@@ -69,6 +69,10 @@ On 2026-10-08, at commit 6b52e97, on the VM as the harness user, the first runs 
 - It installed the pinned copy into a new `~/.local/state/asmai` and ran in a staffed `~/.config/asmai/config.toml`. The account had neither before, and both were removed afterwards, along with the harness's scratch clone.
 - Claude Code's trust prompt for the leader's directory selected "No, exit" first, so the harness moves to "Yes, I trust this folder" before it confirms. Claude Code now records that trust in the account's `~/.claude.json`.
 
+On 2026-10-08, at commit 9163957, the harness ran `C7,C11` on this VM against the real pinned Claude Code 2.1.292.
+Both passed: C7 observed Engineering's exact nudge submission and inbox fetch, with the transcript path recorded on its dispatch; C11 recorded the user's witnessed request without treating the nudge as witnessed.
+The run used `ASMAI_CONFIG_FILE` and `ASMAI_STATE_DIR` inside a scratch directory, and that directory was removed after the harness stopped its factory.
+
 ### Later
 
 From M1, delivery cases watch CI through `gh`, so the harness user will also need `gh` installed and signed in. It is not installed yet.

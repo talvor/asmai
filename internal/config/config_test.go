@@ -198,3 +198,16 @@ func TestRepositoryNames(t *testing.T) {
 		}
 	}
 }
+
+func TestScratchConfigFileOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("ASMAI_CONFIG_FILE", path)
+	got, err := ActivePath(t.TempDir())
+	if err != nil || got != path {
+		t.Fatalf("ActivePath() = %q, %v; want %q", got, err, path)
+	}
+	t.Setenv("ASMAI_CONFIG_FILE", "relative.toml")
+	if _, err := ActivePath(t.TempDir()); err == nil {
+		t.Fatal("relative config path was accepted")
+	}
+}

@@ -28,13 +28,13 @@ func TestOnlyCasesTheHarnessHasCanBeAskedFor(t *testing.T) {
 	}
 }
 
-func TestTheHarnessFirstCasesAreC3AndC4(t *testing.T) {
+func TestTheHarnessCasesAreC3C4C7AndC11(t *testing.T) {
 	var ids []string
 	for _, c := range Cases {
 		ids = append(ids, c.ID)
 	}
-	if want := []string{"C3", "C4"}; !slices.Equal(ids, want) {
-		t.Errorf("the harness runs %q, want %q: later cases belong to later tickets", ids, want)
+	if want := []string{"C3", "C4", "C7", "C11"}; !slices.Equal(ids, want) {
+		t.Errorf("the harness runs %q, want %q", ids, want)
 	}
 }
 
@@ -86,6 +86,63 @@ func TestTheFactoryMustBeConfiguredAndNotRunning(t *testing.T) {
 	}
 	if _, err := daemon.Call(h.Paths.Socket, daemon.Request{Command: daemon.CommandStatus}); err != nil {
 		t.Errorf("checking the factory stopped it: %v", err)
+	}
+}
+
+func TestTheHarnessAcceptsScratchConfigAndStatePaths(t *testing.T) {
+	harness(t, signedIn, startsDirectly)
+	config := filepath.Join(t.TempDir(), "config.toml")
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(config, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ASMAI_CONFIG_FILE", config)
+	state, err := os.MkdirTemp("", "a25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(state) })
+	t.Setenv("ASMAI_STATE_DIR", state)
+	paths, err := statedir.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.Dir != state {
+		t.Fatalf("state dir = %s, want %s", paths.Dir, state)
+	}
+	if err = checkFactory(paths); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQualificationStateIsDisposableAndDoesNotReuseAnExistingDirectory(t *testing.T) {
+	home := t.TempDir()
+	paths, cleanup, err := createQualificationState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.Dir != filepath.Join(home, ".local", "state", "asmai", "qualification") {
+		t.Fatalf("qualification state = %s", paths.Dir)
+	}
+	if err := os.WriteFile(filepath.Join(paths.Dir, "fixture"), []byte("temporary"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if _, err := os.Stat(paths.Dir); !os.IsNotExist(err) {
+		t.Fatalf("qualification state remains after cleanup: %v", err)
+	}
+
+	if err := os.Mkdir(paths.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := createQualificationState(home); err == nil {
+		t.Fatal("an existing qualification directory was reused")
+	}
+	if _, err := os.Stat(paths.Dir); err != nil {
+		t.Fatalf("existing qualification directory was removed: %v", err)
 	}
 }
 

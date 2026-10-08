@@ -45,6 +45,16 @@ type Paths struct {
 // Default returns the paths in the user's state directory,
 // ~/.local/state/asmai.
 func Default() (Paths, error) {
+	if dir := os.Getenv("ASMAI_STATE_DIR"); dir != "" {
+		if !filepath.IsAbs(dir) {
+			return Paths{}, fmt.Errorf("ASMAI_STATE_DIR must be an absolute path")
+		}
+		p := At(filepath.Clean(dir))
+		if len(p.Socket) > maxSocketPath {
+			return Paths{}, fmt.Errorf("the state directory %s is too deep: its socket path is %d bytes, and a Unix socket allows %d", p.Dir, len(p.Socket), maxSocketPath)
+		}
+		return p, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Paths{}, fmt.Errorf("finding the state directory: %w", err)

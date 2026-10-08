@@ -23,6 +23,29 @@ func open(t *testing.T, path string) *Store {
 	return s
 }
 
+func TestSendHandoffRequiresExplicitContextFields(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	base := Handoff{Job: 1, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "implement", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}
+	fields := []struct {
+		name  string
+		clear func(*Handoff)
+	}{
+		{"decisions", func(h *Handoff) { h.Decisions = "" }},
+		{"evidence", func(h *Handoff) { h.Evidence = "" }},
+		{"constraints", func(h *Handoff) { h.Constraints = "" }},
+		{"permissions", func(h *Handoff) { h.Permissions = "" }},
+	}
+	for _, field := range fields {
+		t.Run(field.name, func(t *testing.T) {
+			h := base
+			field.clear(&h)
+			if _, _, err := s.SendHandoff(h, time.Now()); err == nil || !strings.Contains(err.Error(), "decisions, evidence, constraints and permissions") {
+				t.Fatalf("SendHandoff with missing %s returned %v", field.name, err)
+			}
+		})
+	}
+}
+
 func kinds(t *testing.T, s *Store) []string {
 	t.Helper()
 	entries, err := s.Journal()
@@ -380,6 +403,183 @@ func TestEachSessionOfAnAgentIsTheNextGenerationAndIsJournaled(t *testing.T) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	start := SessionStart{Agent: "leader@engineering", Role: "engineering", Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: "/a", PID: 41, At: at}
+	if generation, err := s.SessionStarted(start); err != nil || generation != 1 {
+		t.Fatalf("the first session generation is %d (%v), want 1", generation, err)
+	}
+	jobResult, err := s.db.Exec(`INSERT INTO jobs(repository,state) VALUES('fixture',?)`, JobOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := jobResult.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown} {
+		result, err := s.db.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,created_at) VALUES(?,'leader@coordination','leader@engineering','outcome','','','','','[]','pending',?)`, jobID, timestamp(at))
+		if err != nil {
+			t.Fatal(err)
+		}
+		handoffID, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err = s.db.Exec(`INSERT INTO messages(handoff,job,sender,recipient,kind,body) VALUES(?,?,'leader@coordination','leader@engineering','handoff','outcome')`, handoffID, jobID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		messageID, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.db.Exec(`INSERT INTO dispatches(message,agent,generation,state,updated_at) VALUES(?,'leader@engineering',1,?,?)`, messageID, state, timestamp(at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start.PID = 42
+	if generation, err := s.SessionStarted(start); err != nil || generation != 2 {
+		t.Fatalf("the replacement session generation is %d (%v), want 2", generation, err)
+	}
+	rows, err := s.db.Query(`SELECT generation,state FROM dispatches ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown} {
+		var generation int
+		var got string
+		if !rows.Next() {
+			t.Fatalf("the %s dispatch is missing", state)
+		}
+		if err := rows.Scan(&generation, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got != state || generation != 2 {
+			t.Errorf("the dispatch is generation %d in state %s, want generation 2 in state %s", generation, got, state)
+		}
+	}
+}
+
+func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	coordination := SessionStart{Agent: "leader@coordination", Role: "coordination", Provider: "claude-code", Version: "v", Model: "m", Executable: "/p", Args: []string{}, Dir: "/c", PID: 1, At: at}
+	engineering := SessionStart{Agent: "leader@engineering", Role: "engineering", Provider: "claude-code", Version: "v", Model: "m", Executable: "/p", Args: []string{}, Dir: "/e", PID: 2, At: at}
+	if _, err := s.SessionStarted(coordination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionStarted(engineering); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationEntered(coordination.Agent, coordination.Role, 1, "/dev/pts/3", at); err != nil {
+		t.Fatal(err)
+	}
+	_, witness, err := s.ObservedWitnessed(Witnessed{Agent: coordination.Agent, Role: coordination.Role, Generation: 1, Terminal: "/dev/pts/3", Text: "open a job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a job"}`), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RepositoryAdded(Repository{Name: "fixture", Origin: "https://example.test/fixture", DefaultBranch: "main", Clone: "/fixture", AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobOpened(Job{Repository: "fixture", Witness: witness, Reading: "test", Mandate: MandateTestedPR, Criteria: []string{"complete"}}, false, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, inbound, err := s.SendHandoff(Handoff{Job: job.Number, Sender: coordination.Agent, Receiver: engineering.Agent, Outcome: "implement", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeDispatch(inbound.ID, 1, DispatchCreated, DispatchUnknown, "transcript", at); err != nil {
+		t.Fatal(err)
+	}
+	inbound.Generation = 1
+	if err := s.ObservedAutomated(inbound, engineering.Role, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Inbox(engineering.Agent, inbound.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.PendingLeaders()
+	if err != nil || len(pending) != 1 || pending[0] != engineering.Agent {
+		t.Fatalf("the fetched pending handoff recovery lists %v (%v), want %s", pending, err, engineering.Agent)
+	}
+	engineering.PID = 3
+	engineering.At = at.Add(time.Minute)
+	if generation, err := s.SessionStarted(engineering); err != nil || generation != 2 {
+		t.Fatalf("the restarted Engineering generation is %d (%v), want 2", generation, err)
+	}
+	resumed, err := s.NextDispatch(engineering.Agent)
+	if err != nil || resumed.ID != inbound.ID || resumed.Generation != 2 || resumed.State != DispatchDelivered {
+		t.Fatalf("recovered handoff nudge is %+v (%v), want dispatch %d in generation 2 delivered", resumed, err, inbound.ID)
+	}
+	if err := s.ChangeDispatch(resumed.ID, 2, DispatchDelivered, DispatchUnknown, "transcript", at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := s.PendingLeaders(); err != nil || len(pending) != 0 {
+		t.Fatalf("an unacknowledged recovery nudge remained eligible for restart: %v (%v)", pending, err)
+	}
+	if _, err := s.NextDispatch(engineering.Agent); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("an unacknowledged recovery nudge remained eligible to retype: %v", err)
+	}
+	resumed.Generation = 2
+	if err := s.ObservedAutomated(resumed, engineering.Role, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if messages, err := s.Inbox(engineering.Agent, inbound.ID, at.Add(4*time.Minute)); err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
+		t.Fatalf("re-fetch after the acknowledged recovery nudge returned %+v (%v)", messages, err)
+	}
+	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID+1, 2, HandoffAccepted, "accepted", at); err == nil {
+		t.Fatal("a different current dispatch answered the handoff")
+	}
+	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID, 2, HandoffAccepted, "accepted", at); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = s.PendingLeaders()
+	if err != nil || len(pending) != 1 || pending[0] != coordination.Agent {
+		t.Fatalf("answering the fetched handoff left recipients %v (%v), want only %s", pending, err, coordination.Agent)
+	}
+	coordination.PID = 3
+	coordination.At = at.Add(time.Minute)
+	if generation, err := s.SessionStarted(coordination); err != nil || generation != 2 {
+		t.Fatalf("the restarted Coordination generation is %d (%v), want 2", generation, err)
+	}
+	reply, err := s.NextDispatch(coordination.Agent)
+	if err != nil || reply.Generation != 2 {
+		t.Fatalf("the reply dispatch is %+v (%v), want generation 2", reply, err)
+	}
+	if err := s.ChangeDispatch(reply.ID, 2, DispatchCreated, DispatchUnknown, "transcript", at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	payload := json.RawMessage(`{"prompt":"asmai inbox --dispatch 2"}`)
+	if err := s.ObservedAutomated(reply, coordination.Role, payload, "transcript", at.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := s.Inbox(coordination.Agent, reply.ID, at.Add(4*time.Minute))
+	if err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
+		t.Fatalf("fetching the reply returned %+v (%v), want one delivered message", messages, err)
+	}
+	if err := s.WorkFetchedDispatch(reply.ID, coordination.Agent, 1, at.Add(5*time.Minute)); err == nil {
+		t.Fatal("a different session generation advanced the reply to working")
+	}
+	messages, err = s.Inbox(coordination.Agent, reply.ID, at.Add(6*time.Minute))
+	if err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
+		t.Fatalf("after the uncorrelated transition, the reply is %+v (%v), want delivered", messages, err)
+	}
+	if err := s.WorkFetchedDispatch(reply.ID, coordination.Agent, 2, at.Add(7*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if stopped, err := s.StopDispatchIfWorking(reply.ID, 2, "transcript", at.Add(8*time.Minute)); err != nil || !stopped {
+		t.Fatalf("stopping the working reply returned stopped=%v, err=%v", stopped, err)
+	}
+	messages, err = s.Inbox(coordination.Agent, reply.ID, at.Add(9*time.Minute))
+	if err != nil || len(messages) != 1 || messages[0].State != DispatchStopped {
+		t.Fatalf("the correlated Stop left reply %+v (%v), want stopped", messages, err)
 	}
 }
 

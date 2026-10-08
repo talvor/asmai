@@ -25,6 +25,7 @@ import (
 
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
+	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 	"github.com/talvor/asmai/internal/vt"
@@ -60,14 +61,19 @@ const (
 	// CommandRepoAdd registers the repository the request names, with
 	// AsmAI's clone of it; CommandRepoList, CommandRepoShow and
 	// CommandRepoRemove list, show and remove registered repositories.
-	CommandRepoAdd    = "repo.add"
-	CommandRepoList   = "repo.list"
-	CommandRepoShow   = "repo.show"
-	CommandRepoRemove = "repo.remove"
-	CommandJobOpen    = "job.open"
-	CommandJobs       = "jobs"
-	CommandJob        = "job"
-	CommandBrief      = "brief"
+	CommandRepoAdd        = "repo.add"
+	CommandRepoList       = "repo.list"
+	CommandRepoShow       = "repo.show"
+	CommandRepoRemove     = "repo.remove"
+	CommandJobOpen        = "job.open"
+	CommandJobs           = "jobs"
+	CommandJob            = "job"
+	CommandBrief          = "brief"
+	CommandInbox          = "inbox"
+	CommandHandoffSend    = "handoff.send"
+	CommandHandoffAccept  = "handoff.accept"
+	CommandHandoffClarify = "handoff.clarify"
+	CommandHandoffDecline = "handoff.decline"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -102,6 +108,14 @@ type Request struct {
 	Reading       string   `json:"reading,omitempty"`
 	Mandate       string   `json:"mandate,omitempty"`
 	Criteria      []string `json:"criteria,omitempty"`
+	Handoff       int64    `json:"handoff,omitempty"`
+	Dispatch      int64    `json:"dispatch,omitempty"`
+	Outcome       string   `json:"outcome,omitempty"`
+	Decisions     string   `json:"decisions,omitempty"`
+	Evidence      string   `json:"evidence,omitempty"`
+	Constraints   string   `json:"constraints,omitempty"`
+	Permissions   string   `json:"permissions,omitempty"`
+	Answer        string   `json:"answer,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -125,6 +139,9 @@ type Response struct {
 	Jobs         []store.Job        `json:"jobs,omitempty"`
 	Job          *store.Job         `json:"job,omitempty"`
 	Brief        string             `json:"brief,omitempty"`
+	Handoff      *store.Handoff     `json:"handoff,omitempty"`
+	Dispatch     *store.Dispatch    `json:"dispatch,omitempty"`
+	Messages     []store.Message    `json:"messages,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -250,6 +267,21 @@ func Run(ctx context.Context, cfg Config) error {
 	// Every start restores Coordination's leader, which runs as long as the
 	// factory does.
 	d.ensureCoordination()
+	if pending, err := st.PendingLeaders(); err != nil {
+		log.Error("reading pending leaders", "error", err)
+	} else {
+		for _, agent := range pending {
+			address, err := roles.ParseAddress(agent)
+			if err != nil || address.Name != roles.Leader || address.Role == roles.Coordination {
+				continue
+			}
+			d.mu.Lock()
+			if err = d.ensureRoleLeader(address.Role); err != nil {
+				log.Error("restoring receiving leader", "agent", agent, "error", err)
+			}
+			d.mu.Unlock()
+		}
+	}
 
 	var by string
 	var asker *net.UnixConn
@@ -427,6 +459,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.repoCommand(conn, req)
 	case CommandJobOpen, CommandJobs, CommandJob, CommandBrief:
 		d.jobCommand(conn, req)
+	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
+		d.handoffCommand(conn, req)
 	case CommandStop:
 		select {
 		case d.stop <- conn:

@@ -97,6 +97,25 @@ ALTER TABLE jobs ADD COLUMN mandate TEXT NOT NULL DEFAULT '';
 ALTER TABLE jobs ADD COLUMN criteria TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE jobs ADD COLUMN opened_at TEXT NOT NULL DEFAULT '';
 `,
+	`
+CREATE TABLE handoffs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ job INTEGER NOT NULL REFERENCES jobs(number), sender TEXT NOT NULL, receiver TEXT NOT NULL,
+ outcome TEXT NOT NULL, decisions TEXT NOT NULL, evidence TEXT NOT NULL,
+ constraints TEXT NOT NULL, permissions TEXT NOT NULL, criteria TEXT NOT NULL,
+ state TEXT NOT NULL, answer TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+CREATE TABLE messages (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, handoff INTEGER NOT NULL REFERENCES handoffs(id),
+ job INTEGER NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL,
+ kind TEXT NOT NULL, body TEXT NOT NULL, fetched_at TEXT
+);
+CREATE TABLE dispatches (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, message INTEGER NOT NULL UNIQUE REFERENCES messages(id),
+ agent TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL,
+ transcript TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -126,6 +145,11 @@ const (
 	KindRepositoryAdded   = "repository.added"
 	KindRepositoryRemoved = "repository.removed"
 	KindJobOpened         = "job.opened"
+	KindHandoffSent       = "handoff.sent"
+	KindHandoffAnswered   = "handoff.answered"
+	KindMessageCreated    = "message.created"
+	KindMessageFetched    = "message.fetched"
+	KindDispatchChanged   = "dispatch.changed"
 )
 
 // The states an agent can be in.
@@ -406,6 +430,20 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 				provider = excluded.provider, version = excluded.version, model = excluded.model, pid = excluded.pid,
 				started_at = excluded.started_at, ended_at = NULL, exit = ''`,
 			start.Agent, start.Role, AgentRunning, generation, start.Provider, start.Version, start.Model, start.PID, timestamp(start.At))
+		if err != nil {
+			return "", nil, err
+		}
+		_, err = tx.Exec(`UPDATE dispatches SET generation=? WHERE agent=? AND (
+			(state IN (?,?,?) AND EXISTS (
+				SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NULL
+			)) OR (state IN (?,?) AND EXISTS (
+				SELECT 1 FROM messages JOIN handoffs ON handoffs.id=messages.handoff
+				WHERE messages.id=dispatches.message AND messages.kind='handoff' AND messages.fetched_at IS NOT NULL AND handoffs.state=?
+			))
+		)`, generation, start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
+		if err != nil {
+			return "", nil, err
+		}
 		data := struct {
 			SessionStart
 			Generation int `json:"generation"`

@@ -139,7 +139,11 @@ func Run(ctx context.Context, cfg Config) error {
 		log.Warn("the previous daemon did not stop cleanly", "version", previous.Version, "pid", previous.PID)
 	}
 
-	go d.serve(listener)
+	served := make(chan struct{})
+	go func() {
+		d.serve(listener)
+		close(served)
+	}()
 
 	var by string
 	var asker *net.UnixConn
@@ -153,6 +157,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Stop serving, wait for the commands being served, then persist.
 	listener.Close()
+	<-served
 	d.wg.Wait()
 	err = st.Stopped(by, time.Now())
 	if err == nil {

@@ -351,3 +351,37 @@ func TestTheFakeRefusesAScriptItCannotPlay(t *testing.T) {
 		})
 	}
 }
+
+// The fake starts with the command line the daemon starts Claude Code with,
+// and can write it down for a test to see.
+func TestTheFakeTakesClaudeCodesFlagsAndWritesItsArguments(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args.json")
+	args := []string{"--settings", `{"permissions": {"allow": ["Bash(asmai:*)"]}}`, "--setting-sources", "user", "--model", "opus", "--append-system-prompt", "You are\nCoordination."}
+	cmd := exec.Command(fakeProvider, args...)
+	cmd.Env = append(os.Environ(), "ASMAI_FAKE_PROVIDER_SCRIPT="+writeScript(t, `{"screen": "ready\r\n"}`), "ASMAI_FAKE_PROVIDER_ARGS="+argsFile)
+	s := startCmd(t, cmd)
+	s.waitForScreen("ready")
+	if code := s.exit(); code != 0 {
+		t.Fatalf("fake exited %d: %s", code, s.stderr.String())
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written []string
+	if err := json.Unmarshal(data, &written); err != nil || !slices.Equal(written, args) {
+		t.Errorf("the fake wrote its arguments as %s (%v), want %q", data, err, args)
+	}
+
+	for name, bad := range map[string][]string{
+		"an unknown setting source": {"--setting-sources", "user,global"},
+		"a flag Claude Code lacks":  {"--dangerously-frobnicate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := start(t, append([]string{"--script", writeScript(t, `{"screen": "fine"}`)}, bad...)...)
+			if code := s.exit(); code != 2 {
+				t.Errorf("fake exited %d, want 2 (stderr %q)", code, s.stderr.String())
+			}
+		})
+	}
+}

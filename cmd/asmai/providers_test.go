@@ -29,6 +29,13 @@ var standInClaude = []byte("#!/bin/sh\necho '2.1.292 (Claude Code)'\n")
 // pinning standInClaude. It returns how many downloads it served.
 func standInChannel(t *testing.T, download []byte) (fetches *atomic.Int32) {
 	t.Helper()
+	return standInChannelPinning(t, standInClaude, download)
+}
+
+// standInChannelPinning is standInChannel pinning pinned, at the version the
+// embedded pins file pins.
+func standInChannelPinning(t *testing.T, pinned, download []byte) (fetches *atomic.Int32) {
+	t.Helper()
 	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
 	if !ok {
 		t.Skipf("Claude Code is not published for %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -43,10 +50,10 @@ func standInChannel(t *testing.T, download []byte) (fetches *atomic.Int32) {
 		w.Write(download)
 	}))
 	t.Cleanup(srv.Close)
-	sum := sha256.Sum256(standInClaude)
+	sum := sha256.Sum256(pinned)
 	previous := pins
 	pins = fmt.Appendf(nil, `{"claude-code": {"version": "2.1.292", "channel": %q, "platforms": {%q: {"sha256": %q, "size": %d}}}}`,
-		srv.URL+"/releases", platform, hex.EncodeToString(sum[:]), len(standInClaude))
+		srv.URL+"/releases", platform, hex.EncodeToString(sum[:]), len(pinned))
 	t.Cleanup(func() { pins = previous })
 	return fetches
 }
@@ -114,9 +121,7 @@ func checkHomeUntouched(t *testing.T) {
 func TestProvidersInstallFetchesThePinnedClaudeCodeOnceConfirmed(t *testing.T) {
 	stateDir := factoryHome(t)
 	fetches := standInChannel(t, standInClaude)
-	if _, stderr, code := runAsmai(t, "start"); code != 0 {
-		t.Fatalf("asmai start exited %d: %s", code, stderr)
-	}
+	startUnready(t)
 	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
 
 	stdout, stderr, code := install(t, "y\n")
@@ -168,9 +173,7 @@ func TestProvidersInstallFetchesThePinnedClaudeCodeOnceConfirmed(t *testing.T) {
 func TestProvidersInstallFetchesNothingWithoutConfirmation(t *testing.T) {
 	stateDir := factoryHome(t)
 	fetches := standInChannel(t, standInClaude)
-	if _, stderr, code := runAsmai(t, "start"); code != 0 {
-		t.Fatalf("asmai start exited %d: %s", code, stderr)
-	}
+	startUnready(t)
 	for name, answer := range map[string]string{"no": "n\n", "anything but yes": "sure\n", "no answer": ""} {
 		t.Run(name, func(t *testing.T) {
 			stdout, stderr, code := install(t, answer)
@@ -207,9 +210,7 @@ func TestAFailedDownloadInstallsNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stateDir := factoryHome(t)
 			standInChannel(t, tc.download)
-			if _, stderr, code := runAsmai(t, "start"); code != 0 {
-				t.Fatalf("asmai start exited %d: %s", code, stderr)
-			}
+			startUnready(t)
 
 			stdout, stderr, code := install(t, "y\n", "--json")
 

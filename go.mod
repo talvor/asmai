@@ -6,6 +6,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/google/licensecheck v0.3.1
 	github.com/ncruces/go-sqlite3 v0.32.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	golang.org/x/term v0.46.0
 )
 

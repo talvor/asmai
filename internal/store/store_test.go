@@ -321,3 +321,64 @@ func TestOpenMigratesAStoreAnEarlierAsmaiWrote(t *testing.T) {
 		t.Errorf("the migrated store is at schema %d (%v), want %d", version, err, schemaVersion)
 	}
 }
+
+func TestEachSessionOfAnAgentIsTheNextGenerationAndIsJournaled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s := open(t, path)
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	start := SessionStart{
+		Agent: "leader@coordination", Role: "coordination", Provider: "claude-code", Version: "2.1.292", Model: "opus",
+		Executable: "/state/providers/claude-code/2.1.292/claude", Args: []string{"--model", "opus"}, Dir: "/state/agents/leader@coordination",
+		PID: 41, At: at,
+	}
+	if generation, err := s.SessionStarted(start); err != nil || generation != 1 {
+		t.Fatalf("the first session is generation %d (%v), want 1", generation, err)
+	}
+	payload := json.RawMessage(`{"hook_event_name":"Stop","session_id":"s"}`)
+	if err := s.Observed("leader@coordination", "coordination", 1, "Stop", payload, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SessionEnded("leader@coordination", 1, "exit status 0", "asmai stop", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	start.PID = 42
+	if generation, err := s.SessionStarted(start); err != nil || generation != 2 {
+		t.Fatalf("the second session is generation %d (%v), want 2", generation, err)
+	}
+	s.Close()
+
+	s = open(t, path)
+	agents, err := s.Agents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0].Agent != "leader@coordination" || agents[0].State != AgentRunning || agents[0].Generation != 2 || agents[0].PID != 42 {
+		t.Errorf("the store records %+v, want generation 2 of leader@coordination running", agents)
+	}
+	// A daemon that did not stop cleanly left the session running; the next
+	// start ends it.
+	if err := s.EndAbandonedSessions(at.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if agents, _ := s.Agents(); agents[0].State != AgentStopped || agents[0].Exit != "unknown" {
+		t.Errorf("after the abandoned sessions ended, the store records %+v", agents)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Kind+" "+string(e.Data))
+	}
+	want := []string{
+		`session.started {"agent":"leader@coordination","role":"coordination","provider":"claude-code","version":"2.1.292","model":"opus","executable":"/state/providers/claude-code/2.1.292/claude","args":["--model","opus"],"dir":"/state/agents/leader@coordination","pid":41,"generation":1}`,
+		`observation {"agent":"leader@coordination","event":"Stop","generation":1,"payload":{"hook_event_name":"Stop","session_id":"s"},"role":"coordination"}`,
+		`session.ended {"agent":"leader@coordination","by":"asmai stop","exit":"exit status 0","generation":1,"role":"coordination"}`,
+		`session.started {"agent":"leader@coordination","role":"coordination","provider":"claude-code","version":"2.1.292","model":"opus","executable":"/state/providers/claude-code/2.1.292/claude","args":["--model","opus"],"dir":"/state/agents/leader@coordination","pid":42,"generation":2}`,
+		`session.ended {"agent":"leader@coordination","by":"the previous daemon, which did not stop cleanly","exit":"unknown","generation":2,"role":"coordination"}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

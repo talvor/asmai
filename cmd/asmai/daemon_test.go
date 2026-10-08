@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -25,8 +26,9 @@ import (
 const e2eVersion = "v0.0.0-e2e"
 
 // asmaiBin is the directory holding the asmai executable the end-to-end tests
-// build once.
-var asmaiBin string
+// build once, and fakeProvider the fake provider they install as the pinned
+// Claude Code.
+var asmaiBin, fakeProvider string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "asmai-bin")
@@ -39,6 +41,13 @@ func TestMain(m *testing.M) {
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	if err := build.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "building asmai:", err)
+		os.Exit(1)
+	}
+	fakeProvider = filepath.Join(dir, "fake-provider")
+	build = exec.Command("go", "build", "-o", fakeProvider, "../../internal/fakeprovider/cmd/fake-provider")
+	build.Stdout, build.Stderr = os.Stderr, os.Stderr
+	if err := build.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "building the fake provider:", err)
 		os.Exit(1)
 	}
 	code := m.Run()
@@ -151,7 +160,11 @@ var agentScript = []string{
 }
 
 func TestTheFactoryStartsStopsAndKeepsItsStoreWithAnAgentLookingOn(t *testing.T) {
-	stateDir := factoryHome(t)
+	// The factory is ready to run, and stopped.
+	stateDir := readyFactory(t, idleLeader)
+	if _, stderr, code := runAsmai(t, "stop"); code != 0 {
+		t.Fatalf("asmai stop exited %d: %s", code, stderr)
+	}
 
 	var status struct {
 		Daemon daemonJSON `json:"daemon"`
@@ -272,20 +285,27 @@ func TestTheFactoryStartsStopsAndKeepsItsStoreWithAnAgentLookingOn(t *testing.T)
 	asmaiJSON(t, &journal, "export")
 	var got []string
 	for _, e := range journal.Journal {
-		got = append(got, fmt.Sprintf("%d %s pid=%d previous=%q by=%q", e.ID, e.Kind, e.Data.PID, e.Data.Previous, e.Data.By))
+		if strings.HasPrefix(e.Kind, "daemon.") {
+			got = append(got, fmt.Sprintf("%s pid=%d previous=%q by=%q", e.Kind, e.Data.PID, e.Data.Previous, e.Data.By))
+		}
 	}
+	// The first start and stop made the factory ready.
+	if len(got) < 2 || !strings.HasPrefix(got[0], "daemon.started") || !strings.HasPrefix(got[1], "daemon.stopped") {
+		t.Fatalf("the journal holds %v, want the preparation's start and stop first", got)
+	}
+	got = got[2:]
 	want := []string{
-		fmt.Sprintf(`1 daemon.started pid=%d previous="new" by=""`, pid),
-		fmt.Sprintf(`2 daemon.stopped pid=%d previous="" by="asmai stop"`, pid),
-		fmt.Sprintf(`3 daemon.started pid=%d previous="stopped" by=""`, third.Daemon.PID),
+		fmt.Sprintf(`daemon.started pid=%d previous="stopped" by=""`, pid),
+		fmt.Sprintf(`daemon.stopped pid=%d previous="" by="asmai stop"`, pid),
+		fmt.Sprintf(`daemon.started pid=%d previous="stopped" by=""`, third.Daemon.PID),
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 
 	logText, _, code := runAsmai(t, "log")
-	if code != 0 || strings.Count(logText, "daemon started") != 2 || strings.Count(logText, "daemon stopped") != 1 {
-		t.Errorf("asmai log exited %d and printed\n%s\nwant two starts and a stop", code, logText)
+	if code != 0 || strings.Count(logText, "daemon started") != 3 || strings.Count(logText, "daemon stopped") != 2 {
+		t.Errorf("asmai log exited %d and printed\n%s\nwant three starts and two stops", code, logText)
 	}
 	logJSON, _, _ := runAsmai(t, "log", "--json")
 	for line := range strings.Lines(logJSON) {
@@ -301,8 +321,16 @@ func TestTheFactoryStartsStopsAndKeepsItsStoreWithAnAgentLookingOn(t *testing.T)
 	// No journal entry or log line records an environment variable.
 	recorded := map[string]string{"asmai export": exported, "asmai log": logText, "asmai log --json": logJSON}
 	err = filepath.WalkDir(stateDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Type()&fs.ModeSocket != 0 {
+		if err != nil {
 			return err
+		}
+		// The executables AsmAI keeps and the agents' working directories
+		// are not records.
+		if d.IsDir() && slices.Contains([]string{"bin", "providers", "agents"}, d.Name()) {
+			return fs.SkipDir
+		}
+		if d.IsDir() || d.Type()&fs.ModeSocket != 0 {
+			return nil
 		}
 		data, err := os.ReadFile(path)
 		recorded[path] = string(data)
@@ -350,8 +378,10 @@ func TestStartForegroundKeepsTheDaemonAttachedUntilItIsStopped(t *testing.T) {
 	if status.Daemon.PID != daemon.Process.Pid {
 		t.Errorf("the daemon is pid %d, want the foreground process, pid %d", status.Daemon.PID, daemon.Process.Pid)
 	}
-	if stdout, _, code := runAsmai(t, "start", "--foreground"); code != 0 || !strings.Contains(stdout, "already running") {
-		t.Errorf("a second start --foreground exited %d printing %q, want it to report the running factory", code, stdout)
+	// The factory is not staffed, so its daemon runs without Coordination's
+	// leader, and a start says so.
+	if _, stderr, code := runAsmai(t, "start", "--foreground"); code != 1 || !strings.Contains(stderr, "The factory's daemon is running, but not Coordination's leader") {
+		t.Errorf("a second start --foreground exited %d printing %q, want it to report the running daemon and the failed checks", code, stderr)
 	}
 
 	if _, stderr, code := runAsmai(t, "stop"); code != 0 {
@@ -373,8 +403,8 @@ func TestStartForegroundKeepsTheDaemonAttachedUntilItIsStopped(t *testing.T) {
 }
 
 func TestEveryCommandAcceptsJSON(t *testing.T) {
-	factoryHome(t)
-	for _, args := range [][]string{{"version"}, {"notices"}, {"status"}, {"start"}, {"export"}, {"providers", "list"}, {"stop"}} {
+	readyFactory(t, idleLeader)
+	for _, args := range [][]string{{"version"}, {"notices"}, {"status"}, {"start"}, {"agents"}, {"attach", "coordination"}, {"export"}, {"providers", "list"}, {"stop"}} {
 		var v map[string]any
 		asmaiJSON(t, &v, args...)
 		if len(v) == 0 {
@@ -388,6 +418,12 @@ func TestEveryCommandAcceptsJSON(t *testing.T) {
 	}
 	if code != 1 || json.Unmarshal([]byte(stdout), &failure) != nil || failure.Error == "" {
 		t.Errorf("a failing export --json exited %d printing %q, want 1 and a JSON error", code, stdout)
+	}
+	// asmai hook is run by agent sessions' hooks; anywhere else it fails.
+	stdout, _, code = runAsmai(t, "hook", "--json")
+	failure.Error = ""
+	if code != 1 || json.Unmarshal([]byte(stdout), &failure) != nil || !strings.Contains(failure.Error, "ASMAI_SESSION") {
+		t.Errorf("a failing hook --json exited %d printing %q, want 1 and a JSON error", code, stdout)
 	}
 }
 

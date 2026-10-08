@@ -24,8 +24,10 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/logfile"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
+	"github.com/talvor/asmai/internal/vt"
 )
 
 // ErrAlreadyRunning is returned by Run when another daemon holds the state
@@ -42,12 +44,35 @@ const (
 	// CommandProviderInstalled records the provider install in the request,
 	// which `asmai providers install` has fetched and checked.
 	CommandProviderInstalled = "provider.installed"
+	// CommandStart runs the checks and, if they pass, starts Coordination's
+	// leader unless it is running.
+	CommandStart = "start"
+	// CommandAgents lists the agents the store records.
+	CommandAgents = "agents"
+	// CommandAttach streams an agent's terminal to an attach client, or
+	// with Snapshot answers with its screen.
+	CommandAttach = "attach"
+	// CommandHook journals what an agent session's hook reported.
+	CommandHook = "hook"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
 type Request struct {
 	Command  string                 `json:"command"`
 	Provider *store.ProviderInstall `json:"provider,omitempty"`
+	// Agent addresses an agent, as name@role or a bare role name.
+	Agent string `json:"agent,omitempty"`
+	// Columns and Rows are the size an attach client gives the agent's
+	// terminal.
+	Columns int `json:"columns,omitempty"`
+	Rows    int `json:"rows,omitempty"`
+	// Snapshot asks attach for the agent's screen as it is, without
+	// following it.
+	Snapshot bool `json:"snapshot,omitempty"`
+	// Session is the credential of the agent session a hook reports for,
+	// and Payload what the provider passed the hook.
+	Session string          `json:"session,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -56,6 +81,14 @@ type Response struct {
 	Status    *Status                 `json:"status,omitempty"`
 	Journal   []store.Entry           `json:"journal,omitempty"`
 	Providers []store.ProviderInstall `json:"providers,omitempty"`
+	// Checks are the checks the last start ran.
+	Checks  []Check       `json:"checks,omitempty"`
+	Leaders []Leader      `json:"leaders,omitempty"`
+	Agents  []store.Agent `json:"agents,omitempty"`
+	// Attached is the agent an attach follows, and Screen its screen when
+	// a snapshot was asked for.
+	Attached *Leader   `json:"attached,omitempty"`
+	Screen   *vt.State `json:"screen,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -72,6 +105,14 @@ type Config struct {
 	// Mirror, when set, also receives each line of the log, as a foreground
 	// daemon shows its log on its terminal.
 	Mirror io.Writer
+	// ConfigFile is the configuration file the staffing is read from; with
+	// none, no agent starts.
+	ConfigFile string
+	// Executable, when set, is this asmai, which the daemon copies to its
+	// fixed path in the state directory for agent sessions to run.
+	Executable string
+	// Pins are the provider versions agents run on.
+	Pins providers.Pins
 }
 
 // Run runs the daemon until `asmai stop` asks it to stop or ctx is done. It
@@ -129,9 +170,18 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("making the daemon's socket private: %w", err)
 	}
 
+	if cfg.Executable != "" {
+		if err := installExecutable(cfg.Executable, p.Executable); err != nil {
+			return err
+		}
+	}
+
 	d := &daemon{
-		store: st,
-		log:   log,
+		cfg:      cfg,
+		leaders:  map[string]*leader{},
+		sessions: map[string]sessionRef{},
+		store:    st,
+		log:      log,
 		status: Status{
 			Version:   cfg.Version,
 			PID:       os.Getpid(),
@@ -147,12 +197,18 @@ func Run(ctx context.Context, cfg Config) error {
 	if previous.State == store.StateRunning {
 		log.Warn("the previous daemon did not stop cleanly", "version", previous.Version, "pid", previous.PID)
 	}
+	if err := st.EndAbandonedSessions(time.Now()); err != nil {
+		return fmt.Errorf("journaling the previous daemon's agents as ended: %w", err)
+	}
 
 	served := make(chan struct{})
 	go func() {
 		d.serve(listener)
 		close(served)
 	}()
+	// Every start restores Coordination's leader, which runs as long as the
+	// factory does.
+	d.ensureCoordination()
 
 	var by string
 	var asker *net.UnixConn
@@ -164,7 +220,9 @@ func Run(ctx context.Context, cfg Config) error {
 		defer asker.Close()
 	}
 
-	// Stop serving, wait for the commands being served, then persist.
+	// End the agents, while their hooks can still report, then stop
+	// serving, wait for the commands being served, and persist.
+	d.stopAgents(by)
 	listener.Close()
 	<-served
 	d.wg.Wait()
@@ -191,6 +249,7 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 type daemon struct {
+	cfg    Config
 	store  *store.Store
 	log    *slog.Logger
 	status Status
@@ -198,6 +257,16 @@ type daemon struct {
 	// answered once it has.
 	stop chan *net.UnixConn
 	wg   sync.WaitGroup
+
+	// mu guards the agents and the checks.
+	mu         sync.Mutex
+	leaders    map[string]*leader
+	sessions   map[string]sessionRef
+	lastChecks []Check
+	stopping   bool
+	stoppedBy  string
+	// agents counts the agent sessions whose end is not yet journaled.
+	agents sync.WaitGroup
 }
 
 func (d *daemon) serve(l *net.UnixListener) {
@@ -221,7 +290,8 @@ func (d *daemon) serve(l *net.UnixListener) {
 func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 	conn.SetDeadline(time.Now().Add(time.Minute))
 	var req Request
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	r := bufio.NewReader(conn)
+	line, err := r.ReadBytes('\n')
 	if err == nil {
 		err = json.Unmarshal(line, &req)
 	}
@@ -231,7 +301,29 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 	}
 	switch req.Command {
 	case CommandStatus:
-		reply(conn, Response{Status: &d.status})
+		d.mu.Lock()
+		checks := d.lastChecks
+		d.mu.Unlock()
+		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates()})
+	case CommandStart:
+		checks := d.ensureCoordination()
+		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates()})
+	case CommandAgents:
+		agents, err := d.store.Agents()
+		if err != nil {
+			d.log.Error("reading the agents", "error", err.Error())
+			reply(conn, Response{Error: "reading the agents: " + err.Error()})
+			return false
+		}
+		reply(conn, Response{Agents: agents})
+	case CommandAttach:
+		d.attach(conn, r, req)
+	case CommandHook:
+		if err := d.observe(req.Session, req.Payload); err != nil {
+			reply(conn, Response{Error: err.Error()})
+			return false
+		}
+		reply(conn, Response{})
 	case CommandExport:
 		entries, err := d.store.Journal()
 		if err != nil {

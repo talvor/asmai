@@ -58,6 +58,21 @@ CREATE TABLE providers (
 	PRIMARY KEY (name, version)
 );
 `,
+	`
+CREATE TABLE agents (
+	agent      TEXT PRIMARY KEY,
+	role       TEXT NOT NULL,
+	state      TEXT NOT NULL,
+	generation INTEGER NOT NULL,
+	provider   TEXT NOT NULL,
+	version    TEXT NOT NULL,
+	model      TEXT NOT NULL,
+	pid        INTEGER NOT NULL,
+	started_at TEXT NOT NULL,
+	ended_at   TEXT,
+	exit       TEXT NOT NULL DEFAULT ''
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -68,6 +83,18 @@ const (
 	KindDaemonStarted     = "daemon.started"
 	KindDaemonStopped     = "daemon.stopped"
 	KindProviderInstalled = "provider.installed"
+	// KindSessionStarted records an agent session's start: the provider
+	// version, the settings passed on its command line and its generation.
+	KindSessionStarted = "session.started"
+	KindSessionEnded   = "session.ended"
+	// KindObservation records a lifecycle event a session's hooks reported.
+	KindObservation = "observation"
+)
+
+// The states an agent can be in.
+const (
+	AgentRunning = "running"
+	AgentStopped = "stopped"
 )
 
 // The states the factory can be left in.
@@ -103,6 +130,42 @@ type ProviderInstall struct {
 	Path        string    `json:"path"`
 	SHA256      string    `json:"sha256"`
 	InstalledAt time.Time `json:"installed_at"`
+}
+
+// SessionStart is an agent session the daemon started: the provider it runs
+// and everything passed on its command line. It never holds the session's
+// environment.
+type SessionStart struct {
+	Agent string `json:"agent"`
+	Role  string `json:"role"`
+	// Provider and Version are the provider install the session runs.
+	Provider string `json:"provider"`
+	Version  string `json:"version"`
+	Model    string `json:"model"`
+	// Executable and Args are the session's command line, with the settings
+	// passed on it.
+	Executable string    `json:"executable"`
+	Args       []string  `json:"args"`
+	Dir        string    `json:"dir"`
+	PID        int       `json:"pid"`
+	At         time.Time `json:"-"`
+}
+
+// Agent is an agent's current state, as the store holds it.
+type Agent struct {
+	Agent string `json:"agent"`
+	Role  string `json:"role"`
+	State string `json:"state"`
+	// Generation counts the agent's sessions: each start is the next.
+	Generation int       `json:"generation"`
+	Provider   string    `json:"provider"`
+	Version    string    `json:"version"`
+	Model      string    `json:"model"`
+	PID        int       `json:"pid"`
+	StartedAt  time.Time `json:"started_at"`
+	EndedAt    time.Time `json:"ended_at,omitzero"`
+	// Exit is how the last session ended.
+	Exit string `json:"exit,omitempty"`
 }
 
 // Entry is one journal entry.
@@ -289,6 +352,105 @@ func (s *Store) Providers() ([]ProviderInstall, error) {
 		installs = append(installs, p)
 	}
 	return installs, rows.Err()
+}
+
+// SessionStarted records that the daemon started the agent session s, as
+// the agent's next generation, and journals it with the generation.
+func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
+	err = s.change(start.At, func(tx *sql.Tx) (string, any, error) {
+		err := tx.QueryRow(`SELECT generation FROM agents WHERE agent = ?`, start.Agent).Scan(&generation)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", nil, err
+		}
+		generation++
+		_, err = tx.Exec(`INSERT INTO agents (agent, role, state, generation, provider, version, model, pid, started_at, ended_at, exit)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '')
+			ON CONFLICT (agent) DO UPDATE SET role = excluded.role, state = excluded.state, generation = excluded.generation,
+				provider = excluded.provider, version = excluded.version, model = excluded.model, pid = excluded.pid,
+				started_at = excluded.started_at, ended_at = NULL, exit = ''`,
+			start.Agent, start.Role, AgentRunning, generation, start.Provider, start.Version, start.Model, start.PID, timestamp(start.At))
+		data := struct {
+			SessionStart
+			Generation int `json:"generation"`
+		}{start, generation}
+		return KindSessionStarted, data, err
+	})
+	return generation, err
+}
+
+// SessionEnded records that generation of agent's session ended at at: exit
+// is how its process ended, and by what ended it.
+func (s *Store) SessionEnded(agent string, generation int, exit, by string, at time.Time) error {
+	return s.change(at, func(tx *sql.Tx) (string, any, error) {
+		var role string
+		var current int
+		if err := tx.QueryRow(`SELECT role, generation FROM agents WHERE agent = ?`, agent).Scan(&role, &current); err != nil {
+			return "", nil, fmt.Errorf("no session of %s is recorded: %w", agent, err)
+		}
+		var err error
+		if current == generation {
+			_, err = tx.Exec(`UPDATE agents SET state = ?, ended_at = ?, exit = ? WHERE agent = ?`, AgentStopped, timestamp(at), exit, agent)
+		}
+		data := map[string]any{"agent": agent, "role": role, "generation": generation, "exit": exit, "by": by}
+		return KindSessionEnded, data, err
+	})
+}
+
+// EndAbandonedSessions records every agent session still recorded as running
+// as ended: at a start, they are the sessions of a daemon that did not stop
+// cleanly, which ended with it.
+func (s *Store) EndAbandonedSessions(at time.Time) error {
+	agents, err := s.Agents()
+	if err != nil {
+		return err
+	}
+	for _, a := range agents {
+		if a.State != AgentRunning {
+			continue
+		}
+		if err := s.SessionEnded(a.Agent, a.Generation, "unknown", "the previous daemon, which did not stop cleanly", at); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Observed journals an observation of generation of agent's session: event
+// is the lifecycle event its hooks reported, and payload what the provider
+// passed the hook, kept as it is.
+func (s *Store) Observed(agent, role string, generation int, event string, payload json.RawMessage, at time.Time) error {
+	return s.change(at, func(tx *sql.Tx) (string, any, error) {
+		data := map[string]any{"agent": agent, "role": role, "generation": generation, "event": event, "payload": payload}
+		return KindObservation, data, nil
+	})
+}
+
+// Agents returns every agent the store records, by address.
+func (s *Store) Agents() ([]Agent, error) {
+	rows, err := s.db.Query(`SELECT agent, role, state, generation, provider, version, model, pid, started_at, ended_at, exit FROM agents ORDER BY agent`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	agents := []Agent{}
+	for rows.Next() {
+		var a Agent
+		var started string
+		var ended sql.NullString
+		if err := rows.Scan(&a.Agent, &a.Role, &a.State, &a.Generation, &a.Provider, &a.Version, &a.Model, &a.PID, &started, &ended, &a.Exit); err != nil {
+			return nil, err
+		}
+		if a.StartedAt, err = time.Parse(time.RFC3339Nano, started); err != nil {
+			return nil, err
+		}
+		if ended.Valid {
+			if a.EndedAt, err = time.Parse(time.RFC3339Nano, ended.String); err != nil {
+				return nil, err
+			}
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
 }
 
 // change makes a change to the current state at at and journals it in one

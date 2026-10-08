@@ -32,11 +32,18 @@ func stateDir(t *testing.T) statedir.Paths {
 // for it to answer. stopped waits for it to stop and returns what Run did.
 func runDaemon(t *testing.T, p statedir.Paths) (stopped func() error, cancel func()) {
 	t.Helper()
+	return runDaemonWith(t, Config{Paths: p, Version: "v1.2.3"})
+}
+
+// runDaemonWith is runDaemon with cfg.
+func runDaemonWith(t *testing.T, cfg Config) (stopped func() error, cancel func()) {
+	t.Helper()
+	p := cfg.Paths
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	var err error
 	go func() {
-		err = Run(ctx, Config{Paths: p, Version: "v1.2.3"})
+		err = Run(ctx, cfg)
 		close(done)
 	}()
 	stopped = func() error {

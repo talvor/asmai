@@ -81,6 +81,14 @@ const (
 	CommandEffect  = "effect"
 	CommandResult  = "result"
 	CommandBlocked = "blocked"
+	// CommandAccept, CommandReject and CommandCancel are the owning
+	// leader's decisions on an assignment: accepting a result fast-forwards
+	// the job branch to it, rejecting returns the assignment to its worker,
+	// and cancelling ends it once the worker has pushed its branch and
+	// stopped.
+	CommandAccept = "accept"
+	CommandReject = "reject"
+	CommandCancel = "cancel"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -128,6 +136,10 @@ type Request struct {
 	Ref  string `json:"ref,omitempty"`
 	// Report is what a result or a blocked report says.
 	Report *store.ReportInput `json:"report,omitempty"`
+	// Assignment and Reasons say which assignment a decision is about and
+	// why the owning leader made it.
+	Assignment int64    `json:"assignment,omitempty"`
+	Reasons    []string `json:"reasons,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -157,6 +169,8 @@ type Response struct {
 	Assignment   *store.Assignment  `json:"assignment,omitempty"`
 	Effect       *store.Effect      `json:"effect,omitempty"`
 	Report       *store.Report      `json:"report,omitempty"`
+	Decision     *store.Decision    `json:"decision,omitempty"`
+	JobBranch    *store.JobBranch   `json:"job_branch,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -481,7 +495,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel:
 		d.assignmentCommand(conn, req)
 	case CommandStop:
 		select {

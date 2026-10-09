@@ -66,6 +66,14 @@ commands:
 	                            a worker submits its assignment's result; repeat a flag for each value
 	asmai blocked --reason <text> [--needs <text>]
 	                            a worker reports that it cannot go on
+	asmai accept --assignment <id> --reason <text>
+	                            Engineering's leader accepts the result of an assignment it owns, and the
+	                            daemon fast-forwards the job branch to it; repeat --reason for each reason
+	asmai reject --assignment <id> --reason <text>
+	                            Engineering's leader returns the result to the same worker, in a new dispatch
+	asmai cancel --assignment <id> --reason <text>
+	                            Engineering's leader cancels an assignment it owns; its worker pushes its
+	                            assignment branch and stops
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -159,6 +167,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var criteria criteriaFlags
 	var assignJob int64
 	var assignOutcome, blockedReason, blockedNeeds string
+	var decidedAssignment int64
+	var reasons listFlags
 	var resultArgs resultFlags
 	switch name {
 	case "start":
@@ -202,6 +212,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "blocked":
 		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
 		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker")
+	case "accept", "reject", "cancel":
+		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
+		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
 	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
@@ -231,7 +244,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel"}, name) {
 		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -293,6 +306,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return result(o, paths, resultArgs)
 	case "blocked":
 		return blocked(o, paths, blockedReason, blockedNeeds)
+	case "accept", "reject", "cancel":
+		return decide(o, paths, name, decidedAssignment, reasons)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":

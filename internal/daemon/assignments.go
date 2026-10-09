@@ -21,7 +21,8 @@ import (
 // take: a fetch from origin is the most of it.
 const gitTimeout = 5 * time.Minute
 
-// assignmentCommand serves assign, effect, result and blocked.
+// assignmentCommand serves assign, effect, result, blocked, accept, reject and
+// cancel.
 func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 	var resp Response
 	var err error
@@ -39,6 +40,9 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 		if e, err = d.effect(req); err == nil {
 			resp.Effect = &e
 		}
+	case CommandAccept, CommandReject, CommandCancel:
+		conn.SetDeadline(time.Now().Add(gitTimeout + stopWait + time.Minute))
+		resp, notify, err = d.decide(req)
 	case CommandResult, CommandBlocked:
 		conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
 		var r store.Report

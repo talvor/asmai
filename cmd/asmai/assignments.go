@@ -155,6 +155,44 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 	return 0
 }
 
+// decide makes the owning leader's decision on an assignment: to accept or
+// reject its result, or to cancel it.
+func decide(o *output, paths statedir.Paths, command string, assignment int64, reasons []string) int {
+	if assignment <= 0 {
+		return o.fail(fmt.Errorf("%s needs --assignment", command))
+	}
+	if len(reasons) == 0 {
+		return o.fail(fmt.Errorf("%s needs --reason: why, against the assignment's acceptance criteria", command))
+	}
+	for _, reason := range reasons {
+		if strings.TrimSpace(reason) == "" {
+			return o.fail(fmt.Errorf("%s --reason cannot be blank", command))
+		}
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: command, Assignment: assignment, Reasons: reasons})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.json {
+		return o.printJSON(resp)
+	}
+	a, d := resp.Assignment, resp.Decision
+	switch command {
+	case daemon.CommandAccept:
+		b := resp.JobBranch
+		fmt.Fprintf(o.stdout, "assignment %d accepted by %s at commit %s; the assignment has ended\n", a.ID, d.Leader, d.Commit)
+		fmt.Fprintf(o.stdout, "job branch %s fast-forwarded to %s\nread-only view of the job refreshed: %s\n", b.Name, b.Tip, b.View)
+		fmt.Fprintf(o.stdout, "next: the workspace is removed and %s stopped; later work is a new assignment\n", a.Worker)
+	case daemon.CommandReject:
+		fmt.Fprintf(o.stdout, "assignment %d: result rejected by %s; it is active again with %s, in dispatch %d\n", a.ID, d.Leader, a.Worker, resp.Dispatch.ID)
+		fmt.Fprintf(o.stdout, "next: %s is nudged, and its next result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
+	default:
+		fmt.Fprintf(o.stdout, "assignment %d: cancellation requested by %s; %s is told to push %s and stop, in dispatch %d\n", a.ID, d.Leader, a.Worker, a.Workspace.Branch, resp.Dispatch.ID)
+		fmt.Fprintln(o.stdout, "next: the assignment is cancelled once the worker has stopped")
+	}
+	return 0
+}
+
 // printAssignment writes the assignment a worker is given, or a leader's
 // result is about.
 func printAssignment(w io.Writer, a store.Assignment) {

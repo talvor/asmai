@@ -617,8 +617,12 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	}
 	if fields.Event == turnStopped {
 		d.turnFinished(ref)
-		if err := d.stopCurrentDispatch(ref, fields.PromptID, fields.Transcript); err != nil {
+		stopped, err := d.endCurrentDispatch(ref, fields.PromptID, fields.Transcript)
+		if err != nil {
 			return err
+		}
+		if stopped != 0 {
+			d.dispatchStopped(ref, stopped)
 		}
 	}
 	if fields.Event == "SessionStart" {

@@ -177,3 +177,13 @@ func Contains(ctx context.Context, dir, rev, commit string) (bool, error) {
 	}
 	return false, fmt.Errorf("comparing %s with %s in %s: %w", commit, rev, dir, err)
 }
+
+// MoveBranch moves the branch name of the clone from commit from to commit
+// to, and only if the branch is still at from, so that nothing else's move is
+// overwritten. The branch is not checked out in any checkout of the clone.
+func MoveBranch(ctx context.Context, clone, name, to, from string) error {
+	if _, err := git(ctx, clone, "update-ref", "-m", "asmai: move "+name, "refs/heads/"+name, to, from); err != nil {
+		return fmt.Errorf("moving branch %s from %s to %s: %w", name, from, to, err)
+	}
+	return nil
+}

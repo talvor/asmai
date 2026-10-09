@@ -87,10 +87,11 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 // workFetchedReply moves the fetched dispatch of a message that is work to do
 // at once to working: a reply to a handoff, an assignment for its worker, and
 // a result or a blocked report for the assignment's owning leader. Unlike a
-// handoff, none of them is answered by a command that starts the work.
+// handoff, none of them is answered by a command that starts the work. A
+// rejection and a cancellation are for the assignment's worker too.
 func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
 	switch m.Kind {
-	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.ReportResult, store.ReportBlocked:
+	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageCancellation, store.ReportResult, store.ReportBlocked:
 	default:
 		return nil
 	}
@@ -223,18 +224,28 @@ func (d *daemon) automatedSubmitted(ref sessionRef, prompt, promptID, transcript
 }
 
 func (d *daemon) stopCurrentDispatch(ref sessionRef, promptID, transcript string) error {
+	_, err := d.endCurrentDispatch(ref, promptID, transcript)
+	return err
+}
+
+// endCurrentDispatch ends the dispatch ref's session finished a turn for, and
+// returns it when it was working and is now stopped.
+func (d *daemon) endCurrentDispatch(ref sessionRef, promptID, transcript string) (int64, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	l := d.leaders[ref.address.String()]
 	if l == nil || l.session == nil || l.generation != ref.generation || l.currentDispatch == 0 || promptID == "" || promptID != l.currentPromptID {
-		return nil
+		return 0, nil
 	}
 	id := l.currentDispatch
 	l.currentPromptID = ""
-	_, err := d.store.StopDispatchIfWorking(id, ref.generation, transcript, time.Now())
+	stopped, err := d.store.StopDispatchIfWorking(id, ref.generation, transcript, time.Now())
 	// A correlated Stop ends this submitted prompt even when it did not fetch
 	// the inbox. Keep the durable dispatch eligible for another nudge, but do
 	// not leave the finished prompt as the leader's current dispatch.
 	l.currentDispatch = 0
-	return err
+	if stopped {
+		return id, err
+	}
+	return 0, err
 }

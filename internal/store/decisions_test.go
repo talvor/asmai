@@ -203,6 +203,12 @@ func TestCancellingAnAssignmentHoldsItsWorkerUntilTheWorkerHasStopped(t *testing
 		t.Error("a cancelling assignment was cancelled again")
 	}
 
+	if _, err := s.AssignmentCancelled(a.ID, Cancellation{Commit: otherCommit}, assignmentsAt); err == nil {
+		t.Error("an assignment with an unpushed workspace commit was cancelled")
+	}
+	if got, _ := s.Assignment(a.ID); got.State != AssignmentCancelling {
+		t.Errorf("after an unpushed cancellation the assignment is %s, want cancelling", got.State)
+	}
 	if _, err := s.AssignmentCancelled(a.ID, Cancellation{Commit: otherCommit, Pushed: true}, assignmentsAt); err != nil {
 		t.Fatal(err)
 	}

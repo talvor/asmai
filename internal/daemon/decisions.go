@@ -285,6 +285,7 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	}
 	if !left.Pushed {
 		d.log.Warn("a cancelled assignment's worker stopped without its assignment branch on origin at the workspace's commit", "assignment", id, "worker", a.Worker, "branch", a.Workspace.Branch, "commit", left.Commit)
+		return
 	}
 	d.mu.Lock()
 	_, err = d.store.AssignmentCancelled(id, left, time.Now())

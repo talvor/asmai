@@ -250,6 +250,9 @@ func (s *Store) AssignmentCancelled(id int64, left Cancellation, at time.Time) (
 		if a.State != AssignmentCancelling {
 			return "", nil, fmt.Errorf("assignment %d is %s, not cancelling", a.ID, a.State)
 		}
+		if !left.Pushed {
+			return "", nil, fmt.Errorf("assignment %d cannot be cancelled before its workspace commit is pushed", a.ID)
+		}
 		if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelled, a.ID); err != nil {
 			return "", nil, err
 		}

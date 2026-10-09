@@ -140,8 +140,26 @@ Everything the factory keeps on the host is in the state directory, `~/.local/st
 - `bin/asmai`, the daemon's copy of `asmai`, which each start replaces: agent sessions run it, first on their `PATH`, and their hooks name it.
 - `agents/`, each agent's working directory, by its address, such as `agents/leader@coordination`.
 - `repositories/`, AsmAI's own clone of each registered repository, in a directory named for it.
+- `workspaces/`, each writing assignment's workspace and temporary directory, as `workspaces/job-<n>/assignment-<id>/repo` and `.../tmp` (see [Writing assignments](#writing-assignments)).
+- `views/`, the leaders' read-only view of each repository job, as `views/job-<n>`.
 
 No journal entry or log line records environment variables.
+
+### Writing assignments
+
+Engineering's leader does not write code itself: it gives a writing assignment to a worker with `asmai assign --job <number> --outcome <text> --criterion <text>`, repeating `--criterion` for each acceptance criterion. Only Engineering's leader may. The assignment is recorded with its owning leader, its worker, its outcome and its acceptance criteria, and moves from active to submitted when its worker submits a result.
+
+The daemon, and only the daemon, makes the branches. A repository job's **job branch** is made as the job opens, from the repository's default branch as AsmAI's clone has just fetched it from origin, and is named `asmai/job-<n>-<slug>`, the slug taken from Coordination's reading of the request. The `job.branch` journal entry records the commit it started from. When an assignment is given, the daemon makes its **workspace**: a checkout of AsmAI's clone, never your own checkout, on a new **assignment branch** `asmai/job-<n>/<assignment>` made from the job branch's tip. The checkout shares the clone's configuration, so the worker pushes the branch to the repository's origin. The workspace has a **slot**, the lowest number no live workspace holds, and a temporary directory of its own beside the checkout; the worker starts in the workspace on Engineering's configured worker provider and model with `ASMAI_SLOT` and `TMPDIR` set to them, and is nudged like a leader. Worker numbers start at the lowest free number and are reused once a worker's assignment ends, so the worker is `worker1@engineering` and a durable record names it together with the assignment ID. The job branch itself moves only when a result is accepted, which later work adds.
+
+The daemon also keeps one **read-only view** of each repository job at the job branch's tip, in `views/job-<n>`, with its files made read-only. Leaders read the job's code there, `asmai brief <job>` points to it, and leaders never write in it.
+
+The worker writes tests along with the code, runs the repository's checks, takes in the job branch's tip, commits, pushes its assignment branch, and records each effect immediately with `asmai effect <kind> <ref>`, such as a commit or a push. The ledger is evidence, not proof: git is not routed through `asmai`. Then it submits its result:
+
+```sh
+asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>]
+```
+
+A result links its artifacts and evidence, names the tests added and the checks run with their outcomes, discloses every gap, and carries the worker's PR section: what changed, with before-and-after evidence. Leaving a list out is refused, so that omission is never taken for none. The daemon adds what it saw: the commit the workspace was at, the job branch's tip and whether the commit has taken it in, and the effects recorded in the dispatch. It refuses a result while the workspace has changes that are not committed. The result goes to the owning leader as a message with a dispatch of its own. A worker that cannot go on runs `asmai blocked --reason <text> [--needs <text>]` instead, which leaves the assignment active. A dispatch ends in one report. A message saying the worker is done is never a result.
 
 ## Pinned providers
 

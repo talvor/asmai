@@ -154,6 +154,14 @@ var inherited = []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE=", "GIT_C
 // git runs git in dir, or where it is when dir is empty, and returns what it
 // printed on stdout without its final newline.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
+	out, _, err := gitStatus(ctx, dir, args...)
+	return out, err
+}
+
+// gitStatus is git, which also returns the exit status of a git that ran and
+// failed, so that a caller can tell what a command answered with its status,
+// such as merge-base --is-ancestor, from a git that could not run.
+func gitStatus(ctx context.Context, dir string, args ...string) (stdout string, exit int, err error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	for _, kv := range os.Environ() {
@@ -166,20 +174,25 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 		}
 	}
 	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var out, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &stderr
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return "", errors.New("git is not installed, or not on the daemon's PATH")
+			return "", -1, errors.New("git is not installed, or not on the daemon's PATH")
 		}
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return "", -1, ctx.Err()
 		}
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
 			message = err.Error()
 		}
-		return "", errors.New(strings.ReplaceAll(message, "\n", "; "))
+		exit = -1
+		var failed *exec.ExitError
+		if errors.As(err, &failed) {
+			exit = failed.ExitCode()
+		}
+		return "", exit, errors.New(strings.ReplaceAll(message, "\n", "; "))
 	}
-	return strings.TrimSuffix(stdout.String(), "\n"), nil
+	return strings.TrimSuffix(out.String(), "\n"), 0, nil
 }

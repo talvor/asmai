@@ -40,6 +40,12 @@ type Paths struct {
 	// Repositories holds AsmAI's own clone of each registered repository,
 	// in a directory named for it.
 	Repositories string
+	// Workspaces holds each assignment's workspace and its temporary
+	// directory, in a directory named for its job and assignment.
+	Workspaces string
+	// Views holds the leaders' read-only view of each repository job, in a
+	// directory named for the job.
+	Views string
 }
 
 // Default returns the paths in the user's state directory,
@@ -79,6 +85,8 @@ func At(dir string) Paths {
 		Executable:   filepath.Join(dir, "bin", "asmai"),
 		Agents:       filepath.Join(dir, "agents"),
 		Repositories: filepath.Join(dir, "repositories"),
+		Workspaces:   filepath.Join(dir, "workspaces"),
+		Views:        filepath.Join(dir, "views"),
 	}
 }
 

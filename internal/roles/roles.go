@@ -8,6 +8,7 @@ import (
 	"embed"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -55,6 +56,26 @@ func LeaderOf(role string) Address {
 	return Address{Name: Leader, Role: role}
 }
 
+// Worker is the prefix of a worker's name: worker1, worker2 and so on.
+const Worker = "worker"
+
+// WorkerOf returns the address of role's worker number n, such as
+// worker1@engineering. Worker numbers start at 1.
+func WorkerOf(role string, n int) Address {
+	return Address{Name: Worker + strconv.Itoa(n), Role: role}
+}
+
+// WorkerNumber returns the number of a worker's address, such as 2 for
+// worker2@engineering, or false for the address of anything else.
+func (a Address) WorkerNumber() (int, bool) {
+	digits, ok := strings.CutPrefix(a.Name, Worker)
+	if !ok || digits == "" || digits[0] == '0' {
+		return 0, false
+	}
+	n, err := strconv.Atoi(digits)
+	return n, err == nil && n > 0
+}
+
 func (a Address) String() string {
 	return a.Name + "@" + a.Role
 }
@@ -75,7 +96,7 @@ func ParseAddress(s string) (Address, error) {
 	return Address{Name: name, Role: role}, nil
 }
 
-//go:embed instructions/*.md
+//go:embed instructions/*.md instructions/workers/*.md
 var instructions embed.FS
 
 // LeaderInstructions returns the instructions for role's leader.
@@ -83,6 +104,16 @@ func LeaderInstructions(role string) (string, error) {
 	data, err := instructions.ReadFile("instructions/" + role + ".md")
 	if err != nil {
 		return "", fmt.Errorf("there are no instructions for %s's leader", Title(role))
+	}
+	return string(data), nil
+}
+
+// WorkerInstructions returns the instructions for role's workers. M1 has
+// workers only in Engineering.
+func WorkerInstructions(role string) (string, error) {
+	data, err := instructions.ReadFile("instructions/workers/" + role + ".md")
+	if err != nil {
+		return "", fmt.Errorf("there are no instructions for %s's workers", Title(role))
 	}
 	return string(data), nil
 }

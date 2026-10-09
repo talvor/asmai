@@ -9,6 +9,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -116,6 +117,41 @@ CREATE TABLE dispatches (
  transcript TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
 );
 `,
+	`
+CREATE TABLE job_branches (
+ job INTEGER PRIMARY KEY REFERENCES jobs(number), repository TEXT NOT NULL, name TEXT NOT NULL,
+ started_from TEXT NOT NULL, tip TEXT NOT NULL, view TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE assignments (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ owner TEXT NOT NULL, worker TEXT NOT NULL, outcome TEXT NOT NULL, criteria TEXT NOT NULL,
+ state TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE workspaces (
+ assignment INTEGER PRIMARY KEY REFERENCES assignments(id), slot INTEGER NOT NULL,
+ path TEXT NOT NULL, tmp TEXT NOT NULL, branch TEXT NOT NULL, base TEXT NOT NULL
+);
+CREATE TABLE effects (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ assignment INTEGER REFERENCES assignments(id), dispatch INTEGER NOT NULL REFERENCES dispatches(id),
+ agent TEXT NOT NULL, generation INTEGER NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL, at TEXT NOT NULL
+);
+CREATE TABLE reports (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, assignment INTEGER NOT NULL REFERENCES assignments(id),
+ dispatch INTEGER NOT NULL REFERENCES dispatches(id), kind TEXT NOT NULL, agent TEXT NOT NULL,
+ commit_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE messages_next (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, handoff INTEGER REFERENCES handoffs(id),
+ assignment INTEGER REFERENCES assignments(id), report INTEGER REFERENCES reports(id),
+ job INTEGER NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL,
+ kind TEXT NOT NULL, body TEXT NOT NULL, fetched_at TEXT
+);
+INSERT INTO messages_next (id, handoff, job, sender, recipient, kind, body, fetched_at)
+ SELECT id, handoff, job, sender, recipient, kind, body, fetched_at FROM messages;
+DROP TABLE messages;
+ALTER TABLE messages_next RENAME TO messages;
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -150,6 +186,21 @@ const (
 	KindMessageCreated    = "message.created"
 	KindMessageFetched    = "message.fetched"
 	KindDispatchChanged   = "dispatch.changed"
+	// KindJobBranchMade records the daemon making a job's branch from the
+	// default branch as fetched from origin, with the commit it started from.
+	KindJobBranchMade = "job.branch"
+	// KindAssignmentCreated and KindWorkspaceCreated record a writing
+	// assignment, and the workspace of AsmAI's clone the daemon made for it
+	// on its own branch.
+	KindAssignmentCreated = "assignment.created"
+	KindWorkspaceCreated  = "workspace.created"
+	// KindEffectRecorded records an effect a worker or leader reported,
+	// tagged with its dispatch.
+	KindEffectRecorded = "effect.recorded"
+	// KindResultSubmitted and KindBlockedReported record a worker's result,
+	// which submits its assignment, and its blocked report.
+	KindResultSubmitted = "result.submitted"
+	KindBlockedReported = "blocked.reported"
 )
 
 // The states an agent can be in.
@@ -281,7 +332,20 @@ func (s *Store) migrate() error {
 			return errors.New("it is a database, but not an AsmAI store")
 		}
 	}
-	tx, err := s.db.Begin()
+	// A migration may rebuild a table other tables refer to, which SQLite
+	// allows only with foreign keys off. They stay off on this one connection
+	// for the migration, which then checks them itself before it commits.
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -293,6 +357,15 @@ func (s *Store) migrate() error {
 	}
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return err
+	}
+	violations, err := tx.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	broken := violations.Next()
+	violations.Close()
+	if broken {
+		return errors.New("a migration left a foreign key broken")
 	}
 	return tx.Commit()
 }

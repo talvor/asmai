@@ -74,6 +74,13 @@ const (
 	CommandHandoffAccept  = "handoff.accept"
 	CommandHandoffClarify = "handoff.clarify"
 	CommandHandoffDecline = "handoff.decline"
+	// CommandAssign gives a writing assignment to a worker. CommandEffect
+	// records an effect, CommandResult submits an assignment's result and
+	// CommandBlocked reports that its worker cannot go on.
+	CommandAssign  = "assign"
+	CommandEffect  = "effect"
+	CommandResult  = "result"
+	CommandBlocked = "blocked"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -116,6 +123,11 @@ type Request struct {
 	Constraints   string   `json:"constraints,omitempty"`
 	Permissions   string   `json:"permissions,omitempty"`
 	Answer        string   `json:"answer,omitempty"`
+	// Kind and Ref say what effect an effect request records.
+	Kind string `json:"kind,omitempty"`
+	Ref  string `json:"ref,omitempty"`
+	// Report is what a result or a blocked report says.
+	Report *store.ReportInput `json:"report,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -142,6 +154,9 @@ type Response struct {
 	Handoff      *store.Handoff     `json:"handoff,omitempty"`
 	Dispatch     *store.Dispatch    `json:"dispatch,omitempty"`
 	Messages     []store.Message    `json:"messages,omitempty"`
+	Assignment   *store.Assignment  `json:"assignment,omitempty"`
+	Effect       *store.Effect      `json:"effect,omitempty"`
+	Report       *store.Report      `json:"report,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -272,12 +287,12 @@ func Run(ctx context.Context, cfg Config) error {
 	} else {
 		for _, agent := range pending {
 			address, err := roles.ParseAddress(agent)
-			if err != nil || address.Name != roles.Leader || address.Role == roles.Coordination {
+			if err != nil || address == roles.LeaderOf(roles.Coordination) {
 				continue
 			}
 			d.mu.Lock()
-			if err = d.ensureRoleLeader(address.Role); err != nil {
-				log.Error("restoring receiving leader", "agent", agent, "error", err)
+			if err = d.ensureAgent(address); err != nil {
+				log.Error("restoring receiving agent", "agent", agent, "error", err)
 			}
 			d.mu.Unlock()
 		}
@@ -332,6 +347,11 @@ type daemon struct {
 	// answered once it has.
 	stop chan *net.UnixConn
 	wg   sync.WaitGroup
+
+	// assignMu makes giving assignments one at a time: each makes a job
+	// branch and a workspace of AsmAI's clone, and takes the next worker
+	// number and slot.
+	assignMu sync.Mutex
 
 	// repoMu makes registering and removing repositories one at a time: each
 	// changes the configuration file, the store and the state directory.
@@ -461,6 +481,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked:
+		d.assignmentCommand(conn, req)
 	case CommandStop:
 		select {
 		case d.stop <- conn:

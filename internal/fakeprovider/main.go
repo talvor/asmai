@@ -62,7 +62,10 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	if *scriptPath == "" {
 		*scriptPath = os.Getenv(ScriptEnv)
-		if strings.Contains(*instructions, "Engineering's leader") && os.Getenv(ScriptEnv+"_ENGINEERING") != "" {
+		switch {
+		case strings.Contains(*instructions, "an Engineering worker") && os.Getenv(ScriptEnv+"_WORKER") != "":
+			*scriptPath = os.Getenv(ScriptEnv + "_WORKER")
+		case strings.Contains(*instructions, "Engineering's leader") && os.Getenv(ScriptEnv+"_ENGINEERING") != "":
 			*scriptPath = os.Getenv(ScriptEnv + "_ENGINEERING")
 		}
 	}

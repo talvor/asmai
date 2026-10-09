@@ -185,3 +185,181 @@ func TestAFailedCloneLeavesNothing(t *testing.T) {
 		})
 	}
 }
+
+// cloned makes AsmAI's clone of a new origin with one commit on main, and
+// returns the clone, the origin and that commit.
+func cloned(t *testing.T) (clone, remote, first string) {
+	t.Helper()
+	remote = origin(t, "main")
+	clone = filepath.Join(realPath(t, t.TempDir()), "clone")
+	if _, err := Clone(context.Background(), remote, clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone, remote, run(t, clone, "rev-parse", "HEAD")
+}
+
+func TestAWorkspaceIsACheckoutOfTheCloneOnItsOwnBranchAtACommitAndPushesToOrigin(t *testing.T) {
+	ctx := context.Background()
+	clone, remote, first := cloned(t)
+	workspace := filepath.Join(realPath(t, t.TempDir()), "ws", "repo")
+	if err := AddWorkspace(ctx, clone, workspace, "asmai/job-1/1", first); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, workspace, "symbolic-ref", "--short", "HEAD"); got != "asmai/job-1/1" {
+		t.Errorf("the workspace is on %s, want asmai/job-1/1", got)
+	}
+	if got := run(t, workspace, "rev-parse", "HEAD"); got != first {
+		t.Errorf("the workspace is at %s, want %s", got, first)
+	}
+	if got := run(t, workspace, "rev-parse", "--git-common-dir"); realPath(t, got) != filepath.Join(realPath(t, clone), ".git") {
+		t.Errorf("the workspace belongs to %s, want the clone %s", got, clone)
+	}
+	// Pushing from it reaches the clone's origin.
+	run(t, workspace, "commit", "--allow-empty", "-m", "work")
+	run(t, workspace, "push", "--quiet", "origin", "asmai/job-1/1")
+	if got := run(t, remote, "rev-parse", "refs/heads/asmai/job-1/1"); got != run(t, workspace, "rev-parse", "HEAD") {
+		t.Errorf("origin holds the assignment branch at %s", got)
+	}
+
+	// What an attempt left behind is replaced, and removing the workspace
+	// takes its branch from the clone and leaves the one on origin.
+	if err := AddWorkspace(ctx, clone, workspace, "asmai/job-1/1", first); err != nil {
+		t.Fatalf("making the workspace again: %v", err)
+	}
+	if got := run(t, workspace, "rev-parse", "HEAD"); got != first {
+		t.Errorf("the replaced workspace is at %s, want %s", got, first)
+	}
+	if err := RemoveWorkspace(ctx, clone, workspace, "asmai/job-1/1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(workspace); err == nil {
+		t.Error("the removed workspace is still there")
+	}
+	if out := run(t, clone, "branch", "--list", "asmai/*"); out != "" {
+		t.Errorf("the clone still has branches %q", out)
+	}
+	if out := run(t, remote, "branch", "--list", "asmai/*"); !strings.Contains(out, "asmai/job-1/1") {
+		t.Errorf("origin lost the assignment branch: %q", out)
+	}
+}
+
+func TestAJobBranchStartsFromTheDefaultBranchAsFetchedFromOrigin(t *testing.T) {
+	ctx := context.Background()
+	clone, remote, first := cloned(t)
+	// Origin moves on, and a commit only the clone's checkout has stays out.
+	pusher := filepath.Join(realPath(t, t.TempDir()), "pusher")
+	run(t, filepath.Dir(pusher), "clone", "--quiet", remote, pusher)
+	run(t, pusher, "commit", "--allow-empty", "-m", "second")
+	run(t, pusher, "push", "--quiet", "origin", "HEAD:main")
+	second := run(t, pusher, "rev-parse", "HEAD")
+	run(t, clone, "commit", "--allow-empty", "-m", "local only")
+
+	if tip, err := OriginTip(ctx, clone, "main"); err != nil || tip != first {
+		t.Fatalf("before fetching, origin's main is %s (%v), want %s", tip, err, first)
+	}
+	if err := Fetch(ctx, clone); err != nil {
+		t.Fatal(err)
+	}
+	tip, err := OriginTip(ctx, clone, "main")
+	if err != nil || tip != second {
+		t.Fatalf("after fetching, origin's main is %s (%v), want %s", tip, err, second)
+	}
+	if err := CreateBranch(ctx, clone, "asmai/job-1-x", tip); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, clone, "rev-parse", "asmai/job-1-x"); got != second {
+		t.Errorf("the job branch is at %s, want %s", got, second)
+	}
+	if err := CreateBranch(ctx, clone, "asmai/job-1-x", first); err == nil {
+		t.Error("a branch that exists was made again")
+	}
+	if _, err := OriginTip(ctx, clone, "nowhere"); err == nil {
+		t.Error("origin's tip of a branch it does not have was found")
+	}
+}
+
+func TestAViewIsDetachedAtACommitReadOnlyAndMovedWhenTheTipMoves(t *testing.T) {
+	ctx := context.Background()
+	clone, _, first := cloned(t)
+	if err := os.WriteFile(filepath.Join(clone, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, clone, "add", "a.txt")
+	run(t, clone, "commit", "-m", "second")
+	second := run(t, clone, "rev-parse", "HEAD")
+
+	view := filepath.Join(realPath(t, t.TempDir()), "views", "job-1")
+	t.Cleanup(func() { makeWritable(view) })
+	if err := EnsureView(ctx, clone, view, first); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, view, "rev-parse", "HEAD"); got != first {
+		t.Errorf("the view is at %s, want %s", got, first)
+	}
+	if _, err := os.Stat(filepath.Join(view, "a.txt")); err == nil {
+		t.Error("the view holds a file of a later commit")
+	}
+	if err := EnsureView(ctx, clone, view, second); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, view, "rev-parse", "HEAD"); got != second {
+		t.Errorf("the moved view is at %s, want %s", got, second)
+	}
+	info, err := os.Stat(filepath.Join(view, "a.txt"))
+	if err != nil || info.Mode().Perm()&0o222 != 0 {
+		t.Errorf("the view's a.txt is %v (%v), want it read-only", info, err)
+	}
+	info, err = os.Stat(view)
+	if err != nil || info.Mode().Perm()&0o222 != 0 {
+		t.Errorf("the view directory is %v (%v), want it read-only", info, err)
+	}
+	if out := run(t, view, "status", "--porcelain"); out != "" {
+		t.Errorf("the view reads as changed: %q", out)
+	}
+	// Making the same view again is a no-op, and a view whose files are
+	// read-only can be made again from nothing.
+	if err := EnsureView(ctx, clone, view, second); err != nil {
+		t.Fatal(err)
+	}
+	makeWritable(view)
+	if err := os.RemoveAll(filepath.Join(view, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureView(ctx, clone, view, first); err != nil {
+		t.Fatalf("making the view again: %v", err)
+	}
+	if got := run(t, view, "rev-parse", "HEAD"); got != first {
+		t.Errorf("the remade view is at %s, want %s", got, first)
+	}
+}
+
+func TestUncommittedAndContainsReadAWorkspace(t *testing.T) {
+	ctx := context.Background()
+	clone, _, first := cloned(t)
+	workspace := filepath.Join(realPath(t, t.TempDir()), "ws")
+	if err := AddWorkspace(ctx, clone, workspace, "asmai/job-1/1", first); err != nil {
+		t.Fatal(err)
+	}
+	if lines, err := Uncommitted(ctx, workspace); err != nil || len(lines) != 0 {
+		t.Errorf("a clean workspace reads as %v (%v)", lines, err)
+	}
+	os.WriteFile(filepath.Join(workspace, "new.txt"), []byte("x"), 0o644)
+	if lines, err := Uncommitted(ctx, workspace); err != nil || len(lines) != 1 || !strings.HasSuffix(lines[0], "new.txt") {
+		t.Errorf("a workspace with a new file reads as %v (%v)", lines, err)
+	}
+	run(t, workspace, "add", "new.txt")
+	run(t, workspace, "commit", "-m", "work")
+	head := run(t, workspace, "rev-parse", "HEAD")
+	if in, err := Contains(ctx, workspace, "HEAD", first); err != nil || !in {
+		t.Errorf("the workspace has not taken in the commit it was made at: %v (%v)", in, err)
+	}
+	if in, err := Contains(ctx, workspace, first, head); err != nil || in {
+		t.Errorf("the first commit has taken in the work: %v (%v)", in, err)
+	}
+	if _, err := Contains(ctx, workspace, "HEAD", "not-a-commit"); err == nil {
+		t.Error("a commit that does not exist was compared")
+	}
+	if got, err := Commit(ctx, workspace, "HEAD"); err != nil || got != head {
+		t.Errorf("the workspace is at %s (%v), want %s", got, err, head)
+	}
+}

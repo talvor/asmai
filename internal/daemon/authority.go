@@ -14,7 +14,7 @@ import (
 // user's own access, so it is not a security boundary.
 func (d *daemon) authorize(req Request) error {
 	if req.Session == "" {
-		if req.Command == CommandJobOpen || req.Command == CommandHook || req.Command == CommandBrief || req.Command == CommandInbox || req.Command == CommandHandoffSend || req.Command == CommandHandoffAccept || req.Command == CommandHandoffClarify || req.Command == CommandHandoffDecline {
+		if isAgentCommand(req.Command) {
 			return fmt.Errorf("asmai %s is an agent command", commandName(req.Command))
 		}
 		return nil
@@ -42,12 +42,39 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return fmt.Errorf("only leader@coordination may run asmai job open")
+	case CommandAssign:
+		if ref.address == roles.LeaderOf(roles.Engineering) {
+			return nil
+		}
+		return fmt.Errorf("only leader@engineering may run asmai assign")
+	case CommandEffect:
+		if ref.address.Name != roles.Leader || ref.address == roles.LeaderOf(roles.Engineering) {
+			return nil
+		}
+		return fmt.Errorf("only a worker, or the delivery owner of a job, may run asmai effect")
+	case CommandResult, CommandBlocked:
+		if ref.address.Name != roles.Leader {
+			return nil
+		}
+		return fmt.Errorf("only a worker may run asmai %s: a leader's work goes through its workers", req.Command)
 	default:
 		if userCommand := commandName(req.Command); userCommand != "" {
 			return fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", userCommand)
 		}
 		return fmt.Errorf("an agent cannot run %q; use an agent coordination command", req.Command)
 	}
+}
+
+// isAgentCommand reports whether command is one only an agent's session may
+// run, and so needs the session's credential.
+func isAgentCommand(command string) bool {
+	switch command {
+	case CommandJobOpen, CommandHook, CommandBrief, CommandInbox,
+		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
+		CommandAssign, CommandEffect, CommandResult, CommandBlocked:
+		return true
+	}
+	return false
 }
 
 func commandName(command string) string {
@@ -66,6 +93,8 @@ func commandName(command string) string {
 		return "job <number>"
 	case CommandInbox:
 		return "inbox"
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked:
+		return command
 	case CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		return "handoff " + strings.TrimPrefix(command, "handoff.")
 	default:

@@ -22,6 +22,8 @@ Run it in a pseudo-terminal, the way the daemon runs a provider CLI. Like the re
 
 The fake plays the script named by `--script`, or else by the `ASMAI_FAKE_PROVIDER_SCRIPT` environment variable. With the script in the environment, a test starts the fake in place of the pinned Claude Code with the arguments the daemon passes to Claude Code and no fake-only flags.
 
+A flow with more than one agent needs one script for each. The fake plays the script named by `ASMAI_FAKE_PROVIDER_SCRIPT_ENGINEERING` instead when the instructions it is started with are Engineering's leader's, and by `ASMAI_FAKE_PROVIDER_SCRIPT_WORKER` when they are an Engineering worker's, if the variable is set; every other agent plays `ASMAI_FAKE_PROVIDER_SCRIPT`.
+
 `--setting-sources` takes the setting sources Claude Code loads, separated by commas, each of `user`, `project` and `local`; any other makes the fake exit 2. The fake plays the same whatever `--setting-sources`, `--model` and `--append-system-prompt` are. With `ASMAI_FAKE_PROVIDER_ARGS` naming a file in its environment, the fake writes the arguments it was started with to that file as a JSON array before it plays, so that a test can see the command line a session was given.
 
 `--settings` takes Claude Code settings the way Claude Code's own `--settings` does: the path of a settings file, or the settings as JSON when the argument starts with `{`. The fake reads only their `"hooks"`, in Claude Code's shape, and leaves everything else alone:

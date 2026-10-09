@@ -34,3 +34,21 @@ func TestCoordinationsLeaderHasItsInstructions(t *testing.T) {
 		t.Error("a role with no instructions has some")
 	}
 }
+
+func TestWorkersAreNumberedFromOneAndNamedByAddress(t *testing.T) {
+	if got := WorkerOf(Engineering, 3).String(); got != "worker3@engineering" {
+		t.Errorf("worker 3 of Engineering is %s", got)
+	}
+	for in, want := range map[string]int{"worker1@engineering": 1, "worker12@quality": 12} {
+		a, err := ParseAddress(in)
+		if n, ok := a.WorkerNumber(); err != nil || !ok || n != want {
+			t.Errorf("%s is worker %d, %v (%v), want %d", in, n, ok, err, want)
+		}
+	}
+	for _, in := range []string{"leader@engineering", "worker@engineering", "worker0@engineering", "worker01@engineering", "worker1x@engineering", "worker-1@engineering"} {
+		a, err := ParseAddress(in)
+		if n, ok := a.WorkerNumber(); err != nil || ok {
+			t.Errorf("%s is worker %d, %v (%v), want it to be no worker", in, n, ok, err)
+		}
+	}
+}

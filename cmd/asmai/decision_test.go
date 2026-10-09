@@ -3,7 +3,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +26,74 @@ func greetingWorker(branch string) []string {
 		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(resultFlagsForGreeting, 0, "result recorded for assignment 1"),
+	}
+}
+
+func TestCancellationWithoutConfirmedPushStaysIncompleteAndRetainsWorker(t *testing.T) {
+	const branch = "asmai/job-1/1"
+	worker := []string{
+		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
+		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`asmai blocked --reason 'Which greeting?' --needs 'a choice'`, 0, "blocked recorded for assignment 1"),
+		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "already ended in a blocked report"),
+		hookStep("Stop", "assignment", ""),
+		`{"expect":"asmai inbox --dispatch 5\r"}`,
+		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 5"),
+		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)dispatch 5 \\| job 1 \\| cancellation from leader@engineering.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| cancelling"),
+		fakeRun(`printf 'unconfirmed\\n' > notes.txt && git add -A && git commit -q -m 'Unpushed work' && touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""),
+	}
+	leader := []string{
+		fakeRun(`asmai inbox --dispatch 4`, 0, "blocked 1"),
+		fakeRun(`asmai cancel --assignment 1 --reason 'stop this work'`, 0, "cancellation requested"),
+		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-done" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`asmai brief 1`, 0, "cancelling"),
+	}
+	fixture, _ := assignmentFlow(t, worker, leader)
+	if cancelled := journaled(t, "assignment.cancelled"); len(cancelled) != 0 {
+		t.Fatalf("unconfirmed cancellation was recorded: %+v", cancelled)
+	}
+	if got := journaled(t, "assignment.cancelling"); len(got) != 1 {
+		t.Fatalf("cancellation requests: %+v", got)
+	}
+	if w := workerOf(t, "worker1@engineering"); w.State == "stopped" {
+		t.Errorf("worker allocation was freed after unconfirmed push: %+v", w)
+	}
+	if got := gitIn(t, fixture.origin, "show-ref", "--verify", "refs/heads/"+branch); got == "" {
+		t.Fatal("expected assignment branch to exist on origin")
+	}
+}
+
+func TestAcceptanceCleanupFailureIsReportedAndNotJournaledAsRemoved(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, err := filepath.Abs(".test-acceptance-cleanup-bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(bin) })
+	wrapper := filepath.Join(bin, "git")
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2 $3\" = \"branch -D asmai/job-1/1\" ]; then echo injected cleanup failure >&2; exit 1; fi\nexec %q \"$@\"\n", gitPath)
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const branch = "asmai/job-1/1"
+	leader := []string{
+		fakeRun(`asmai inbox --dispatch 4`, 0, "result 1"),
+		waitForWorker,
+		fakeRun(`asmai accept --assignment 1 --reason 'criteria met'`, 1, "injected cleanup failure"),
+	}
+	assignmentFlow(t, greetingWorker(branch), leader)
+	if len(journaled(t, "result.accepted")) != 1 {
+		t.Fatal("acceptance should remain recorded before cleanup fails")
+	}
+	if got := journaled(t, "workspace.removed"); len(got) != 0 {
+		t.Errorf("failed cleanup was journaled as removed: %+v", got)
 	}
 }
 

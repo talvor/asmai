@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -38,6 +39,67 @@ func TestAJobBranchIsNamedForTheJobAndASlugOfItsTitle(t *testing.T) {
 	}
 	if s := slug(strings.Repeat("abcd ", 30)); len(s) > maxSlug || strings.HasSuffix(s, "-") {
 		t.Errorf("a long title makes the slug %q, want at most %d characters and no hyphen last", s, maxSlug)
+	}
+}
+
+func TestAJobBranchCanBeRecordedAfterItsViewCreationIsRetried(t *testing.T) {
+	paths := stateDir(t)
+	origin := remote(t)
+	clone := filepath.Join(paths.Repositories, "fixture")
+	if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git(t, filepath.Dir(clone), "clone", origin, clone)
+
+	s, err := store.Open(paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	at := time.Now()
+	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
+		t.Fatal(err)
+	}
+	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "open a test job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a test job"}`), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Recover branch", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(paths.Dir, "views-blocker")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{cfg: Config{Paths: paths}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	d.cfg.Paths.Views = blocker
+	repository, err := s.Repository("fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := d.ensureJobBranch(ctx, job, repository); err == nil {
+		t.Fatal("branch creation succeeded despite the blocked view path")
+	}
+	name := JobBranchName(job)
+	startedFrom := git(t, clone, "rev-parse", "refs/heads/"+name)
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	d.cfg.Paths.Views = paths.Views
+	branch, err := d.ensureJobBranch(ctx, job, repository)
+	if err != nil {
+		t.Fatalf("retrying the job branch failed: %v", err)
+	}
+	if branch.Name != name || branch.StartedFrom != startedFrom {
+		t.Errorf("the recovered branch is %+v, want %s started from %s", branch, name, startedFrom)
+	}
+	if got := git(t, filepath.Join(paths.Views, "job-1"), "rev-parse", "HEAD"); got != startedFrom {
+		t.Errorf("the recovered view is at %s, want %s", got, startedFrom)
 	}
 }
 

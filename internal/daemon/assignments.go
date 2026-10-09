@@ -194,18 +194,22 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		return store.JobBranch{}, err
 	}
 	name := JobBranchName(j)
-	if err := repos.CreateBranch(ctx, repository.Clone, name, tip); err != nil {
-		return store.JobBranch{}, err
+	startedFrom, err := repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
+	if err != nil {
+		startedFrom = tip
+		if err := repos.CreateBranch(ctx, repository.Clone, name, startedFrom); err != nil {
+			return store.JobBranch{}, err
+		}
 	}
 	view := filepath.Join(d.cfg.Paths.Views, fmt.Sprintf("job-%d", j.Number))
-	if err := repos.EnsureView(ctx, repository.Clone, view, tip); err != nil {
+	if err := repos.EnsureView(ctx, repository.Clone, view, startedFrom); err != nil {
 		return store.JobBranch{}, err
 	}
-	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: tip, View: view}, time.Now())
+	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view}, time.Now())
 	if err != nil {
 		return store.JobBranch{}, fmt.Errorf("recording the job branch: %w", err)
 	}
-	d.log.Info("job branch made", "job", j.Number, "branch", name, "started_from", tip, "view", view)
+	d.log.Info("job branch made", "job", j.Number, "branch", name, "started_from", startedFrom, "view", view)
 	return branch, nil
 }
 

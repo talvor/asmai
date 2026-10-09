@@ -164,9 +164,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	}
 	d.log.Info("assignment created", "assignment", a.ID, "job", j.Number, "worker", a.Worker, "slot", slot, "branch", workspace.Branch, "workspace", workspace.Path)
 	if err := d.ensureAgent(worker); err != nil {
-		// The assignment is recorded and its dispatch waits in the worker's
-		// inbox; the worker starts when the factory can run it.
-		d.log.Error("starting the worker", "agent", worker.String(), "assignment", a.ID, "dispatch", dispatch.ID, "error", err)
+		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("starting worker %s for assignment %d: %w", worker, a.ID, err)
 	}
 	return a, dispatch, nil
 }

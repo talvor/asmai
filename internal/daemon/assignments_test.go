@@ -103,6 +103,69 @@ func TestAJobBranchCanBeRecordedAfterItsViewCreationIsRetried(t *testing.T) {
 	}
 }
 
+func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
+	paths := stateDir(t)
+	origin := remote(t)
+	clone := filepath.Join(paths.Repositories, "fixture")
+	if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git(t, filepath.Dir(clone), "clone", origin, clone)
+	s, err := store.Open(paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	at := time.Now()
+	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
+		t.Fatal(err)
+	}
+	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "open a test job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a test job"}`), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Start worker", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config strings.Builder
+	for _, role := range []string{roles.Coordination, roles.Engineering, roles.Quality} {
+		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
+	}
+	configFile := filepath.Join(paths.Dir, "config.toml")
+	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := filepath.Join(paths.Providers, "claude-code", "v", "claude")
+	if err := os.MkdirAll(filepath.Dir(provider), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(provider, []byte("#!/missing/interpreter\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ProviderInstalled(store.ProviderInstall{Name: providers.ClaudeCode, Version: "v", Path: provider, SHA256: strings.Repeat("a", 64), InstalledAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	owner := roles.LeaderOf(roles.Engineering)
+	d := &daemon{
+		cfg: Config{Paths: paths, ConfigFile: configFile, Pins: providers.Pins{ClaudeCode: providers.Pin{Version: "v"}}}, work: context.Background(), store: s,
+		leaders:  map[string]*leader{owner.String(): {address: owner, session: &session.Session{}, generation: 1}},
+		sessions: map[string]sessionRef{"credential": {address: owner, generation: 1}},
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	_, _, err = d.assign(Request{Session: "credential", Job: job.Number, Outcome: "Implement it", Criteria: []string{"complete"}})
+	if err == nil || !strings.Contains(err.Error(), "starting worker worker1@engineering") {
+		t.Fatalf("assign returned %v, want the worker startup error", err)
+	}
+	assignments, err := s.AssignmentsForJob(job.Number)
+	if err != nil || len(assignments) != 1 || assignments[0].Worker != "worker1@engineering" || assignments[0].State != store.AssignmentActive {
+		t.Errorf("the recorded assignment is %+v (%v), want one active worker1 assignment", assignments, err)
+	}
+}
+
 // workerFactory is a daemon with Engineering staffed, a pinned Claude Code
 // that records where and how it was started and waits, and a store holding a
 // job with a branch and one assignment for worker1@engineering, whose

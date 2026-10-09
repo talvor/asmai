@@ -47,6 +47,13 @@ func gitIdentity(t *testing.T) {
 // else has, so that a workspace made from the checkout would show.
 func registerWritingFixture(t *testing.T) writingFixture {
 	t.Helper()
+	return registerWritingFixtureWith(t, nil)
+}
+
+// registerWritingFixtureWith is registerWritingFixture for a repository whose
+// main also holds files, by path.
+func registerWritingFixtureWith(t *testing.T, files map[string]string) writingFixture {
+	t.Helper()
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +65,15 @@ func registerWritingFixture(t *testing.T) writingFixture {
 	if err := os.WriteFile(filepath.Join(f.checkout, "README.md"), []byte("fixture\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gitIn(t, f.checkout, "add", "README.md")
+	for path, text := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(f.checkout, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(f.checkout, path), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, f.checkout, "add", "-A")
 	gitIn(t, f.checkout, "commit", "-m", "initial")
 	gitIn(t, f.checkout, "push", "--quiet", "origin", "main")
 	f.main = gitIn(t, f.checkout, "rev-parse", "HEAD")
@@ -109,7 +124,15 @@ func hookStep(event, promptID, prompt string) string {
 // when both have finished.
 func assignmentFlow(t *testing.T, worker, leader []string) (fixture writingFixture, testDir string) {
 	t.Helper()
-	gitIdentity(t)
+	return assignmentFlowWith(t, gitIdentity, nil, worker, leader)
+}
+
+// assignmentFlowWith is assignmentFlow for a test that sets git up as it
+// likes, before the daemon starts, and registers a repository whose main also
+// holds files.
+func assignmentFlowWith(t *testing.T, setUpGit func(*testing.T), files map[string]string, worker, leader []string) (fixture writingFixture, testDir string) {
+	t.Helper()
+	setUpGit(t)
 	testDir = t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	engineering := append([]string{
@@ -170,7 +193,7 @@ func assignmentFlow(t *testing.T, worker, leader []string) (fixture writingFixtu
 	if _, stderr, code := runAsmai(t, "start"); code != 0 {
 		t.Fatal(stderr)
 	}
-	fixture = registerWritingFixture(t)
+	fixture = registerWritingFixtureWith(t, files)
 	a := inTerminal(t, 100, 25)
 	waitFor(t, "Coordination prompt", a.shows(">"))
 	a.ptmx.WriteString("Please add a greeting\r")

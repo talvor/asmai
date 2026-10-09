@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/config"
+	"github.com/talvor/asmai/internal/githooks"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/session"
@@ -370,6 +371,9 @@ type launch struct {
 	model        string
 	dir          string
 	env          map[string]string
+	// writable are the directories besides dir that the session's write
+	// guard lets its commands write.
+	writable []string
 }
 
 // startLeader starts l's session on the installed Claude Code, with
@@ -400,11 +404,21 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.
 	if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
 		return fmt.Errorf("creating the workspace's temporary directory: %w", err)
 	}
+	repository, err := roles.RepositoryInstructions(a.Workspace.Path)
+	if err != nil {
+		return fmt.Errorf("reading the repository's instruction files in the workspace of assignment %d: %w", a.ID, err)
+	}
+	if repository != "" {
+		instructions += "\n" + repository
+	}
 	l.assignment = a.ID
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: map[string]string{
+	env := map[string]string{
 		SlotVariable: strconv.Itoa(a.Workspace.Slot),
 		"TMPDIR":     a.Workspace.Tmp,
-	}})
+	}
+	// The worker's git adds the trailers to each commit, as the user.
+	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}})
 }
 
 // startSession starts l's session on the installed Claude Code as launch
@@ -414,7 +428,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	if err != nil {
 		return err
 	}
-	args := providers.ClaudeCodeArgs(providers.HookCommand(d.cfg.Paths.Executable), launch.model, launch.instructions)
+	args := providers.ClaudeCodeArgs(providers.HookCommand(d.cfg.Paths.Executable), launch.model, launch.instructions, providers.WriteGuard{Socket: d.cfg.Paths.Socket, Writable: launch.writable})
 	set := map[string]string{SessionCredential: credential}
 	maps.Copy(set, launch.env)
 	env := providers.SessionEnv(os.Environ(), d.cfg.Paths.Bin, set)

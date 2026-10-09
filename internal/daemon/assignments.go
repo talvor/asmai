@@ -264,6 +264,47 @@ func (d *daemon) effect(req Request) (store.Effect, error) {
 	return e, nil
 }
 
+// The trailers every commit of a worker carries.
+const (
+	TrailerJob      = "AsmAI-Job"
+	TrailerAgent    = "AsmAI-Agent"
+	TrailerDispatch = "AsmAI-Dispatch"
+)
+
+// trailers returns the trailers a commit of req's worker carries: the job of
+// the assignment in its current dispatch, the worker and the dispatch. Only a
+// worker commits, and only while it works on a dispatch it fetched.
+func (d *daemon) trailers(req Request) ([]string, error) {
+	d.mu.Lock()
+	ref, l, err := d.caller(req)
+	current := int64(0)
+	if err == nil {
+		current = l.currentDispatch
+	}
+	d.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if ref.address.Name == roles.Leader {
+		return nil, refuse("%s commits nothing: a leader's work goes through its workers", ref.address)
+	}
+	if current == 0 {
+		return nil, refuse("%s has no current dispatch to name in the commit; commit while working on the assignment you fetched with `asmai inbox`", ref.address)
+	}
+	a, err := d.store.DispatchAssignment(current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, refuse("dispatch %d is about no assignment, so there is no job to name in the commit", current)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		fmt.Sprintf("%s: %d", TrailerJob, a.Job),
+		fmt.Sprintf("%s: %s", TrailerAgent, ref.address),
+		fmt.Sprintf("%s: %d", TrailerDispatch, current),
+	}, nil
+}
+
 // report records the result or the blocked report of the assignment req's
 // worker carries in its current dispatch. A result submits the assignment.
 // The report goes to the owning leader, which is started if it is not

@@ -45,6 +45,9 @@ type Provider interface {
 	// AuthStatus asks the copy at path, in the factory's environment, for its
 	// sign-in status.
 	AuthStatus(ctx context.Context, f *Factory, path string) (AuthStatus, error)
+	// Ask runs the copy at path for one turn, non-interactively, as spec says,
+	// and returns what it did.
+	Ask(ctx context.Context, f *Factory, path string, spec AskSpec) (Turn, error)
 }
 
 // ClaudeCode is the real pinned Claude Code.

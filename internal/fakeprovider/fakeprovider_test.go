@@ -385,3 +385,36 @@ func TestTheFakeTakesClaudeCodesFlagsAndWritesItsArguments(t *testing.T) {
 		})
 	}
 }
+
+// Claude Code loads a repository's own settings only when the project setting
+// source is among those it is given, and the fake does the same, so that a
+// test can see whether a session loaded a repository's hooks.
+func TestTheFakeLoadsTheRepositorysHooksOnlyWithTheProjectSettingSource(t *testing.T) {
+	for _, tt := range []struct {
+		sources string
+		loaded  bool
+	}{{"user", false}, {"user, project", true}, {"project", true}, {"", false}} {
+		t.Run("sources "+tt.sources, func(t *testing.T) {
+			repo := t.TempDir()
+			log := hookLog(filepath.Join(t.TempDir(), "repository.log"))
+			if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), []byte(hookSettings(t, log, "SessionStart")), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(fakeProvider, "--setting-sources", tt.sources)
+			cmd.Dir = repo
+			cmd.Env = append(os.Environ(), "ASMAI_FAKE_PROVIDER_SCRIPT="+writeScript(t,
+				`{"hook": "SessionStart", "payload": {"hook_event_name": "SessionStart", "source": "startup"}}`, `{"screen": "ready\r\n"}`))
+			s := startCmd(t, cmd)
+			s.waitForScreen("ready")
+			if code := s.exit(); code != 0 {
+				t.Fatalf("fake exited %d: %s", code, s.stderr.String())
+			}
+			if got := len(log.deliveries(t)) == 1; got != tt.loaded {
+				t.Errorf("with --setting-sources %q the repository's hook ran: %t, want %t", tt.sources, got, tt.loaded)
+			}
+		})
+	}
+}

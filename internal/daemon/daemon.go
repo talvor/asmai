@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/talvor/asmai/internal/githooks"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
@@ -81,6 +82,9 @@ const (
 	CommandEffect  = "effect"
 	CommandResult  = "result"
 	CommandBlocked = "blocked"
+	// CommandTrailers answers a worker's git hook with the trailers its
+	// commit carries.
+	CommandTrailers = "trailers"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -157,6 +161,9 @@ type Response struct {
 	Assignment   *store.Assignment  `json:"assignment,omitempty"`
 	Effect       *store.Effect      `json:"effect,omitempty"`
 	Report       *store.Report      `json:"report,omitempty"`
+	// Trailers are the trailers a worker's commit carries, each as
+	// "Key: value".
+	Trailers []string `json:"trailers,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -240,6 +247,9 @@ func Run(ctx context.Context, cfg Config) error {
 
 	if cfg.Executable != "" {
 		if err := installExecutable(cfg.Executable, p.Executable); err != nil {
+			return err
+		}
+		if err := githooks.Install(p.GitHooks, p.Executable); err != nil {
 			return err
 		}
 	}
@@ -483,6 +493,13 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.handoffCommand(conn, req)
 	case CommandAssign, CommandEffect, CommandResult, CommandBlocked:
 		d.assignmentCommand(conn, req)
+	case CommandTrailers:
+		trailers, err := d.trailers(req)
+		if err != nil {
+			reply(conn, Response{Error: err.Error()})
+			return false
+		}
+		reply(conn, Response{Trailers: trailers})
 	case CommandStop:
 		select {
 		case d.stop <- conn:

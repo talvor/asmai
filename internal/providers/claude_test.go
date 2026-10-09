@@ -14,8 +14,9 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	if want := `'/home/it'\''s/.local/state/asmai/bin/asmai' hook`; hook != want {
 		t.Errorf("the hook command is %s, want %s", hook, want)
 	}
-	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.")
-	if want := []string{"--setting-sources", "user", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
+	guard := WriteGuard{Socket: "/state/daemon.sock", Writable: []string{"/state/workspaces/job-1/assignment-1/tmp"}}
+	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.", guard)
+	if want := []string{"--setting-sources", "user", "--strict-mcp-config", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
 		t.Errorf("the command line is %q, want --settings, then %q", args, want)
 	}
 	if args[0] != "--settings" {
@@ -34,6 +35,19 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 			DefaultMode                  string   `json:"defaultMode"`
 			DisableBypassPermissionsMode string   `json:"disableBypassPermissionsMode"`
 		} `json:"permissions"`
+		Sandbox struct {
+			Enabled                  bool     `json:"enabled"`
+			FailIfUnavailable        bool     `json:"failIfUnavailable"`
+			AutoAllowBashIfSandboxed bool     `json:"autoAllowBashIfSandboxed"`
+			ExcludedCommands         []string `json:"excludedCommands"`
+			Filesystem               struct {
+				AllowWrite []string `json:"allowWrite"`
+			} `json:"filesystem"`
+			Network struct {
+				AllowUnixSockets []string `json:"allowUnixSockets"`
+				AllowedDomains   []string `json:"allowedDomains"`
+			} `json:"network"`
+		} `json:"sandbox"`
 	}
 	if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
 		t.Fatal(err)
@@ -48,9 +62,69 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 		}
 	}
 	p := settings.Permissions
-	if !slices.Equal(p.Allow, []string{"Bash(asmai:*)"}) || p.DefaultMode != "default" || p.DisableBypassPermissionsMode != "disable" {
-		t.Errorf("the permissions are %+v, want asmai allowed and the native prompts kept", p)
+	if !slices.Equal(p.Allow, []string{"Bash(asmai:*)", "Bash(git:*)", "Bash(gh:*)"}) || p.DefaultMode != "default" || p.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("the permissions are %+v, want asmai, git and gh allowed and the native prompts kept", p)
 	}
+	if !slices.Contains(p.Allow, AllowedAsmai) {
+		t.Errorf("the permissions %q lack %s", p.Allow, AllowedAsmai)
+	}
+}
+
+func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *testing.T) {
+	var settings struct {
+		Sandbox struct {
+			Enabled                  bool           `json:"enabled"`
+			FailIfUnavailable        bool           `json:"failIfUnavailable"`
+			AutoAllowBashIfSandboxed bool           `json:"autoAllowBashIfSandboxed"`
+			ExcludedCommands         []string       `json:"excludedCommands"`
+			Filesystem               map[string]any `json:"filesystem"`
+			Network                  map[string]any `json:"network"`
+		} `json:"sandbox"`
+		Permissions struct {
+			Allow []string `json:"allow"`
+			Ask   []string `json:"ask"`
+		} `json:"permissions"`
+	}
+	for name, guard := range map[string]WriteGuard{
+		"a worker's": {Socket: "/state/daemon.sock", Writable: []string{"/state/tmp"}},
+		"a leader's": {Socket: "/state/daemon.sock"},
+		"no socket":  {},
+	} {
+		settings.Sandbox.Filesystem, settings.Sandbox.Network = nil, nil
+		if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard)), &settings); err != nil {
+			t.Fatal(err)
+		}
+		sb := settings.Sandbox
+		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed {
+			t.Errorf("%s sandbox is %+v, want it enabled, auto-allowing what it guards, and failing rather than running unguarded", name, sb)
+		}
+		// Commands the guard does not guard are exactly those allowed to run
+		// without a prompt; every other command is either guarded or raises
+		// the prompt.
+		if want := []string{"asmai *", "git *", "gh *"}; !slices.Equal(sb.ExcludedCommands, want) {
+			t.Errorf("%s sandbox leaves %q alone, want %q", name, sb.ExcludedCommands, want)
+		}
+		if len(settings.Permissions.Ask) != 0 {
+			t.Errorf("%s permissions ask for %q", name, settings.Permissions.Ask)
+		}
+		if _, ok := sb.Filesystem["allowWrite"]; ok != (len(guard.Writable) > 0) {
+			t.Errorf("%s sandbox filesystem is %v for writable %q", name, sb.Filesystem, guard.Writable)
+		}
+		if got, ok := sb.Network["allowUnixSockets"]; ok != (guard.Socket != "") || (ok && !slices.Equal(anyStrings(got), []string{guard.Socket})) {
+			t.Errorf("%s sandbox network is %v for socket %q", name, sb.Network, guard.Socket)
+		}
+		if _, ok := sb.Network["allowedDomains"]; ok {
+			t.Errorf("%s sandbox allows network domains: %v", name, sb.Network)
+		}
+	}
+}
+
+func anyStrings(v any) []string {
+	var out []string
+	for _, e := range v.([]any) {
+		out = append(out, e.(string))
+	}
+	return out
 }
 
 func TestASessionsEnvironmentHasNoProviderAPIKey(t *testing.T) {

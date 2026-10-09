@@ -27,7 +27,7 @@ const ScriptEnv = "ASMAI_FAKE_PROVIDER_SCRIPT"
 // that a test can see the command line a session was given.
 const ArgsEnv = "ASMAI_FAKE_PROVIDER_ARGS"
 
-const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--model MODEL] [--append-system-prompt TEXT]"
+const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--strict-mcp-config] [--model MODEL] [--append-system-prompt TEXT]"
 
 // settingSources are the sources Claude Code's --setting-sources takes.
 var settingSources = []string{"user", "project", "local"}
@@ -42,6 +42,7 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// The fake takes these as Claude Code does, and plays the same whatever
 	// they are.
 	sources := flags.String("setting-sources", "", "the setting sources Claude Code loads, separated by commas")
+	flags.Bool("strict-mcp-config", false, "use only the MCP servers given on the command line")
 	flags.String("model", "", "the model Claude Code uses")
 	instructions := flags.String("append-system-prompt", "", "text Claude Code appends to its system prompt")
 	if err := flags.Parse(args); err != nil {
@@ -79,6 +80,16 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		if hooks, err = readSettings(*settingsArg); err != nil {
 			fmt.Fprintf(stderr, "fake-provider: --settings: %v\n", err)
 			return 2
+		}
+	}
+	// Like Claude Code, the fake loads the repository's own settings only
+	// when the project setting source is among those it is given, so that a
+	// test can see whether a repository's hooks load.
+	if slices.ContainsFunc(strings.Split(*sources, ","), func(source string) bool { return strings.TrimSpace(source) == "project" }) {
+		if project, err := readSettings(".claude/settings.json"); err == nil {
+			for event, matchers := range project {
+				hooks[event] = append(hooks[event], matchers...)
+			}
 		}
 	}
 	f, err := os.Open(*scriptPath)

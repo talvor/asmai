@@ -35,7 +35,6 @@ func TestCancellationWithoutConfirmedPushStaysIncompleteAndRetainsWorker(t *test
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
 		fakeRun(`asmai blocked --reason 'Which greeting?' --needs 'a choice'`, 0, "blocked recorded for assignment 1"),
-		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "already ended in a blocked report"),
 		hookStep("Stop", "assignment", ""),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 5"),

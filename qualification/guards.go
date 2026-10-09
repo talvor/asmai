@@ -384,18 +384,14 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		return fmt.Errorf("git with network access printed %q, not the remote's branch", ls.Output)
 	}
 	r.observe("inside the workspace, writing a file, and git add, commit, push and ls-remote against a remote host, ran without a native prompt")
-	if _, err := exec.LookPath("gh"); err != nil {
-		r.observe("gh is not installed on this host, so the harness could not run it")
-	} else {
-		c, err := tried("gh --version")
-		if err != nil {
-			return err
-		}
-		if c.Denied || c.Failed {
-			return fmt.Errorf("`gh --version` was refused or failed: %s", strings.TrimSpace(c.Output))
-		}
-		r.observe("gh ran without a native prompt")
+	c, err := tried("gh --version")
+	if err != nil {
+		return err
 	}
+	if c.Denied || c.Failed {
+		return fmt.Errorf("`gh --version` was refused or failed: %s", strings.TrimSpace(c.Output))
+	}
+	r.observe("gh ran without a native prompt")
 
 	// What it does not allow does not go through.
 	if _, err := tried("echo outside"); err != nil {

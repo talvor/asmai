@@ -44,6 +44,7 @@ type guardSession struct {
 	guardOff bool
 	// promptsForGit makes git raise a native prompt, which the guard should not.
 	promptsForGit bool
+	ghUnavailable bool
 }
 
 var codeWord = regexp.MustCompile(`Code word: (\S+)`)
@@ -85,7 +86,11 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 		case strings.HasPrefix(text, "git ls-remote"):
 			c.Output = "0123456789abcdef0123456789abcdef01234567\trefs/heads/master\n"
 		case strings.HasPrefix(text, "gh "):
-			c.Output = "gh version 2.0.0\n"
+			if g.ghUnavailable {
+				c.Failed, c.Output = true, "gh: command not found"
+			} else {
+				c.Output = "gh version 2.0.0\n"
+			}
 		case strings.HasPrefix(text, "echo outside"):
 			if g.guardOff {
 				cmd := exec.Command("sh", "-c", text)
@@ -184,6 +189,13 @@ func TestC37FailsWhenGitRaisesANativePrompt(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{promptsForGit: true}), "C37")
 	if r.Outcome != Failed || !strings.Contains(r.Failure, "raised a native permission prompt, but the guard allows it") {
 		t.Errorf("C37 %s: %q, want it to fail because git was stopped", r.Outcome, r.Failure)
+	}
+}
+
+func TestC37FailsWhenGhCannotRun(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{ghUnavailable: true}), "C37")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "gh --version` was refused or failed") {
+		t.Errorf("C37 %s: %q, want it to fail because gh could not run", r.Outcome, r.Failure)
 	}
 }
 

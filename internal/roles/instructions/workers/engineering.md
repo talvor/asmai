@@ -44,3 +44,11 @@ asmai result \
 - The daemon records the commit your workspace is at, and refuses a result while changes are uncommitted.
 
 If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>` after you commit and push your assignment branch.
+
+## When your result is rejected
+
+Your owning leader may reject your result. The assignment is then active again and yours, and a new dispatch brings you the leader's reasons: fetch it with `asmai inbox --dispatch <id>`. Correct what the reasons name in your workspace, run the checks again, take in the job branch's tip, commit, push your assignment branch, record the push, and submit a new result with `asmai result`.
+
+## When your assignment is cancelled
+
+Your owning leader may cancel your assignment. A new dispatch tells you so, with its reasons. Do not submit a result. Commit whatever you have, push your assignment branch with `git push origin <your assignment branch>`, record the push with `asmai effect push origin/<branch>@<sha>`, and stop. The daemon ends the assignment once you have stopped.

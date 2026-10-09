@@ -14,13 +14,18 @@ import (
 	"github.com/talvor/asmai/internal/roles"
 )
 
-// The states of an assignment that this asmai moves it through. An
-// assignment starts active and, when its worker submits a result, is
-// submitted; accepting, rejecting and cancelling it are later work, and end
-// or reopen it.
+// The states of an assignment. It starts active and, when its worker submits
+// a result, is submitted. Its owning leader then accepts the result, which
+// ends the assignment, or rejects it, which returns the assignment to active
+// with the same worker. The owning leader may cancel an assignment that is
+// active or submitted: it is cancelling until its worker has pushed its
+// assignment branch and stopped, and then cancelled.
 const (
-	AssignmentActive    = "active"
-	AssignmentSubmitted = "submitted"
+	AssignmentActive     = "active"
+	AssignmentSubmitted  = "submitted"
+	AssignmentAccepted   = "accepted"
+	AssignmentCancelling = "cancelling"
+	AssignmentCancelled  = "cancelled"
 )
 
 // The kinds of report a worker makes of an assignment.
@@ -30,8 +35,15 @@ const (
 )
 
 // The kinds of message about an assignment: it gives the assignment to its
-// worker, and the worker's reports come back to its owning leader.
-const MessageAssignment = "assignment"
+// worker, and the worker's reports come back to its owning leader. A
+// rejection returns the assignment to the same worker with the leader's
+// reasons, and a cancellation tells the worker to push its assignment branch
+// and stop.
+const (
+	MessageAssignment   = "assignment"
+	MessageRejection    = "rejection"
+	MessageCancellation = "cancellation"
+)
 
 // endedAssignment is the SQL for an assignment that no longer holds its
 // worker's number or its workspace's slot: one that was accepted or
@@ -571,7 +583,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err := tx.QueryRow(`SELECT kind FROM messages m JOIN dispatches d ON d.message = m.id WHERE d.id = ?`, sub.Dispatch).Scan(&given); err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if given != MessageAssignment {
+	if given != MessageAssignment && given != MessageRejection {
 		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d does not give %s an assignment to report on", sub.Dispatch, sub.Agent)
 	}
 	if a.State != AssignmentActive {

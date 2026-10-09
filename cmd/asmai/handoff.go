@@ -9,6 +9,7 @@ import (
 
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/store"
 )
 
 func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisions, evidence, constraints, permissions string, criteria []string) int {
@@ -75,6 +76,9 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		}
 		if m.HandoffData != nil && m.Kind != "handoff" {
 			fmt.Fprintf(o.stdout, "Answer: %s\n", m.Body)
+		}
+		if m.Kind == store.MessageRejection || m.Kind == store.MessageCancellation {
+			fmt.Fprintf(o.stdout, "Reasons from %s:\n%s\n", m.Sender, m.Body)
 		}
 		if a := m.AssignmentData; a != nil {
 			printAssignment(o.stdout, *a)

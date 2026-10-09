@@ -152,6 +152,13 @@ INSERT INTO messages_next (id, handoff, job, sender, recipient, kind, body, fetc
 DROP TABLE messages;
 ALTER TABLE messages_next RENAME TO messages;
 `,
+	`
+CREATE TABLE decisions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, assignment INTEGER NOT NULL REFERENCES assignments(id),
+ report INTEGER REFERENCES reports(id), kind TEXT NOT NULL, leader TEXT NOT NULL,
+ reasons TEXT NOT NULL, commit_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -201,6 +208,20 @@ const (
 	// which submits its assignment, and its blocked report.
 	KindResultSubmitted = "result.submitted"
 	KindBlockedReported = "blocked.reported"
+	// KindResultAccepted and KindResultRejected record the owning leader's
+	// decision on a result with its reasons. Accepting also moves the job
+	// branch, which KindJobBranchMoved records in the same step.
+	KindResultAccepted = "result.accepted"
+	KindResultRejected = "result.rejected"
+	KindJobBranchMoved = "job.branch.moved"
+	// KindWorkspaceRemoved records the daemon removing a writing assignment's
+	// workspace once its work is on the job branch.
+	KindWorkspaceRemoved = "workspace.removed"
+	// KindCancellationRequested records the owning leader cancelling an
+	// assignment, which its worker is told to push its branch for, and
+	// KindAssignmentCancelled the assignment ending once the worker stopped.
+	KindCancellationRequested = "assignment.cancelling"
+	KindAssignmentCancelled   = "assignment.cancelled"
 )
 
 // The states an agent can be in.

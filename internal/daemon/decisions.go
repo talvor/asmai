@@ -152,7 +152,9 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 	d.log.Info("result accepted; job branch fast-forwarded", "assignment", a.ID, "job", a.Job, "branch", branch.Name, "from", branch.Tip, "to", result.Commit, "leader", ref.address.String())
 
 	d.stopWorker(a)
-	d.removeWorkspace(ctx, a, repository)
+	if err := d.removeWorkspace(ctx, a, repository); err != nil {
+		return Response{}, err
+	}
 	a, err = d.store.Assignment(a.ID)
 	if err != nil {
 		return Response{}, err
@@ -228,21 +230,24 @@ func (d *daemon) stopWorker(a store.Assignment) {
 // removeWorkspace removes the writing workspace of a, whose work is on the
 // job branch, and its temporary directory, and journals it. The assignment
 // branch stays on origin.
-func (d *daemon) removeWorkspace(ctx context.Context, a store.Assignment, repository store.Repository) {
+func (d *daemon) removeWorkspace(ctx context.Context, a store.Assignment, repository store.Repository) error {
 	ctx = context.WithoutCancel(ctx)
 	if err := repos.RemoveWorkspace(ctx, repository.Clone, a.Workspace.Path, a.Workspace.Branch); err != nil {
 		d.log.Error("removing an accepted assignment's workspace", "assignment", a.ID, "workspace", a.Workspace.Path, "error", err.Error())
-		return
+		return err
 	}
 	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
 		d.log.Error("removing an accepted assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
+		return err
 	}
 	// The assignment's directory goes too, once nothing is left in it.
 	os.Remove(filepath.Dir(a.Workspace.Path))
 	if err := d.store.WorkspaceRemoved(a, time.Now()); err != nil {
 		d.log.Error("journaling a workspace's removal", "assignment", a.ID, "error", err.Error())
+		return err
 	}
 	d.log.Info("workspace removed", "assignment", a.ID, "job", a.Job, "workspace", a.Workspace.Path)
+	return nil
 }
 
 // dispatchStopped is told that the turn ref's session ran for dispatch has

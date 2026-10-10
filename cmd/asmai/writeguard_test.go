@@ -188,12 +188,12 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		}
 		sb := settings.Sandbox
 		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed || !slices.Equal(sb.ExcludedCommands, []string{
-			"asmai *", "gh --version", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"asmai *", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
 			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
 			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
 			"git status *", "git rev-parse *", "git merge *", "git var *",
 		}) || !slices.Equal(settings.Permissions.Allow, []string{
-			"Bash(asmai:*)", "Bash(gh --version)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+			"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 			"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
 			"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 			"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",

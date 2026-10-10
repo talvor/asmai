@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -318,7 +319,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		"git commit -q -m inside",
 		"git push -q origin HEAD:refs/heads/qualification",
 		"git ls-remote --heads https://github.com/git/git master",
-		"gh --version",
+		"gh pr list --repo cli/cli --state all --limit 1 --json number",
 		"echo outside > " + outside,
 		"curl -sS --max-time 20 -o curl.out https://example.com",
 	}
@@ -367,14 +368,20 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		return fmt.Errorf("git with network access printed %q, not the remote's branch", ls.Output)
 	}
 	r.observe("inside the workspace, writing a file, and git add, commit, push and ls-remote against a remote host, ran without a native prompt")
-	c, err := tried("gh --version")
+	c, err := tried("gh pr list")
 	if err != nil {
 		return err
 	}
 	if c.Denied || c.Failed {
-		return fmt.Errorf("`gh --version` was refused or failed: %s", strings.TrimSpace(c.Output))
+		return fmt.Errorf("`gh pr list` was refused or failed: %s", strings.TrimSpace(c.Output))
 	}
-	r.observe("gh ran without a native prompt")
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(c.Output), &prs); err != nil || len(prs) != 1 || prs[0].Number <= 0 {
+		return fmt.Errorf("gh did not return a pull request from its remote repository: %q", c.Output)
+	}
+	r.observe("gh listed a pull request from a remote repository without a native prompt")
 
 	// What it does not allow does not go through.
 	outsideWrite, err := tried("echo outside")

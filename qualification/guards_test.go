@@ -85,11 +85,11 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 		switch {
 		case strings.HasPrefix(text, "git ls-remote"):
 			c.Output = "0123456789abcdef0123456789abcdef01234567\trefs/heads/master\n"
-		case strings.HasPrefix(text, "gh "):
+		case strings.HasPrefix(text, "gh pr list"):
 			if g.ghUnavailable {
 				c.Failed, c.Output = true, "gh: command not found"
 			} else {
-				c.Output = "gh version 2.0.0\n"
+				c.Output = "[{\"number\":1}]\n"
 			}
 		case strings.HasPrefix(text, "echo outside"):
 			if g.guardOff {
@@ -213,7 +213,7 @@ func TestC37FailsWhenGitRaisesANativePrompt(t *testing.T) {
 
 func TestC37FailsWhenGhCannotRun(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{ghUnavailable: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "gh --version` was refused or failed") {
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "gh pr list` was refused or failed") {
 		t.Errorf("C37 %s: %q, want it to fail because gh could not run", r.Outcome, r.Failure)
 	}
 }

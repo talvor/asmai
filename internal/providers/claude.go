@@ -72,8 +72,6 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 		allow = append(allow, "Bash("+command+":*)")
 		excluded = append(excluded, command+" *")
 	}
-	allow = append(allow, "Bash(gh --version)")
-	excluded = append(excluded, "gh --version")
 	for _, command := range unguardedGHCommands {
 		allow = append(allow, "Bash(gh "+command+":*)")
 		excluded = append(excluded, "gh "+command+" *")

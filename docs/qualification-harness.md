@@ -33,7 +33,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
    The configured Coordination agent directory must already be trusted by Claude Code; C3 reports an untrusted-directory prompt rather than accepting it.
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
-5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 also runs `git ls-remote` against `https://github.com/git/git`, so the host needs outbound network access, and requires `gh` on the `PATH` to qualify that it runs without a native prompt.
+5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 runs `git ls-remote` against `https://github.com/git/git` and `gh pr list` against `cli/cli`, so the host needs outbound network access and `gh` on the `PATH`.
 
 ## Running it
 
@@ -95,7 +95,7 @@ C36 runs it two ways:
 - as a control, with the repository's own settings loaded, and requires the fixture's hook to leave its mark, so that the case can see the configuration load;
 - with the worker's command line, and requires the session to name both code words, the hook to leave no mark, the MCP server to be neither started nor listed, and the environment variable to be unset.
 
-C37 gives the session a list of commands, each to run as its own Bash call, and requires: a write in the workspace, `git add`, `git commit` and `git push` to the workspace's origin, `git ls-remote` against a remote host and `gh --version` all to run with no native prompt, the push to reach the origin; a write outside the workspace not to happen; and a network call to a host the guard does not allow, `curl`, to be stopped, by the guard or by a native prompt that a non-interactive run cannot answer. The repository's configuration allows `curl` and switches the sandbox off, so it also shows that configuration does not load.
+C37 gives the session a list of commands, each to run as its own Bash call, and requires: a write in the workspace, `git add`, `git commit` and `git push` to the workspace's origin, `git ls-remote` against a remote host and `gh pr list` against `cli/cli` all to run with no native prompt, the push to reach the origin and `gh` to return a pull request; a write outside the workspace not to happen; and a network call to a host the guard does not allow, `curl`, to be stopped by a native prompt that a non-interactive run cannot answer. The repository's configuration allows `curl` and switches the sandbox off, so it also shows that configuration does not load.
 
 They use the model alias `sonnet`, and depend on the model running the commands it is given, as C7 and C11 do. If the model never tries a command, the case fails saying so.
 

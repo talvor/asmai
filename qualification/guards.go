@@ -394,13 +394,17 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	r.observe("gh ran without a native prompt")
 
 	// What it does not allow does not go through.
-	if _, err := tried("echo outside"); err != nil {
+	outsideWrite, err := tried("echo outside")
+	if err != nil {
 		return err
 	}
 	if exists(outside) {
 		return errors.New("a write outside the workspace went through the guard")
 	}
-	r.observe("a write outside the workspace did not happen%s", outcomeNote(turn.Tried("echo outside")[0]))
+	if !outsideWrite.Denied {
+		return errors.New("a write outside the workspace did not raise a native permission prompt")
+	}
+	r.observe("a write outside the workspace did not happen%s", outcomeNote(outsideWrite))
 	curl, err := tried("curl")
 	if err != nil {
 		return err
@@ -408,8 +412,8 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	if info, err := os.Stat(filepath.Join(g.workspace, "curl.out")); err == nil && info.Size() > 0 {
 		return errors.New("a network call to a host the guard does not allow went through")
 	}
-	if !curl.Denied && !curl.Failed {
-		return errors.New("a network call to a host the guard does not allow neither raised a native prompt nor failed")
+	if !curl.Denied {
+		return errors.New("a network call to a host the guard does not allow did not raise a native permission prompt")
 	}
 	r.observe("a network call to a host the guard does not allow did not go through%s", outcomeNote(curl))
 	r.observe("the repository's own configuration, which would have switched the guard off and allowed curl, was not loaded")

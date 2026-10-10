@@ -43,8 +43,10 @@ type guardSession struct {
 	// guardOff lets a write outside the workspace and an unlisted host through.
 	guardOff bool
 	// promptsForGit makes git raise a native prompt, which the guard should not.
-	promptsForGit bool
-	ghUnavailable bool
+	promptsForGit      bool
+	ghUnavailable      bool
+	noPromptForOutside bool
+	noPromptForCurl    bool
 }
 
 var codeWord = regexp.MustCompile(`Code word: (\S+)`)
@@ -96,8 +98,10 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 				cmd := exec.Command("sh", "-c", text)
 				cmd.Dir = spec.Dir
 				cmd.Run()
-			} else {
+			} else if g.noPromptForOutside {
 				c.Failed, c.Output = true, "Operation not permitted"
+			} else {
+				c.Denied, c.Failed, c.Output = true, true, "requires approval"
 			}
 		case strings.HasPrefix(text, "curl"):
 			if g.guardOff {
@@ -105,7 +109,10 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 					return Turn{}, err
 				}
 			} else {
-				c.Denied, c.Failed, c.Output = true, true, "requires approval"
+				c.Failed, c.Output = true, "network is unavailable"
+				if !g.noPromptForCurl {
+					c.Denied = true
+				}
 			}
 		default:
 			if g.promptsForGit && strings.HasPrefix(text, "git push") {
@@ -182,6 +189,20 @@ func TestC37FailsWhenAWriteOutsideTheWorkspaceGoesThrough(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{guardOff: true}), "C37")
 	if r.Outcome != Failed || !strings.Contains(r.Failure, "outside the workspace went through") {
 		t.Errorf("C37 %s: %q, want it to fail because the write got out", r.Outcome, r.Failure)
+	}
+}
+
+func TestC37FailsWhenAnOutsideWriteFailsWithoutRaisingAPrompt(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{noPromptForOutside: true}), "C37")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "did not raise a native permission prompt") {
+		t.Errorf("C37 %s: %q, want it to fail because the outside write did not raise a prompt", r.Outcome, r.Failure)
+	}
+}
+
+func TestC37FailsWhenCurlFailsWithoutRaisingAPrompt(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{noPromptForCurl: true}), "C37")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "did not raise a native permission prompt") {
+		t.Errorf("C37 %s: %q, want it to fail because curl did not raise a prompt", r.Outcome, r.Failure)
 	}
 }
 

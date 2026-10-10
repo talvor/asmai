@@ -159,6 +159,16 @@ CREATE TABLE decisions (
  reasons TEXT NOT NULL, commit_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 );
 `,
+	`
+ALTER TABLE assignments ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE handoffs ADD COLUMN head TEXT NOT NULL DEFAULT '';
+CREATE TABLE findings (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ assignment INTEGER NOT NULL REFERENCES assignments(id), report INTEGER NOT NULL REFERENCES reports(id),
+ kind TEXT NOT NULL, text TEXT NOT NULL, commit_id TEXT NOT NULL,
+ cleared_by INTEGER REFERENCES reports(id), cleared_at TEXT, created_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -222,6 +232,12 @@ const (
 	// KindAssignmentCancelled the assignment ending once the worker stopped.
 	KindCancellationRequested = "assignment.cancelling"
 	KindAssignmentCancelled   = "assignment.cancelled"
+	// KindValidationAccepted records Quality's leader accepting a validation
+	// report: the findings it recorded, with their IDs, and the earlier
+	// blocking findings it cleared. KindReadOnlyWorkspaceRemoved records the
+	// daemon removing a read-only workspace when its assignment ended.
+	KindValidationAccepted       = "validation.accepted"
+	KindReadOnlyWorkspaceRemoved = "workspace.read-only.removed"
 )
 
 // The states an agent can be in.

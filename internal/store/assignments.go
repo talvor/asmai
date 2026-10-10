@@ -38,11 +38,13 @@ const (
 // worker, and the worker's reports come back to its owning leader. A
 // rejection returns the assignment to the same worker with the leader's
 // reasons, and a cancellation tells the worker to push its assignment branch
-// and stop.
+// and stop. A validation carries the validation report Quality's leader
+// accepted to the delivery owner.
 const (
 	MessageAssignment   = "assignment"
 	MessageRejection    = "rejection"
 	MessageCancellation = "cancellation"
+	MessageValidation   = "validation"
 )
 
 // endedAssignment is the SQL for an assignment that no longer holds its
@@ -69,7 +71,9 @@ type JobBranch struct {
 }
 
 // Workspace is the directory set aside for one assignment, where its worker
-// works: a checkout of AsmAI's clone on the assignment's own branch.
+// works: a checkout of AsmAI's clone on the assignment's own branch, or for a
+// read-only assignment a clean checkout of the commit it examines, with no
+// branch.
 type Workspace struct {
 	Assignment int64 `json:"assignment"`
 	// Slot is the number the worker gets as ASMAI_SLOT: the lowest that no
@@ -80,7 +84,8 @@ type Workspace struct {
 	Path string `json:"path"`
 	Tmp  string `json:"tmp"`
 	// Branch is asmai/job-<n>/<assignment>, and Base the commit of the job
-	// branch's tip it was made from.
+	// branch's tip it was made from. A read-only workspace has no branch,
+	// and its Base is the commit it is fixed at.
 	Branch string `json:"branch"`
 	Base   string `json:"base"`
 }
@@ -104,6 +109,15 @@ type Assignment struct {
 	// the tip of before it submits.
 	JobBranch string    `json:"job_branch"`
 	Workspace Workspace `json:"workspace"`
+	// ReadOnly says the assignment examines a commit and changes nothing:
+	// Quality's validation. Its workspace is fixed at Commit, which is the
+	// job branch's tip it was assigned at, and has no branch to push. Its
+	// worker is given the job's Intent, and the blocking findings still
+	// OpenFindings, which its report says are resolved or not.
+	ReadOnly     bool      `json:"read_only,omitempty"`
+	Commit       string    `json:"commit,omitempty"`
+	Intent       *Intent   `json:"intent,omitempty"`
+	OpenFindings []Finding `json:"open_findings,omitempty"`
 }
 
 // Effect is a consequential effect an agent made and reported with
@@ -143,6 +157,10 @@ type ReportInput struct {
 	// PRSection is the worker's part of the pull request: what changed, with
 	// before-and-after evidence.
 	PRSection string `json:"pr_section,omitempty"`
+	// Validation is what a Quality worker's report says beside its checks:
+	// its findings, and whether each earlier blocking finding is resolved.
+	// Only a read-only assignment's result has it.
+	Validation *ValidationInput `json:"validation,omitempty"`
 	// Reason is why a blocked worker cannot go on, and Needs what would
 	// unblock it.
 	Reason string `json:"reason,omitempty"`
@@ -167,6 +185,10 @@ type Report struct {
 	// made the report.
 	Effects   []Effect  `json:"effects"`
 	CreatedAt time.Time `json:"created_at"`
+	// Findings are the findings a validation report recorded, with their IDs
+	// and whether each has been cleared. A validation has them once Quality's
+	// leader has accepted it.
+	Findings []Finding `json:"findings,omitempty"`
 }
 
 // JobBranchMade records the branch the daemon made for job, and journals it.
@@ -219,6 +241,20 @@ func jobBranch(q queryer, job int64) (JobBranch, error) {
 	}
 	b.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
 	return b, err
+}
+
+// liveValidation returns the ID of the read-only assignment of job that has
+// not ended, or zero when it has none.
+func liveValidation(q queryer, job int64) (int64, error) {
+	var id int64
+	err := q.QueryRow(`SELECT COALESCE(MIN(id), 0) FROM assignments WHERE job = ? AND read_only = 1 AND NOT `+endedAssignment, job).Scan(&id)
+	return id, err
+}
+
+// LiveValidation returns the ID of the validation of job that has not ended,
+// or zero when it has none.
+func (s *Store) LiveValidation(job int64) (int64, error) {
+	return liveValidation(s.db, job)
 }
 
 // NextAssignmentID returns the ID the next assignment will have, so that the
@@ -292,6 +328,8 @@ type NewAssignment struct {
 	// Workspace is the workspace the daemon made; its Assignment is set from
 	// ID.
 	Workspace Workspace
+	// ReadOnly makes a read-only assignment, whose workspace has no branch.
+	ReadOnly bool
 }
 
 // AssignmentCreated records a writing assignment and its workspace, and the
@@ -309,8 +347,8 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 	}
 	w := n.Workspace
 	w.Assignment = n.ID
-	if w.Slot <= 0 || w.Path == "" || w.Tmp == "" || w.Branch == "" || w.Base == "" {
-		return Assignment{}, Dispatch{}, errors.New("a workspace needs a slot, a path, a temporary directory, its branch and the commit it was made at")
+	if w.Slot <= 0 || w.Path == "" || w.Tmp == "" || w.Base == "" || (w.Branch == "") != n.ReadOnly {
+		return Assignment{}, Dispatch{}, errors.New("a workspace needs a slot, a path, a temporary directory and the commit it was made at, and a writing workspace its branch; a read-only one has none")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -331,12 +369,19 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 	if w.Base != b.Tip {
 		return Assignment{}, Dispatch{}, fmt.Errorf("the workspace was made at %s, but the job branch's tip is %s", w.Base, b.Tip)
 	}
+	if n.ReadOnly {
+		if live, err := liveValidation(tx, n.Job); err != nil {
+			return Assignment{}, Dispatch{}, err
+		} else if live != 0 {
+			return Assignment{}, Dispatch{}, fmt.Errorf("job %d already has validation %d in progress; it ends before another starts", n.Job, live)
+		}
+	}
 	criteria, err := json.Marshal(n.Criteria)
 	if err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at)); err != nil {
+	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at, read_only) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at), n.ReadOnly); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
 	if _, err := tx.Exec(`INSERT INTO workspaces (assignment, slot, path, tmp, branch, base) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -344,6 +389,10 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 		return Assignment{}, Dispatch{}, err
 	}
 	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w}
+	if n.ReadOnly {
+		a.ReadOnly, a.Commit = true, w.Base
+		a.Intent = &Intent{Words: j.Words, Reading: j.Reading, Mandate: j.Mandate, Criteria: j.Criteria}
+	}
 	if _, err := appendEntry(tx, at, KindAssignmentCreated, a); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
@@ -367,8 +416,8 @@ func (s *Store) Assignment(id int64) (Assignment, error) {
 }
 
 const (
-	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, b.name, w.slot, w.path, w.tmp, w.branch, w.base`
-	assignmentTables  = `assignments a JOIN workspaces w ON w.assignment = a.id JOIN job_branches b ON b.job = a.job`
+	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, b.name, w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria`
+	assignmentTables  = `assignments a JOIN workspaces w ON w.assignment = a.id JOIN job_branches b ON b.job = a.job JOIN jobs j ON j.number = a.job`
 )
 
 func assignment(q queryer, id int64) (Assignment, error) {
@@ -378,13 +427,22 @@ func assignment(q queryer, id int64) (Assignment, error) {
 func scanAssignment(row *sql.Row) (Assignment, error) {
 	var a Assignment
 	var criteria, created string
-	err := row.Scan(&a.ID, &a.Job, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &created, &a.JobBranch, &a.Workspace.Slot, &a.Workspace.Path, &a.Workspace.Tmp, &a.Workspace.Branch, &a.Workspace.Base)
+	var intent Intent
+	var jobCriteria string
+	err := row.Scan(&a.ID, &a.Job, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &created, &a.JobBranch, &a.Workspace.Slot, &a.Workspace.Path, &a.Workspace.Tmp, &a.Workspace.Branch, &a.Workspace.Base,
+		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria)
 	if err != nil {
 		return Assignment{}, err
 	}
 	a.Workspace.Assignment = a.ID
 	if err := json.Unmarshal([]byte(criteria), &a.Criteria); err != nil {
 		return Assignment{}, err
+	}
+	if a.ReadOnly {
+		if err := json.Unmarshal([]byte(jobCriteria), &intent.Criteria); err != nil {
+			return Assignment{}, err
+		}
+		a.Commit, a.Intent = a.Workspace.Base, &intent
 	}
 	a.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
 	return a, err
@@ -393,7 +451,7 @@ func scanAssignment(row *sql.Row) (Assignment, error) {
 // LiveAssignmentOf returns the assignment that worker, by address, carries
 // now: the latest that has not ended, or sql.ErrNoRows.
 func (s *Store) LiveAssignmentOf(worker string) (Assignment, error) {
-	return scanAssignment(s.db.QueryRow(`SELECT `+assignmentColumns+` FROM `+assignmentTables+` WHERE a.worker = ? AND NOT `+endedAssignment+` ORDER BY a.id DESC LIMIT 1`, worker))
+	return scanAssignment(s.db.QueryRow(`SELECT `+assignmentColumns+` FROM `+assignmentTables+` WHERE a.worker = ? AND a.state NOT IN ('accepted', 'cancelled') ORDER BY a.id DESC LIMIT 1`, worker))
 }
 
 // AssignmentsForJob returns the assignments of job, oldest first.
@@ -539,14 +597,8 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	in := sub.Input
 	switch sub.Kind {
 	case ReportResult:
-		if strings.TrimSpace(in.PRSection) == "" || len(in.Evidence) == 0 {
-			return Report{}, Dispatch{}, errors.New("a result links its evidence and has a PR section: what changed, with before-and-after evidence")
-		}
-		for _, evidence := range in.Evidence {
-			if strings.TrimSpace(evidence) == "" {
-				return Report{}, Dispatch{}, errors.New("result evidence cannot be blank")
-			}
-		}
+		// What a result must hold depends on whether its assignment is a
+		// writing one or a validation, which is checked below.
 	case ReportBlocked:
 		if strings.TrimSpace(in.Reason) == "" {
 			return Report{}, Dispatch{}, errors.New("a blocked report says why the worker cannot go on")
@@ -556,9 +608,6 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	}
 	if sub.Commit == "" {
 		return Report{}, Dispatch{}, errors.New("a report names the commit the workspace is at")
-	}
-	if !sub.TookInTip {
-		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -589,6 +638,19 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if a.State != AssignmentActive {
 		return Report{}, Dispatch{}, fmt.Errorf("assignment %d is %s, so it takes no new report", a.ID, a.State)
 	}
+	// A read-only assignment's commit is the one it is fixed at, and it has
+	// no branch for its worker to take the job branch's tip into.
+	if a.ReadOnly && sub.Commit != a.Commit {
+		return Report{}, Dispatch{}, fmt.Errorf("the workspace is at %s, but assignment %d is fixed at %s: validation never changes the work", sub.Commit, a.ID, a.Commit)
+	}
+	if !a.ReadOnly && !sub.TookInTip {
+		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
+	}
+	if sub.Kind == ReportResult {
+		if err := checkResult(tx, a, in); err != nil {
+			return Report{}, Dispatch{}, err
+		}
+	}
 	// A dispatch ends in one report. A worker that goes on after reporting it
 	// is blocked is given the work again in a new dispatch.
 	var reported string
@@ -603,13 +665,16 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if !slices.ContainsFunc(effects, func(e Effect) bool { return e.Kind == "push" }) {
+	if !a.ReadOnly && !slices.ContainsFunc(effects, func(e Effect) bool { return e.Kind == "push" }) {
 		return Report{}, Dispatch{}, errors.New("a result or blocked report records its assignment branch push")
 	}
 	// A list that is empty is still given, so that a record never says null.
 	in.Artifacts, in.Evidence, in.Tests, in.Gaps = nonNil(in.Artifacts), nonNil(in.Evidence), nonNil(in.Tests), nonNil(in.Gaps)
 	if in.Checks == nil {
 		in.Checks = []Check{}
+	}
+	if in.Validation != nil && in.Validation.Findings == nil {
+		in.Validation.Findings = []FindingInput{}
 	}
 	r := Report{
 		Assignment: a.ID, Dispatch: sub.Dispatch, Kind: sub.Kind, Agent: sub.Agent,
@@ -652,6 +717,27 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	return r, d, tx.Commit()
 }
 
+// checkResult checks what a result holds: a writing assignment's links its
+// evidence and has a PR section, and a read-only one is a validation report
+// with its findings.
+func checkResult(q querier, a Assignment, in ReportInput) error {
+	if a.ReadOnly {
+		return checkValidation(q, a, in)
+	}
+	if in.Validation != nil {
+		return errors.New("findings belong to a validation: a writing assignment's result has none")
+	}
+	if strings.TrimSpace(in.PRSection) == "" || len(in.Evidence) == 0 {
+		return errors.New("a result links its evidence and has a PR section: what changed, with before-and-after evidence")
+	}
+	for _, evidence := range in.Evidence {
+		if strings.TrimSpace(evidence) == "" {
+			return errors.New("result evidence cannot be blank")
+		}
+	}
+	return nil
+}
+
 func nonNil(list []string) []string {
 	if list == nil {
 		return []string{}
@@ -661,7 +747,7 @@ func nonNil(list []string) []string {
 
 // report returns the report id, which the reports table holds as JSON beside
 // its columns.
-func report(q queryer, id int64) (Report, error) {
+func report(q querier, id int64) (Report, error) {
 	var data string
 	if err := q.QueryRow(`SELECT data FROM reports WHERE id = ?`, id).Scan(&data); err != nil {
 		return Report{}, err
@@ -671,6 +757,15 @@ func report(q queryer, id int64) (Report, error) {
 		return Report{}, err
 	}
 	r.ID = id
+	if r.Validation != nil {
+		recorded, err := findings(q, `report = ?`, id)
+		if err != nil {
+			return Report{}, err
+		}
+		if len(recorded) > 0 {
+			r.Findings = recorded
+		}
+	}
 	return r, nil
 }
 

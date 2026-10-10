@@ -59,6 +59,27 @@ func AddWorkspace(ctx context.Context, clone, dir, branch, commit string) error 
 	return nil
 }
 
+// AddReadOnlyWorkspace makes dir a clean checkout of AsmAI's clone fixed at
+// commit, detached: it has no branch, so there is nothing in it to push. Its
+// files are writable, as running a repository's checks writes build output,
+// but nothing the checks write is part of the commit. Whatever an earlier
+// attempt left at dir, which no record points at, is replaced.
+func AddReadOnlyWorkspace(ctx context.Context, clone, dir, commit string) error {
+	if err := clearWorktree(ctx, clone, dir); err != nil {
+		return err
+	}
+	if _, err := git(ctx, clone, "worktree", "add", "--quiet", "--detach", dir, commit); err != nil {
+		return fmt.Errorf("making the read-only workspace %s: %w", dir, err)
+	}
+	return nil
+}
+
+// RemoveReadOnlyWorkspace removes the checkout at dir, which
+// AddReadOnlyWorkspace made, and the clone's record of it.
+func RemoveReadOnlyWorkspace(ctx context.Context, clone, dir string) error {
+	return clearWorktree(ctx, clone, dir)
+}
+
 // RemoveWorkspace removes the checkout at dir, which AddWorkspace made, and
 // the branch it was made on, from the clone. Its branch on the origin stays.
 func RemoveWorkspace(ctx context.Context, clone, dir, branch string) error {

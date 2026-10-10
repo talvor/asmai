@@ -71,7 +71,7 @@ func decided(tx *sql.Tx, id int64, leader string, reasons []string) (Assignment,
 
 // latestResult returns the latest report of assignment, which must be a
 // result.
-func latestResult(q queryer, assignment int64) (Report, error) {
+func latestResult(q querier, assignment int64) (Report, error) {
 	var id int64
 	if err := q.QueryRow(`SELECT id FROM reports WHERE assignment = ? ORDER BY id DESC LIMIT 1`, assignment).Scan(&id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -250,7 +250,8 @@ func (s *Store) AssignmentCancelled(id int64, left Cancellation, at time.Time) (
 		if a.State != AssignmentCancelling {
 			return "", nil, fmt.Errorf("assignment %d is %s, not cancelling", a.ID, a.State)
 		}
-		if !left.Pushed {
+		// A read-only assignment has no branch to push.
+		if !left.Pushed && !a.ReadOnly {
 			return "", nil, fmt.Errorf("assignment %d cannot be cancelled before its workspace commit is pushed", a.ID)
 		}
 		if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelled, a.ID); err != nil {
@@ -268,10 +269,15 @@ func (s *Store) AssignmentCancelled(id int64, left Cancellation, at time.Time) (
 }
 
 // WorkspaceRemoved journals that the daemon removed the workspace of
-// assignment, whose work is on the job branch.
+// assignment: a writing assignment's, whose work is on the job branch, or a
+// read-only assignment's, which ended.
 func (s *Store) WorkspaceRemoved(a Assignment, at time.Time) error {
+	kind := KindWorkspaceRemoved
+	if a.ReadOnly {
+		kind = KindReadOnlyWorkspaceRemoved
+	}
 	return s.change(at, func(tx *sql.Tx) (string, any, error) {
-		return KindWorkspaceRemoved, struct {
+		return kind, struct {
 			Workspace
 			Job    int64  `json:"job"`
 			Worker string `json:"worker"`

@@ -56,6 +56,7 @@ type Message struct {
 	State       string   `json:"dispatch_state"`
 	Transcript  string   `json:"transcript,omitempty"`
 	Fetched     bool     `json:"fetched"`
+	Resumes     int64    `json:"resumes,omitempty"`
 	HandoffData *Handoff `json:"handoff_data,omitempty"`
 	// AssignmentData is the assignment an assignment message gives its
 	// worker, or whose report a report message carries; ReportData is that
@@ -71,6 +72,10 @@ type Dispatch struct {
 	Generation int    `json:"generation"`
 	State      string `json:"state"`
 	Transcript string `json:"transcript,omitempty"`
+	// Resumes is the dispatch this one resumes, after a restart, and
+	// NativeSession the provider's session it resumes it in.
+	Resumes       int64  `json:"resumes,omitempty"`
+	NativeSession string `json:"native_session,omitempty"`
 }
 
 func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) {
@@ -140,6 +145,12 @@ type messageRef struct {
 }
 
 func createMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kind, body string, at time.Time) (Dispatch, error) {
+	return createResumingMessage(tx, ref, job, sender, recipient, kind, body, at, 0, "")
+}
+
+// createResumingMessage is createMessage for a message whose dispatch resumes
+// the dispatch resumes, in the provider's session nativeSession.
+func createResumingMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kind, body string, at time.Time, resumes int64, nativeSession string) (Dispatch, error) {
 	result, err := tx.Exec(`INSERT INTO messages(handoff,assignment,report,job,sender,recipient,kind,body) VALUES(NULLIF(?,0),NULLIF(?,0),NULLIF(?,0),?,?,?,?,?)`, ref.handoff, ref.assignment, ref.report, job, sender, recipient, kind, body)
 	if err != nil {
 		return Dispatch{}, err
@@ -148,7 +159,7 @@ func createMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kin
 	if err != nil {
 		return Dispatch{}, err
 	}
-	result, err = tx.Exec(`INSERT INTO dispatches(message,agent,state,updated_at) VALUES(?,?,?,?)`, message, recipient, DispatchCreated, timestamp(at))
+	result, err = tx.Exec(`INSERT INTO dispatches(message,agent,state,updated_at,resumes,native_session) VALUES(?,?,?,?,NULLIF(?,0),?)`, message, recipient, DispatchCreated, timestamp(at), resumes, nativeSession)
 	if err != nil {
 		return Dispatch{}, err
 	}
@@ -156,7 +167,7 @@ func createMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kin
 	if err != nil {
 		return Dispatch{}, err
 	}
-	d := Dispatch{ID: id, Message: message, Agent: recipient, State: DispatchCreated}
+	d := Dispatch{ID: id, Message: message, Agent: recipient, State: DispatchCreated, Resumes: resumes, NativeSession: nativeSession}
 	if _, err = appendEntry(tx, at, KindMessageCreated, map[string]any{"message": message, "handoff": ref.handoff, "assignment": ref.assignment, "job": job, "sender": sender, "recipient": recipient, "kind": kind, "dispatch": id}); err != nil {
 		return Dispatch{}, err
 	}
@@ -278,7 +289,7 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.recipient=? AND (?=0 OR d.id=?) ORDER BY m.id`, agent, only, only)
+	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.recipient=? AND (?=0 OR d.id=?) ORDER BY m.id`, agent, only, only)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +298,7 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 		var m Message
 		var fetched sql.NullString
 		var handoff, assignment, report sql.NullInt64
-		if err = rows.Scan(&m.ID, &handoff, &assignment, &report, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Transcript, &fetched); err != nil {
+		if err = rows.Scan(&m.ID, &handoff, &assignment, &report, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Transcript, &fetched, &m.Resumes); err != nil {
 			break
 		}
 		m.Handoff, m.Assignment, m.Report = handoff.Int64, assignment.Int64, report.Int64
@@ -370,12 +381,17 @@ func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 	return d, err
 }
 
+// PendingLeaders returns the agents with a message waiting for them, which
+// the daemon starts a session for. A worker whose assignment is held for
+// reconciliation has none: it is not started again for it.
 func (s *Store) PendingLeaders() ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT m.recipient FROM messages m JOIN dispatches d ON d.message=m.id WHERE
+	rows, err := s.db.Query(`SELECT DISTINCT m.recipient FROM messages m JOIN dispatches d ON d.message=m.id WHERE (
 		(m.fetched_at IS NULL AND d.state IN (?,?,?)) OR
 		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
 			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
-		)) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
+		))) AND NOT EXISTS (
+			SELECT 1 FROM assignments a WHERE a.id=m.assignment AND a.worker=m.recipient AND a.state=?
+		) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending, AssignmentNeedsReconciliation)
 	if err != nil {
 		return nil, err
 	}

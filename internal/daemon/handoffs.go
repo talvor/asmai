@@ -114,10 +114,13 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 // at once to working: a reply to a handoff, an assignment for its worker, and
 // a result or a blocked report for the assignment's owning leader. Unlike a
 // handoff, none of them is answered by a command that starts the work. A
-// rejection and a cancellation are for the assignment's worker too.
+// rejection and a cancellation are for the assignment's worker too, as is a
+// resumption after a restart; a restored leader's brief to load and a
+// reconciliation for an assignment's owning leader are work at once too.
 func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
 	switch m.Kind {
-	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageCancellation, store.MessageValidation, store.ReportResult, store.ReportBlocked:
+	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageCancellation, store.MessageValidation, store.ReportResult, store.ReportBlocked,
+		store.MessageResumption, store.MessageReconciliation, store.MessageRestoration:
 	default:
 		return nil
 	}
@@ -244,6 +247,7 @@ func (d *daemon) initialBoundary(ref sessionRef, transcript string) {
 		d.mu.Unlock()
 		return
 	}
+	l.started = true
 	s := l.session
 	d.mu.Unlock()
 	go func() {

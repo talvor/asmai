@@ -19,13 +19,17 @@ import (
 // ends the assignment, or rejects it, which returns the assignment to active
 // with the same worker. The owning leader may cancel an assignment that is
 // active or submitted: it is cancelling until its worker has pushed its
-// assignment branch and stopped, and then cancelled.
+// assignment branch and stopped, and then cancelled. An active assignment
+// whose worker's turn was cut off, or whose native session cannot be resumed
+// after a restart, needs reconciliation: it is held, with its worker's number
+// and workspace, for its owning leader to reconcile.
 const (
-	AssignmentActive     = "active"
-	AssignmentSubmitted  = "submitted"
-	AssignmentAccepted   = "accepted"
-	AssignmentCancelling = "cancelling"
-	AssignmentCancelled  = "cancelled"
+	AssignmentActive              = "active"
+	AssignmentSubmitted           = "submitted"
+	AssignmentAccepted            = "accepted"
+	AssignmentCancelling          = "cancelling"
+	AssignmentCancelled           = "cancelled"
+	AssignmentNeedsReconciliation = "needs_reconciliation"
 )
 
 // The kinds of report a worker makes of an assignment.
@@ -39,13 +43,24 @@ const (
 // rejection returns the assignment to the same worker with the leader's
 // reasons, and a cancellation tells the worker to push its assignment branch
 // and stop. A validation carries the validation report Quality's leader
-// accepted to the delivery owner.
+// accepted to the delivery owner. After a restart, a resumption continues the
+// assignment of a worker that had stopped at a boundary, and a reconciliation
+// tells the owning leader that its assignment needs it.
 const (
-	MessageAssignment   = "assignment"
-	MessageRejection    = "rejection"
-	MessageCancellation = "cancellation"
-	MessageValidation   = "validation"
+	MessageAssignment     = "assignment"
+	MessageRejection      = "rejection"
+	MessageCancellation   = "cancellation"
+	MessageValidation     = "validation"
+	MessageResumption     = "resumption"
+	MessageReconciliation = "reconciliation"
+	// MessageRestoration tells a restored leader which job to load the brief
+	// of. It is about a job, not an assignment or a handoff.
+	MessageRestoration = "restoration"
 )
+
+// Daemon is the sender of a message the daemon itself makes, such as a
+// resumption.
+const Daemon = "daemon"
 
 // endedAssignment is the SQL for an assignment that no longer holds its
 // worker's number or its workspace's slot: one that was accepted or
@@ -632,7 +647,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err := tx.QueryRow(`SELECT kind FROM messages m JOIN dispatches d ON d.message = m.id WHERE d.id = ?`, sub.Dispatch).Scan(&given); err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if given != MessageAssignment && given != MessageRejection {
+	if given != MessageAssignment && given != MessageRejection && given != MessageResumption {
 		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d does not give %s an assignment to report on", sub.Dispatch, sub.Agent)
 	}
 	if a.State != AssignmentActive {

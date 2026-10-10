@@ -27,7 +27,17 @@ const ScriptEnv = "ASMAI_FAKE_PROVIDER_SCRIPT"
 // that a test can see the command line a session was given.
 const ArgsEnv = "ASMAI_FAKE_PROVIDER_ARGS"
 
-const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--model MODEL] [--append-system-prompt TEXT]"
+// ResumedScriptEnv is the environment variable that names the script to play
+// instead of ScriptEnv's, or one of its role-specific variants, when the fake
+// is started with --resume to resume a session as Claude Code does.
+const ResumedScriptEnv = ScriptEnv + "_RESUMED"
+
+// ResumeFailsEnv, when set, makes the fake behave as Claude Code does when it
+// is asked to resume a session it has no record of: it says so and exits 1,
+// without playing anything.
+const ResumeFailsEnv = "ASMAI_FAKE_PROVIDER_RESUME_FAILS"
+
+const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--model MODEL] [--append-system-prompt TEXT] [--resume SESSION]"
 
 // settingSources are the sources Claude Code's --setting-sources takes.
 var settingSources = []string{"user", "project", "local"}
@@ -44,6 +54,7 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	sources := flags.String("setting-sources", "", "the setting sources Claude Code loads, separated by commas")
 	flags.String("model", "", "the model Claude Code uses")
 	instructions := flags.String("append-system-prompt", "", "text Claude Code appends to its system prompt")
+	resume := flags.String("resume", "", "the session to resume")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -60,20 +71,28 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
+	if *resume != "" && os.Getenv(ResumeFailsEnv) != "" {
+		fmt.Fprintf(stderr, "No conversation found with session ID: %s\n", *resume)
+		return 1
+	}
 	if *scriptPath == "" {
 		*scriptPath = os.Getenv(ScriptEnv)
 		// The agent is named in the instructions' heading, which says who
 		// it is; the instructions go on to name the other roles.
 		heading, _, _ := strings.Cut(strings.TrimSpace(*instructions), "\n")
-		switch {
-		case strings.Contains(heading, "a Quality worker") && os.Getenv(ScriptEnv+"_QUALITY_WORKER") != "":
-			*scriptPath = os.Getenv(ScriptEnv + "_QUALITY_WORKER")
-		case strings.Contains(heading, "Quality's leader") && os.Getenv(ScriptEnv+"_QUALITY") != "":
-			*scriptPath = os.Getenv(ScriptEnv + "_QUALITY")
-		case strings.Contains(heading, "an Engineering worker") && os.Getenv(ScriptEnv+"_WORKER") != "":
-			*scriptPath = os.Getenv(ScriptEnv + "_WORKER")
-		case strings.Contains(heading, "Engineering's leader") && os.Getenv(ScriptEnv+"_ENGINEERING") != "":
-			*scriptPath = os.Getenv(ScriptEnv + "_ENGINEERING")
+		if *resume != "" && os.Getenv(ResumedScriptEnv) != "" {
+			*scriptPath = os.Getenv(ResumedScriptEnv)
+		} else {
+			switch {
+			case strings.Contains(heading, "a Quality worker") && os.Getenv(ScriptEnv+"_QUALITY_WORKER") != "":
+				*scriptPath = os.Getenv(ScriptEnv + "_QUALITY_WORKER")
+			case strings.Contains(heading, "Quality's leader") && os.Getenv(ScriptEnv+"_QUALITY") != "":
+				*scriptPath = os.Getenv(ScriptEnv + "_QUALITY")
+			case strings.Contains(heading, "an Engineering worker") && os.Getenv(ScriptEnv+"_WORKER") != "":
+				*scriptPath = os.Getenv(ScriptEnv + "_WORKER")
+			case strings.Contains(heading, "Engineering's leader") && os.Getenv(ScriptEnv+"_ENGINEERING") != "":
+				*scriptPath = os.Getenv(ScriptEnv + "_ENGINEERING")
+			}
 		}
 	}
 	if *scriptPath == "" || flags.NArg() != 0 {

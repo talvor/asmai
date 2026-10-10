@@ -112,7 +112,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	var qualificationPaths statedir.Paths
-	needsHandoffState := len(ids) == 0 || containsCase(ids, "C7") || containsCase(ids, "C11")
+	needsHandoffState := len(ids) == 0 || containsCase(ids, "C7") || containsCase(ids, "C11") || containsCase(ids, "C19")
 	if needsHandoffState {
 		var cleanup func()
 		qualificationPaths, cleanup, err = createQualificationState(home)

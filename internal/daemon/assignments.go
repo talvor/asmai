@@ -465,6 +465,9 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if err != nil {
 		return err
 	}
+	if a.State == store.AssignmentNeedsReconciliation {
+		return fmt.Errorf("assignment %d needs reconciliation, so %s is not started for it", a.ID, address)
+	}
 	l := d.agent(address)
 	if l.session != nil {
 		if l.assignment != a.ID {
@@ -476,5 +479,11 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if failed(checks) {
 		return fmt.Errorf("cannot start %s: factory checks failed", address)
 	}
-	return d.startWorker(l, cfg.Roles[address.Role], install, a)
+	// A worker whose assignment continues after a restart resumes the
+	// provider's session it was in, where the start recorded it.
+	resume := ""
+	if w, err := d.store.WorkerDispatch(a.ID); err == nil && w.Kind == store.MessageResumption && !w.Fetched {
+		resume = w.Dispatch.NativeSession
+	}
+	return d.startWorker(l, cfg.Roles[address.Role], install, a, resume)
 }

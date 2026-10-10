@@ -168,6 +168,14 @@ CREATE TABLE findings (
  kind TEXT NOT NULL, text TEXT NOT NULL, commit_id TEXT NOT NULL,
  cleared_by INTEGER REFERENCES reports(id), cleared_at TEXT, created_at TEXT NOT NULL
 );
+ALTER TABLE dispatches ADD COLUMN resumes INTEGER REFERENCES dispatches(id);
+ALTER TABLE dispatches ADD COLUMN native_session TEXT NOT NULL DEFAULT '';
+CREATE TABLE native_sessions (
+ agent TEXT NOT NULL, generation INTEGER NOT NULL, provider TEXT NOT NULL,
+ assignment INTEGER REFERENCES assignments(id),
+ session_id TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY (agent, generation)
+);
 `,
 }
 
@@ -238,6 +246,15 @@ const (
 	// daemon removing a read-only workspace when its assignment ended.
 	KindValidationAccepted       = "validation.accepted"
 	KindReadOnlyWorkspaceRemoved = "workspace.read-only.removed"
+	// KindSessionIdentified records the provider's own identifier of an agent
+	// session, as its hooks reported it: what a later session resumes.
+	KindSessionIdentified = "session.identified"
+	// KindAssignmentResumed records a stopped worker's assignment continuing
+	// after a restart, in a new dispatch that resumes the one that stopped,
+	// and KindAssignmentNeedsReconciliation an assignment held for its
+	// owning leader to reconcile.
+	KindAssignmentResumed             = "assignment.resumed"
+	KindAssignmentNeedsReconciliation = "assignment.needs_reconciliation"
 )
 
 // The states an agent can be in.
@@ -298,6 +315,11 @@ type SessionStart struct {
 	Dir        string    `json:"dir"`
 	PID        int       `json:"pid"`
 	At         time.Time `json:"-"`
+	// Assignment is the assignment a worker's session carries, and zero for a
+	// leader's. Resumes is the provider's own session this one resumes, when
+	// it does.
+	Assignment int64  `json:"assignment,omitempty"`
+	Resumes    string `json:"resumes,omitempty"`
 }
 
 // Agent is an agent's current state, as the store holds it.
@@ -540,6 +562,11 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 				provider = excluded.provider, version = excluded.version, model = excluded.model, pid = excluded.pid,
 				started_at = excluded.started_at, ended_at = NULL, exit = ''`,
 			start.Agent, start.Role, AgentRunning, generation, start.Provider, start.Version, start.Model, start.PID, timestamp(start.At))
+		if err != nil {
+			return "", nil, err
+		}
+		_, err = tx.Exec(`INSERT INTO native_sessions (agent, generation, provider, assignment) VALUES (?, ?, ?, NULLIF(?, 0))`,
+			start.Agent, generation, start.Provider, start.Assignment)
 		if err != nil {
 			return "", nil, err
 		}

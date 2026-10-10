@@ -95,6 +95,9 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 	if err = h.awaitPromptSurface(ctx, f); err != nil {
 		return handoffEvidence{}, err
 	}
+	if err = h.awaitSettled(ctx, f); err != nil {
+		return handoffEvidence{}, err
+	}
 	before, err := factoryJournal(f)
 	if err != nil {
 		return handoffEvidence{}, err
@@ -103,7 +106,7 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 	if len(before) > 0 {
 		baseline = before[len(before)-1].ID
 	}
-	prompt := fmt.Sprintf("Qualification exercise %d. In registered repository %s, open a tested-pr job from this witnessed message with reading 'Handoff test' and criterion 'Engineering confirms'. Then send Engineering a handoff for that job to acknowledge it. Use 'none' for decisions, constraints and permissions, and cite this message as evidence. Execute the asmai commands now.", time.Now().UnixNano(), qualificationRepository)
+	prompt := h.exercisePrompt()
 	if err = f.Submit(prompt); err != nil {
 		return handoffEvidence{}, err
 	}
@@ -129,6 +132,17 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 		time.Sleep(h.Poll)
 	}
 	return evidence, fmt.Errorf("handoff did not reach acknowledged inbox delivery within %s (witnessed=%t dispatch=%d acknowledged=%t fetched=%t)", h.Wait, evidence.witness != "", evidence.dispatch, evidence.observed, evidence.fetched)
+}
+
+// exercisePrompt is the request the case's user makes of Coordination: a job
+// opened from it, and a handoff of the job to Engineering. Each is numbered,
+// so that the witnessed message that cites it is the case's own.
+func (h *Harness) exercisePrompt() string {
+	number := time.Now().UnixNano()
+	if h.Number != nil {
+		number = h.Number()
+	}
+	return fmt.Sprintf("Qualification exercise %d. In registered repository %s, open a tested-pr job from this witnessed message with reading 'Handoff test' and criterion 'Engineering confirms'. Then send Engineering a handoff for that job to acknowledge it. Use 'none' for decisions, constraints and permissions, and cite this message as evidence. Execute the asmai commands now.", number, qualificationRepository)
 }
 
 // record folds one journal entry made after the case began into the evidence.
@@ -186,6 +200,61 @@ func (e *handoffEvidence) record(entry store.Entry, prompt string) {
 			e.ackObservation = entry.ID
 		}
 	}
+}
+
+// awaitSettled waits until the leader of Coordination has finished what it
+// was told when the factory started, such as the brief a restored leader loads
+// when an earlier case left a job open in the same state: the case's own
+// request is typed after it, not into the turn that work is. It waits at
+// most half as long as a case waits for anything, and then goes on, as the
+// case's own evidence says whether it held.
+func (h *Harness) awaitSettled(ctx context.Context, f *Factory) error {
+	deadline := time.Now().Add(h.Wait / 2)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		entries, err := factoryJournal(f)
+		if err != nil {
+			return err
+		}
+		if !coordinationBusy(entries) {
+			return nil
+		}
+		time.Sleep(h.Poll)
+	}
+	return nil
+}
+
+// coordinationBusy reports whether a dispatch for Coordination's leader is on
+// its way to it or being worked on, from the journal.
+func coordinationBusy(entries []store.Entry) bool {
+	const coordinationLeader = "leader@coordination"
+	state := map[int64]string{}
+	for _, entry := range entries {
+		if entry.Kind != store.KindDispatchChanged {
+			continue
+		}
+		var d struct {
+			ID    int64  `json:"id"`
+			Agent string `json:"agent"`
+			State string `json:"state"`
+		}
+		if json.Unmarshal(entry.Data, &d) != nil {
+			continue
+		}
+		// A dispatch's first entry names its agent; its later ones may not.
+		if _, known := state[d.ID]; known || d.Agent == coordinationLeader {
+			state[d.ID] = d.State
+		}
+	}
+	for _, s := range state {
+		switch s {
+		case store.DispatchCreated, store.DispatchUnknown, store.DispatchNudged, store.DispatchDelivered, store.DispatchWorking:
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Harness) awaitPromptSurface(ctx context.Context, f *Factory) error {

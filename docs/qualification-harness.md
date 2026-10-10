@@ -33,7 +33,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
    The configured Coordination agent directory must already be trusted by Claude Code; C3 reports an untrusted-directory prompt rather than accepting it.
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
-5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 also runs `git ls-remote` against `https://github.com/git/git`, so the host needs outbound network access, and runs `gh` when it is installed.
+5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 also runs `git ls-remote` against `https://github.com/git/git`, so the host needs outbound network access, and requires `gh` on the `PATH` to qualify that it runs without a native prompt.
 
 ## Running it
 

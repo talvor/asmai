@@ -38,8 +38,9 @@ func userGitConfig(t *testing.T) {
 // configuration that would be visible if a session loaded it: a hook that
 // leaves a mark, a permission rule, an environment variable and an MCP server.
 var repositoryFiles = map[string]string{
-	"AGENTS.md": "Instruction canary: the repository's check is `make check`.\n",
-	"CLAUDE.md": "Claude canary: commit subjects are imperative.\n",
+	"AGENTS.md":         "Instruction canary: the repository's check is `make check`.\n",
+	"CLAUDE.md":         "Claude canary: commit subjects are imperative.\n",
+	".claude/CLAUDE.md": "Claude directory canary: run the repository's review process.\n",
 	".claude/settings.json": `{
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "touch \"$ASMAI_TEST_DIR/repository-hook-ran\""}]}],
@@ -104,7 +105,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "result 1 \\| assignment 1 \\| worker1@engineering"),
 		// A leader commits nothing, so it is given no trailers.
-		fakeRun(`printf 'msg\n' > "$ASMAI_TEST_DIR/message" && asmai git-hook prepare-commit-msg "$ASMAI_TEST_DIR/message"`, 1, "a leader's work goes through its workers"),
+		fakeRun(`cd "$HOME/.local/state/asmai/repositories/fixture" && msg="$(git rev-parse --git-path COMMIT_EDITMSG)" && printf 'msg\n' > "$msg" && asmai git-hook prepare-commit-msg "$msg"`, 1, "a leader's work goes through its workers"),
 	}
 	fixture, testDir := assignmentFlowWith(t, userGitConfig, repositoryFiles, worker, leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
@@ -143,9 +144,11 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 	for _, want := range []string{
 		"You are an Engineering worker in AsmAI",
 		"Stay inside the workspace: any write outside it is an effect to record",
+		"write-outside-workspace", "Never change the git identity", "AsmAI-Job", "AsmAI-Agent", "AsmAI-Dispatch",
 		"never widen your assignment or the job's mandate",
 		"# The repository's instruction files", "## AGENTS.md", "Instruction canary: the repository's check is `make check`.",
 		"## CLAUDE.md", "Claude canary: commit subjects are imperative.",
+		"## .claude/CLAUDE.md", "Claude directory canary: run the repository's review process.",
 	} {
 		if !strings.Contains(instructions, want) {
 			t.Errorf("the worker's instructions lack %q", want)

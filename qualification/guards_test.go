@@ -142,7 +142,7 @@ func TestC36PassesWhenTheInstructionFilesLoadAndNoneOfTheRepositorysConfiguratio
 		t.Fatalf("C36 %s: %s", r.Outcome, r.Failure)
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"control: with the project setting source loaded", "both instruction files", "loaded none of the repository's .claude configuration"} {
+	for _, want := range []string{"control: with the project setting source loaded", "all three instruction files", "loaded none of the repository's .claude configuration"} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C36's evidence\n%s\ndoes not say %q", evidence, want)
 		}

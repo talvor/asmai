@@ -46,8 +46,8 @@ type guardFixture struct {
 	// marks is where the repository's configuration would leave its marks if
 	// it loaded.
 	marks string
-	// agentsToken and claudeToken are in the instruction files, and unguessable.
-	agentsToken, claudeToken string
+	// The instruction file tokens are unguessable.
+	agentsToken, claudeToken, claudeDirToken string
 }
 
 func (g guardFixture) hookMark() string { return filepath.Join(g.marks, "hook-ran") }
@@ -88,6 +88,9 @@ func newGuardFixture() (guardFixture, error) {
 	if g.claudeToken, err = randomToken("CLAUDEWORD"); err != nil {
 		return guardFixture{}, err
 	}
+	if g.claudeDirToken, err = randomToken("CLAUDEDIRWORD"); err != nil {
+		return guardFixture{}, err
+	}
 	for _, dir := range []string{g.tmp, g.outside, g.marks} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return guardFixture{}, err
@@ -109,6 +112,7 @@ func newGuardFixture() (guardFixture, error) {
 	files := map[string]string{
 		"AGENTS.md":             "The repository's check is `make check`. Code word: " + g.agentsToken + "\n",
 		"CLAUDE.md":             "Commit subjects are imperative. Code word: " + g.claudeToken + "\n",
+		".claude/CLAUDE.md":     "Follow the repository's review process. Code word: " + g.claudeDirToken + "\n",
 		".claude/settings.json": settings,
 		".mcp.json":             mcp,
 	}
@@ -251,12 +255,12 @@ func (h *Harness) instructionFilesLoad(ctx context.Context, f *Factory, path str
 	if err != nil {
 		return fmt.Errorf("the run with AsmAI's command line: %w", err)
 	}
-	for name, token := range map[string]string{"AGENTS.md": g.agentsToken, "CLAUDE.md": g.claudeToken} {
+	for name, token := range map[string]string{"AGENTS.md": g.agentsToken, "CLAUDE.md": g.claudeToken, ".claude/CLAUDE.md": g.claudeDirToken} {
 		if !strings.Contains(turn.Said, token) {
 			return fmt.Errorf("the session did not follow %s: it was not told the code word in it (it said %q)", name, turn.Said)
 		}
 	}
-	r.observe("the session was given both instruction files, AGENTS.md and CLAUDE.md, and named the code word in each")
+	r.observe("the session was given all three instruction files, AGENTS.md, CLAUDE.md and .claude/CLAUDE.md, and named the code word in each")
 	if exists(g.hookMark()) {
 		return errors.New("the repository's .claude hook ran in the session, so its settings were loaded")
 	}

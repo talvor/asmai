@@ -55,25 +55,6 @@ func TestWorkersAreNumberedFromOneAndNamedByAddress(t *testing.T) {
 	}
 }
 
-func TestWorkersAreToldToStayInTheWorkspaceRecordWritesOutsideAndFollowTheRepositoryWithoutWideningTheMandate(t *testing.T) {
-	text, err := WorkerInstructions(Engineering)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"Stay inside the workspace: any write outside it is an effect to record",
-		"`write-outside-workspace`",
-		"Follow the repository's instruction files, `AGENTS.md` and `CLAUDE.md`",
-		"never widen your assignment or the job's mandate",
-		"`AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers",
-		"Never change the git identity",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the worker's instructions lack %q", want)
-		}
-	}
-}
-
 func write(t *testing.T, dir, name, text string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
@@ -88,23 +69,34 @@ func TestARepositorysInstructionFilesAreGivenInOrderAndItsClaudeConfigurationIsN
 	dir := t.TempDir()
 	write(t, dir, "CLAUDE.md", "Use tabs.\n")
 	write(t, dir, "AGENTS.md", "Run make check.\n")
-	write(t, dir, ".claude/settings.json", `{"hooks":"would be visible"}`)
-	write(t, dir, ".claude/CLAUDE.md", "claude directory notes")
-	write(t, dir, ".mcp.json", `{"mcpServers":"would be visible"}`)
+	write(t, dir, ".claude/CLAUDE.md", "Use the repository's review process.\n")
+	for name, content := range map[string]string{
+		".claude/settings.json":  `{"hooks":"settings sentinel"}`,
+		".claude/rules/no.md":    "rules sentinel",
+		".claude/commands/no.md": "commands sentinel",
+		".claude/agents/no.md":   "agents sentinel",
+		".claude/hooks/no.sh":    "hooks sentinel",
+		".claude/.mcp.json":      `{"mcpServers":"mcp sentinel"}`,
+		".mcp.json":              `{"mcpServers":"root mcp sentinel"}`,
+	} {
+		write(t, dir, name, content)
+	}
 	got, err := RepositoryInstructions(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, claude := strings.Index(got, "## AGENTS.md\n\nRun make check."), strings.Index(got, "## CLAUDE.md\n\nUse tabs.")
-	if agents < 0 || claude < agents {
-		t.Errorf("the instructions are\n%s\nwant AGENTS.md then CLAUDE.md", got)
+	agents := strings.Index(got, "## AGENTS.md\n\nRun make check.")
+	claude := strings.Index(got, "## CLAUDE.md\n\nUse tabs.")
+	claudeDir := strings.Index(got, "## .claude/CLAUDE.md\n\nUse the repository's review process.")
+	if agents < 0 || claude < agents || claudeDir < claude {
+		t.Errorf("the instructions are\n%s\nwant AGENTS.md, CLAUDE.md then .claude/CLAUDE.md", got)
 	}
 	for _, want := range []string{"never widen your assignment or the job's mandate", "never decide how a branch is pushed"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the instructions lack %q:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"would be visible", "claude directory notes"} {
+	for _, unwanted := range []string{"settings sentinel", "rules sentinel", "commands sentinel", "agents sentinel", "hooks sentinel", "mcp sentinel"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("the instructions hold %q, which is the repository's provider configuration", unwanted)
 		}

@@ -161,6 +161,27 @@ func TestRunRejectsMessagePathsOtherThanGitsOwn(t *testing.T) {
 	}
 }
 
+func TestMergeMessageGetsTrailersFromBothMessageHooks(t *testing.T) {
+	repo(t)
+	out, err := exec.Command("git", "rev-parse", "--git-path", "MERGE_MSG").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := strings.TrimSpace(string(out))
+	if err := os.WriteFile(file, []byte("Merge side\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{PrepareCommitMessage, CommitMessage} {
+		if code, stderr := run(t, name, "/own", trailers, file); code != 0 {
+			t.Fatalf("%s exited %d: %s", name, code, stderr)
+		}
+	}
+	want := "Merge side\n\nAsmAI-Job: 4\nAsmAI-Agent: worker1@engineering\nAsmAI-Dispatch: 9\n"
+	if got, err := os.ReadFile(file); err != nil || string(got) != want {
+		t.Errorf("merge message is %q (%v), want %q", got, err, want)
+	}
+}
+
 func TestTheTrailersAreAddedAgainAfterTheRepositorysCommitMsgRewritesTheMessage(t *testing.T) {
 	dir := repo(t)
 	executable(t, filepath.Join(dir, ".git", "hooks", CommitMessage), "printf 'Rewritten by the repository\\n' > \"$1\"\n")
@@ -253,16 +274,29 @@ func TestAnInheritedHooksPathSurvivesAsmAIsEnvironmentOverride(t *testing.T) {
 }
 
 func TestEveryClientHookForwardsToAsmai(t *testing.T) {
+	repo(t)
 	own := filepath.Join(t.TempDir(), "githooks")
-	if err := Install(own, "/state/it's/bin/asmai"); err != nil {
+	executablePath := filepath.Join(t.TempDir(), "it's", "asmai")
+	record := filepath.Join(t.TempDir(), "invocation")
+	executable(t, executablePath, "printf '%s\\n' \"$@\" > \"$ASMAI_HOOK_RECORD\"\nexit 7\n")
+	t.Setenv("ASMAI_HOOK_RECORD", record)
+	if err := Install(own, executablePath); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range Names {
-		data, err := os.ReadFile(filepath.Join(own, name))
-		info, statErr := os.Stat(filepath.Join(own, name))
-		want := "#!/bin/sh\nexec '/state/it'\\''s/bin/asmai' git-hook " + name + " \"$@\"\n"
-		if err != nil || statErr != nil || string(data) != want || info.Mode().Perm() != 0o755 {
-			t.Errorf("hook %s is %q (%v, %v), want %q, executable", name, data, err, statErr, want)
+		info, err := os.Stat(filepath.Join(own, name))
+		if err != nil || info.Mode().Perm() != 0o755 {
+			t.Errorf("hook %s is %v (%v), want executable", name, info, err)
+			continue
+		}
+		cmd := exec.Command("git", "-c", "core.hooksPath="+own, "hook", "run", name, "--", "origin", "url")
+		var exit *exec.ExitError
+		if err := cmd.Run(); !errors.As(err, &exit) || exit.ExitCode() != 7 {
+			t.Errorf("git hook run %s returned %v, want status 7", name, err)
+		}
+		want := "git-hook\n" + name + "\norigin\nurl\n"
+		if got, err := os.ReadFile(record); err != nil || string(got) != want {
+			t.Errorf("git hook run %s forwarded %q (%v), want %q", name, got, err, want)
 		}
 	}
 	entries, _ := os.ReadDir(own)

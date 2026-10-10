@@ -148,20 +148,25 @@ func gitMessageFile(ctx context.Context, path string) bool {
 	if path == "" {
 		return false
 	}
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", "COMMIT_EDITMSG").Output()
-	if err != nil {
-		return false
-	}
-	want, err := filepath.Abs(strings.TrimSpace(string(out)))
-	if err != nil {
-		return false
-	}
 	got, err := filepath.Abs(path)
-	if err != nil || got != want {
+	if err != nil {
 		return false
 	}
 	info, err := os.Lstat(got)
-	return err == nil && info.Mode().IsRegular()
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	for _, name := range []string{"COMMIT_EDITMSG", "MERGE_MSG"} {
+		out, err := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", name).Output()
+		if err != nil {
+			return false
+		}
+		want, err := filepath.Abs(strings.TrimSpace(string(out)))
+		if err == nil && got == want {
+			return true
+		}
+	}
+	return false
 }
 
 // repairCommitTrailers amends the commit just made when its message lacks the

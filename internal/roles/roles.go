@@ -124,13 +124,13 @@ func WorkerInstructions(role string) (string, error) {
 
 // instructionFiles are the repository's instruction files that every agent
 // working in a repository follows, in the order they are given.
-var instructionFiles = []string{"AGENTS.md", "CLAUDE.md"}
+var instructionFiles = []string{"AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md"}
 
 // RepositoryInstructions returns the repository's instruction files at dir,
-// AGENTS.md and CLAUDE.md, whichever exist, as text to append to an agent's
-// instructions, or "" when it has neither. Claude Code is not left to load
-// them: it loads them only along with the repository's own settings, which
-// AsmAI never loads, so AsmAI passes their content itself. A file that links
+// AGENTS.md, CLAUDE.md and .claude/CLAUDE.md, whichever exist, as text to
+// append to an agent's instructions, or "" when it has none. Claude Code is
+// not left to load them: it loads them only along with the repository's own
+// settings, which AsmAI never loads, so AsmAI passes their content itself. A file that links
 // to another that is given, or to anything outside dir, is not given twice
 // or at all.
 func RepositoryInstructions(dir string) (string, error) {

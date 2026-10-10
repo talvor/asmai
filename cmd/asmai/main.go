@@ -167,6 +167,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		name, args = name+" "+args[0], args[1:]
 	}
+	if name == "git-hook" {
+		return gitHook(args, stdin, stdout, stderr)
+	}
 	flags := flag.NewFlagSet("asmai "+name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")

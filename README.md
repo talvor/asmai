@@ -112,13 +112,29 @@ The name is the last part of the origin without `.git`, or what `--name` says. T
 
 ### Agents
 
-Coordination's leader runs the pinned Claude Code in a pseudo-terminal the daemon owns. Everything the session is given is on its command line: `--settings` with a hook for each lifecycle event (session start, prompt submission, permission request and stop) and the permission rule `Bash(asmai:*)` that lets it run `asmai` without a prompt; `--setting-sources user`; its model; and Coordination's instructions, appended to its system prompt. AsmAI never writes `~/.claude`, and keeps Claude Code's native permission prompts and hook review: it passes no flag that skips them, and the settings set the default permission mode and disable bypassing permissions, whatever your own settings say.
+Coordination's leader runs the pinned Claude Code in a pseudo-terminal the daemon owns. Everything the session is given is on its command line: `--settings` with a hook for each lifecycle event (session start, prompt submission, permission request and stop), the permission rules for `asmai` and selected git and gh operations, and the [write guard](#the-write-guard-commits-and-repository-files); `--setting-sources user` and `--strict-mcp-config`; its model; and Coordination's instructions, appended to its system prompt. AsmAI never writes `~/.claude`, and keeps Claude Code's native permission prompts and hook review: it passes no flag that skips them, and the settings set the default permission mode and disable bypassing permissions, whatever your own settings say.
 
 The session starts with the daemon's environment, less any provider API-key variable such as `ANTHROPIC_API_KEY`, so it runs on your subscription. Each hook runs the daemon's copy of `asmai` at its fixed path, `bin/asmai` in the state directory, which reports the event to the daemon; the daemon journals it as an observation of that session's generation. A `session.started` journal entry records the provider version, the command line passed (never the environment) and the generation, and a `session.ended` entry records how the session ended.
 
 Each agent session receives `ASMAI_SESSION` in its environment. The CLI sends it with each daemon request; without it the caller is the user. The daemon checks the credential against the running session's role, leader or worker kind, and generation. A stale or unknown credential is refused. An agent can run only its coordination commands; for a factory-changing command, AsmAI tells it what to ask the user to run. This guard and the witnessed-message attribution prevent mistakes and keep authority clear. They are not a security boundary against a process running with the user's own access.
 
 Agents are addressed `name@role`, and a role alone means its leader: `asmai attach coordination` is `asmai attach leader@coordination`. `asmai attach` draws the agent's screen itself from AsmAI's own terminal emulation, with the agent's terminal one row shorter than yours and a status line on the last row. Attaching only observes: what you type does not reach the agent. Only the conversation carries your keys, to Coordination.
+
+### The write guard, commits and repository files
+
+Every agent session runs inside Claude Code's write guard, its sandbox for the commands it runs, which the session's settings switch on with `failIfUnavailable`: a session whose guard cannot start does not start. On Linux the guard needs `bubblewrap` and `socat`. Commands in the guard write only in the agent's working directory, a worker's own temporary directory and the system's, and reach a network host only once you approve it, at the prompt. The commands that need your credentials, your network and the daemon run outside it, and are allowed without a prompt: `asmai`, the Git subcommands workers need, and selected `gh pr`, `gh issue view` and `gh run` operations. Other commands, including `git config`, `git diff` and `gh config`, stay inside the guard. Anything else the guard does not allow raises Claude Code's native prompt in the agent's terminal, which waits for you. The guard is a guard against mistakes, not a security boundary, and workers are told to stay inside their workspace and to record any write outside it as an effect.
+
+Workers commit as you. Git runs with your own configuration, so commits carry your name and email, and `git push` and `gh` use your existing credentials: AsmAI sets no identity, stores no token and writes nothing to the clone's configuration. Every commit a worker makes carries three trailers, which the worker's git adds through a hooks directory AsmAI gives it, `githooks/` in the state directory, whose hooks run `asmai git-hook`:
+
+```
+AsmAI-Job: 1
+AsmAI-Agent: worker1@engineering
+AsmAI-Dispatch: 3
+```
+
+The job and dispatch are the daemon's, for the assignment the worker is on. A commit that cannot carry them is refused. AsmAI adds the trailers after the repository's `prepare-commit-msg` hook, including when the worker uses `git commit --no-verify`, and again after its `commit-msg` hook, so that a merge commit carries them too even when that hook rewrites the message. It forwards the repository's other hooks according to Git's normal hook rules. After a commit, it checks the final message and amends it if a repository hook changed a trailer.
+
+Workers follow the repository's instruction files, `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md`, whichever exist, but never its Claude Code configuration. Claude Code loads instruction files only along with a repository's own settings, so AsmAI reads these three files from the workspace and appends them to the worker's instructions, and starts the session with `--setting-sources user` and `--strict-mcp-config`: the repository's `.claude` settings, hooks, permission rules and MCP servers never load. The instruction files decide how work is done in the repository, never what the worker is asked to do, and never how the branch is pushed. [Qualification](docs/qualification-harness.md) cases C36 and C37 check both on the pinned Claude Code.
 
 ### The conversation
 
@@ -138,6 +154,7 @@ Everything the factory keeps on the host is in the state directory, `~/.local/st
 - `daemon.lock`, held by the running daemon.
 - `providers/`, AsmAI's own copies of the provider CLIs, one directory per provider and version, such as `providers/claude-code/2.1.292/claude`.
 - `bin/asmai`, the daemon's copy of `asmai`, which each start replaces: agent sessions run it, first on their `PATH`, and their hooks name it.
+- `githooks/`, the git hooks that add the commit trailers to a worker's commits, rewritten at each start.
 - `agents/`, each agent's working directory, by its address, such as `agents/leader@coordination`.
 - `repositories/`, AsmAI's own clone of each registered repository, in a directory named for it.
 - `workspaces/`, each assignment's workspace and temporary directory, as `workspaces/job-<n>/assignment-<id>/repo` and `.../tmp` (see [Writing assignments](#writing-assignments) and [Validation](#validation)).

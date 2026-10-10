@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/config"
+	"github.com/talvor/asmai/internal/githooks"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/session"
@@ -373,6 +374,9 @@ type launch struct {
 	model        string
 	dir          string
 	env          map[string]string
+	// writable are the directories besides dir that the session's write
+	// guard lets its commands write.
+	writable []string
 	// assignment is the assignment a worker's session carries, and resume
 	// the provider's own session it continues, when it continues one.
 	assignment int64
@@ -408,11 +412,21 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.
 	if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
 		return fmt.Errorf("creating the workspace's temporary directory: %w", err)
 	}
+	repository, err := roles.RepositoryInstructions(a.Workspace.Path)
+	if err != nil {
+		return fmt.Errorf("reading the repository's instruction files in the workspace of assignment %d: %w", a.ID, err)
+	}
+	if repository != "" {
+		instructions += "\n" + repository
+	}
 	l.assignment = a.ID
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: map[string]string{
+	env := map[string]string{
 		SlotVariable: strconv.Itoa(a.Workspace.Slot),
 		"TMPDIR":     a.Workspace.Tmp,
-	}, assignment: a.ID, resume: resume})
+	}
+	// The worker's git adds the trailers to each commit, as the user.
+	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, assignment: a.ID, resume: resume})
 }
 
 // startSession starts l's session on the installed Claude Code as launch
@@ -423,9 +437,10 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 		return err
 	}
 	hook := providers.HookCommand(d.cfg.Paths.Executable)
-	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions)
+	guard := providers.WriteGuard{Writable: launch.writable}
+	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, guard)
 	if launch.resume != "" {
-		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, launch.resume)
+		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, guard, launch.resume)
 	}
 	set := map[string]string{SessionCredential: credential}
 	maps.Copy(set, launch.env)

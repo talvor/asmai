@@ -14,8 +14,9 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	if want := `'/home/it'\''s/.local/state/asmai/bin/asmai' hook`; hook != want {
 		t.Errorf("the hook command is %s, want %s", hook, want)
 	}
-	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.")
-	if want := []string{"--setting-sources", "user", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
+	guard := WriteGuard{Writable: []string{"/state/workspaces/job-1/assignment-1/tmp"}}
+	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.", guard)
+	if want := []string{"--setting-sources", "user", "--strict-mcp-config", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
 		t.Errorf("the command line is %q, want --settings, then %q", args, want)
 	}
 	if args[0] != "--settings" {
@@ -34,6 +35,15 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 			DefaultMode                  string   `json:"defaultMode"`
 			DisableBypassPermissionsMode string   `json:"disableBypassPermissionsMode"`
 		} `json:"permissions"`
+		Sandbox struct {
+			Enabled                  bool     `json:"enabled"`
+			FailIfUnavailable        bool     `json:"failIfUnavailable"`
+			AutoAllowBashIfSandboxed bool     `json:"autoAllowBashIfSandboxed"`
+			ExcludedCommands         []string `json:"excludedCommands"`
+			Filesystem               struct {
+				AllowWrite []string `json:"allowWrite"`
+			} `json:"filesystem"`
+		} `json:"sandbox"`
 	}
 	if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
 		t.Fatal(err)
@@ -48,8 +58,67 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 		}
 	}
 	p := settings.Permissions
-	if !slices.Equal(p.Allow, []string{"Bash(asmai:*)"}) || p.DefaultMode != "default" || p.DisableBypassPermissionsMode != "disable" {
-		t.Errorf("the permissions are %+v, want asmai allowed and the native prompts kept", p)
+	if !slices.Equal(p.Allow, []string{
+		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
+		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
+		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
+		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
+	}) || p.DefaultMode != "default" || p.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("the permissions are %+v, want asmai, git and gh allowed and the native prompts kept", p)
+	}
+	if !slices.Contains(p.Allow, AllowedAsmai) {
+		t.Errorf("the permissions %q lack %s", p.Allow, AllowedAsmai)
+	}
+}
+
+func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *testing.T) {
+	var settings struct {
+		Sandbox struct {
+			Enabled                  bool           `json:"enabled"`
+			FailIfUnavailable        bool           `json:"failIfUnavailable"`
+			AutoAllowBashIfSandboxed bool           `json:"autoAllowBashIfSandboxed"`
+			ExcludedCommands         []string       `json:"excludedCommands"`
+			Filesystem               map[string]any `json:"filesystem"`
+			Network                  map[string]any `json:"network"`
+		} `json:"sandbox"`
+		Permissions struct {
+			Allow []string `json:"allow"`
+			Ask   []string `json:"ask"`
+		} `json:"permissions"`
+	}
+	for name, guard := range map[string]WriteGuard{
+		"a worker's": {Writable: []string{"/state/tmp"}},
+		"a leader's": {},
+	} {
+		settings.Sandbox.Filesystem, settings.Sandbox.Network = nil, nil
+		if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard)), &settings); err != nil {
+			t.Fatal(err)
+		}
+		sb := settings.Sandbox
+		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed {
+			t.Errorf("%s sandbox is %+v, want it enabled, auto-allowing what it guards, and failing rather than running unguarded", name, sb)
+		}
+		// Commands the guard does not guard are exactly those allowed to run
+		// without a prompt; every other command is either guarded or raises
+		// the prompt.
+		if want := []string{
+			"asmai *", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
+			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
+			"git status *", "git rev-parse *", "git merge *", "git var *",
+		}; !slices.Equal(sb.ExcludedCommands, want) {
+			t.Errorf("%s sandbox leaves %q alone, want %q", name, sb.ExcludedCommands, want)
+		}
+		if len(settings.Permissions.Ask) != 0 {
+			t.Errorf("%s permissions ask for %q", name, settings.Permissions.Ask)
+		}
+		if _, ok := sb.Filesystem["allowWrite"]; ok != (len(guard.Writable) > 0) {
+			t.Errorf("%s sandbox filesystem is %v for writable %q", name, sb.Filesystem, guard.Writable)
+		}
+		if len(sb.Network) != 0 {
+			t.Errorf("%s sandbox has network allowances: %v", name, sb.Network)
+		}
 	}
 }
 
@@ -89,13 +158,13 @@ func TestEveryListedAPIKeyVariableIsOneAndTheListIsACopy(t *testing.T) {
 // model and instructions, as every start does, and the session to continue.
 func TestAResumedSessionIsStartedWithTheSameSettingsAndTheSessionToContinue(t *testing.T) {
 	hook := HookCommand("/state/bin/asmai")
-	fresh := ClaudeCodeArgs(hook, "opus", "Be a worker.")
-	resumed := ClaudeCodeResumeArgs(hook, "opus", "Be a worker.", "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3")
+	fresh := ClaudeCodeArgs(hook, "opus", "Be a worker.", WriteGuard{})
+	resumed := ClaudeCodeResumeArgs(hook, "opus", "Be a worker.", WriteGuard{}, "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3")
 
 	if want := append(slices.Clone(fresh), "--resume", "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3"); !slices.Equal(resumed, want) {
 		t.Errorf("the resumed command line is %q, want %q", resumed, want)
 	}
-	if len(fresh) != 8 {
+	if len(fresh) != 9 {
 		t.Errorf("a new session's command line has %d arguments, want it unchanged by resuming: %q", len(fresh), fresh)
 	}
 }

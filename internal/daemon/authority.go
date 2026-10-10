@@ -30,7 +30,7 @@ func (d *daemon) authorize(req Request) error {
 		return fmt.Errorf("unknown or superseded agent session credential; this session can no longer call asmai")
 	}
 	switch req.Command {
-	case CommandStatus, CommandAgents, CommandJobs, CommandBrief, CommandHook, CommandInbox, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
+	case CommandStatus, CommandAgents, CommandJobs, CommandBrief, CommandHook, CommandInbox, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline, CommandTrailers:
 		return nil
 	case CommandHandoffSend:
 		if ref.address.Name == roles.Leader {
@@ -76,7 +76,8 @@ func isAgentCommand(command string) bool {
 	switch command {
 	case CommandJobOpen, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
-		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel:
+		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
+		CommandTrailers:
 		return true
 	}
 	return false

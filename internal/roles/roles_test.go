@@ -3,6 +3,8 @@
 package roles
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,6 +52,91 @@ func TestWorkersAreNumberedFromOneAndNamedByAddress(t *testing.T) {
 		if n, ok := a.WorkerNumber(); err != nil || ok {
 			t.Errorf("%s is worker %d, %v (%v), want it to be no worker", in, n, ok, err)
 		}
+	}
+}
+
+func write(t *testing.T, dir, name, text string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestARepositorysInstructionFilesAreGivenInOrderAndItsClaudeConfigurationIsNot(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "CLAUDE.md", "Use tabs.\n")
+	write(t, dir, "AGENTS.md", "Run make check.\n")
+	write(t, dir, ".claude/CLAUDE.md", "Use the repository's review process.\n")
+	for name, content := range map[string]string{
+		".claude/settings.json":  `{"hooks":"settings sentinel"}`,
+		".claude/rules/no.md":    "rules sentinel",
+		".claude/commands/no.md": "commands sentinel",
+		".claude/agents/no.md":   "agents sentinel",
+		".claude/hooks/no.sh":    "hooks sentinel",
+		".claude/.mcp.json":      `{"mcpServers":"mcp sentinel"}`,
+		".mcp.json":              `{"mcpServers":"root mcp sentinel"}`,
+	} {
+		write(t, dir, name, content)
+	}
+	got, err := RepositoryInstructions(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents := strings.Index(got, "## AGENTS.md\n\nRun make check.")
+	claude := strings.Index(got, "## CLAUDE.md\n\nUse tabs.")
+	claudeDir := strings.Index(got, "## .claude/CLAUDE.md\n\nUse the repository's review process.")
+	if agents < 0 || claude < agents || claudeDir < claude {
+		t.Errorf("the instructions are\n%s\nwant AGENTS.md, CLAUDE.md then .claude/CLAUDE.md", got)
+	}
+	for _, want := range []string{"never widen your assignment or the job's mandate", "never decide how a branch is pushed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the instructions lack %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"settings sentinel", "rules sentinel", "commands sentinel", "agents sentinel", "hooks sentinel", "mcp sentinel"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("the instructions hold %q, which is the repository's provider configuration", unwanted)
+		}
+	}
+}
+
+func TestARepositoryWithNoInstructionFilesAddsNothingAndALinkIsGivenOnceAndNeverFromOutside(t *testing.T) {
+	dir := t.TempDir()
+	if got, err := RepositoryInstructions(dir); err != nil || got != "" {
+		t.Errorf("an empty repository gives %q, %v", got, err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(outside, []byte("outside the repository"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "AGENTS.md", "Shared rules.\n")
+	if err := os.Symlink("AGENTS.md", filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Skip("no symbolic links:", err)
+	}
+	got, err := RepositoryInstructions(dir)
+	if err != nil || strings.Count(got, "Shared rules.") != 1 || strings.Contains(got, "## CLAUDE.md") {
+		t.Errorf("a CLAUDE.md linking AGENTS.md gives %q, %v, want AGENTS.md once", got, err)
+	}
+	os.Remove(filepath.Join(dir, "CLAUDE.md"))
+	os.Remove(filepath.Join(dir, "AGENTS.md"))
+	if err := os.Symlink(outside, filepath.Join(dir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := RepositoryInstructions(dir); err != nil || got != "" {
+		t.Errorf("an AGENTS.md linking a file outside the repository gives %q, %v, want nothing", got, err)
+	}
+}
+
+func TestAnOversizedInstructionFileIsGivenInFull(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Repeat("x", (64<<10)+10)
+	write(t, dir, "AGENTS.md", content)
+	got, err := RepositoryInstructions(dir)
+	if err != nil || !strings.Contains(got, content) {
+		t.Errorf("an oversized file was truncated: %d bytes, %v", len(got), err)
 	}
 }
 

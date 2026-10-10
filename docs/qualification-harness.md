@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has five cases from M1:
+So far it has seven cases from M1:
 
 | Case | What it qualifies |
 |---|---|
@@ -11,6 +11,8 @@ So far it has five cases from M1:
 | C7 | An automated nudge counts only after the receiving provider acknowledges its exact prompt |
 | C11 | The user's witnessed request is journaled, while the daemon's nudge is not |
 | C19 | Dispatches and results stay correlated and reconcilable across restarts |
+| C36 | Instruction files load without the repository's provider configuration |
+| C37 | Provider write guards are switched on |
 
 Later milestones add the other cases to the same harness.
 
@@ -32,6 +34,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
    The configured Coordination agent directory must already be trusted by Claude Code; C3 reports an untrusted-directory prompt rather than accepting it.
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
+5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 runs `git ls-remote` against `https://github.com/git/git` and `gh pr list` against `cli/cli`, so the host needs outbound network access and `gh` on the `PATH`.
 
 ## Running it
 
@@ -84,6 +87,19 @@ For C7, C11 and C19 on `asmai-vm`, the harness answers trust prompts for the Coo
 
 The harness sets a canary in every provider API-key variable AsmAI lists, and in one for each `*_API_KEY` pattern, in the daemon's own environment, and checks that the daemon holds them. It then reads the names of the environment variables of the running leader session from the operating system (`/proc` on Linux, `ps` on macOS) and requires that it holds none of them, and no other name that is a provider API-key variable. It also requires that the process it read is the agent session, by `ASMAI_SESSION`. The canaries are not keys, and no value is read, kept or reported.
 
+### C36 and C37: instruction files and the write guard
+
+Both cases run the pinned Claude Code non-interactively (`claude -p`, reading its JSON events) in a workspace they make: a linked checkout of a clone on an assignment branch, as a worker has, in a repository with `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md` instruction files, each with a code word nobody could guess, and a `.claude` configuration that would be visible if it loaded. That configuration has a hook that leaves a mark, an environment variable, permission rules allowing `curl`, a setting that switches the sandbox off, a `.mcp.json` server, and a setting to enable it. They give the session the command line the code under test builds for a worker (`providers.ClaudeCodeArgs`, with `roles.RepositoryInstructions`), so the arguments qualified are the arguments run. They use no provider hooks of the daemon's and never write `~/.claude`.
+
+C36 runs it two ways:
+
+- as a control, with the repository's own settings loaded, and requires the fixture's hook to leave its mark, so that the case can see the configuration load;
+- with the worker's command line, and requires the session to name all three instruction code words, the hook to leave no mark, the MCP server to be neither started nor listed, and the environment variable to be unset.
+
+C37 gives the session a list of commands, each to run as its own Bash call, and requires: a write in the workspace, `git add`, `git commit` and `git push` to the workspace's origin, `git ls-remote` against a remote host and `gh pr list` against `cli/cli` all to run with no native prompt, the push to reach the origin and `gh` to return a pull request; a write outside the workspace not to happen; and a network call to a host the guard does not allow, `curl`, to be stopped by a native prompt that a non-interactive run cannot answer. The repository's configuration allows `curl` and switches the sandbox off, so it also shows that configuration does not load.
+
+They use the model alias `sonnet`, and depend on the model running the commands it is given, as C7 and C11 do. If the model never tries a command, the case fails saying so.
+
 ### C7 and C11: an acknowledged handoff nudge
 
 The harness keeps a small fixture repository in the disposable C7/C11/C19 factory state and, on `asmai-vm`, answers Claude Code's first-use trust prompt in Engineering's qualification directory before the daemon starts that leader. It then opens the conversation and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
@@ -121,8 +137,12 @@ C11 passed  Witnessed user messages are distinct from daemon nudges
     - ...
 C19 passed  Dispatches and results stay correlated and reconcilable across restarts
     - ...
+C36 passed  Instruction files load without the repository's provider configuration
+    - ...
+C37 passed  Provider write guards are switched on
+    - ...
 
-5 of 5 cases passed.
+7 of 7 cases passed.
 ```
 
 Each case is `passed` or `failed`. The report names the platform, the pinned version from the commit's pins file, the version the installed copy reports, and the commit. It holds no credential and no environment variable's value.

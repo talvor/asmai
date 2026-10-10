@@ -16,7 +16,7 @@ ASMAI_FAKE_PROVIDER_SCRIPT=FILE fake-provider [CLAUDE CODE FLAGS]
 fake-provider --script FILE [CLAUDE CODE FLAGS]
 ```
 
-The Claude Code flags it takes are the ones the daemon starts Claude Code with: `--settings FILE|JSON`, `--setting-sources SOURCES`, `--model MODEL`, `--append-system-prompt TEXT` and, to resume a session, `--resume SESSION`. Any other flag makes it exit 2, as an unknown option makes Claude Code exit.
+The Claude Code flags it takes are the ones the daemon starts Claude Code with: `--settings FILE|JSON`, `--setting-sources SOURCES`, `--strict-mcp-config`, `--model MODEL`, `--append-system-prompt TEXT` and, to resume a session, `--resume SESSION`. Any other flag makes it exit 2, as an unknown option makes Claude Code exit.
 
 Run it in a pseudo-terminal, the way the daemon runs a provider CLI. Like the real providers, it puts its terminal in raw mode. Keys arrive exactly as typed, Enter arrives as `\r`, and nothing is echoed unless a scripted screen draws it.
 
@@ -26,7 +26,7 @@ A flow with more than one agent needs one script for each. The fake plays the sc
 
 A session the daemon resumes after a restart is started with `--resume` and the provider's own identifier of the session it continues. Started so, the fake plays the script named by `ASMAI_FAKE_PROVIDER_SCRIPT_RESUMED` if that variable is set, whichever agent it is, and the scripts above otherwise. With `ASMAI_FAKE_PROVIDER_RESUME_FAILS` set it does what Claude Code does with a session it has no record of: it prints `No conversation found with session ID: <id>` and exits 1 without playing anything.
 
-`--setting-sources` takes the setting sources Claude Code loads, separated by commas, each of `user`, `project` and `local`; any other makes the fake exit 2. The fake plays the same whatever `--setting-sources`, `--model` and `--append-system-prompt` are. With `ASMAI_FAKE_PROVIDER_ARGS` naming a file in its environment, the fake writes the arguments it was started with to that file as a JSON array before it plays, so that a test can see the command line a session was given.
+`--setting-sources` takes the setting sources Claude Code loads, separated by commas, each of `user`, `project` and `local`; any other makes the fake exit 2. The fake plays the same whatever `--strict-mcp-config`, `--model` and `--append-system-prompt` are, and whatever `--setting-sources` are, except that when they include `project` it also loads the hooks of the repository's own `.claude/settings.json` in its working directory, as Claude Code does, so that a test can see whether a repository's provider configuration loaded. With `ASMAI_FAKE_PROVIDER_ARGS` naming a file in its environment, the fake writes the arguments it was started with to that file as a JSON array before it plays, so that a test can see the command line a session was given.
 
 `--settings` takes Claude Code settings the way Claude Code's own `--settings` does: the path of a settings file, or the settings as JSON when the argument starts with `{`. The fake reads only their `"hooks"`, in Claude Code's shape, and leaves everything else alone:
 

@@ -84,6 +84,8 @@ var Cases = []Case{
 	{ID: "C7", Title: "Every automated submission has a correlated positive acknowledgment", Env: signedInOnly, Run: (*Harness).c7},
 	{ID: "C11", Title: "Witnessed user messages are distinct from daemon nudges", Env: signedInOnly, Run: (*Harness).c11},
 	{ID: "C19", Title: "Dispatches and results stay correlated and reconcilable across restarts", Env: signedInOnly, Run: (*Harness).c19},
+	{ID: "C36", Title: "Instruction files load without the repository's provider configuration", Env: signedInOnly, Run: (*Harness).c36},
+	{ID: "C37", Title: "Provider write guards are switched on", Env: signedInOnly, Run: (*Harness).c37},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in

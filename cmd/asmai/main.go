@@ -47,7 +47,11 @@ commands:
                               Ctrl-] leaves the conversation, which pauses nothing
   asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
                               the daemon runs in the background unless --foreground
-  asmai stop                  persist the factory's state and stop its daemon and agents
+  asmai stop                  persist the factory's state and stop its daemon and agents; queued
+                              messages and open handoffs survive it, and the next start continues
+                              the work: it restores Coordination and each leader with open work, and
+                              runs each worker that had stopped at a boundary again, resuming its
+                              native session where it can, in a new dispatch
   asmai status                show the daemon, its version and each leader
   asmai agents                list the factory's agents
 	asmai jobs                  list numbered jobs
@@ -61,11 +65,26 @@ commands:
 	asmai assign --job <number> --outcome <text> --criterion <text>
 	                            Engineering's leader gives a writing assignment to a worker, in a workspace of
 	                            AsmAI's clone on its own branch; repeat --criterion for each acceptance criterion
+	asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text>
+	                            Quality's leader gives a validation to a worker, in a clean workspace fixed at the
+	                            job branch's exact head, with the job's mandate and criteria
 	asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch
 	asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>]
 	                            a worker submits its assignment's result; repeat a flag for each value
+	asmai result --evidence <text> --check '<command> -> <outcome>'|none --gap <text>|none --finding '<blocking|advisory|needs-you>: <text>'|none [--resolved <id>] [--unresolved <id>]
+	                            a Quality worker submits its validation report
 	asmai blocked --reason <text> [--needs <text>]
 	                            a worker reports that it cannot go on
+	asmai accept --assignment <id> --reason <text>
+	                            Engineering's leader accepts the result of an assignment it owns, and the
+	                            daemon fast-forwards the job branch to it; Quality's leader accepts a validation
+	                            report, and the daemon delivers it to Engineering's leader. Repeat --reason
+	                            for each reason
+	asmai reject --assignment <id> --reason <text>
+	                            a leader returns the result to the same worker, in a new dispatch
+	asmai cancel --assignment <id> --reason <text>
+	                            a leader cancels an assignment it owns; its worker pushes its assignment
+	                            branch, if it has one, and stops
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -161,7 +180,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var recipient, outcome, decisions, evidence, constraints, permissions, answer string
 	var criteria criteriaFlags
 	var assignJob int64
+	var assignReadOnly bool
+	var assignCommit string
 	var assignOutcome, blockedReason, blockedNeeds string
+	var decidedAssignment int64
+	var reasons listFlags
 	var resultArgs resultFlags
 	switch name {
 	case "start":
@@ -194,6 +217,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Int64Var(&assignJob, "job", 0, "job number")
 		flags.StringVar(&assignOutcome, "outcome", "", "the outcome the worker is to deliver")
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
+		flags.BoolVar(&assignReadOnly, "read-only", false, "give a validation, which changes nothing, instead of a writing assignment")
+		flags.StringVar(&assignCommit, "commit", "", "with --read-only, the job branch's exact head commit the validation is fixed at")
 	case "effect":
 	case "result":
 		flags.Var(&resultArgs.evidence, "evidence", "what shows the work does; may be repeated")
@@ -202,9 +227,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&resultArgs.checks, "check", "a check run and its outcome at the commit, '<command> -> <outcome>', or none; may be repeated")
 		flags.Var(&resultArgs.gaps, "gap", "an unresolved gap, or none; may be repeated")
 		flags.StringVar(&resultArgs.prSection, "pr-section", "", "the worker's part of the pull request: what changed, with before-and-after evidence")
+		flags.Var(&resultArgs.findings, "finding", "a validation's finding, '<blocking|advisory|needs-you>: <text>', or none; may be repeated")
+		flags.Var(&resultArgs.resolved, "resolved", "an earlier blocking finding's ID that is resolved at this commit; may be repeated")
+		flags.Var(&resultArgs.unresolved, "unresolved", "an earlier blocking finding's ID that is still open at this commit; may be repeated")
 	case "blocked":
 		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
 		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker")
+	case "accept", "reject", "cancel":
+		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
+		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
 	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
@@ -234,7 +265,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel"}, name) {
 		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -289,13 +320,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "handoff accept", "handoff clarify", "handoff decline":
 		return handoffAnswer(o, paths, name, handoffID, answer)
 	case "assign":
-		return assign(o, paths, assignJob, assignOutcome, criteria)
+		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit)
 	case "effect":
 		return effect(o, paths, operands[0], operands[1])
 	case "result":
 		return result(o, paths, resultArgs)
 	case "blocked":
 		return blocked(o, paths, blockedReason, blockedNeeds)
+	case "accept", "reject", "cancel":
+		return decide(o, paths, name, decidedAssignment, reasons)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":

@@ -154,8 +154,11 @@ type leader struct {
 	earlier        int
 	submitTerminal string
 	// ready is set only by a provider lifecycle boundary. A submission
-	// attempt consumes it until its matching acknowledgment and Stop.
+	// attempt consumes it until its matching acknowledgment and Stop. started
+	// is set once the session's own SessionStart reports it came up, which a
+	// session that resumed a provider session that is gone never does.
 	ready           bool
+	started         bool
 	inputUnknown    bool
 	pendingDispatch int64
 	currentDispatch int64
@@ -374,6 +377,10 @@ type launch struct {
 	// writable are the directories besides dir that the session's write
 	// guard lets its commands write.
 	writable []string
+	// assignment is the assignment a worker's session carries, and resume
+	// the provider's own session it continues, when it continues one.
+	assignment int64
+	resume     string
 }
 
 // startLeader starts l's session on the installed Claude Code, with
@@ -392,8 +399,9 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 
 // startWorker starts the session of the worker l on the installed Claude
 // Code in the workspace of the assignment it carries, with that workspace's
-// slot and temporary directory, and journals it. d.mu is held.
-func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.ProviderInstall, a store.Assignment) error {
+// slot and temporary directory, and journals it. A worker that resumes the
+// provider's session resume starts in it. d.mu is held.
+func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.ProviderInstall, a store.Assignment, resume string) error {
 	instructions, err := roles.WorkerInstructions(l.address.Role)
 	if err != nil {
 		return err
@@ -418,7 +426,7 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.
 	}
 	// The worker's git adds the trailers to each commit, as the user.
 	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, assignment: a.ID, resume: resume})
 }
 
 // startSession starts l's session on the installed Claude Code as launch
@@ -428,7 +436,12 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	if err != nil {
 		return err
 	}
-	args := providers.ClaudeCodeArgs(providers.HookCommand(d.cfg.Paths.Executable), launch.model, launch.instructions, providers.WriteGuard{Socket: d.cfg.Paths.Socket, Writable: launch.writable})
+	hook := providers.HookCommand(d.cfg.Paths.Executable)
+	guard := providers.WriteGuard{Socket: d.cfg.Paths.Socket, Writable: launch.writable}
+	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, guard)
+	if launch.resume != "" {
+		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, guard, launch.resume)
+	}
 	set := map[string]string{SessionCredential: credential}
 	maps.Copy(set, launch.env)
 	env := providers.SessionEnv(os.Environ(), d.cfg.Paths.Bin, set)
@@ -448,6 +461,8 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 		Dir:        launch.dir,
 		PID:        s.PID(),
 		At:         at,
+		Assignment: launch.assignment,
+		Resumes:    launch.resume,
 	})
 	if err != nil {
 		s.Stop(stopGrace)
@@ -455,11 +470,11 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	}
 	l.session, l.generation, l.startedAt = s, generation, at
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
-	l.ready, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, 0, 0, "", "", ""
+	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", ""
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
 	d.agents.Add(1)
-	go d.watch(l, s, generation)
+	go d.watch(l, s, generation, launch.resume != "")
 	return nil
 }
 
@@ -473,8 +488,10 @@ func newCredential() (string, error) {
 
 // watch waits for l's session s to end and journals how. Coordination's
 // leader is restarted after a session that ended on its own, as Coordination
-// always runs while the factory runs.
-func (d *daemon) watch(l *leader, s *session.Session, generation int) {
+// always runs while the factory runs. A worker's session that resumed the
+// provider's session and ended without coming up could not resume it: its
+// assignment needs reconciliation.
+func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bool) {
 	defer d.agents.Done()
 	<-s.Done()
 	exit := describeExit(s.Exit())
@@ -494,6 +511,9 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int) {
 	l.session = nil
 	if d.stopping {
 		return
+	}
+	if resumed && !l.started {
+		d.cannotResume(l, exit)
 	}
 	if l.address.Role != roles.Coordination {
 		pending, err := d.store.PendingLeaders()
@@ -600,6 +620,7 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 		Prompt     *string `json:"prompt"`
 		PromptID   string  `json:"prompt_id"`
 		Transcript string  `json:"transcript_path"`
+		Session    string  `json:"session_id"`
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, payload); err != nil || json.Unmarshal(payload, &fields) != nil {
@@ -607,6 +628,13 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	}
 	if fields.Event == "" {
 		return errors.New("the hook's payload names no hook_event_name")
+	}
+	if fields.Session != "" {
+		// Every hook of a session carries the provider's own identifier of
+		// it, which resuming the session after a restart needs.
+		if err := d.store.SessionIdentified(ref.address.String(), ref.generation, fields.Session, fields.Transcript, time.Now()); err != nil {
+			d.log.Error("recording the provider's session", "agent", ref.address.String(), "generation", ref.generation, "error", err.Error())
+		}
 	}
 	if fields.Event == promptSubmitted {
 		if fields.Prompt != nil {
@@ -631,8 +659,12 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	}
 	if fields.Event == turnStopped {
 		d.turnFinished(ref)
-		if err := d.stopCurrentDispatch(ref, fields.PromptID, fields.Transcript); err != nil {
+		stopped, err := d.endCurrentDispatch(ref, fields.PromptID, fields.Transcript)
+		if err != nil {
 			return err
+		}
+		if stopped != 0 {
+			d.dispatchStopped(ref, stopped)
 		}
 	}
 	if fields.Event == "SessionStart" {

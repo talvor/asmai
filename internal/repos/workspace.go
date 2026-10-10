@@ -59,6 +59,27 @@ func AddWorkspace(ctx context.Context, clone, dir, branch, commit string) error 
 	return nil
 }
 
+// AddReadOnlyWorkspace makes dir a clean checkout of AsmAI's clone fixed at
+// commit, detached: it has no branch, so there is nothing in it to push. Its
+// files are writable, as running a repository's checks writes build output,
+// but nothing the checks write is part of the commit. Whatever an earlier
+// attempt left at dir, which no record points at, is replaced.
+func AddReadOnlyWorkspace(ctx context.Context, clone, dir, commit string) error {
+	if err := clearWorktree(ctx, clone, dir); err != nil {
+		return err
+	}
+	if _, err := git(ctx, clone, "worktree", "add", "--quiet", "--detach", dir, commit); err != nil {
+		return fmt.Errorf("making the read-only workspace %s: %w", dir, err)
+	}
+	return nil
+}
+
+// RemoveReadOnlyWorkspace removes the checkout at dir, which
+// AddReadOnlyWorkspace made, and the clone's record of it.
+func RemoveReadOnlyWorkspace(ctx context.Context, clone, dir string) error {
+	return clearWorktree(ctx, clone, dir)
+}
+
 // RemoveWorkspace removes the checkout at dir, which AddWorkspace made, and
 // the branch it was made on, from the clone. Its branch on the origin stays.
 func RemoveWorkspace(ctx context.Context, clone, dir, branch string) error {
@@ -176,4 +197,14 @@ func Contains(ctx context.Context, dir, rev, commit string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("comparing %s with %s in %s: %w", commit, rev, dir, err)
+}
+
+// MoveBranch moves the branch name of the clone from commit from to commit
+// to, and only if the branch is still at from, so that nothing else's move is
+// overwritten. The branch is not checked out in any checkout of the clone.
+func MoveBranch(ctx context.Context, clone, name, to, from string) error {
+	if _, err := git(ctx, clone, "update-ref", "-m", "asmai: move "+name, "refs/heads/"+name, to, from); err != nil {
+		return fmt.Errorf("moving branch %s from %s to %s: %w", name, from, to, err)
+	}
+	return nil
 }

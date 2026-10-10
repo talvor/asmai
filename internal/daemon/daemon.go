@@ -26,7 +26,6 @@ import (
 	"github.com/talvor/asmai/internal/githooks"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
-	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 	"github.com/talvor/asmai/internal/vt"
@@ -75,13 +74,23 @@ const (
 	CommandHandoffAccept  = "handoff.accept"
 	CommandHandoffClarify = "handoff.clarify"
 	CommandHandoffDecline = "handoff.decline"
-	// CommandAssign gives a writing assignment to a worker. CommandEffect
+	// CommandAssign gives a writing assignment to a worker of Engineering, or
+	// with ReadOnly a validation to a worker of Quality. CommandEffect
 	// records an effect, CommandResult submits an assignment's result and
 	// CommandBlocked reports that its worker cannot go on.
 	CommandAssign  = "assign"
 	CommandEffect  = "effect"
 	CommandResult  = "result"
 	CommandBlocked = "blocked"
+	// CommandAccept, CommandReject and CommandCancel are the owning
+	// leader's decisions on an assignment: accepting a result fast-forwards
+	// the job branch to it, or for a validation records its findings and
+	// delivers the report to Engineering's leader; rejecting returns the
+	// assignment to its worker, and cancelling ends it once the worker has
+	// pushed its branch, if it has one, and stopped.
+	CommandAccept = "accept"
+	CommandReject = "reject"
+	CommandCancel = "cancel"
 	// CommandTrailers answers a worker's git hook with the trailers its
 	// commit carries.
 	CommandTrailers = "trailers"
@@ -132,6 +141,14 @@ type Request struct {
 	Ref  string `json:"ref,omitempty"`
 	// Report is what a result or a blocked report says.
 	Report *store.ReportInput `json:"report,omitempty"`
+	// Assignment and Reasons say which assignment a decision is about and
+	// why the owning leader made it.
+	Assignment int64    `json:"assignment,omitempty"`
+	Reasons    []string `json:"reasons,omitempty"`
+	// ReadOnly and Commit make an assign a read-only validation fixed at the
+	// commit, which is the job branch's tip.
+	ReadOnly bool   `json:"read_only,omitempty"`
+	Commit   string `json:"commit,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -161,6 +178,8 @@ type Response struct {
 	Assignment   *store.Assignment  `json:"assignment,omitempty"`
 	Effect       *store.Effect      `json:"effect,omitempty"`
 	Report       *store.Report      `json:"report,omitempty"`
+	Decision     *store.Decision    `json:"decision,omitempty"`
+	JobBranch    *store.JobBranch   `json:"job_branch,omitempty"`
 	// Trailers are the trailers a worker's commit carries, each as
 	// "Key: value".
 	Trailers []string `json:"trailers,omitempty"`
@@ -283,6 +302,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := st.EndAbandonedSessions(time.Now()); err != nil {
 		return fmt.Errorf("journaling the previous daemon's agents as ended: %w", err)
 	}
+	// Every start is a recovery: what the previous daemon left is continued
+	// or held for reconciliation before any leader is restored.
+	d.recoverWork(previous.State != store.StateRunning)
 
 	served := make(chan struct{})
 	go func() {
@@ -290,23 +312,9 @@ func Run(ctx context.Context, cfg Config) error {
 		close(served)
 	}()
 	// Every start restores Coordination's leader, which runs as long as the
-	// factory does.
+	// factory does, and every leader whose role has open work.
 	d.ensureCoordination()
-	if pending, err := st.PendingLeaders(); err != nil {
-		log.Error("reading pending leaders", "error", err)
-	} else {
-		for _, agent := range pending {
-			address, err := roles.ParseAddress(agent)
-			if err != nil || address == roles.LeaderOf(roles.Coordination) {
-				continue
-			}
-			d.mu.Lock()
-			if err = d.ensureAgent(address); err != nil {
-				log.Error("restoring receiving agent", "agent", agent, "error", err)
-			}
-			d.mu.Unlock()
-		}
-	}
+	d.restoreLeaders()
 
 	var by string
 	var asker *net.UnixConn
@@ -423,6 +431,11 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates()})
 	case CommandStart:
 		checks := d.ensureCoordination()
+		if !failed(checks) {
+			// A factory started before it could run agents restores the
+			// leaders with open work once it can.
+			d.restoreLeaders()
+		}
 		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates()})
 	case CommandAgents:
 		agents, err := d.store.Agents()
@@ -491,7 +504,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel:
 		d.assignmentCommand(conn, req)
 	case CommandTrailers:
 		trailers, err := d.trailers(req)

@@ -123,6 +123,14 @@ func ClaudeCodeArgs(hookCommand, model, instructions string, guard WriteGuard) [
 	}
 }
 
+// ClaudeCodeResumeArgs returns the command line a session of Claude Code is
+// started with to resume the native session sessionID: ClaudeCodeArgs, and
+// the session to continue. The settings, model and instructions are those of
+// the new session, as Claude Code takes them again on every start.
+func ClaudeCodeResumeArgs(hookCommand, model, instructions string, guard WriteGuard, sessionID string) []string {
+	return append(ClaudeCodeArgs(hookCommand, model, instructions, guard), "--resume", sessionID)
+}
+
 // HookCommand is the shell command a hook runs: the asmai executable at path
 // with `hook`.
 func HookCommand(path string) string {

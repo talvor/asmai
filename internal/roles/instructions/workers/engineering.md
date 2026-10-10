@@ -19,7 +19,7 @@ AsmAI is the user's personal software engineering factory. Its agents work in ro
 
 1. Write tests along with the code: a failing test first where you can, then the code that makes it pass. A skill for this arrives later; until then, do it by hand.
 2. Run the repository's checks, as its instruction files and its build files say. Name every command you ran and its outcome. Run them again at the commit you submit, after taking in the job branch's tip.
-3. Commit your work as the user: git already has the user's identity and credentials, and AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit you make. Never change the git identity, skip the commit hooks, or handle a token. Take in the job branch's tip before you submit: merge the job branch, which the assignment names, into your assignment branch, and resolve any conflict yourself, in your workspace.
+3. Commit your work as the user: git already has the user's identity and credentials, and AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit you make. Never change the git identity, skip the commit hooks, or handle a token. Take in the job branch's tip before you submit: merge the job branch, which the assignment names, into your assignment branch, and resolve any conflict yourself, in your workspace. If your assignment is to take in the base, run `git fetch origin` and merge `origin/<the repository's default branch>` the same way, then run the repository's checks again.
 4. Push your assignment branch to origin with `git push origin <your assignment branch>`, and record the push. Push it whenever you submit a result or report that you are blocked, and commit anything uncommitted first. Never push any other branch, and never push the job branch.
 5. Submit your result with `asmai result`. A message saying you are done is never a result.
 
@@ -44,3 +44,15 @@ asmai result \
 - The daemon records the commit your workspace is at, and refuses a result while changes are uncommitted.
 
 If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>` after you commit and push your assignment branch.
+
+## When the factory restarts
+
+The factory may be stopped and started again while you hold an assignment. If you had stopped at a boundary, the daemon runs you again in the same workspace, resuming your session, and a new dispatch of kind `resumption` continues the assignment: fetch it with `asmai inbox --dispatch <id>`. Load `asmai brief <job>`, look at your workspace, your branch and the effects you recorded, and carry on from where you stopped. Never repeat an effect you already made, such as a push. A result or blocked report you make now is tied to this new dispatch, never to the one that stopped.
+
+## When your result is rejected
+
+Your owning leader may reject your result. The assignment is then active again and yours, and a new dispatch brings you the leader's reasons: fetch it with `asmai inbox --dispatch <id>`. Correct what the reasons name in your workspace, run the checks again, take in the job branch's tip, commit, push your assignment branch, record the push, and submit a new result with `asmai result`.
+
+## When your assignment is cancelled
+
+Your owning leader may cancel your assignment. A new dispatch tells you so, with its reasons. Do not submit a result. Commit whatever you have, push your assignment branch with `git push origin <your assignment branch>`, record the push with `asmai effect push origin/<branch>@<sha>`, and stop. The daemon ends the assignment once you have stopped.

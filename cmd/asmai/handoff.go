@@ -9,6 +9,7 @@ import (
 
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/store"
 )
 
 func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisions, evidence, constraints, permissions string, criteria []string) int {
@@ -72,9 +73,24 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 			for _, c := range h.Criteria {
 				fmt.Fprintf(o.stdout, "- %s\n", c)
 			}
+			if h.Head != "" {
+				fmt.Fprintf(o.stdout, "Head to validate: %s\n", h.Head)
+			}
 		}
 		if m.HandoffData != nil && m.Kind != "handoff" {
 			fmt.Fprintf(o.stdout, "Answer: %s\n", m.Body)
+		}
+		if m.Kind == store.MessageValidation {
+			fmt.Fprintf(o.stdout, "Validation delivered by %s: %s\n", m.Sender, m.Body)
+		}
+		if m.Kind == store.MessageRejection || m.Kind == store.MessageCancellation {
+			fmt.Fprintf(o.stdout, "Reasons from %s:\n%s\n", m.Sender, m.Body)
+		}
+		if m.Kind == store.MessageResumption {
+			fmt.Fprintf(o.stdout, "Resumes dispatch %d, which stopped at a boundary before the factory stopped.\n%s\n", m.Resumes, m.Body)
+		}
+		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation {
+			fmt.Fprintf(o.stdout, "%s\n", m.Body)
 		}
 		if a := m.AssignmentData; a != nil {
 			printAssignment(o.stdout, *a)

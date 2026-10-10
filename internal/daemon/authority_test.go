@@ -13,17 +13,20 @@ import (
 func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 	coordination := roles.LeaderOf(roles.Coordination)
 	engineering := roles.LeaderOf(roles.Engineering)
+	quality := roles.LeaderOf(roles.Quality)
 	worker := roles.Address{Name: "worker-1", Role: roles.Coordination}
 	d := &daemon{
 		leaders: map[string]*leader{
 			coordination.String(): {address: coordination, session: &session.Session{}, generation: 2},
 			engineering.String():  {address: engineering, session: &session.Session{}, generation: 1},
+			quality.String():      {address: quality, session: &session.Session{}, generation: 1},
 			worker.String():       {address: worker, session: &session.Session{}, generation: 1},
 		},
 		sessions: map[string]sessionRef{
 			"current":     {address: coordination, generation: 2},
 			"old":         {address: coordination, generation: 1},
 			"engineering": {address: engineering, generation: 1},
+			"quality":     {address: quality, generation: 1},
 			"worker":      {address: worker, generation: 1},
 		},
 	}
@@ -38,6 +41,15 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"unknown", CommandJobs, "unknown or superseded"},
 		{"", CommandJobOpen, "agent command"},
 		{"engineering", CommandAssign, ""},
+		{"quality", CommandAssign, ""},
+		{"engineering", CommandAccept, ""},
+		{"quality", CommandAccept, ""},
+		{"quality", CommandReject, ""},
+		{"quality", CommandCancel, ""},
+		{"current", CommandAccept, "only leader@engineering or leader@quality"},
+		{"worker", CommandCancel, "only leader@engineering or leader@quality"},
+		{"quality", CommandResult, "only a worker"},
+		{"quality", CommandHandoffSend, ""},
 		{"current", CommandAssign, "only leader@engineering"},
 		{"worker", CommandAssign, "only leader@engineering"},
 		{"worker", CommandEffect, ""},

@@ -169,3 +169,18 @@ func TestEveryListedAPIKeyVariableIsOneAndTheListIsACopy(t *testing.T) {
 		t.Error("changing the list APIKeyVariables returned changed the list itself")
 	}
 }
+
+// Resuming a session starts Claude Code with the session's own settings,
+// model and instructions, as every start does, and the session to continue.
+func TestAResumedSessionIsStartedWithTheSameSettingsAndTheSessionToContinue(t *testing.T) {
+	hook := HookCommand("/state/bin/asmai")
+	fresh := ClaudeCodeArgs(hook, "opus", "Be a worker.", WriteGuard{})
+	resumed := ClaudeCodeResumeArgs(hook, "opus", "Be a worker.", WriteGuard{}, "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3")
+
+	if want := append(slices.Clone(fresh), "--resume", "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3"); !slices.Equal(resumed, want) {
+		t.Errorf("the resumed command line is %q, want %q", resumed, want)
+	}
+	if len(fresh) != 9 {
+		t.Errorf("a new session's command line has %d arguments, want it unchanged by resuming: %q", len(fresh), fresh)
+	}
+}

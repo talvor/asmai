@@ -43,10 +43,15 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return fmt.Errorf("only leader@coordination may run asmai job open")
 	case CommandAssign:
-		if ref.address == roles.LeaderOf(roles.Engineering) {
+		if ref.address == roles.LeaderOf(roles.Engineering) || ref.address == roles.LeaderOf(roles.Quality) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering may run asmai assign")
+		return fmt.Errorf("only leader@engineering, for writing work, or leader@quality, for validation, may run asmai assign")
+	case CommandAccept, CommandReject, CommandCancel:
+		if ref.address == roles.LeaderOf(roles.Engineering) || ref.address == roles.LeaderOf(roles.Quality) {
+			return nil
+		}
+		return fmt.Errorf("only leader@engineering or leader@quality may run asmai %s", req.Command)
 	case CommandEffect:
 		if ref.address.Name != roles.Leader || ref.address == roles.LeaderOf(roles.Engineering) {
 			return nil
@@ -71,7 +76,8 @@ func isAgentCommand(command string) bool {
 	switch command {
 	case CommandJobOpen, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
-		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandTrailers:
+		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
+		CommandTrailers:
 		return true
 	}
 	return false
@@ -93,7 +99,7 @@ func commandName(command string) string {
 		return "job <number>"
 	case CommandInbox:
 		return "inbox"
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel:
 		return command
 	case CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		return "handoff " + strings.TrimPrefix(command, "handoff.")

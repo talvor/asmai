@@ -152,6 +152,31 @@ INSERT INTO messages_next (id, handoff, job, sender, recipient, kind, body, fetc
 DROP TABLE messages;
 ALTER TABLE messages_next RENAME TO messages;
 `,
+	`
+CREATE TABLE decisions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, assignment INTEGER NOT NULL REFERENCES assignments(id),
+ report INTEGER REFERENCES reports(id), kind TEXT NOT NULL, leader TEXT NOT NULL,
+ reasons TEXT NOT NULL, commit_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+`,
+	`
+ALTER TABLE assignments ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE handoffs ADD COLUMN head TEXT NOT NULL DEFAULT '';
+CREATE TABLE findings (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ assignment INTEGER NOT NULL REFERENCES assignments(id), report INTEGER NOT NULL REFERENCES reports(id),
+ kind TEXT NOT NULL, text TEXT NOT NULL, commit_id TEXT NOT NULL,
+ cleared_by INTEGER REFERENCES reports(id), cleared_at TEXT, created_at TEXT NOT NULL
+);
+ALTER TABLE dispatches ADD COLUMN resumes INTEGER REFERENCES dispatches(id);
+ALTER TABLE dispatches ADD COLUMN native_session TEXT NOT NULL DEFAULT '';
+CREATE TABLE native_sessions (
+ agent TEXT NOT NULL, generation INTEGER NOT NULL, provider TEXT NOT NULL,
+ assignment INTEGER REFERENCES assignments(id),
+ session_id TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY (agent, generation)
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -201,6 +226,35 @@ const (
 	// which submits its assignment, and its blocked report.
 	KindResultSubmitted = "result.submitted"
 	KindBlockedReported = "blocked.reported"
+	// KindResultAccepted and KindResultRejected record the owning leader's
+	// decision on a result with its reasons. Accepting also moves the job
+	// branch, which KindJobBranchMoved records in the same step.
+	KindResultAccepted = "result.accepted"
+	KindResultRejected = "result.rejected"
+	KindJobBranchMoved = "job.branch.moved"
+	// KindWorkspaceRemoved records the daemon removing a writing assignment's
+	// workspace once its work is on the job branch.
+	KindWorkspaceRemoved = "workspace.removed"
+	// KindCancellationRequested records the owning leader cancelling an
+	// assignment, which its worker is told to push its branch for, and
+	// KindAssignmentCancelled the assignment ending once the worker stopped.
+	KindCancellationRequested = "assignment.cancelling"
+	KindAssignmentCancelled   = "assignment.cancelled"
+	// KindValidationAccepted records Quality's leader accepting a validation
+	// report: the findings it recorded, with their IDs, and the earlier
+	// blocking findings it cleared. KindReadOnlyWorkspaceRemoved records the
+	// daemon removing a read-only workspace when its assignment ended.
+	KindValidationAccepted       = "validation.accepted"
+	KindReadOnlyWorkspaceRemoved = "workspace.read-only.removed"
+	// KindSessionIdentified records the provider's own identifier of an agent
+	// session, as its hooks reported it: what a later session resumes.
+	KindSessionIdentified = "session.identified"
+	// KindAssignmentResumed records a stopped worker's assignment continuing
+	// after a restart, in a new dispatch that resumes the one that stopped,
+	// and KindAssignmentNeedsReconciliation an assignment held for its
+	// owning leader to reconcile.
+	KindAssignmentResumed             = "assignment.resumed"
+	KindAssignmentNeedsReconciliation = "assignment.needs_reconciliation"
 )
 
 // The states an agent can be in.
@@ -261,6 +315,11 @@ type SessionStart struct {
 	Dir        string    `json:"dir"`
 	PID        int       `json:"pid"`
 	At         time.Time `json:"-"`
+	// Assignment is the assignment a worker's session carries, and zero for a
+	// leader's. Resumes is the provider's own session this one resumes, when
+	// it does.
+	Assignment int64  `json:"assignment,omitempty"`
+	Resumes    string `json:"resumes,omitempty"`
 }
 
 // Agent is an agent's current state, as the store holds it.
@@ -503,6 +562,11 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 				provider = excluded.provider, version = excluded.version, model = excluded.model, pid = excluded.pid,
 				started_at = excluded.started_at, ended_at = NULL, exit = ''`,
 			start.Agent, start.Role, AgentRunning, generation, start.Provider, start.Version, start.Model, start.PID, timestamp(start.At))
+		if err != nil {
+			return "", nil, err
+		}
+		_, err = tx.Exec(`INSERT INTO native_sessions (agent, generation, provider, assignment) VALUES (?, ?, ?, NULLIF(?, 0))`,
+			start.Agent, generation, start.Provider, start.Assignment)
 		if err != nil {
 			return "", nil, err
 		}

@@ -21,7 +21,8 @@ import (
 // take: a fetch from origin is the most of it.
 const gitTimeout = 5 * time.Minute
 
-// assignmentCommand serves assign, effect, result and blocked.
+// assignmentCommand serves assign, effect, result, blocked, accept, reject and
+// cancel.
 func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 	var resp Response
 	var err error
@@ -39,6 +40,9 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 		if e, err = d.effect(req); err == nil {
 			resp.Effect = &e
 		}
+	case CommandAccept, CommandReject, CommandCancel:
+		conn.SetDeadline(time.Now().Add(gitTimeout + stopWait + time.Minute))
+		resp, notify, err = d.decide(req)
 	case CommandResult, CommandBlocked:
 		conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
 		var r store.Report
@@ -71,25 +75,40 @@ func (d *daemon) caller(req Request) (sessionRef, *leader, error) {
 	return ref, l, nil
 }
 
-// assign gives the writing assignment req describes to a worker of
-// Engineering. It makes the job's branch if it has none, takes the lowest
-// free worker number and slot, makes the workspace of AsmAI's clone on the
-// assignment's own branch from the job branch's tip, records the assignment
-// with the dispatch that delivers it, and starts the worker in the workspace.
-// The worker is nudged at its first input boundary.
+// assign gives the assignment req describes to a worker: a writing
+// assignment to one of Engineering, or with req.ReadOnly a validation to one
+// of Quality. It makes the job's branch if it has none, takes the lowest free
+// worker number and slot, makes the worker's workspace of AsmAI's clone, which
+// is on the assignment's own branch from the job branch's tip for a writing
+// assignment and a clean checkout fixed at the tip's commit, with no branch,
+// for a validation, records the assignment with the dispatch that delivers
+// it, and starts the worker in the workspace. The worker is nudged at its
+// first input boundary.
 func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
-	engineering := roles.LeaderOf(roles.Engineering)
+	role, owner := roles.Engineering, roles.LeaderOf(roles.Engineering)
+	if req.ReadOnly {
+		role, owner = roles.Quality, roles.LeaderOf(roles.Quality)
+	}
 	d.mu.Lock()
 	ref, _, err := d.caller(req)
 	d.mu.Unlock()
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
-	if ref.address != engineering {
-		return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign writing work", engineering)
+	if ref.address != owner {
+		if req.ReadOnly {
+			return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign read-only validation", owner)
+		}
+		return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign writing work: Quality's validation is read-only, and never changes the work", owner)
 	}
 	if req.Job <= 0 || strings.TrimSpace(req.Outcome) == "" || len(req.Criteria) == 0 {
 		return store.Assignment{}, store.Dispatch{}, refuse("an assignment needs a job, an outcome and acceptance criteria")
+	}
+	if req.ReadOnly && strings.TrimSpace(req.Commit) == "" {
+		return store.Assignment{}, store.Dispatch{}, refuse("a validation is fixed at the job branch's exact head: give --commit")
+	}
+	if !req.ReadOnly && req.Commit != "" {
+		return store.Assignment{}, store.Dispatch{}, refuse("a writing assignment is made from the job branch's tip, so it takes no --commit")
 	}
 
 	d.assignMu.Lock()
@@ -117,33 +136,61 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
+	if req.ReadOnly {
+		if _, err := d.store.JobBranch(j.Number); errors.Is(err, sql.ErrNoRows) {
+			return store.Assignment{}, store.Dispatch{}, refuse("job %d has no job branch, so there is nothing to validate", j.Number)
+		} else if err != nil {
+			return store.Assignment{}, store.Dispatch{}, err
+		}
+	}
 	branch, err := d.ensureJobBranch(ctx, j, repository)
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, err
+	}
+	if req.ReadOnly && req.Commit != branch.Tip {
+		return store.Assignment{}, store.Dispatch{}, refuse("job %d's job branch is at %s, not %s: validation is fixed at the exact head, so assign it at the branch's tip", j.Number, branch.Tip, req.Commit)
+	}
+	if req.ReadOnly {
+		if live, err := d.store.LiveValidation(j.Number); err != nil {
+			return store.Assignment{}, store.Dispatch{}, err
+		} else if live != 0 {
+			return store.Assignment{}, store.Dispatch{}, refuse("job %d already has validation %d in progress; it ends before another starts", j.Number, live)
+		}
 	}
 	id, err := d.store.NextAssignmentID()
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
-	number, slot, err := d.store.Allocate(roles.Engineering)
+	number, slot, err := d.store.Allocate(role)
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
-	worker := roles.WorkerOf(roles.Engineering, number)
+	worker := roles.WorkerOf(role, number)
 	dir := filepath.Join(d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", j.Number), fmt.Sprintf("assignment-%d", id))
 	workspace := store.Workspace{
-		Slot:   slot,
-		Path:   filepath.Join(dir, "repo"),
-		Tmp:    filepath.Join(dir, "tmp"),
-		Branch: fmt.Sprintf("asmai/job-%d/%d", j.Number, id),
-		Base:   branch.Tip,
-	}
-	if err := repos.AddWorkspace(ctx, repository.Clone, workspace.Path, workspace.Branch, workspace.Base); err != nil {
-		return store.Assignment{}, store.Dispatch{}, err
+		Slot: slot,
+		Path: filepath.Join(dir, "repo"),
+		Tmp:  filepath.Join(dir, "tmp"),
+		Base: branch.Tip,
 	}
 	undo := func() {
 		if err := repos.RemoveWorkspace(context.WithoutCancel(ctx), repository.Clone, workspace.Path, workspace.Branch); err != nil {
 			d.log.Error("undoing an assignment's workspace", "assignment", id, "error", err.Error())
+		}
+	}
+	if req.ReadOnly {
+		if err := repos.AddReadOnlyWorkspace(ctx, repository.Clone, workspace.Path, workspace.Base); err != nil {
+			return store.Assignment{}, store.Dispatch{}, err
+		}
+		undo = func() {
+			if err := repos.RemoveReadOnlyWorkspace(context.WithoutCancel(ctx), repository.Clone, workspace.Path); err != nil {
+				d.log.Error("undoing an assignment's workspace", "assignment", id, "error", err.Error())
+			}
+		}
+	} else {
+		workspace.Branch = fmt.Sprintf("asmai/job-%d/%d", j.Number, id)
+		if err := repos.AddWorkspace(ctx, repository.Clone, workspace.Path, workspace.Branch, workspace.Base); err != nil {
+			return store.Assignment{}, store.Dispatch{}, err
 		}
 	}
 
@@ -156,13 +203,13 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	}
 	a, dispatch, err := d.store.AssignmentCreated(store.NewAssignment{
 		ID: id, Job: j.Number, Owner: ref.address.String(), Worker: worker.String(),
-		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace,
+		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly,
 	}, time.Now())
 	if err != nil {
 		undo()
 		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("recording the assignment: %w", err)
 	}
-	d.log.Info("assignment created", "assignment", a.ID, "job", j.Number, "worker", a.Worker, "slot", slot, "branch", workspace.Branch, "workspace", workspace.Path)
+	d.log.Info("assignment created", "assignment", a.ID, "job", j.Number, "worker", a.Worker, "slot", slot, "branch", workspace.Branch, "workspace", workspace.Path, "read_only", a.ReadOnly, "commit", workspace.Base)
 	if err := d.ensureAgent(worker); err != nil {
 		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("starting worker %s for assignment %d: %w", worker, a.ID, err)
 	}
@@ -352,44 +399,24 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	if err != nil {
 		return store.Report{}, store.Dispatch{}, fmt.Errorf("reading the commit of %s: %w", a.Workspace.Path, err)
 	}
-	uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
-	if err != nil {
-		return store.Report{}, store.Dispatch{}, err
-	}
-	if len(uncommitted) > 0 {
-		return store.Report{}, store.Dispatch{}, refuse("the workspace has changes that are not committed, so the report would not be at its commit: commit them, push %s, record the push with `asmai effect`, and submit again\n%s", a.Workspace.Branch, strings.Join(uncommitted, "\n"))
-	}
-	tookIn, err := repos.Contains(ctx, a.Workspace.Path, "HEAD", branch.Tip)
-	if err != nil {
-		return store.Report{}, store.Dispatch{}, err
-	}
-	if !tookIn {
-		return store.Report{}, store.Dispatch{}, refuse("the assignment branch does not contain the job branch's tip %s; take it in and submit again", branch.Tip)
-	}
-	job, err := d.store.Job(a.Job)
-	if err != nil {
-		return store.Report{}, store.Dispatch{}, err
-	}
-	repository, err := d.store.Repository(job.Repository)
-	if err != nil {
-		return store.Report{}, store.Dispatch{}, err
-	}
-	if err := repos.Fetch(ctx, repository.Clone); err != nil {
-		return store.Report{}, store.Dispatch{}, err
-	}
-	remoteBranch := "refs/remotes/origin/" + a.Workspace.Branch
-	if _, err := repos.OriginTip(ctx, repository.Clone, a.Workspace.Branch); err != nil {
-		return store.Report{}, store.Dispatch{}, refuse("origin does not have the assignment branch %s; push it and submit again", a.Workspace.Branch)
-	}
-	pushedCommit, err := repos.Contains(ctx, repository.Clone, remoteBranch, commit)
-	if err != nil {
-		return store.Report{}, store.Dispatch{}, err
-	}
-	if !pushedCommit {
-		return store.Report{}, store.Dispatch{}, refuse("origin's assignment branch %s does not contain reported commit %s; push it and submit again", a.Workspace.Branch, commit)
-	}
 	input := *req.Report
-	input.Artifacts = append([]string{fmt.Sprintf("branch %s at %s", a.Workspace.Branch, commit)}, input.Artifacts...)
+	var tookIn bool
+	if a.ReadOnly {
+		// A validation is fixed at one commit, and its evidence names it.
+		// It has no branch to push, so only the commit it is at is checked.
+		if commit != a.Commit {
+			return store.Report{}, store.Dispatch{}, refuse("the workspace is at %s, but assignment %d is fixed at %s: validation never changes the work, so check out %s again and report at it", commit, a.ID, a.Commit, a.Commit)
+		}
+		if tookIn, err = repos.Contains(ctx, a.Workspace.Path, "HEAD", branch.Tip); err != nil {
+			return store.Report{}, store.Dispatch{}, err
+		}
+		input.Artifacts = append([]string{fmt.Sprintf("validated commit %s of job branch %s, in a read-only workspace", commit, branch.Name)}, input.Artifacts...)
+	} else {
+		if tookIn, err = d.checkWritingReport(ctx, a, branch, commit); err != nil {
+			return store.Report{}, store.Dispatch{}, err
+		}
+		input.Artifacts = append([]string{fmt.Sprintf("branch %s at %s", a.Workspace.Branch, commit)}, input.Artifacts...)
+	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -414,6 +441,50 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	return r, dispatch, nil
 }
 
+// checkWritingReport checks that a writing assignment's workspace is at a
+// commit that can be reported: everything is committed, the job branch's tip
+// is taken in, and origin's assignment branch holds the commit. It returns
+// whether the commit has the tip in its history.
+func (d *daemon) checkWritingReport(ctx context.Context, a store.Assignment, branch store.JobBranch, commit string) (bool, error) {
+	uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
+	if err != nil {
+		return false, err
+	}
+	if len(uncommitted) > 0 {
+		return false, refuse("the workspace has changes that are not committed, so the report would not be at its commit: commit them, push %s, record the push with `asmai effect`, and submit again\n%s", a.Workspace.Branch, strings.Join(uncommitted, "\n"))
+	}
+	tookIn, err := repos.Contains(ctx, a.Workspace.Path, "HEAD", branch.Tip)
+	if err != nil {
+		return false, err
+	}
+	if !tookIn {
+		return false, refuse("the assignment branch does not contain the job branch's tip %s; take it in and submit again", branch.Tip)
+	}
+	job, err := d.store.Job(a.Job)
+	if err != nil {
+		return false, err
+	}
+	repository, err := d.store.Repository(job.Repository)
+	if err != nil {
+		return false, err
+	}
+	if err := repos.Fetch(ctx, repository.Clone); err != nil {
+		return false, err
+	}
+	remoteBranch := "refs/remotes/origin/" + a.Workspace.Branch
+	if _, err := repos.OriginTip(ctx, repository.Clone, a.Workspace.Branch); err != nil {
+		return false, refuse("origin does not have the assignment branch %s; push it and submit again", a.Workspace.Branch)
+	}
+	pushedCommit, err := repos.Contains(ctx, repository.Clone, remoteBranch, commit)
+	if err != nil {
+		return false, err
+	}
+	if !pushedCommit {
+		return false, refuse("origin's assignment branch %s does not contain reported commit %s; push it and submit again", a.Workspace.Branch, commit)
+	}
+	return true, nil
+}
+
 // ensureAgent starts the session of the agent at address unless it is
 // running: a role's leader, or a worker in the workspace of the assignment it
 // carries. d.mu is held.
@@ -435,6 +506,9 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if err != nil {
 		return err
 	}
+	if a.State == store.AssignmentNeedsReconciliation {
+		return fmt.Errorf("assignment %d needs reconciliation, so %s is not started for it", a.ID, address)
+	}
 	l := d.agent(address)
 	if l.session != nil {
 		if l.assignment != a.ID {
@@ -446,5 +520,11 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if failed(checks) {
 		return fmt.Errorf("cannot start %s: factory checks failed", address)
 	}
-	return d.startWorker(l, cfg.Roles[address.Role], install, a)
+	// A worker whose assignment continues after a restart resumes the
+	// provider's session it was in, where the start recorded it.
+	resume := ""
+	if w, err := d.store.WorkerDispatch(a.ID); err == nil && w.Kind == store.MessageResumption && !w.Fetched {
+		resume = w.Dispatch.NativeSession
+	}
+	return d.startWorker(l, cfg.Roles[address.Role], install, a, resume)
 }

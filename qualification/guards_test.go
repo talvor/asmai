@@ -47,6 +47,8 @@ type guardSession struct {
 	ghUnavailable      bool
 	noPromptForOutside bool
 	noPromptForCurl    bool
+	commandInstead     map[int]string
+	environmentCommand *Command
 }
 
 var codeWord = regexp.MustCompile(`Code word: (\S+)`)
@@ -63,7 +65,11 @@ func (g guardSession) ask(spec AskSpec) (Turn, error) {
 	case spec.Prompt == "" || strings.HasPrefix(spec.Prompt, "You are being qualified"):
 		return g.guarded(spec)
 	}
-	turn := Turn{Commands: []Command{{Text: "printenv " + fixtureEnvVariable + " || echo unset", Output: "unset\n"}}}
+	probe := Command{Text: "printenv " + fixtureEnvVariable + " || echo unset", Output: "unset\n"}
+	if g.environmentCommand != nil {
+		probe = *g.environmentCommand
+	}
+	turn := Turn{Commands: []Command{probe}}
 	if !g.ignoresInstructions {
 		for _, m := range codeWord.FindAllStringSubmatch(system, -1) {
 			turn.Said += m[1] + " "
@@ -79,8 +85,11 @@ var listed = regexp.MustCompile("(?m)^\\d+\\. `(.*)`$")
 
 func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 	var turn Turn
-	for _, m := range listed.FindAllStringSubmatch(spec.Prompt, -1) {
+	for i, m := range listed.FindAllStringSubmatch(spec.Prompt, -1) {
 		text := m[1]
+		if instead, ok := g.commandInstead[i]; ok {
+			text = instead
+		}
 		c := Command{Text: text}
 		switch {
 		case strings.HasPrefix(text, "git ls-remote"):
@@ -170,6 +179,23 @@ func TestC36FailsWhenItCannotSeeTheRepositorysConfigurationLoad(t *testing.T) {
 	}
 }
 
+func TestC36RequiresTheExactSuccessfulEnvironmentProbe(t *testing.T) {
+	command := "printenv " + fixtureEnvVariable + " || echo unset"
+	for name, probe := range map[string]Command{
+		"wrong variable": {Text: "printenv OTHER || echo unset", Output: "unset\n"},
+		"failed":         {Text: command, Output: "unset\n", Failed: true},
+		"denied":         {Text: command, Output: "unset\n", Denied: true},
+		"quoted output":  {Text: command, Output: "echo unset\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := result(t, guardHarness(t, guardSession{environmentCommand: &probe}), "C36")
+			if r.Outcome != Failed {
+				t.Errorf("C36 %s: %q, want the invalid probe rejected", r.Outcome, r.Failure)
+			}
+		})
+	}
+}
+
 func TestC37PassesWhenTheGuardKeepsWritesInTheWorkspaceAndLetsGitAndGhThrough(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{}), "C37")
 	if r.Outcome != Passed {
@@ -218,6 +244,27 @@ func TestC37FailsWhenGhCannotRun(t *testing.T) {
 	}
 }
 
+func TestC37RequiresTheRequestedCommands(t *testing.T) {
+	for name, change := range map[string]struct {
+		index   int
+		instead string
+	}{
+		"allowed write": {0, "echo inside > inside.txt # changed"},
+		"remote host":   {4, "git ls-remote --heads origin main"},
+		"gh repository": {5, "gh pr list --repo other/repo --state all --limit 1 --json number"},
+		"outside write": {6, "echo outside > somewhere-else.txt"},
+		"curl host":     {7, "curl -sS --max-time 20 -o curl.out https://other.example"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := guardSession{commandInstead: map[int]string{change.index: change.instead}}
+			r := result(t, guardHarness(t, s), "C37")
+			if r.Outcome != Failed || !strings.Contains(r.Failure, "never tried") {
+				t.Errorf("C37 %s: %q, want the substituted command rejected", r.Outcome, r.Failure)
+			}
+		})
+	}
+}
+
 func TestC37FailsClearlyWhenTheHostLacksWhatTheGuardNeeds(t *testing.T) {
 	h := guardHarness(t, guardSession{})
 	checkGuardDependencies = func() error { return errors.New("install bubblewrap and socat") }
@@ -248,8 +295,11 @@ func TestATurnReadsTheEventsClaudeCodePrints(t *testing.T) {
 	if c := turn.Commands[1]; c.Text != "curl x" || c.Output != "needs approval" || !c.Failed || !c.Denied {
 		t.Errorf("the second command is %+v, want it failed and denied", c)
 	}
-	if got := turn.Tried("curl"); len(got) != 1 {
-		t.Errorf("Tried(curl) = %+v", got)
+	if got := turn.Tried("curl x"); len(got) != 1 {
+		t.Errorf("Tried(curl x) = %+v", got)
+	}
+	if got := turn.Tried("curl"); len(got) != 0 {
+		t.Errorf("Tried(curl) = %+v, want no exact match", got)
 	}
 	if _, err := parseTurn(strings.NewReader("not json\n")); err == nil {
 		t.Error("a line that is not JSON was accepted")

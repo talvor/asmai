@@ -44,11 +44,11 @@ type Command struct {
 	Denied bool
 }
 
-// Tried returns the commands whose text begins with prefix.
-func (t Turn) Tried(prefix string) []Command {
+// Tried returns the commands whose text matches command.
+func (t Turn) Tried(command string) []Command {
 	var found []Command
 	for _, c := range t.Commands {
-		if strings.HasPrefix(strings.TrimSpace(c.Text), prefix) {
+		if strings.TrimSpace(c.Text) == command {
 			found = append(found, c)
 		}
 	}

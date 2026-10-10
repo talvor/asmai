@@ -179,7 +179,7 @@ func (g guardFixture) sessionArgs(f *Factory) ([]string, error) {
 	if repository != "" {
 		instructions += "\n" + repository
 	}
-	return providers.ClaudeCodeArgs(noopHook, guardModel, instructions, providers.WriteGuard{Socket: f.paths.Socket, Writable: []string{g.tmp}}), nil
+	return providers.ClaudeCodeArgs(noopHook, guardModel, instructions, providers.WriteGuard{Writable: []string{g.tmp}}), nil
 }
 
 // checkGuardDependencies is guardDependencies, which a test replaces.
@@ -270,11 +270,14 @@ func (h *Harness) instructionFilesLoad(ctx context.Context, f *Factory, path str
 	if slices.Contains(turn.MCPServers, fixtureMCPServer) {
 		return fmt.Errorf("the session lists the repository's MCP server %s", fixtureMCPServer)
 	}
-	printenv := turn.Tried("printenv")
+	printenv := turn.Tried("printenv " + fixtureEnvVariable + " || echo unset")
 	if len(printenv) == 0 {
 		return errors.New("the session did not run the command that shows whether the repository's environment variable loaded")
 	}
-	if strings.Contains(printenv[0].Output, "loaded") || !strings.Contains(printenv[0].Output, "unset") {
+	if printenv[0].Failed || printenv[0].Denied {
+		return fmt.Errorf("the repository's environment probe failed or was denied: %q", printenv[0].Output)
+	}
+	if strings.TrimSpace(printenv[0].Output) != "unset" {
 		return fmt.Errorf("the repository's environment setting reached the session: its command printed %q", printenv[0].Output)
 	}
 	r.observe("the session loaded none of the repository's .claude configuration: its hook did not run, its MCP server was not started or listed, and its environment variable was not set")
@@ -340,17 +343,17 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	if err != nil {
 		return err
 	}
-	tried := func(prefix string) (Command, error) {
-		found := turn.Tried(prefix)
+	tried := func(command string) (Command, error) {
+		found := turn.Tried(command)
 		if len(found) == 0 {
-			return Command{}, fmt.Errorf("the session never tried `%s`, so the harness cannot show how the guard treats it", prefix)
+			return Command{}, fmt.Errorf("the session never tried `%s`, so the harness cannot show how the guard treats it", command)
 		}
 		return found[0], nil
 	}
 
 	// What the guard allows runs without a native prompt.
-	for _, prefix := range []string{"echo inside", "git add", "git commit", "git push", "git ls-remote"} {
-		c, err := tried(prefix)
+	for _, command := range commands[:5] {
+		c, err := tried(command)
 		if err != nil {
 			return err
 		}
@@ -367,12 +370,12 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	if want, got := gitOutput(g.workspace, "rev-parse", "HEAD"), gitOutput(g.origin, "rev-parse", "refs/heads/qualification"); want == "" || want != got {
 		return fmt.Errorf("the commit and push from the workspace did not reach its origin (HEAD %q, origin %q)", want, got)
 	}
-	ls, _ := tried("git ls-remote")
+	ls, _ := tried(commands[4])
 	if len(strings.TrimSpace(ls.Output)) < 40 {
 		return fmt.Errorf("git with network access printed %q, not the remote's branch", ls.Output)
 	}
 	r.observe("inside the workspace, writing a file, and git add, commit, push and ls-remote against a remote host, ran without a native prompt")
-	c, err := tried("gh pr list")
+	c, err := tried(commands[5])
 	if err != nil {
 		return err
 	}
@@ -388,7 +391,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	r.observe("gh listed a pull request from a remote repository without a native prompt")
 
 	// What it does not allow does not go through.
-	outsideWrite, err := tried("echo outside")
+	outsideWrite, err := tried(commands[6])
 	if err != nil {
 		return err
 	}
@@ -399,7 +402,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		return errors.New("a write outside the workspace did not raise a native permission prompt")
 	}
 	r.observe("a write outside the workspace did not happen%s", outcomeNote(outsideWrite))
-	curl, err := tried("curl")
+	curl, err := tried(commands[7])
 	if err != nil {
 		return err
 	}

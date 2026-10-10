@@ -14,7 +14,7 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	if want := `'/home/it'\''s/.local/state/asmai/bin/asmai' hook`; hook != want {
 		t.Errorf("the hook command is %s, want %s", hook, want)
 	}
-	guard := WriteGuard{Socket: "/state/daemon.sock", Writable: []string{"/state/workspaces/job-1/assignment-1/tmp"}}
+	guard := WriteGuard{Writable: []string{"/state/workspaces/job-1/assignment-1/tmp"}}
 	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.", guard)
 	if want := []string{"--setting-sources", "user", "--strict-mcp-config", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
 		t.Errorf("the command line is %q, want --settings, then %q", args, want)
@@ -43,10 +43,6 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 			Filesystem               struct {
 				AllowWrite []string `json:"allowWrite"`
 			} `json:"filesystem"`
-			Network struct {
-				AllowUnixSockets []string `json:"allowUnixSockets"`
-				AllowedDomains   []string `json:"allowedDomains"`
-			} `json:"network"`
 		} `json:"sandbox"`
 	}
 	if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
@@ -92,9 +88,8 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		} `json:"permissions"`
 	}
 	for name, guard := range map[string]WriteGuard{
-		"a worker's": {Socket: "/state/daemon.sock", Writable: []string{"/state/tmp"}},
-		"a leader's": {Socket: "/state/daemon.sock"},
-		"no socket":  {},
+		"a worker's": {Writable: []string{"/state/tmp"}},
+		"a leader's": {},
 	} {
 		settings.Sandbox.Filesystem, settings.Sandbox.Network = nil, nil
 		if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard)), &settings); err != nil {
@@ -121,21 +116,10 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		if _, ok := sb.Filesystem["allowWrite"]; ok != (len(guard.Writable) > 0) {
 			t.Errorf("%s sandbox filesystem is %v for writable %q", name, sb.Filesystem, guard.Writable)
 		}
-		if got, ok := sb.Network["allowUnixSockets"]; ok != (guard.Socket != "") || (ok && !slices.Equal(anyStrings(got), []string{guard.Socket})) {
-			t.Errorf("%s sandbox network is %v for socket %q", name, sb.Network, guard.Socket)
-		}
-		if _, ok := sb.Network["allowedDomains"]; ok {
-			t.Errorf("%s sandbox allows network domains: %v", name, sb.Network)
+		if len(sb.Network) != 0 {
+			t.Errorf("%s sandbox has network allowances: %v", name, sb.Network)
 		}
 	}
-}
-
-func anyStrings(v any) []string {
-	var out []string
-	for _, e := range v.([]any) {
-		out = append(out, e.(string))
-	}
-	return out
 }
 
 func TestASessionsEnvironmentHasNoProviderAPIKey(t *testing.T) {

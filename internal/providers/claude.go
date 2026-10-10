@@ -39,9 +39,6 @@ var unguardedGitSubcommands = []string{
 // writes stay in the session's working directory, and any command it does not
 // allow raises the native permission prompt in the agent's terminal.
 type WriteGuard struct {
-	// Socket is the daemon's socket, which a guarded command may connect to
-	// so that `asmai` works wherever it runs.
-	Socket string
 	// Writable are the directories besides the working directory and the
 	// system's temporary directory that a guarded command may write, such as
 	// a worker's own temporary directory.
@@ -88,9 +85,6 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 	}
 	if len(guard.Writable) > 0 {
 		sandbox["filesystem"] = map[string]any{"allowWrite": guard.Writable}
-	}
-	if guard.Socket != "" {
-		sandbox["network"] = map[string]any{"allowUnixSockets": []string{guard.Socket}}
 	}
 	settings := map[string]any{
 		"hooks": hooks,

@@ -365,6 +365,31 @@ func TestEachLeaderWithOpenWorkInAJobIsToldOnceToLoadItsBrief(t *testing.T) {
 	}
 }
 
+func TestPendingRestorationTracksNewOpenJobs(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job1 := jobWithBranch(t, s)
+	d, made, err := s.LeaderRestored("leader@engineering", job1, "Load job 1.", assignmentsAt)
+	if err != nil || !made {
+		t.Fatalf("telling the leader: %+v, %v, %v", d, made, err)
+	}
+	result, err := s.db.Exec(`INSERT INTO jobs(repository, state, reading) VALUES('fixture', ?, 'Add another greeting')`, JobOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job2, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "Load the briefs of jobs 1 and 2."
+	if _, made, err := s.LeaderRestored("leader@engineering", job2, body, assignmentsAt); err != nil || made {
+		t.Fatalf("refreshing the pending restoration: made %v (%v)", made, err)
+	}
+	messages, err := s.Inbox("leader@engineering", d.ID, assignmentsAt)
+	if err != nil || len(messages) != 1 || messages[0].Job != job2 || messages[0].Body != body {
+		t.Fatalf("the pending restoration is %+v (%v), want the current jobs and body", messages, err)
+	}
+}
+
 func TestAnEndedJobIsNoOpenWork(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	job := jobWithBranch(t, s)

@@ -303,6 +303,15 @@ func (s *Store) LeaderRestored(leader string, job int64, body string, at time.Ti
 		return Dispatch{}, false, err
 	}
 	if waiting > 0 {
+		if _, err := tx.Exec(`UPDATE messages SET job = ?, body = ? WHERE recipient = ? AND kind = ? AND fetched_at IS NULL AND id IN (
+			SELECT m.id FROM messages m JOIN dispatches d ON d.message = m.id
+			WHERE m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?)
+		)`, job, body, leader, MessageRestoration, leader, MessageRestoration, DispatchCreated, DispatchNudged); err != nil {
+			return Dispatch{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return Dispatch{}, false, err
+		}
 		return Dispatch{}, false, nil
 	}
 	d, err := createMessage(tx, messageRef{}, job, Daemon, leader, MessageRestoration, body, at)

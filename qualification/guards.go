@@ -131,6 +131,9 @@ func newGuardFixture() (guardFixture, error) {
 		}
 	}
 	for _, args := range [][]string{
+		{"config", "--local", "user.name", "Qualification"},
+		{"config", "--local", "user.email", "qualification@example.invalid"},
+		{"config", "--local", "commit.gpgsign", "false"},
 		{"checkout", "-q", "-b", "main"},
 		{"add", "-A"},
 		{"commit", "-q", "-m", "fixture"},
@@ -328,11 +331,10 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		return err
 	}
 	outside := filepath.Join(g.outside, "outside.txt")
-	git := "git -c user.name=Qualification -c user.email=qualification@example.invalid -c commit.gpgsign=false"
 	commands := []string{
 		"echo inside > inside.txt",
 		"git add inside.txt",
-		git + " commit -q -m inside",
+		"git commit -q -m inside",
 		"git push -q origin HEAD:refs/heads/qualification",
 		"git ls-remote --heads https://github.com/git/git master",
 		"gh --version",
@@ -361,7 +363,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	}
 
 	// What the guard allows runs without a native prompt.
-	for _, prefix := range []string{"echo inside", "git add", "git -c", "git push", "git ls-remote"} {
+	for _, prefix := range []string{"echo inside", "git add", "git commit", "git push", "git ls-remote"} {
 		c, err := tried(prefix)
 		if err != nil {
 			return err

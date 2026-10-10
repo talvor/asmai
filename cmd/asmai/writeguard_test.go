@@ -85,10 +85,10 @@ func TestAWorkerCommitsAsTheUserWithAsmAITrailersInsideTheWriteGuardFollowingThe
 		// the session holds none of AsmAI's.
 		fakeRun(`git var GIT_AUTHOR_IDENT | sed 's/ [0-9]* [-+][0-9]*$//'`, 0, "^Una User <una@example.test>\n$"),
 		fakeRun(`env | grep -c '^GIT_\(AUTHOR\|COMMITTER\)_' || true`, 0, "^0\n$"),
-		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt' && git log -1 --format='%an <%ae>|%cn <%ce>%n%B'`, 0, "(?s)^Una User <una@example.test>\\|Una User <una@example.test>\nAdd greeting.txt\n\n"+trailers),
+		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit --no-verify -q -m 'Add greeting.txt' && git log -1 --format='%an <%ae>|%cn <%ce>%n%B'`, 0, "(?s)^Una User <una@example.test>\\|Una User <una@example.test>\nAdd greeting.txt\n\n"+trailers),
 		// Amending never doubles the trailers, and a trailer written by hand
 		// is replaced by the real one.
-		fakeRun(`git commit -q --amend -m 'Add greeting.txt
+		fakeRun(`git commit --no-verify -q --amend -m 'Add greeting.txt
 
 AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		fakeRun(`git log -1 --format=%B | grep -c 'AsmAI-Job: 99' || true`, 0, "^0\n$"),
@@ -100,7 +100,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "result 1 \\| assignment 1 \\| worker1@engineering"),
 		// A leader commits nothing, so it is given no trailers.
-		fakeRun(`printf 'msg\n' > "$ASMAI_TEST_DIR/message" && asmai git-hook commit-msg "$ASMAI_TEST_DIR/message"`, 1, "a leader's work goes through its workers"),
+		fakeRun(`printf 'msg\n' > "$ASMAI_TEST_DIR/message" && asmai git-hook prepare-commit-msg "$ASMAI_TEST_DIR/message"`, 1, "a leader's work goes through its workers"),
 	}
 	fixture, testDir := assignmentFlowWith(t, userGitConfig, repositoryFiles, worker, leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
@@ -124,8 +124,8 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 			t.Errorf("AsmAI's clone sets %s to %s", key, strings.TrimSpace(string(out)))
 		}
 	}
-	if info, err := os.Stat(filepath.Join(stateDir, "githooks", "commit-msg")); err != nil || info.Mode().Perm()&0o111 == 0 {
-		t.Errorf("the commit-msg hook is %v (%v), want an executable in AsmAI's state directory", info, err)
+	if info, err := os.Stat(filepath.Join(stateDir, "githooks", "prepare-commit-msg")); err != nil || info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("the prepare-commit-msg hook is %v (%v), want an executable in AsmAI's state directory", info, err)
 	}
 
 	// The worker's session was started with the write guard on, only the
@@ -187,8 +187,14 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 			t.Fatalf("%s: %v", agent, err)
 		}
 		sb := settings.Sandbox
-		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed || !slices.Equal(sb.ExcludedCommands, []string{"asmai *", "git *", "gh *"}) ||
-			!slices.Equal(settings.Permissions.Allow, []string{"Bash(asmai:*)", "Bash(git:*)", "Bash(gh:*)"}) ||
+		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed || !slices.Equal(sb.ExcludedCommands, []string{
+			"asmai *", "gh *", "git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
+			"git status *", "git diff *", "git log *", "git rev-parse *", "git merge *", "git var *", "git show *",
+		}) || !slices.Equal(settings.Permissions.Allow, []string{
+			"Bash(asmai:*)", "Bash(gh:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git fetch:*)",
+			"Bash(git ls-remote:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git rev-parse:*)",
+			"Bash(git merge:*)", "Bash(git var:*)", "Bash(git show:*)",
+		}) ||
 			settings.Permissions.DefaultMode != "default" || settings.Permissions.BypassDenied != "disable" ||
 			!slices.Equal(sb.Network.AllowUnixSockets, []string{filepath.Join(stateDir, "daemon.sock")}) {
 			t.Errorf("%s was started with the settings %s, want the write guard on and the native prompts kept", agent, argValue(args, "--settings"))

@@ -51,7 +51,7 @@ func TestTheCommitMessageGetsTheThreeTrailersOnceWhateverTheNumberOfTimesItIsHoo
 	repo(t)
 	file := message(t, "Add a greeting\n\nIt says hello.\n")
 	for range 2 {
-		if code, stderr := run(t, CommitMessage, "/own", trailers, file); code != 0 {
+		if code, stderr := run(t, PrepareCommitMessage, "/own", trailers, file); code != 0 {
 			t.Fatalf("the hook exited %d: %s", code, stderr)
 		}
 	}
@@ -65,7 +65,7 @@ func TestTheCommitMessageGetsTheThreeTrailersOnceWhateverTheNumberOfTimesItIsHoo
 func TestACommitThatCannotCarryItsTrailersIsRefusedAndLeftAlone(t *testing.T) {
 	repo(t)
 	file := message(t, "Add a greeting\n")
-	code, stderr := run(t, CommitMessage, "/own", func() ([]string, error) { return nil, errors.New("no current dispatch") }, file)
+	code, stderr := run(t, PrepareCommitMessage, "/own", func() ([]string, error) { return nil, errors.New("no current dispatch") }, file)
 	if code != 1 || !strings.Contains(stderr, "cannot carry the AsmAI trailers: no current dispatch") {
 		t.Errorf("the hook exited %d saying %q, want it to refuse the commit and say why", code, stderr)
 	}
@@ -84,16 +84,31 @@ func executable(t *testing.T, path, script string) {
 	}
 }
 
-func TestTheRepositorysOwnHookStillRunsAfterTheTrailersAndDecidesTheStatus(t *testing.T) {
+func TestTheRepositorysOwnPrepareHookRunsBeforeTheTrailers(t *testing.T) {
 	dir := repo(t)
 	record := filepath.Join(t.TempDir(), "seen")
-	executable(t, filepath.Join(dir, ".git", "hooks", CommitMessage), `cp "$1" `+record+"\nexit 7\n")
+	executable(t, filepath.Join(dir, ".git", "hooks", PrepareCommitMessage), `cp "$1" `+record+"\nprintf 'Repository detail\\n' >> \"$1\"\n")
 	file := message(t, "Add a greeting\n")
-	if code, _ := run(t, CommitMessage, "/own", trailers, file); code != 7 {
+	if code, stderr := run(t, PrepareCommitMessage, "/own", trailers, file); code != 0 {
+		t.Errorf("the hook exited %d: %s", code, stderr)
+	}
+	if seen, _ := os.ReadFile(record); string(seen) != "Add a greeting\n" {
+		t.Errorf("the repository's hook saw %q, want the original message", seen)
+	}
+	if got, _ := os.ReadFile(file); !strings.Contains(string(got), "Repository detail") || !strings.Contains(string(got), "AsmAI-Dispatch: 9") {
+		t.Errorf("the prepared message is %q, want the repository's edit and AsmAI trailers", got)
+	}
+}
+
+func TestTheRepositorysHookStillDecidesTheStatus(t *testing.T) {
+	dir := repo(t)
+	executable(t, filepath.Join(dir, ".git", "hooks", PrepareCommitMessage), "exit 7\n")
+	file := message(t, "Add a greeting\n")
+	if code, _ := run(t, PrepareCommitMessage, "/own", trailers, file); code != 7 {
 		t.Errorf("the hook exited %d, want the repository's own status, 7", code)
 	}
-	if seen, _ := os.ReadFile(record); !strings.Contains(string(seen), "AsmAI-Dispatch: 9") {
-		t.Errorf("the repository's hook saw %q, want the message with the trailers", seen)
+	if got, _ := os.ReadFile(file); string(got) != "Add a greeting\n" {
+		t.Errorf("the rejected message changed to %q", got)
 	}
 }
 

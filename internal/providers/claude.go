@@ -24,7 +24,11 @@ const AllowedAsmai = "Bash(asmai:*)"
 // credentials, their network, the daemon's socket and the clone's git
 // directory, which is outside the workspace. Each is both a permission rule
 // and a pattern the guard leaves alone.
-var unguardedCommands = []string{"asmai", "git", "gh"}
+var unguardedCommands = []string{"asmai", "gh"}
+
+var unguardedGitSubcommands = []string{
+	"add", "commit", "push", "fetch", "ls-remote", "status", "diff", "log", "rev-parse", "merge", "var", "show",
+}
 
 // WriteGuard is what an agent session's write guard needs to know of the
 // session. The guard is Claude Code's sandbox for the commands it runs:
@@ -63,6 +67,10 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 	for _, command := range unguardedCommands {
 		allow = append(allow, "Bash("+command+":*)")
 		excluded = append(excluded, command+" *")
+	}
+	for _, subcommand := range unguardedGitSubcommands {
+		allow = append(allow, "Bash(git "+subcommand+":*)")
+		excluded = append(excluded, "git "+subcommand+" *")
 	}
 	sandbox := map[string]any{
 		"enabled":                  true,

@@ -358,7 +358,11 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 			t.Errorf("the %s hook is %+v, want the daemon's copy of asmai at %s", event, h, fixedPath)
 		}
 	}
-	if !slices.Equal(settings.Permissions.Allow, []string{"Bash(asmai:*)", "Bash(git:*)", "Bash(gh:*)"}) || settings.Permissions.DefaultMode != "default" {
+	if !slices.Equal(settings.Permissions.Allow, []string{
+		"Bash(asmai:*)", "Bash(gh:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git fetch:*)",
+		"Bash(git ls-remote:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git rev-parse:*)",
+		"Bash(git merge:*)", "Bash(git var:*)", "Bash(git show:*)",
+	}) || settings.Permissions.DefaultMode != "default" {
 		t.Errorf("the session's permissions are %+v, want asmai, git and gh allowed and the default mode", settings.Permissions)
 	}
 	if !settings.Sandbox.Enabled || !settings.Sandbox.FailIfUnavailable {

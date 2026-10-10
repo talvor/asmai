@@ -3,7 +3,7 @@
 // Package githooks puts AsmAI's trailers on the commits its workers make. A
 // worker's git is given a hooks directory of AsmAI's through its environment,
 // not the repository's configuration: each hook in it runs `asmai git-hook`,
-// which adds the trailers to a commit's message and then runs the hook the
+// which adds the trailers to a commit's message and runs the hook the
 // repository would have run, so the repository's own hooks still apply.
 package githooks
 
@@ -32,8 +32,7 @@ var Names = []string{
 	"sendemail-validate",
 }
 
-// CommitMessage is the hook that adds the trailers.
-const CommitMessage = "commit-msg"
+const PrepareCommitMessage = "prepare-commit-msg"
 
 // Trailers returns the trailers of a worker's commit, each as "Key: value".
 type Trailers func() ([]string, error)
@@ -90,35 +89,33 @@ func Environment(environ []string, dir string) map[string]string {
 }
 
 // Run runs the hook name that git called with args, with its standard input,
-// and returns the exit status git should see. The commit-msg hook first adds
-// the trailers to the message file it is given; then, for every hook, the
+// and returns the exit status git should see. For every hook, the
 // repository's own hook of that name runs if it has one, and decides the
-// status. ownDir is AsmAI's hooks directory, which is never run as the
-// repository's.
+// status. The prepared message then gets the trailers. ownDir is AsmAI's
+// hooks directory, which is never run as the repository's.
 func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer, ownDir string, trailers Trailers) int {
-	if name == CommitMessage {
+	hook := repositoryHook(ctx, name, ownDir)
+	if hook != "" {
+		cmd := exec.CommandContext(ctx, hook, args...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+		if err := cmd.Run(); err != nil {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				return exit.ExitCode()
+			}
+			fmt.Fprintf(stderr, "asmai git-hook: running the repository's %s: %v\n", name, err)
+			return 1
+		}
+	}
+	if name == PrepareCommitMessage {
 		if len(args) < 1 {
-			fmt.Fprintln(stderr, "asmai git-hook: commit-msg needs the message file git passes it")
+			fmt.Fprintln(stderr, "asmai git-hook: prepare-commit-msg needs the message file git passes it")
 			return 2
 		}
 		if err := addTrailers(ctx, args[0], trailers); err != nil {
 			fmt.Fprintf(stderr, "asmai: this commit was refused because it cannot carry the AsmAI trailers: %v\n", err)
 			return 1
 		}
-	}
-	hook := repositoryHook(ctx, name, ownDir)
-	if hook == "" {
-		return 0
-	}
-	cmd := exec.CommandContext(ctx, hook, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	if err := cmd.Run(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return exit.ExitCode()
-		}
-		fmt.Fprintf(stderr, "asmai git-hook: running the repository's %s: %v\n", name, err)
-		return 1
 	}
 	return 0
 }

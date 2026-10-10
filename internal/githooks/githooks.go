@@ -32,7 +32,10 @@ var Names = []string{
 	"sendemail-validate",
 }
 
-const PrepareCommitMessage = "prepare-commit-msg"
+const (
+	PrepareCommitMessage = "prepare-commit-msg"
+	CommitMessage        = "commit-msg"
+)
 
 // Trailers returns the trailers of a worker's commit, each as "Key: value".
 type Trailers func() ([]string, error)
@@ -91,8 +94,11 @@ func Environment(environ []string, dir string) map[string]string {
 // Run runs the hook name that git called with args, with its standard input,
 // and returns the exit status git should see. For every hook, the
 // repository's own hook of that name runs if it has one, and decides the
-// status. The prepared message then gets the trailers. ownDir is AsmAI's
-// hooks directory, which is never run as the repository's.
+// status. The message then gets the trailers, both when it is prepared, which
+// `--no-verify` never skips, and again after the repository's commit-msg,
+// which can rewrite it, so that the message git commits carries them, for a
+// merge as for a commit. ownDir is AsmAI's hooks directory, which is never run
+// as the repository's.
 func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer, ownDir string, trailers Trailers) int {
 	hook := repositoryHook(ctx, name, ownDir)
 	status := 0
@@ -112,9 +118,9 @@ func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdou
 	if status != 0 && name != "post-commit" {
 		return status
 	}
-	if name == PrepareCommitMessage {
+	if name == PrepareCommitMessage || name == CommitMessage {
 		if len(args) < 1 {
-			fmt.Fprintln(stderr, "asmai git-hook: prepare-commit-msg needs the message file git passes it")
+			fmt.Fprintf(stderr, "asmai git-hook: %s needs the message file git passes it\n", name)
 			return 2
 		}
 		if err := addTrailers(ctx, args[0], trailers); err != nil {
@@ -131,7 +137,13 @@ func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdou
 	return status
 }
 
+// repairCommitTrailers amends the commit just made when its message lacks the
+// trailers, which only a repository hook that rewrites a commit without
+// AsmAI's hooks can cause. There is nothing to check before the first commit.
 func repairCommitTrailers(ctx context.Context, trailers Trailers) error {
+	if exec.CommandContext(ctx, "git", "rev-parse", "-q", "--verify", "HEAD").Run() != nil {
+		return nil
+	}
 	lines, err := trailers()
 	if err != nil {
 		return err

@@ -132,7 +132,7 @@ AsmAI-Agent: worker1@engineering
 AsmAI-Dispatch: 3
 ```
 
-The job and dispatch are the daemon's, for the assignment the worker is on. A commit that cannot carry them is refused. AsmAI adds the trailers after the repository's `prepare-commit-msg` hook, including when the worker uses `git commit --no-verify`, and forwards the repository's other hooks according to Git's normal hook rules. After the commit, it checks the final message and amends it if a repository hook changed a trailer.
+The job and dispatch are the daemon's, for the assignment the worker is on. A commit that cannot carry them is refused. AsmAI adds the trailers after the repository's `prepare-commit-msg` hook, including when the worker uses `git commit --no-verify`, and again after its `commit-msg` hook, so that a merge commit carries them too even when that hook rewrites the message. It forwards the repository's other hooks according to Git's normal hook rules. After a commit, it checks the final message and amends it if a repository hook changed a trailer.
 
 Workers follow the repository's instruction files, `AGENTS.md` and `CLAUDE.md`, whichever exist, but never its Claude Code configuration. Claude Code loads instruction files only along with a repository's own settings, so AsmAI reads the two files from the workspace and appends them to the worker's instructions, and starts the session with `--setting-sources user` and `--strict-mcp-config`: the repository's `.claude` settings, hooks, permission rules and MCP servers never load. The instruction files decide how work is done in the repository, never what the worker is asked to do, and never how the branch is pushed. [Qualification](docs/qualification-harness.md) cases C36 and C37 check both on the pinned Claude Code.
 

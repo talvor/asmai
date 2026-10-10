@@ -112,6 +112,19 @@ func TestTheRepositorysHookStillDecidesTheStatus(t *testing.T) {
 	}
 }
 
+func TestTheTrailersAreAddedAgainAfterTheRepositorysCommitMsgRewritesTheMessage(t *testing.T) {
+	dir := repo(t)
+	executable(t, filepath.Join(dir, ".git", "hooks", CommitMessage), "printf 'Rewritten by the repository\\n' > \"$1\"\n")
+	file := message(t, "Merge branch 'side'\n\nAsmAI-Job: 4\n")
+	if code, stderr := run(t, CommitMessage, "/own", trailers, file); code != 0 {
+		t.Fatalf("commit-msg exited %d: %s", code, stderr)
+	}
+	want := "Rewritten by the repository\n\nAsmAI-Job: 4\nAsmAI-Agent: worker1@engineering\nAsmAI-Dispatch: 9\n"
+	if got, _ := os.ReadFile(file); string(got) != want {
+		t.Errorf("the message is %q, want the repository's rewrite with the trailers %q", got, want)
+	}
+}
+
 func TestPostCommitRestoresTrailersAfterTheRepositoryRewritesTheMessage(t *testing.T) {
 	dir := repo(t)
 	for _, args := range [][]string{

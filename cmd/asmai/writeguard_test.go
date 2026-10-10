@@ -94,6 +94,10 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		fakeRun(`git log -1 --format=%B | grep -c 'AsmAI-Job: 99' || true`, 0, "^0\n$"),
 		fakeRun(`asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
 		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		// A merge commit carries them too, even when the repository's own
+		// commit-msg hook rewrites the message.
+		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && mkdir -p "$hooks" && printf '#!/bin/sh\nsed -i.bak "/^AsmAI-/d" "$1"\n' > "$hooks/commit-msg" && chmod +x "$hooks/commit-msg"`, 0, ""),
+		fakeRun(`git checkout -q -b side HEAD~1 && printf 'side\n' > side.txt && git add side.txt && git commit -q -m 'Add side.txt' && git checkout -q `+branch+` && git merge -q --no-edit side && git log -1 --format='%p%n%(trailers:only,unfold)'`, 0, "(?s)^[0-9a-f]+ [0-9a-f]+\n"+trailers),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	}

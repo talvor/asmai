@@ -16,13 +16,15 @@ ASMAI_FAKE_PROVIDER_SCRIPT=FILE fake-provider [CLAUDE CODE FLAGS]
 fake-provider --script FILE [CLAUDE CODE FLAGS]
 ```
 
-The Claude Code flags it takes are the ones the daemon starts Claude Code with: `--settings FILE|JSON`, `--setting-sources SOURCES`, `--model MODEL` and `--append-system-prompt TEXT`. Any other flag makes it exit 2, as an unknown option makes Claude Code exit.
+The Claude Code flags it takes are the ones the daemon starts Claude Code with: `--settings FILE|JSON`, `--setting-sources SOURCES`, `--model MODEL`, `--append-system-prompt TEXT` and, to resume a session, `--resume SESSION`. Any other flag makes it exit 2, as an unknown option makes Claude Code exit.
 
 Run it in a pseudo-terminal, the way the daemon runs a provider CLI. Like the real providers, it puts its terminal in raw mode. Keys arrive exactly as typed, Enter arrives as `\r`, and nothing is echoed unless a scripted screen draws it.
 
 The fake plays the script named by `--script`, or else by the `ASMAI_FAKE_PROVIDER_SCRIPT` environment variable. With the script in the environment, a test starts the fake in place of the pinned Claude Code with the arguments the daemon passes to Claude Code and no fake-only flags.
 
 A flow with more than one agent needs one script for each. The fake plays the script named by `ASMAI_FAKE_PROVIDER_SCRIPT_ENGINEERING` instead when the instructions it is started with are Engineering's leader's, by `ASMAI_FAKE_PROVIDER_SCRIPT_WORKER` when they are an Engineering worker's, by `ASMAI_FAKE_PROVIDER_SCRIPT_QUALITY` when they are Quality's leader's, and by `ASMAI_FAKE_PROVIDER_SCRIPT_QUALITY_WORKER` when they are a Quality worker's, if the variable is set; every other agent plays `ASMAI_FAKE_PROVIDER_SCRIPT`. The instructions' first line says which agent they are for.
+
+A session the daemon resumes after a restart is started with `--resume` and the provider's own identifier of the session it continues. Started so, the fake plays the script named by `ASMAI_FAKE_PROVIDER_SCRIPT_RESUMED` if that variable is set, whichever agent it is, and the scripts above otherwise. With `ASMAI_FAKE_PROVIDER_RESUME_FAILS` set it does what Claude Code does with a session it has no record of: it prints `No conversation found with session ID: <id>` and exits 1 without playing anything.
 
 `--setting-sources` takes the setting sources Claude Code loads, separated by commas, each of `user`, `project` and `local`; any other makes the fake exit 2. The fake plays the same whatever `--setting-sources`, `--model` and `--append-system-prompt` are. With `ASMAI_FAKE_PROVIDER_ARGS` naming a file in its environment, the fake writes the arguments it was started with to that file as a JSON array before it plays, so that a test can see the command line a session was given.
 

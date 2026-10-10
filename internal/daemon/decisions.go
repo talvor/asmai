@@ -313,11 +313,22 @@ func (d *daemon) removeWorkspace(ctx context.Context, a store.Assignment, reposi
 }
 
 // dispatchStopped is told that the turn ref's session ran for dispatch has
-// finished. When the dispatch told a worker its assignment is cancelled, the
-// worker has stopped: the assignment ends.
+// finished. When the dispatch told a worker its assignment is cancelled, or
+// resumed it after a restart while it was, the worker has stopped: the
+// assignment ends.
 func (d *daemon) dispatchStopped(ref sessionRef, dispatch int64) {
 	kind, assignment, err := d.store.DispatchKind(dispatch)
-	if err != nil || kind != store.MessageCancellation {
+	if err != nil {
+		return
+	}
+	// A cancellation that was under way when the factory stopped is resumed
+	// in a dispatch of its own, and ends the assignment the same way.
+	if kind == store.MessageResumption {
+		if a, err := d.store.Assignment(assignment); err == nil && a.State == store.AssignmentCancelling {
+			kind = store.MessageCancellation
+		}
+	}
+	if kind != store.MessageCancellation {
 		return
 	}
 	d.mu.Lock()

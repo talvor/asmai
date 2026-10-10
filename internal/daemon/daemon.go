@@ -25,7 +25,6 @@ import (
 
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
-	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 	"github.com/talvor/asmai/internal/vt"
@@ -293,6 +292,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := st.EndAbandonedSessions(time.Now()); err != nil {
 		return fmt.Errorf("journaling the previous daemon's agents as ended: %w", err)
 	}
+	// Every start is a recovery: what the previous daemon left is continued
+	// or held for reconciliation before any leader is restored.
+	d.recoverWork(previous.State != store.StateRunning)
 
 	served := make(chan struct{})
 	go func() {
@@ -300,23 +302,9 @@ func Run(ctx context.Context, cfg Config) error {
 		close(served)
 	}()
 	// Every start restores Coordination's leader, which runs as long as the
-	// factory does.
+	// factory does, and every leader whose role has open work.
 	d.ensureCoordination()
-	if pending, err := st.PendingLeaders(); err != nil {
-		log.Error("reading pending leaders", "error", err)
-	} else {
-		for _, agent := range pending {
-			address, err := roles.ParseAddress(agent)
-			if err != nil || address == roles.LeaderOf(roles.Coordination) {
-				continue
-			}
-			d.mu.Lock()
-			if err = d.ensureAgent(address); err != nil {
-				log.Error("restoring receiving agent", "agent", agent, "error", err)
-			}
-			d.mu.Unlock()
-		}
-	}
+	d.restoreLeaders()
 
 	var by string
 	var asker *net.UnixConn
@@ -433,6 +421,11 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates()})
 	case CommandStart:
 		checks := d.ensureCoordination()
+		if !failed(checks) {
+			// A factory started before it could run agents restores the
+			// leaders with open work once it can.
+			d.restoreLeaders()
+		}
 		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates()})
 	case CommandAgents:
 		agents, err := d.store.Agents()

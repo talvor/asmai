@@ -47,7 +47,11 @@ commands:
                               Ctrl-] leaves the conversation, which pauses nothing
   asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
                               the daemon runs in the background unless --foreground
-  asmai stop                  persist the factory's state and stop its daemon and agents
+  asmai stop                  persist the factory's state and stop its daemon and agents; queued
+                              messages and open handoffs survive it, and the next start continues
+                              the work: it restores Coordination and each leader with open work, and
+                              runs each worker that had stopped at a boundary again, resuming its
+                              native session where it can, in a new dispatch
   asmai status                show the daemon, its version and each leader
   asmai agents                list the factory's agents
 	asmai jobs                  list numbered jobs

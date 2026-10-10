@@ -45,6 +45,10 @@ asmai result \
 
 If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>` after you commit and push your assignment branch.
 
+## When the factory restarts
+
+The factory may be stopped and started again while you hold an assignment. If you had stopped at a boundary, the daemon runs you again in the same workspace, resuming your session, and a new dispatch of kind `resumption` continues the assignment: fetch it with `asmai inbox --dispatch <id>`. Load `asmai brief <job>`, look at your workspace, your branch and the effects you recorded, and carry on from where you stopped. Never repeat an effect you already made, such as a push. A result or blocked report you make now is tied to this new dispatch, never to the one that stopped.
+
 ## When your result is rejected
 
 Your owning leader may reject your result. The assignment is then active again and yours, and a new dispatch brings you the leader's reasons: fetch it with `asmai inbox --dispatch <id>`. Correct what the reasons name in your workspace, run the checks again, take in the job branch's tip, commit, push your assignment branch, record the push, and submit a new result with `asmai result`.

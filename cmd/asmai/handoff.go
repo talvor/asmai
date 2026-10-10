@@ -86,6 +86,12 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if m.Kind == store.MessageRejection || m.Kind == store.MessageCancellation {
 			fmt.Fprintf(o.stdout, "Reasons from %s:\n%s\n", m.Sender, m.Body)
 		}
+		if m.Kind == store.MessageResumption {
+			fmt.Fprintf(o.stdout, "Resumes dispatch %d, which stopped at a boundary before the factory stopped.\n%s\n", m.Resumes, m.Body)
+		}
+		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation {
+			fmt.Fprintf(o.stdout, "%s\n", m.Body)
+		}
 		if a := m.AssignmentData; a != nil {
 			printAssignment(o.stdout, *a)
 		}

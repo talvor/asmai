@@ -139,3 +139,52 @@ func TestTheFakeRefusesSettingsItCannotRun(t *testing.T) {
 func jsonString(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`).Replace(s)
 }
+
+// A session the daemon resumes after a restart is started with --resume and
+// the provider's own identifier of the session it continues; the fake plays
+// the script for resumed sessions, where there is one, and says what Claude
+// Code says of a session it has no record of when it is told to.
+func TestAResumedSessionPlaysTheResumedScriptOrFailsAsClaudeCodeDoesForAMissingSession(t *testing.T) {
+	first := writeScript(t, `{"screen": "first session\r\n"}`)
+	resumed := writeScript(t, `{"screen": "resumed session\r\n"}`)
+	start := func(t *testing.T, args []string, env ...string) *session {
+		t.Helper()
+		cmd := exec.Command(fakeProvider, append([]string{"--settings", "{}"}, args...)...)
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(append(os.Environ(), fakeprovider.ScriptEnv+"="+first), env...)
+		return startCmd(t, cmd)
+	}
+
+	s := start(t, nil, fakeprovider.ResumedScriptEnv+"="+resumed)
+	s.waitForScreen("first session\r\n")
+	if code := s.exit(); code != 0 {
+		t.Errorf("a new session exited %d, want 0 (stderr %q)", code, s.stderr.String())
+	}
+
+	s = start(t, []string{"--resume", "6b8b4567"}, fakeprovider.ResumedScriptEnv+"="+resumed)
+	s.waitForScreen("resumed session\r\n")
+	if code := s.exit(); code != 0 {
+		t.Errorf("a resumed session exited %d, want 0 (stderr %q)", code, s.stderr.String())
+	}
+
+	// With no script of its own for a resumed session, it plays the usual.
+	s = start(t, []string{"--resume", "6b8b4567"})
+	s.waitForScreen("first session\r\n")
+	if code := s.exit(); code != 0 {
+		t.Errorf("a resumed session with no script of its own exited %d, want 0", code)
+	}
+
+	s = start(t, []string{"--resume", "6b8b4567"}, fakeprovider.ResumeFailsEnv+"=1", fakeprovider.ResumedScriptEnv+"="+resumed)
+	if code := s.exit(); code != 1 {
+		t.Errorf("a session that cannot be resumed exited %d, want 1", code)
+	}
+	if !strings.Contains(s.stderr.String(), "No conversation found with session ID: 6b8b4567") || strings.Contains(s.drawn(), "resumed session") {
+		t.Errorf("a session that cannot be resumed printed %q and drew %q", s.stderr.String(), s.drawn())
+	}
+	// A new session is not affected by it.
+	s = start(t, nil, fakeprovider.ResumeFailsEnv+"=1")
+	s.waitForScreen("first session\r\n")
+	if code := s.exit(); code != 0 {
+		t.Errorf("a new session exited %d with resuming made to fail, want 0", code)
+	}
+}

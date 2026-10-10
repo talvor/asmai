@@ -135,6 +135,18 @@ func (f *Factory) Leader() (store.Agent, bool, error) {
 	return store.Agent{}, false, nil
 }
 
+// Agents returns the agents the store records.
+func (f *Factory) Agents() ([]store.Agent, error) {
+	resp, err := daemon.Call(f.paths.Socket, daemon.Request{Command: daemon.CommandAgents})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, errors.New(resp.Error)
+	}
+	return resp.Agents, nil
+}
+
 // Screen returns the rows of text Coordination's leader shows.
 func (f *Factory) Screen() ([]string, error) {
 	resp, err := daemon.Call(f.paths.Socket, daemon.Request{Command: daemon.CommandAttach, Agent: roles.LeaderOf(roles.Coordination).String(), Snapshot: true})

@@ -25,7 +25,8 @@ type Harness struct {
 	Provider Provider
 	// Paths is the configured state directory used by C3 and C4.
 	Paths statedir.Paths
-	// QualificationPaths is the disposable state directory used by C7 and C11.
+	// QualificationPaths is the disposable state directory used by C7, C11
+	// and C19.
 	QualificationPaths statedir.Paths
 	// Env is the harness's own environment, which each case's factory starts
 	// from.
@@ -40,6 +41,9 @@ type Harness struct {
 	ShowScreen bool
 	// Log receives a line for each step.
 	Log io.Writer
+	// Number, when set, numbers each case's exercise in place of the time,
+	// so that a scripted provider can expect the request it is given.
+	Number func() int64
 
 	reported string
 }
@@ -79,6 +83,7 @@ var Cases = []Case{
 	},
 	{ID: "C7", Title: "Every automated submission has a correlated positive acknowledgment", Env: signedInOnly, Run: (*Harness).c7},
 	{ID: "C11", Title: "Witnessed user messages are distinct from daemon nudges", Env: signedInOnly, Run: (*Harness).c11},
+	{ID: "C19", Title: "Dispatches and results stay correlated and reconcilable across restarts", Env: signedInOnly, Run: (*Harness).c19},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in
@@ -121,7 +126,7 @@ func (h *Harness) runCase(ctx context.Context, c Case) Result {
 func (h *Harness) factoryForCase(c Case, r *Result) *Factory {
 	paths := h.Paths
 	env := c.Env(h.Env, r)
-	if c.ID == "C7" || c.ID == "C11" {
+	if c.ID == "C7" || c.ID == "C11" || c.ID == "C19" {
 		paths = h.QualificationPaths
 		env = envValue(env, "ASMAI_STATE_DIR", paths.Dir)
 	}

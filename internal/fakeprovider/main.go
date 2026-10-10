@@ -62,10 +62,17 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	if *scriptPath == "" {
 		*scriptPath = os.Getenv(ScriptEnv)
+		// The agent is named in the instructions' heading, which says who
+		// it is; the instructions go on to name the other roles.
+		heading, _, _ := strings.Cut(strings.TrimSpace(*instructions), "\n")
 		switch {
-		case strings.Contains(*instructions, "an Engineering worker") && os.Getenv(ScriptEnv+"_WORKER") != "":
+		case strings.Contains(heading, "a Quality worker") && os.Getenv(ScriptEnv+"_QUALITY_WORKER") != "":
+			*scriptPath = os.Getenv(ScriptEnv + "_QUALITY_WORKER")
+		case strings.Contains(heading, "Quality's leader") && os.Getenv(ScriptEnv+"_QUALITY") != "":
+			*scriptPath = os.Getenv(ScriptEnv + "_QUALITY")
+		case strings.Contains(heading, "an Engineering worker") && os.Getenv(ScriptEnv+"_WORKER") != "":
 			*scriptPath = os.Getenv(ScriptEnv + "_WORKER")
-		case strings.Contains(*instructions, "Engineering's leader") && os.Getenv(ScriptEnv+"_ENGINEERING") != "":
+		case strings.Contains(heading, "Engineering's leader") && os.Getenv(ScriptEnv+"_ENGINEERING") != "":
 			*scriptPath = os.Getenv(ScriptEnv + "_ENGINEERING")
 		}
 	}

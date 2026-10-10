@@ -29,8 +29,8 @@ func (d *daemon) decide(req Request) (resp Response, notify string, err error) {
 	if err != nil {
 		return Response{}, "", err
 	}
-	if ref.address != roles.LeaderOf(roles.Engineering) {
-		return Response{}, "", refuse("only %s may run asmai %s", roles.LeaderOf(roles.Engineering), req.Command)
+	if engineering, quality := roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Quality); ref.address != engineering && ref.address != quality {
+		return Response{}, "", refuse("only %s or %s may run asmai %s", engineering, quality, req.Command)
 	}
 	if req.Assignment <= 0 || len(req.Reasons) == 0 {
 		return Response{}, "", refuse("asmai %s needs an assignment and its reasons", req.Command)
@@ -50,9 +50,11 @@ func (d *daemon) decide(req Request) (resp Response, notify string, err error) {
 		resp, err = d.accept(req, ref)
 	default:
 		resp, err = d.returnOrCancel(req, ref)
-		if resp.Dispatch != nil {
-			notify = resp.Dispatch.Agent
-		}
+	}
+	// A rejection or a cancellation goes to the assignment's worker, and an
+	// accepted validation to the delivery owner.
+	if err == nil && resp.Dispatch != nil {
+		notify = resp.Dispatch.Agent
 	}
 	return resp, notify, err
 }
@@ -72,6 +74,9 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 	}
 	if a.State != store.AssignmentSubmitted {
 		return Response{}, refuse("assignment %d is %s, so it has no result to accept", a.ID, a.State)
+	}
+	if a.ReadOnly {
+		return d.acceptValidation(req, ref, a)
 	}
 	result, err := d.store.LatestResult(a.ID)
 	if err != nil {
@@ -166,6 +171,56 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 	return Response{Assignment: &a, Decision: &decision, JobBranch: &branch}, nil
 }
 
+// acceptValidation records the acceptance of the validation report of the
+// read-only assignment a by its owning leader, Quality's. The report's
+// findings are recorded, and the earlier blocking findings it confirms
+// resolved are cleared. The report goes to Engineering's leader, the delivery
+// owner, which is started if it is not running, and the returned dispatch is
+// its, to nudge. The assignment has ended, so its worker is stopped and its
+// read-only workspace removed. Nothing about the job branch changes. assignMu
+// is held.
+func (d *daemon) acceptValidation(req Request, ref sessionRef, a store.Assignment) (Response, error) {
+	j, err := d.store.Job(a.Job)
+	if err != nil {
+		return Response{}, err
+	}
+	repository, err := d.store.Repository(j.Repository)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Response{}, notRegistered(j.Repository)
+	}
+	if err != nil {
+		return Response{}, err
+	}
+	delivery := roles.LeaderOf(roles.Engineering)
+	d.mu.Lock()
+	if _, _, err := d.caller(req); err != nil {
+		d.mu.Unlock()
+		return Response{}, err
+	}
+	decision, dispatch, err := d.store.ValidationAccepted(store.Acceptance{Assignment: a.ID, Leader: ref.address.String(), Reasons: req.Reasons}, delivery.String(), time.Now())
+	if err != nil {
+		d.mu.Unlock()
+		return Response{}, refuse("%v", err)
+	}
+	d.log.Info("validation accepted", "assignment", a.ID, "job", a.Job, "commit", decision.Commit, "leader", ref.address.String(), "dispatch", dispatch.ID, "to", delivery.String())
+	if err := d.ensureAgent(delivery); err != nil {
+		d.log.Error("starting the delivery owner", "agent", delivery.String(), "dispatch", dispatch.ID, "error", err.Error())
+	}
+	d.mu.Unlock()
+
+	d.stopWorker(a)
+	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
+	defer cancel()
+	if err := d.removeWorkspace(ctx, a, repository); err != nil {
+		return Response{}, err
+	}
+	a, err = d.store.Assignment(a.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{Assignment: &a, Decision: &decision, Dispatch: &dispatch}, nil
+}
+
 // returnOrCancel serves reject and cancel: both are recorded with their
 // reasons and sent to the assignment's worker, which is started if it is not
 // running. The returned dispatch is the worker's, to nudge.
@@ -227,13 +282,20 @@ func (d *daemon) stopWorker(a store.Assignment) {
 	d.log.Warn("a stopped worker's session was not cleared in time", "agent", a.Worker, "assignment", a.ID)
 }
 
-// removeWorkspace removes the writing workspace of a, whose work is on the
-// job branch, and its temporary directory, and journals it. The assignment
-// branch stays on origin.
+// removeWorkspace removes the workspace of a, which has ended, and its
+// temporary directory, and journals it: a writing assignment's, whose work is
+// on the job branch, with its branch, which stays on origin; or a read-only
+// assignment's, a clean checkout with no branch.
 func (d *daemon) removeWorkspace(ctx context.Context, a store.Assignment, repository store.Repository) error {
 	ctx = context.WithoutCancel(ctx)
-	if err := repos.RemoveWorkspace(ctx, repository.Clone, a.Workspace.Path, a.Workspace.Branch); err != nil {
-		d.log.Error("removing an accepted assignment's workspace", "assignment", a.ID, "workspace", a.Workspace.Path, "error", err.Error())
+	remove := func() error {
+		return repos.RemoveWorkspace(ctx, repository.Clone, a.Workspace.Path, a.Workspace.Branch)
+	}
+	if a.ReadOnly {
+		remove = func() error { return repos.RemoveReadOnlyWorkspace(ctx, repository.Clone, a.Workspace.Path) }
+	}
+	if err := remove(); err != nil {
+		d.log.Error("removing an ended assignment's workspace", "assignment", a.ID, "workspace", a.Workspace.Path, "error", err.Error())
 		return err
 	}
 	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
@@ -281,6 +343,10 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	}
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
+	if a.ReadOnly {
+		d.cancelledValidation(ctx, a)
+		return
+	}
 	left := store.Cancellation{}
 	if commit, err := repos.Commit(ctx, a.Workspace.Path, "HEAD"); err != nil {
 		d.log.Error("reading the commit of a cancelled assignment's workspace", "assignment", id, "error", err.Error())
@@ -301,6 +367,34 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	}
 	d.log.Info("assignment cancelled", "assignment", id, "job", a.Job, "worker", a.Worker, "commit", left.Commit, "pushed", left.Pushed)
 	d.stopWorker(a)
+}
+
+// cancelledValidation ends the cancelling read-only assignment a, whose worker
+// has stopped. It has no branch to push, so nothing is waited for: the
+// assignment ends, the worker is stopped and the read-only workspace removed.
+func (d *daemon) cancelledValidation(ctx context.Context, a store.Assignment) {
+	d.mu.Lock()
+	_, err := d.store.AssignmentCancelled(a.ID, store.Cancellation{Commit: a.Commit}, time.Now())
+	d.mu.Unlock()
+	if err != nil {
+		d.log.Error("ending a cancelled validation", "assignment", a.ID, "error", err.Error())
+		return
+	}
+	d.log.Info("validation cancelled", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "commit", a.Commit)
+	d.stopWorker(a)
+	j, err := d.store.Job(a.Job)
+	if err != nil {
+		d.log.Error("reading the job of a cancelled validation", "assignment", a.ID, "error", err.Error())
+		return
+	}
+	repository, err := d.store.Repository(j.Repository)
+	if err != nil {
+		d.log.Error("reading the repository of a cancelled validation", "assignment", a.ID, "error", err.Error())
+		return
+	}
+	d.assignMu.Lock()
+	defer d.assignMu.Unlock()
+	d.removeWorkspace(ctx, a, repository)
 }
 
 // pushed reports whether origin's branch of a holds commit, as AsmAI's clone

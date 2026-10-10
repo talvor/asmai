@@ -37,6 +37,9 @@ type Handoff struct {
 	Criteria    []string `json:"acceptance_criteria"`
 	State       string   `json:"state"`
 	Answer      string   `json:"answer,omitempty"`
+	// Head is the exact commit of the job branch that a handoff to Quality
+	// asks it to validate, which the daemon fixes when the handoff is sent.
+	Head string `json:"head,omitempty"`
 }
 
 type Message struct {
@@ -90,9 +93,28 @@ func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) 
 	if _, err = job(tx, h.Job); err != nil {
 		return Handoff{}, Dispatch{}, fmt.Errorf("job %d: %w", h.Job, err)
 	}
+	if h.Head != "" {
+		// A handoff asking for validation names the job branch's tip, which
+		// is finished: no writing assignment of the job is live.
+		b, err := jobBranch(tx, h.Job)
+		if err != nil {
+			return Handoff{}, Dispatch{}, fmt.Errorf("job %d has no job branch to validate: %w", h.Job, err)
+		}
+		if b.Tip != h.Head {
+			return Handoff{}, Dispatch{}, fmt.Errorf("the job branch's tip is %s, not %s", b.Tip, h.Head)
+		}
+		var live int64
+		err = tx.QueryRow(`SELECT COALESCE(MIN(id), 0) FROM assignments WHERE job = ? AND read_only = 0 AND NOT `+endedAssignment, h.Job).Scan(&live)
+		if err != nil {
+			return Handoff{}, Dispatch{}, err
+		}
+		if live != 0 {
+			return Handoff{}, Dispatch{}, fmt.Errorf("assignment %d of job %d has not ended, so the job branch is not finished: accept or cancel it first", live, h.Job)
+		}
+	}
 	criteria, _ := json.Marshal(h.Criteria)
 	h.State = HandoffPending
-	result, err := tx.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, h.Job, h.Sender, h.Receiver, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions, string(criteria), h.State, timestamp(at))
+	result, err := tx.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,head,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, h.Job, h.Sender, h.Receiver, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions, string(criteria), h.State, h.Head, timestamp(at))
 	if err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
@@ -210,7 +232,7 @@ func (s *Store) AnswerHandoff(id int64, agent string, currentDispatch int64, gen
 func handoff(q queryer, id int64) (Handoff, error) {
 	var h Handoff
 	var criteria string
-	err := q.QueryRow(`SELECT id,job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,answer FROM handoffs WHERE id=?`, id).Scan(&h.ID, &h.Job, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer)
+	err := q.QueryRow(`SELECT id,job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,answer,head FROM handoffs WHERE id=?`, id).Scan(&h.ID, &h.Job, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head)
 	if err != nil {
 		return Handoff{}, err
 	}
@@ -295,6 +317,11 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 			a, e := assignment(tx, m.Assignment)
 			if e != nil {
 				return nil, e
+			}
+			if a.ReadOnly && a.State != AssignmentAccepted && a.State != AssignmentCancelled {
+				if a.OpenFindings, e = openBlocking(tx, a.Job); e != nil {
+					return nil, e
+				}
 			}
 			m.AssignmentData = &a
 		}

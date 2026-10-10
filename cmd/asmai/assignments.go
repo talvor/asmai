@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/talvor/asmai/internal/daemon"
@@ -61,11 +62,17 @@ func parseChecks(values []string) ([]store.Check, error) {
 	return checks, nil
 }
 
-func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string) int {
+func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit string) int {
 	if job <= 0 || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(errors.New("assign needs --job, --outcome and --criterion"))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria})
+	if readOnly && strings.TrimSpace(commit) == "" {
+		return o.fail(errors.New("a read-only assignment is fixed at the job branch's exact head: give --commit"))
+	}
+	if !readOnly && commit != "" {
+		return o.fail(errors.New("--commit belongs to --read-only: a writing assignment is made from the job branch's tip"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -74,6 +81,11 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	}
 	a := resp.Assignment
 	fmt.Fprintf(o.stdout, "assignment %d of job %d given to %s; dispatch %d\n", a.ID, a.Job, a.Worker, resp.Dispatch.ID)
+	if a.ReadOnly {
+		fmt.Fprintf(o.stdout, "read-only workspace fixed at %s of %s, with no branch\nworkspace: %s (slot %d)\n", a.Commit, a.JobBranch, a.Workspace.Path, a.Workspace.Slot)
+		fmt.Fprintf(o.stdout, "next: %s is started in its workspace and nudged; its validation report comes back to you through `asmai inbox`\n", a.Worker)
+		return 0
+	}
 	fmt.Fprintf(o.stdout, "assignment branch: %s, made from %s at %s\nworkspace: %s (slot %d)\n", a.Workspace.Branch, a.JobBranch, a.Workspace.Base, a.Workspace.Path, a.Workspace.Slot)
 	fmt.Fprintf(o.stdout, "next: %s is started in its workspace and nudged; its result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
 	return 0
@@ -96,6 +108,72 @@ func effect(o *output, paths statedir.Paths, kind, ref string) int {
 type resultFlags struct {
 	artifacts, evidence, tests, checks, gaps listFlags
 	prSection                                string
+	// findings, resolved and unresolved make the result a validation
+	// report: a Quality worker's findings, and the earlier blocking findings
+	// it says are resolved or still open.
+	findings, resolved, unresolved listFlags
+}
+
+// validationFinding reads the value of --finding, '<kind>: <text>'.
+func validationFinding(value string) (store.FindingInput, error) {
+	kind, text, found := strings.Cut(value, ":")
+	f := store.FindingInput{Kind: strings.ToLower(strings.TrimSpace(kind)), Text: strings.TrimSpace(text)}
+	if !found || f.Text == "" || !slices.Contains(store.FindingKinds, f.Kind) {
+		return store.FindingInput{}, fmt.Errorf("--finding %q is not '<%s>: <text>'", value, strings.Join(store.FindingKinds, "|"))
+	}
+	return f, nil
+}
+
+// findingIDs reads the values of --resolved or --unresolved, finding IDs.
+func findingIDs(name string, values []string) ([]int64, error) {
+	var ids []int64
+	for _, v := range values {
+		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("--%s %q is not a finding ID, as the assignment lists it", name, v)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// validationResult reads a validation report: the checks re-run, the
+// findings, and the earlier blocking findings each resolved or not.
+func validationResult(f resultFlags, input store.ReportInput) (store.ReportInput, error) {
+	var err error
+	if f.prSection != "" || len(f.tests) > 0 || len(f.artifacts) > 0 {
+		return input, errors.New("a validation report has findings, not tests or a PR section: it changes nothing")
+	}
+	checks, err := explicit("check", f.checks)
+	if err != nil {
+		return input, err
+	}
+	if input.Checks, err = parseChecks(checks); err != nil {
+		return input, err
+	}
+	if input.Gaps, err = explicit("gap", f.gaps); err != nil {
+		return input, err
+	}
+	v := &store.ValidationInput{Findings: []store.FindingInput{}}
+	findings, err := explicit("finding", f.findings)
+	if err != nil {
+		return input, err
+	}
+	for _, value := range findings {
+		finding, err := validationFinding(value)
+		if err != nil {
+			return input, err
+		}
+		v.Findings = append(v.Findings, finding)
+	}
+	if v.Resolved, err = findingIDs("resolved", f.resolved); err != nil {
+		return input, err
+	}
+	if v.StillOpen, err = findingIDs("unresolved", f.unresolved); err != nil {
+		return input, err
+	}
+	input.Validation = v
+	return input, nil
 }
 
 func result(o *output, paths statedir.Paths, f resultFlags) int {
@@ -109,8 +187,14 @@ func result(o *output, paths statedir.Paths, f resultFlags) int {
 			return o.fail(errors.New("result evidence cannot be blank"))
 		}
 	}
+	if len(f.findings) > 0 || len(f.resolved) > 0 || len(f.unresolved) > 0 {
+		if input, err = validationResult(f, input); err != nil {
+			return o.fail(err)
+		}
+		return report(o, paths, daemon.CommandResult, input)
+	}
 	if strings.TrimSpace(f.prSection) == "" {
-		return o.fail(errors.New("result needs --pr-section: your part of the pull request, what changed with before-and-after evidence"))
+		return o.fail(errors.New("result needs --pr-section: your part of the pull request, what changed with before-and-after evidence; a Quality worker's validation report gives --finding instead"))
 	}
 	input.Artifacts, input.PRSection = f.artifacts, f.prSection
 	if input.Tests, err = explicit("test", f.tests); err != nil {
@@ -145,6 +229,10 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 		return o.printJSON(resp)
 	}
 	r := resp.Report
+	if r.Validation != nil {
+		fmt.Fprintf(o.stdout, "validation report recorded for assignment %d at commit %s; sent to %s as dispatch %d\n", r.Assignment, r.Commit, resp.Dispatch.Agent, resp.Dispatch.ID)
+		return 0
+	}
 	fmt.Fprintf(o.stdout, "%s recorded for assignment %d at commit %s; sent to %s as dispatch %d\n", r.Kind, r.Assignment, r.Commit, resp.Dispatch.Agent, resp.Dispatch.ID)
 	if !r.TookInTip {
 		fmt.Fprintf(o.stdout, "note: this commit does not have the job branch's tip %s in its history; take the tip in and submit again\n", r.JobTip)
@@ -179,6 +267,12 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 	a, d := resp.Assignment, resp.Decision
 	switch command {
 	case daemon.CommandAccept:
+		if a.ReadOnly {
+			fmt.Fprintf(o.stdout, "validation %d accepted by %s at commit %s; the assignment has ended\n", a.ID, d.Leader, d.Commit)
+			fmt.Fprintf(o.stdout, "the report and its findings are delivered to %s as dispatch %d; nothing about the job branch changed\n", resp.Dispatch.Agent, resp.Dispatch.ID)
+			fmt.Fprintf(o.stdout, "next: the read-only workspace is removed and %s stopped\n", a.Worker)
+			return 0
+		}
 		b := resp.JobBranch
 		fmt.Fprintf(o.stdout, "assignment %d accepted by %s at commit %s; the assignment has ended\n", a.ID, d.Leader, d.Commit)
 		fmt.Fprintf(o.stdout, "job branch %s fast-forwarded to %s\nread-only view of the job refreshed: %s\n", b.Name, b.Tip, b.View)
@@ -199,6 +293,23 @@ func printAssignment(w io.Writer, a store.Assignment) {
 	fmt.Fprintf(w, "assignment %d | job %d | %s -> %s | %s\nOutcome: %s\nAcceptance criteria:\n", a.ID, a.Job, a.Owner, a.Worker, a.State, a.Outcome)
 	for _, c := range a.Criteria {
 		fmt.Fprintf(w, "- %s\n", c)
+	}
+	if a.ReadOnly {
+		fmt.Fprintf(w, "Read-only workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nFixed at commit: %s, the head of the job branch %s; it has no branch, and you never change the work\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Commit, a.JobBranch)
+		if i := a.Intent; i != nil {
+			fmt.Fprintf(w, "Job intent:\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nJob acceptance criteria:\n", i.Words, i.Reading, i.Mandate)
+			for _, c := range i.Criteria {
+				fmt.Fprintf(w, "- %s\n", c)
+			}
+		}
+		fmt.Fprintln(w, "Earlier blocking findings still open, which your report says are resolved or not:")
+		if len(a.OpenFindings) == 0 {
+			fmt.Fprintln(w, "- none")
+		}
+		for _, f := range a.OpenFindings {
+			fmt.Fprintf(w, "- finding %d, found at %s: %s\n", f.ID, f.Commit, f.Text)
+		}
+		return
 	}
 	fmt.Fprintf(w, "Workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nAssignment branch: %s, made from the job branch %s at %s\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Workspace.Branch, a.JobBranch, a.Workspace.Base)
 }
@@ -223,10 +334,15 @@ func printReport(w io.Writer, r store.Report) {
 			fmt.Fprintf(w, "- %s\n", item)
 		}
 	}
+	if r.Kind == store.ReportResult && r.Validation != nil {
+		fmt.Fprintf(w, "Validation report at commit %s\n", r.Commit)
+	}
 	if r.Kind == store.ReportResult {
 		list("Artifacts", r.Artifacts)
 		list("Evidence", r.Evidence)
-		list("Tests added", r.Tests)
+		if r.Validation == nil {
+			list("Tests added", r.Tests)
+		}
 		var checks []string
 		for _, c := range r.Checks {
 			checks = append(checks, c.Command+checkSeparator+c.Outcome+" (at "+r.Commit+")")
@@ -234,13 +350,35 @@ func printReport(w io.Writer, r store.Report) {
 		list("Checks run", checks)
 		list("Gaps", r.Gaps)
 	}
+	if v := r.Validation; v != nil {
+		var found []string
+		switch {
+		case len(r.Findings) > 0:
+			for _, f := range r.Findings {
+				found = append(found, fmt.Sprintf("finding %d | %s | %s", f.ID, f.Kind, f.Text))
+			}
+		default:
+			for _, f := range v.Findings {
+				found = append(found, fmt.Sprintf("%s | %s", f.Kind, f.Text))
+			}
+		}
+		list("Findings", found)
+		var earlier []string
+		for _, id := range v.Resolved {
+			earlier = append(earlier, fmt.Sprintf("finding %d resolved", id))
+		}
+		for _, id := range v.StillOpen {
+			earlier = append(earlier, fmt.Sprintf("finding %d still open", id))
+		}
+		list("Earlier blocking findings", earlier)
+	}
 	var effects []string
 	for _, e := range r.Effects {
 		effects = append(effects, fmt.Sprintf("%d %s %s", e.ID, e.Kind, e.Ref))
 	}
 	list("Effects", effects)
 	fmt.Fprintf(w, "Job branch tip when reported: %s (taken in: %t)\n", r.JobTip, r.TookInTip)
-	if r.Kind == store.ReportResult {
+	if r.Kind == store.ReportResult && r.Validation == nil {
 		fmt.Fprintf(w, "PR section:\n%s\n", r.PRSection)
 	}
 }

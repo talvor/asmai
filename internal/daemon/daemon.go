@@ -74,7 +74,8 @@ const (
 	CommandHandoffAccept  = "handoff.accept"
 	CommandHandoffClarify = "handoff.clarify"
 	CommandHandoffDecline = "handoff.decline"
-	// CommandAssign gives a writing assignment to a worker. CommandEffect
+	// CommandAssign gives a writing assignment to a worker of Engineering, or
+	// with ReadOnly a validation to a worker of Quality. CommandEffect
 	// records an effect, CommandResult submits an assignment's result and
 	// CommandBlocked reports that its worker cannot go on.
 	CommandAssign  = "assign"
@@ -83,9 +84,10 @@ const (
 	CommandBlocked = "blocked"
 	// CommandAccept, CommandReject and CommandCancel are the owning
 	// leader's decisions on an assignment: accepting a result fast-forwards
-	// the job branch to it, rejecting returns the assignment to its worker,
-	// and cancelling ends it once the worker has pushed its branch and
-	// stopped.
+	// the job branch to it, or for a validation records its findings and
+	// delivers the report to Engineering's leader; rejecting returns the
+	// assignment to its worker, and cancelling ends it once the worker has
+	// pushed its branch, if it has one, and stopped.
 	CommandAccept = "accept"
 	CommandReject = "reject"
 	CommandCancel = "cancel"
@@ -140,6 +142,10 @@ type Request struct {
 	// why the owning leader made it.
 	Assignment int64    `json:"assignment,omitempty"`
 	Reasons    []string `json:"reasons,omitempty"`
+	// ReadOnly and Commit make an assign a read-only validation fixed at the
+	// commit, which is the job branch's tip.
+	ReadOnly bool   `json:"read_only,omitempty"`
+	Commit   string `json:"commit,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.

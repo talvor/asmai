@@ -18,9 +18,9 @@ const resultFlagsForGreeting = `asmai result --evidence './check.sh exits 0 at H
 func greetingWorker(branch string) []string {
 	return []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`asmai accept --assignment 1 --reason x`, 1, "only leader@engineering may run asmai accept"),
-		fakeRun(`asmai reject --assignment 1 --reason x`, 1, "only leader@engineering may run asmai reject"),
-		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "only leader@engineering may run asmai cancel"),
+		fakeRun(`asmai accept --assignment 1 --reason x`, 1, "only leader@engineering or leader@quality may run asmai accept"),
+		fakeRun(`asmai reject --assignment 1 --reason x`, 1, "only leader@engineering or leader@quality may run asmai reject"),
+		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "only leader@engineering or leader@quality may run asmai cancel"),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
 		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
 		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),

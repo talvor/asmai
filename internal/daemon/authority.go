@@ -43,15 +43,15 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return fmt.Errorf("only leader@coordination may run asmai job open")
 	case CommandAssign:
-		if ref.address == roles.LeaderOf(roles.Engineering) {
+		if ref.address == roles.LeaderOf(roles.Engineering) || ref.address == roles.LeaderOf(roles.Quality) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering may run asmai assign")
+		return fmt.Errorf("only leader@engineering, for writing work, or leader@quality, for validation, may run asmai assign")
 	case CommandAccept, CommandReject, CommandCancel:
-		if ref.address == roles.LeaderOf(roles.Engineering) {
+		if ref.address == roles.LeaderOf(roles.Engineering) || ref.address == roles.LeaderOf(roles.Quality) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering may run asmai %s", req.Command)
+		return fmt.Errorf("only leader@engineering or leader@quality may run asmai %s", req.Command)
 	case CommandEffect:
 		if ref.address.Name != roles.Leader || ref.address == roles.LeaderOf(roles.Engineering) {
 			return nil

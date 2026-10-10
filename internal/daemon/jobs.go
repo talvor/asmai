@@ -67,6 +67,10 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					if err == nil {
 						assignments, err = d.store.AssignmentsForJob(j.Number)
 					}
+					var findings []store.Finding
+					if err == nil {
+						findings, err = d.store.Findings(j.Number)
+					}
 					var branch *store.JobBranch
 					if b, e := d.store.JobBranch(j.Number); e == nil {
 						branch = &b
@@ -74,7 +78,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 						err = e
 					}
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments)
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings)
 					}
 				}
 			}
@@ -105,14 +109,14 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
 		fmt.Fprintf(&b, "- %s\n", criterion)
 	}
 	if repository.Clone != "" {
-		fmt.Fprintf(&b, "Repository clone: %s\n", repository.Clone)
+		fmt.Fprintf(&b, "Repository clone: %s\nDefault branch (the base the job branch takes in): %s\n", repository.Clone, repository.DefaultBranch)
 	}
 	switch {
 	case branch != nil:
@@ -125,14 +129,36 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		fmt.Fprintln(&b, "- none")
 	}
 	for _, h := range handoffs {
-		fmt.Fprintf(&b, "- %d %s -> %s: %s\n", h.ID, h.Sender, h.Receiver, h.State)
+		fmt.Fprintf(&b, "- %d %s -> %s: %s", h.ID, h.Sender, h.Receiver, h.State)
+		if h.Head != "" {
+			fmt.Fprintf(&b, " (validate %s)", h.Head)
+		}
+		fmt.Fprintln(&b)
 	}
 	fmt.Fprintln(&b, "Assignments:")
 	if len(assignments) == 0 {
 		fmt.Fprintln(&b, "- none")
 	}
 	for _, a := range assignments {
+		if a.ReadOnly {
+			fmt.Fprintf(&b, "- %d %s (owner %s) %s, read-only at %s: %s\n", a.ID, a.Worker, a.Owner, a.State, a.Commit, a.Outcome)
+			continue
+		}
 		fmt.Fprintf(&b, "- %d %s (owner %s) %s on branch %s: %s\n", a.ID, a.Worker, a.Owner, a.State, a.Workspace.Branch, a.Outcome)
+	}
+	fmt.Fprintln(&b, "Findings:")
+	if len(findings) == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	for _, f := range findings {
+		state := ""
+		switch {
+		case f.Open():
+			state = " (open)"
+		case f.Kind == store.FindingBlocking:
+			state = fmt.Sprintf(" (cleared by report %d)", f.ClearedBy)
+		}
+		fmt.Fprintf(&b, "- %d %s%s, found at %s: %s\n", f.ID, f.Kind, state, f.Commit, f.Text)
 	}
 	fmt.Fprintln(&b, "Pending decisions: none\nGrants: none\nRecent journal:")
 	for _, entry := range entries {

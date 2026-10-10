@@ -372,6 +372,9 @@ func TestPendingRestorationTracksNewOpenJobs(t *testing.T) {
 	if err != nil || !made {
 		t.Fatalf("telling the leader: %+v, %v, %v", d, made, err)
 	}
+	if err := s.ChangeDispatch(d.ID, 0, DispatchCreated, DispatchUnknown, "", assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
 	result, err := s.db.Exec(`INSERT INTO jobs(repository, state, reading) VALUES('fixture', ?, 'Add another greeting')`, JobOpen)
 	if err != nil {
 		t.Fatal(err)

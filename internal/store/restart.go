@@ -297,16 +297,16 @@ func (s *Store) LeaderRestored(leader string, job int64, body string, at time.Ti
 	defer tx.Rollback()
 	var waiting int
 	err = tx.QueryRow(`SELECT count(*) FROM messages m JOIN dispatches d ON d.message = m.id
-		WHERE m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?)`,
-		leader, MessageRestoration, DispatchCreated, DispatchNudged).Scan(&waiting)
+		WHERE m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?, ?)`,
+		leader, MessageRestoration, DispatchCreated, DispatchNudged, DispatchUnknown).Scan(&waiting)
 	if err != nil {
 		return Dispatch{}, false, err
 	}
 	if waiting > 0 {
 		if _, err := tx.Exec(`UPDATE messages SET job = ?, body = ? WHERE recipient = ? AND kind = ? AND fetched_at IS NULL AND id IN (
 			SELECT m.id FROM messages m JOIN dispatches d ON d.message = m.id
-			WHERE m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?)
-		)`, job, body, leader, MessageRestoration, leader, MessageRestoration, DispatchCreated, DispatchNudged); err != nil {
+			WHERE m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?, ?)
+		)`, job, body, leader, MessageRestoration, leader, MessageRestoration, DispatchCreated, DispatchNudged, DispatchUnknown); err != nil {
 			return Dispatch{}, false, err
 		}
 		if err := tx.Commit(); err != nil {

@@ -33,7 +33,11 @@ func repo(t *testing.T) string {
 
 func message(t *testing.T, text string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "COMMIT_EDITMSG")
+	out, err := exec.Command("git", "rev-parse", "--git-path", "COMMIT_EDITMSG").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := strings.TrimSpace(string(out))
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +116,51 @@ func TestTheRepositorysHookStillDecidesTheStatus(t *testing.T) {
 	}
 }
 
+func TestRunRejectsHookNamesOutsideTheInstalledSet(t *testing.T) {
+	dir := repo(t)
+	record := filepath.Join(dir, "seen")
+	executable(t, filepath.Join(dir, ".git", "outside"), "touch "+record+"\n")
+	if code, _ := run(t, "../outside", "/own", trailers); code != 2 {
+		t.Errorf("unknown hook exited %d, want 2", code)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Errorf("unknown hook ran the outside executable: %v", err)
+	}
+}
+
+func TestRunRejectsMessagePathsOtherThanGitsOwn(t *testing.T) {
+	dir := repo(t)
+	record := filepath.Join(dir, "seen")
+	for _, name := range []string{PrepareCommitMessage, CommitMessage} {
+		executable(t, filepath.Join(dir, ".git", "hooks", name), "touch "+record+"\n")
+	}
+	outside := filepath.Join(t.TempDir(), "message")
+	if err := os.WriteFile(outside, []byte("Leave alone\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{PrepareCommitMessage, CommitMessage} {
+		if code, _ := run(t, name, "/own", trailers, outside); code != 2 {
+			t.Errorf("%s with an outside message exited %d, want 2", name, code)
+		}
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "Leave alone\n" {
+		t.Errorf("outside message is %q (%v)", got, err)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Errorf("repository hook ran on an invalid message: %v", err)
+	}
+	path := message(t, "Original\n")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := run(t, PrepareCommitMessage, "/own", trailers, path); code != 2 {
+		t.Errorf("symlinked message exited %d, want 2", code)
+	}
+}
+
 func TestTheTrailersAreAddedAgainAfterTheRepositorysCommitMsgRewritesTheMessage(t *testing.T) {
 	dir := repo(t)
 	executable(t, filepath.Join(dir, ".git", "hooks", CommitMessage), "printf 'Rewritten by the repository\\n' > \"$1\"\n")
@@ -180,6 +229,26 @@ func TestAHooksDirectoryTheRepositorySetsIsFoundEvenThoughAsmAIsIsInTheEnvironme
 	// With no hook of the name anywhere, there is nothing to run.
 	if code, stderr := run(t, "post-commit", own, trailers); code != 0 {
 		t.Errorf("a hook with no repository hook exited %d: %s", code, stderr)
+	}
+}
+
+func TestAnInheritedHooksPathSurvivesAsmAIsEnvironmentOverride(t *testing.T) {
+	dir := repo(t)
+	userHooks := filepath.Join(dir, "user-hooks")
+	own := filepath.Join(t.TempDir(), "githooks")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+	t.Setenv("GIT_CONFIG_VALUE_0", userHooks)
+	for key, value := range Environment(os.Environ(), own) {
+		t.Setenv(key, value)
+	}
+	record := filepath.Join(dir, "seen")
+	executable(t, filepath.Join(userHooks, "pre-commit"), "touch "+record+"\n")
+	if code, stderr := run(t, "pre-commit", own, trailers); code != 0 {
+		t.Fatalf("pre-commit exited %d: %s", code, stderr)
+	}
+	if _, err := os.Stat(record); err != nil {
+		t.Errorf("the inherited hook did not run: %v", err)
 	}
 }
 

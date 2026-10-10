@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -100,6 +101,16 @@ func Environment(environ []string, dir string) map[string]string {
 // merge as for a commit. ownDir is AsmAI's hooks directory, which is never run
 // as the repository's.
 func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer, ownDir string, trailers Trailers) int {
+	if !slices.Contains(Names, name) {
+		fmt.Fprintf(stderr, "asmai git-hook: unknown hook %q\n", name)
+		return 2
+	}
+	if name == PrepareCommitMessage || name == CommitMessage {
+		if len(args) < 1 || !gitMessageFile(ctx, args[0]) {
+			fmt.Fprintf(stderr, "asmai git-hook: %s needs Git's commit message file\n", name)
+			return 2
+		}
+	}
 	hook := repositoryHook(ctx, name, ownDir)
 	status := 0
 	if hook != "" {
@@ -119,10 +130,6 @@ func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdou
 		return status
 	}
 	if name == PrepareCommitMessage || name == CommitMessage {
-		if len(args) < 1 {
-			fmt.Fprintf(stderr, "asmai git-hook: %s needs the message file git passes it\n", name)
-			return 2
-		}
 		if err := addTrailers(ctx, args[0], trailers); err != nil {
 			fmt.Fprintf(stderr, "asmai: this commit was refused because it cannot carry the AsmAI trailers: %v\n", err)
 			return 1
@@ -135,6 +142,26 @@ func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdou
 		}
 	}
 	return status
+}
+
+func gitMessageFile(ctx context.Context, path string) bool {
+	if path == "" {
+		return false
+	}
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", "COMMIT_EDITMSG").Output()
+	if err != nil {
+		return false
+	}
+	want, err := filepath.Abs(strings.TrimSpace(string(out)))
+	if err != nil {
+		return false
+	}
+	got, err := filepath.Abs(path)
+	if err != nil || got != want {
+		return false
+	}
+	info, err := os.Lstat(got)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // repairCommitTrailers amends the commit just made when its message lacks the
@@ -218,11 +245,7 @@ func addTrailers(ctx context.Context, file string, trailers Trailers) error {
 // a hooks directory the repository's own tooling set is found too.
 func repositoryHook(ctx context.Context, name, ownDir string) string {
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", "hooks")
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "GIT_CONFIG_COUNT=") && !strings.HasPrefix(kv, "GIT_CONFIG_KEY_") && !strings.HasPrefix(kv, "GIT_CONFIG_VALUE_") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
+	cmd.Env = withoutOwnHooksPath(os.Environ(), ownDir)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -243,6 +266,36 @@ func repositoryHook(ctx context.Context, name, ownDir string) string {
 		return ""
 	}
 	return path
+}
+
+func withoutOwnHooksPath(environ []string, ownDir string) []string {
+	values := make(map[string]string, len(environ))
+	for _, kv := range environ {
+		key, value, _ := strings.Cut(kv, "=")
+		values[key] = value
+	}
+	count, err := strconv.Atoi(values["GIT_CONFIG_COUNT"])
+	if err != nil || count < 1 {
+		return environ
+	}
+	index := strconv.Itoa(count - 1)
+	key := "GIT_CONFIG_KEY_" + index
+	value := "GIT_CONFIG_VALUE_" + index
+	if values[key] != "core.hooksPath" || values[value] != ownDir {
+		return environ
+	}
+	var result []string
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "GIT_CONFIG_COUNT":
+			result = append(result, "GIT_CONFIG_COUNT="+index)
+		case key, value:
+		default:
+			result = append(result, kv)
+		}
+	}
+	return result
 }
 
 func same(a, b string) bool {

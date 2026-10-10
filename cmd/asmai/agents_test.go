@@ -359,9 +359,11 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		}
 	}
 	if !slices.Equal(settings.Permissions.Allow, []string{
-		"Bash(asmai:*)", "Bash(gh:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git fetch:*)",
-		"Bash(git ls-remote:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git rev-parse:*)",
-		"Bash(git merge:*)", "Bash(git var:*)", "Bash(git show:*)",
+		"Bash(asmai:*)", "Bash(gh --version)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
+		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
+		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
+		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
 	}) || settings.Permissions.DefaultMode != "default" {
 		t.Errorf("the session's permissions are %+v, want asmai, git and gh allowed and the default mode", settings.Permissions)
 	}

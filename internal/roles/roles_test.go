@@ -138,11 +138,12 @@ func TestARepositoryWithNoInstructionFilesAddsNothingAndALinkIsGivenOnceAndNever
 	}
 }
 
-func TestAnOversizedInstructionFileIsCutWithANoteToReadTheRest(t *testing.T) {
+func TestAnOversizedInstructionFileIsGivenInFull(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "AGENTS.md", strings.Repeat("x", maxInstructionFile+10))
+	content := strings.Repeat("x", (64<<10)+10)
+	write(t, dir, "AGENTS.md", content)
 	got, err := RepositoryInstructions(dir)
-	if err != nil || !strings.Contains(got, "read AGENTS.md in your workspace for the rest") || len(got) > maxInstructionFile+1000 {
-		t.Errorf("an oversized file gives %d bytes, %v", len(got), err)
+	if err != nil || !strings.Contains(got, content) {
+		t.Errorf("an oversized file was truncated: %d bytes, %v", len(got), err)
 	}
 }

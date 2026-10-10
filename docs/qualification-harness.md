@@ -90,10 +90,9 @@ The harness sets a canary in every provider API-key variable AsmAI lists, and in
 
 Both cases run the pinned Claude Code non-interactively (`claude -p`, reading its JSON events) in a workspace they make: a linked checkout of a clone on an assignment branch, as a worker has, in a repository whose files are an `AGENTS.md` and a `CLAUDE.md`, each with a code word nobody could guess, and a `.claude` configuration that would be visible if it loaded. That configuration has a hook that leaves a mark, an environment variable, permission rules allowing `curl`, a setting that switches the sandbox off, a `.mcp.json` server, and a setting to enable it. They give the session the command line the code under test builds for a worker (`providers.ClaudeCodeArgs`, with `roles.RepositoryInstructions`), so the arguments qualified are the arguments run. They use no provider hooks of the daemon's and never write `~/.claude`.
 
-C36 runs it three ways:
+C36 runs it two ways:
 
 - as a control, with the repository's own settings loaded, and requires the fixture's hook to leave its mark, so that the case can see the configuration load;
-- with only the user's settings and none of AsmAI's instructions, and records whether Claude Code loads the instruction files by itself (AsmAI passes the content itself whatever it finds, rule 36; a trial on 2.1.294 found Claude Code loads them only along with the project setting source, which also loads the repository's settings);
 - with the worker's command line, and requires the session to name both code words, the hook to leave no mark, the MCP server to be neither started nor listed, and the environment variable to be unset.
 
 C37 gives the session a list of commands, each to run as its own Bash call, and requires: a write in the workspace, `git add`, `git commit` and `git push` to the workspace's origin, `git ls-remote` against a remote host and `gh --version` all to run with no native prompt, the push to reach the origin; a write outside the workspace not to happen; and a network call to a host the guard does not allow, `curl`, to be stopped, by the guard or by a native prompt that a non-interactive run cannot answer. The repository's configuration allows `curl` and switches the sandbox off, so it also shows that configuration does not load.

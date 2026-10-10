@@ -112,6 +112,39 @@ func TestTheRepositorysHookStillDecidesTheStatus(t *testing.T) {
 	}
 }
 
+func TestPostCommitRestoresTrailersAfterTheRepositoryRewritesTheMessage(t *testing.T) {
+	dir := repo(t)
+	for _, args := range [][]string{
+		{"config", "user.name", "Una User"},
+		{"config", "user.email", "una@example.test"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "greeting.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "greeting.txt"}, {"-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "Add greeting"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	executable(t, filepath.Join(dir, ".git", "hooks", "post-commit"), "git -c core.hooksPath=/dev/null commit --amend --no-verify -q -m 'Stripped by repository hook'\n")
+	if code, stderr := run(t, "post-commit", "/own", trailers); code != 0 {
+		t.Fatalf("post-commit exited %d: %s", code, stderr)
+	}
+	got, err := exec.Command("git", "log", "-1", "--format=%(trailers:only,unfold)").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"AsmAI-Job: 4", "AsmAI-Agent: worker1@engineering", "AsmAI-Dispatch: 9"} {
+		if !strings.Contains("\n"+string(got), "\n"+line+"\n") {
+			t.Errorf("the final commit has trailers %q, missing %q", got, line)
+		}
+	}
+}
+
 func TestAHooksDirectoryTheRepositorySetsIsFoundEvenThoughAsmAIsIsInTheEnvironment(t *testing.T) {
 	dir := repo(t)
 	own := filepath.Join(t.TempDir(), "githooks")

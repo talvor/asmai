@@ -19,15 +19,19 @@ var HookEvents = []string{"SessionStart", "UserPromptSubmit", "PermissionRequest
 const AllowedAsmai = "Bash(asmai:*)"
 
 // The commands an agent runs without a native permission prompt, besides the
-// commands Claude Code's write guard allows: `asmai`, and git and gh with
+// commands Claude Code's write guard allows: `asmai`, and selected git and gh operations with
 // network access. They run outside the guard, as they need the user's own
 // credentials, their network, the daemon's socket and the clone's git
 // directory, which is outside the workspace. Each is both a permission rule
 // and a pattern the guard leaves alone.
-var unguardedCommands = []string{"asmai", "gh"}
+var unguardedCommands = []string{"asmai"}
+
+var unguardedGHCommands = []string{
+	"pr create", "pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
+}
 
 var unguardedGitSubcommands = []string{
-	"add", "commit", "push", "fetch", "ls-remote", "status", "diff", "log", "rev-parse", "merge", "var", "show",
+	"add", "commit", "push", "fetch", "ls-remote", "status", "rev-parse", "merge", "var",
 }
 
 // WriteGuard is what an agent session's write guard needs to know of the
@@ -46,7 +50,7 @@ type WriteGuard struct {
 
 // ClaudeCodeSettings returns the settings an agent session of Claude Code is
 // given with --settings: a hook for each of HookEvents that runs
-// hookCommand, the permission rules that allow `asmai`, git and gh, and the
+// hookCommand, the permission rules for `asmai` and selected git and gh operations, and the
 // write guard guard describes, which is always on: Claude Code does not start
 // the session when it cannot guard it. They keep Claude Code's native
 // permission prompts on, whatever the user's own settings say: the default
@@ -67,6 +71,12 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 	for _, command := range unguardedCommands {
 		allow = append(allow, "Bash("+command+":*)")
 		excluded = append(excluded, command+" *")
+	}
+	allow = append(allow, "Bash(gh --version)")
+	excluded = append(excluded, "gh --version")
+	for _, command := range unguardedGHCommands {
+		allow = append(allow, "Bash(gh "+command+":*)")
+		excluded = append(excluded, "gh "+command+" *")
 	}
 	for _, subcommand := range unguardedGitSubcommands {
 		allow = append(allow, "Bash(git "+subcommand+":*)")

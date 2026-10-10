@@ -95,17 +95,22 @@ func Environment(environ []string, dir string) map[string]string {
 // hooks directory, which is never run as the repository's.
 func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer, ownDir string, trailers Trailers) int {
 	hook := repositoryHook(ctx, name, ownDir)
+	status := 0
 	if hook != "" {
 		cmd := exec.CommandContext(ctx, hook, args...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 		if err := cmd.Run(); err != nil {
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
-				return exit.ExitCode()
+				status = exit.ExitCode()
+			} else {
+				fmt.Fprintf(stderr, "asmai git-hook: running the repository's %s: %v\n", name, err)
+				status = 1
 			}
-			fmt.Fprintf(stderr, "asmai git-hook: running the repository's %s: %v\n", name, err)
-			return 1
 		}
+	}
+	if status != 0 && name != "post-commit" {
+		return status
 	}
 	if name == PrepareCommitMessage {
 		if len(args) < 1 {
@@ -117,7 +122,62 @@ func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdou
 			return 1
 		}
 	}
-	return 0
+	if name == "post-commit" {
+		if err := repairCommitTrailers(ctx, trailers); err != nil {
+			fmt.Fprintf(stderr, "asmai: the committed message could not be verified or repaired: %v\n", err)
+			return 1
+		}
+	}
+	return status
+}
+
+func repairCommitTrailers(ctx context.Context, trailers Trailers) error {
+	lines, err := trailers()
+	if err != nil {
+		return err
+	}
+	hasTrailers := func() (bool, error) {
+		cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%(trailers:only,unfold)")
+		out, err := cmd.Output()
+		if err != nil {
+			return false, err
+		}
+		listed := "\n" + strings.TrimSpace(string(out)) + "\n"
+		for _, line := range lines {
+			if !strings.Contains(listed, "\n"+line+"\n") {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	if ok, err := hasTrailers(); err != nil || ok {
+		return err
+	}
+	message, err := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B").Output()
+	if err != nil {
+		return err
+	}
+	args := []string{"interpret-trailers", "--if-exists", "replace", "--if-missing", "add"}
+	for _, line := range lines {
+		args = append(args, "--trailer", line)
+	}
+	interpret := exec.CommandContext(ctx, "git", args...)
+	interpret.Stdin = bytes.NewReader(message)
+	corrected, err := interpret.Output()
+	if err != nil {
+		return err
+	}
+	amend := exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "commit", "--amend", "--no-verify", "-q", "-F", "-")
+	amend.Stdin = bytes.NewReader(corrected)
+	if out, err := amend.CombinedOutput(); err != nil {
+		return fmt.Errorf("amending the commit: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if ok, err := hasTrailers(); err != nil {
+		return err
+	} else if !ok {
+		return errors.New("the amended commit lacks an AsmAI trailer")
+	}
+	return nil
 }
 
 // addTrailers adds the trailers to the commit message in file, replacing any

@@ -205,12 +205,10 @@ func exists(path string) bool {
 // c36 qualifies that instruction files load without the repository's provider
 // configuration (05 rules 34 to 36). In a repository whose files are
 // instruction files and a configuration that would be visible if it loaded,
-// it runs the pinned Claude Code three ways: as a control with the
+// it runs the pinned Claude Code twice: as a control with the
 // repository's own settings loaded, to show that the harness can see the
-// configuration load; with only the user's settings and no instructions of
-// AsmAI's, to observe whether Claude Code loads the instruction files itself;
-// and with the command line AsmAI gives a worker, which must show the
-// instruction files and none of the configuration.
+// configuration load; and with the command line AsmAI gives a worker, which
+// must show the instruction files and none of the configuration.
 func (h *Harness) c36(ctx context.Context, f *Factory, r *Result) error {
 	path, err := h.ready(ctx, f)
 	if err != nil {
@@ -226,12 +224,6 @@ func (h *Harness) instructionFilesLoad(ctx context.Context, f *Factory, path str
 		return err
 	}
 	defer os.RemoveAll(g.root)
-	reset := func() {
-		os.Remove(g.hookMark())
-		os.Remove(g.mcpMark())
-	}
-	askWords := "Without using any tool, list the code words that appear in the repository's instruction files in your instructions. Reply with the words, or with none."
-
 	// The control.
 	control, err := h.Provider.Ask(ctx, f, path, AskSpec{Dir: g.workspace, Args: []string{"--setting-sources", "user,project", "--model", guardModel}, Prompt: "Reply with the single word ok."})
 	if err != nil {
@@ -241,19 +233,8 @@ func (h *Harness) instructionFilesLoad(ctx context.Context, f *Factory, path str
 		return errors.New("with the repository's settings loaded, the fixture's hook left no mark, so the harness could not see the repository's configuration load; C36 shows nothing until it can")
 	}
 	r.observe("control: with the project setting source loaded, the fixture repository's hook ran%s", mcpNote(control))
-	reset()
-
-	// What Claude Code does by itself.
-	native, err := h.Provider.Ask(ctx, f, path, AskSpec{Dir: g.workspace, Args: []string{"--setting-sources", "user", "--strict-mcp-config", "--model", guardModel, "--tools", ""}, Prompt: askWords})
-	if err != nil {
-		return fmt.Errorf("the run with only the user's settings: %w", err)
-	}
-	if strings.Contains(native.Said, g.agentsToken) || strings.Contains(native.Said, g.claudeToken) {
-		r.observe("with only the user's settings loaded and no instructions of AsmAI's, Claude Code loaded the repository's instruction files itself; AsmAI passes them on the command line regardless")
-	} else {
-		r.observe("with only the user's settings loaded, Claude Code did not load the repository's instruction files itself; AsmAI passes them on the command line")
-	}
-	reset()
+	os.Remove(g.hookMark())
+	os.Remove(g.mcpMark())
 
 	// The session as AsmAI starts it.
 	args, err := g.sessionArgs(f)

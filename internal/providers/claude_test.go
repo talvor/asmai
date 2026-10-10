@@ -63,9 +63,11 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	}
 	p := settings.Permissions
 	if !slices.Equal(p.Allow, []string{
-		"Bash(asmai:*)", "Bash(gh:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git fetch:*)",
-		"Bash(git ls-remote:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git rev-parse:*)",
-		"Bash(git merge:*)", "Bash(git var:*)", "Bash(git show:*)",
+		"Bash(asmai:*)", "Bash(gh --version)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
+		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
+		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
+		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
 	}) || p.DefaultMode != "default" || p.DisableBypassPermissionsMode != "disable" {
 		t.Errorf("the permissions are %+v, want asmai, git and gh allowed and the native prompts kept", p)
 	}
@@ -106,8 +108,10 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		// without a prompt; every other command is either guarded or raises
 		// the prompt.
 		if want := []string{
-			"asmai *", "gh *", "git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
-			"git status *", "git diff *", "git log *", "git rev-parse *", "git merge *", "git var *", "git show *",
+			"asmai *", "gh --version", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
+			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
+			"git status *", "git rev-parse *", "git merge *", "git var *",
 		}; !slices.Equal(sb.ExcludedCommands, want) {
 			t.Errorf("%s sandbox leaves %q alone, want %q", name, sb.ExcludedCommands, want)
 		}

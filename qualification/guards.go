@@ -338,7 +338,8 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		Dir:  g.workspace,
 		Args: args,
 		Prompt: "You are being qualified. Run each of these commands as its own Bash tool call, in order, exactly as written. " +
-			"If one is refused or fails, do not retry it, change it or work around it: go on to the next. When you have tried them all, reply with the single word done.\n" + list.String(),
+			"If one fails because the sandbox stopped it, retry it once, exactly as written, with dangerouslyDisableSandbox set to true. " +
+			"Otherwise, if one is refused or fails, do not retry it, change it or work around it: go on to the next. When you have tried them all, reply with the single word done.\n" + list.String(),
 	})
 	if err != nil {
 		return err
@@ -350,12 +351,30 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		}
 		return found[0], nil
 	}
+	// refused returns the attempt at command that raised a native prompt:
+	// Claude Code raises one when the session retries a command the sandbox
+	// stopped outside the sandbox.
+	refused := func(command string) (Command, error) {
+		found := turn.Tried(command)
+		if len(found) == 0 {
+			return Command{}, fmt.Errorf("the session never tried `%s`, so the harness cannot show how the guard treats it", command)
+		}
+		for _, c := range found {
+			if c.Denied {
+				return c, nil
+			}
+		}
+		return found[len(found)-1], nil
+	}
 
-	// What the guard allows runs without a native prompt.
+	// What the guard allows runs without a native prompt, and without a retry.
 	for _, command := range commands[:5] {
 		c, err := tried(command)
 		if err != nil {
 			return err
+		}
+		if n := len(turn.Tried(command)); n > 1 || c.Unsandboxed {
+			return fmt.Errorf("`%s` was tried %d times or outside the sandbox, but the guard allows it to run once inside it", c.Text, n)
 		}
 		if c.Denied {
 			return fmt.Errorf("`%s` raised a native permission prompt, but the guard allows it", c.Text)
@@ -379,8 +398,8 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	if err != nil {
 		return err
 	}
-	if c.Denied || c.Failed {
-		return fmt.Errorf("`gh pr list` was refused or failed: %s", strings.TrimSpace(c.Output))
+	if c.Denied || c.Failed || c.Unsandboxed || len(turn.Tried(commands[5])) > 1 {
+		return fmt.Errorf("`gh pr list` was refused, failed or retried: %s", strings.TrimSpace(c.Output))
 	}
 	var prs []struct {
 		Number int `json:"number"`
@@ -391,7 +410,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	r.observe("gh listed a pull request from a remote repository without a native prompt")
 
 	// What it does not allow does not go through.
-	outsideWrite, err := tried(commands[6])
+	outsideWrite, err := refused(commands[6])
 	if err != nil {
 		return err
 	}
@@ -402,7 +421,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		return errors.New("a write outside the workspace did not raise a native permission prompt")
 	}
 	r.observe("a write outside the workspace did not happen%s", outcomeNote(outsideWrite))
-	curl, err := tried(commands[7])
+	curl, err := refused(commands[7])
 	if err != nil {
 		return err
 	}
@@ -418,6 +437,9 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 }
 
 func outcomeNote(c Command) string {
+	if c.Denied && c.Unsandboxed {
+		return ": the sandbox stopped it, and its retry outside the sandbox raised a native permission prompt, which a non-interactive run cannot answer"
+	}
 	if c.Denied {
 		return ": it raised a native permission prompt, which a non-interactive run cannot answer"
 	}

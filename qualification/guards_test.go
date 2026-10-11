@@ -43,7 +43,9 @@ type guardSession struct {
 	// guardOff lets a write outside the workspace and an unlisted host through.
 	guardOff bool
 	// promptsForGit makes git raise a native prompt, which the guard should not.
-	promptsForGit      bool
+	promptsForGit bool
+	// retriesGit makes the session run git push again outside the sandbox.
+	retriesGit         bool
 	ghUnavailable      bool
 	noPromptForOutside bool
 	noPromptForCurl    bool
@@ -91,6 +93,9 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 			text = instead
 		}
 		c := Command{Text: text}
+		// retry is the session's retry of a command the sandbox stopped,
+		// outside the sandbox, as the prompt tells it.
+		var retry *Command
 		switch {
 		case strings.HasPrefix(text, "git ls-remote"):
 			c.Output = "0123456789abcdef0123456789abcdef01234567\trefs/heads/master\n"
@@ -105,10 +110,9 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 				cmd := exec.Command("sh", "-c", text)
 				cmd.Dir = spec.Dir
 				cmd.Run()
-			} else if g.noPromptForOutside {
-				c.Failed, c.Output = true, "Operation not permitted"
 			} else {
-				c.Denied, c.Failed, c.Output = true, true, "requires approval"
+				c.Failed, c.Output = true, "Read-only file system"
+				retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: "requires approval", Denied: !g.noPromptForOutside}
 			}
 		case strings.HasPrefix(text, "curl"):
 			if g.guardOff {
@@ -117,9 +121,7 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 				}
 			} else {
 				c.Failed, c.Output = true, "network is unavailable"
-				if !g.noPromptForCurl {
-					c.Denied = true
-				}
+				retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: "requires approval", Denied: !g.noPromptForCurl}
 			}
 		default:
 			if g.promptsForGit && strings.HasPrefix(text, "git push") {
@@ -130,8 +132,14 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 			cmd.Dir = spec.Dir
 			out, err := cmd.CombinedOutput()
 			c.Output, c.Failed = string(out), err != nil
+			if g.retriesGit && strings.HasPrefix(text, "git push") {
+				retry = &Command{Text: text, Unsandboxed: true}
+			}
 		}
 		turn.Commands = append(turn.Commands, c)
+		if retry != nil {
+			turn.Commands = append(turn.Commands, *retry)
+		}
 	}
 	turn.Reply = "done"
 	return turn, nil
@@ -202,7 +210,7 @@ func TestC37PassesWhenTheGuardKeepsWritesInTheWorkspaceAndLetsGitAndGhThrough(t 
 		t.Fatalf("C37 %s: %s", r.Outcome, r.Failure)
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"ran without a native prompt", "a write outside the workspace did not happen", "did not go through: it raised a native permission prompt", "was not loaded"} {
+	for _, want := range []string{"ran without a native prompt", "a write outside the workspace did not happen", "did not go through: the sandbox stopped it, and its retry outside the sandbox raised a native permission prompt", "was not loaded"} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C37's evidence\n%s\ndoes not say %q", evidence, want)
 		}
@@ -237,9 +245,16 @@ func TestC37FailsWhenGitRaisesANativePrompt(t *testing.T) {
 	}
 }
 
+func TestC37FailsWhenAnAllowedCommandIsRetriedOutsideTheSandbox(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{retriesGit: true}), "C37")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "allows it to run once inside it") {
+		t.Errorf("C37 %s: %q, want it to fail because git push was retried outside the sandbox", r.Outcome, r.Failure)
+	}
+}
+
 func TestC37FailsWhenGhCannotRun(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{ghUnavailable: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "gh pr list` was refused or failed") {
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "gh pr list` was refused, failed or retried") {
 		t.Errorf("C37 %s: %q, want it to fail because gh could not run", r.Outcome, r.Failure)
 	}
 }
@@ -278,7 +293,7 @@ func TestATurnReadsTheEventsClaudeCodePrints(t *testing.T) {
 	stream := `{"type":"system","subtype":"hook_started"}
 {"type":"system","subtype":"permission_denied","tool_name":"Bash","message":"needs approval"}
 {"type":"system","subtype":"init","mcp_servers":[{"name":"one","status":"connected"}],"permissionMode":"default"}
-{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"echo hi > a"}},{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"curl x"}},{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/x"}}]}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"echo hi > a"}},{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"curl x","dangerouslyDisableSandbox":true}},{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/x"}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"fine","is_error":false},{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"needs approval"}],"is_error":true}]}}
 {"type":"result","subtype":"success","result":"done","permission_denials":[{"tool_name":"Bash","tool_use_id":"t2","tool_input":{}}]}
 `
@@ -292,8 +307,8 @@ func TestATurnReadsTheEventsClaudeCodePrints(t *testing.T) {
 	if c := turn.Commands[0]; c.Text != "echo hi > a" || c.Output != "fine" || c.Failed || c.Denied {
 		t.Errorf("the first command is %+v", c)
 	}
-	if c := turn.Commands[1]; c.Text != "curl x" || c.Output != "needs approval" || !c.Failed || !c.Denied {
-		t.Errorf("the second command is %+v, want it failed and denied", c)
+	if c := turn.Commands[1]; c.Text != "curl x" || c.Output != "needs approval" || !c.Failed || !c.Denied || !c.Unsandboxed {
+		t.Errorf("the second command is %+v, want it failed and denied outside the sandbox", c)
 	}
 	if got := turn.Tried("curl x"); len(got) != 1 {
 		t.Errorf("Tried(curl x) = %+v", got)

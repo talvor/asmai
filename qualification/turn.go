@@ -42,6 +42,9 @@ type Command struct {
 	// Denied reports that the command needed a native permission prompt, which
 	// a non-interactive run cannot answer, so it was refused.
 	Denied bool
+	// Unsandboxed reports that the session asked to run the command outside
+	// the sandbox, which Claude Code allows only after a native prompt.
+	Unsandboxed bool
 }
 
 // Tried returns the commands whose text matches command.
@@ -148,7 +151,8 @@ func (t *Turn) add(line []byte, byID map[string]int) error {
 			Name  string `json:"name"`
 			Text  string `json:"text"`
 			Input struct {
-				Command string `json:"command"`
+				Command     string `json:"command"`
+				Unsandboxed bool   `json:"dangerouslyDisableSandbox"`
 			} `json:"input"`
 		}
 		if json.Unmarshal(message.Content, &blocks) == nil {
@@ -158,7 +162,7 @@ func (t *Turn) add(line []byte, byID map[string]int) error {
 				}
 				if b.Type == "tool_use" && b.Name == "Bash" {
 					byID[b.ID] = len(t.Commands)
-					t.Commands = append(t.Commands, Command{Text: b.Input.Command})
+					t.Commands = append(t.Commands, Command{Text: b.Input.Command, Unsandboxed: b.Input.Unsandboxed})
 				}
 			}
 		}

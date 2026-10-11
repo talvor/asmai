@@ -77,6 +77,8 @@ worker_model = "opus"
 type fakeClaude struct {
 	auth    AuthStatus
 	authErr error
+	// ask plays a non-interactive run.
+	ask func(AskSpec) (Turn, error)
 }
 
 func (fakeClaude) Name() string { return "Claude Code" }
@@ -112,6 +114,14 @@ func (fakeClaude) Version(context.Context, *Factory, string) (string, error) {
 
 func (c fakeClaude) AuthStatus(context.Context, *Factory, string) (AuthStatus, error) {
 	return c.auth, c.authErr
+}
+
+// Ask is a non-interactive run the fake plays as the test says.
+func (c fakeClaude) Ask(ctx context.Context, f *Factory, path string, spec AskSpec) (Turn, error) {
+	if c.ask == nil {
+		return Turn{}, errors.New("the fake plays no non-interactive run")
+	}
+	return c.ask(spec)
 }
 
 func pinnedVersion() string {

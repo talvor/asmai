@@ -18,12 +18,41 @@ var HookEvents = []string{"SessionStart", "UserPromptSubmit", "PermissionRequest
 // a native permission prompt.
 const AllowedAsmai = "Bash(asmai:*)"
 
+// The commands an agent runs without a native permission prompt, besides the
+// commands Claude Code's write guard allows: `asmai`, and selected git and gh operations with
+// network access. They run outside the guard, as they need the user's own
+// credentials, their network, the daemon's socket and the clone's git
+// directory, which is outside the workspace. Each is both a permission rule
+// and a pattern the guard leaves alone.
+var unguardedCommands = []string{"asmai"}
+
+var unguardedGHCommands = []string{
+	"pr create", "pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
+}
+
+var unguardedGitSubcommands = []string{
+	"add", "commit", "push", "fetch", "ls-remote", "status", "rev-parse", "merge", "var",
+}
+
+// WriteGuard is what an agent session's write guard needs to know of the
+// session. The guard is Claude Code's sandbox for the commands it runs:
+// writes stay in the session's working directory, and any command it does not
+// allow raises the native permission prompt in the agent's terminal.
+type WriteGuard struct {
+	// Writable are the directories besides the working directory and the
+	// system's temporary directory that a guarded command may write, such as
+	// a worker's own temporary directory.
+	Writable []string
+}
+
 // ClaudeCodeSettings returns the settings an agent session of Claude Code is
 // given with --settings: a hook for each of HookEvents that runs
-// hookCommand, and the permission rule that allows `asmai`. They keep Claude
-// Code's native permission prompts on, whatever the user's own settings say:
-// the default permission mode, with bypassing permissions disabled.
-func ClaudeCodeSettings(hookCommand string) string {
+// hookCommand, the permission rules for `asmai` and selected git and gh operations, and the
+// write guard guard describes, which is always on: Claude Code does not start
+// the session when it cannot guard it. They keep Claude Code's native
+// permission prompts on, whatever the user's own settings say: the default
+// permission mode, with bypassing permissions disabled.
+func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 	type hook struct {
 		Type    string `json:"type"`
 		Command string `json:"command"`
@@ -35,13 +64,36 @@ func ClaudeCodeSettings(hookCommand string) string {
 	for _, event := range HookEvents {
 		hooks[event] = []matcher{{Hooks: []hook{{Type: "command", Command: hookCommand}}}}
 	}
+	var allow, excluded []string
+	for _, command := range unguardedCommands {
+		allow = append(allow, "Bash("+command+":*)")
+		excluded = append(excluded, command+" *")
+	}
+	for _, command := range unguardedGHCommands {
+		allow = append(allow, "Bash(gh "+command+":*)")
+		excluded = append(excluded, "gh "+command+" *")
+	}
+	for _, subcommand := range unguardedGitSubcommands {
+		allow = append(allow, "Bash(git "+subcommand+":*)")
+		excluded = append(excluded, "git "+subcommand+" *")
+	}
+	sandbox := map[string]any{
+		"enabled":                  true,
+		"failIfUnavailable":        true,
+		"autoAllowBashIfSandboxed": true,
+		"excludedCommands":         excluded,
+	}
+	if len(guard.Writable) > 0 {
+		sandbox["filesystem"] = map[string]any{"allowWrite": guard.Writable}
+	}
 	settings := map[string]any{
 		"hooks": hooks,
 		"permissions": map[string]any{
-			"allow":                        []string{AllowedAsmai},
+			"allow":                        allow,
 			"defaultMode":                  "default",
 			"disableBypassPermissionsMode": "disable",
 		},
+		"sandbox": sandbox,
 	}
 	data, _ := json.Marshal(settings)
 	return string(data)
@@ -49,13 +101,17 @@ func ClaudeCodeSettings(hookCommand string) string {
 
 // ClaudeCodeArgs returns the command line an agent session of Claude Code is
 // started with: everything the session is given is on it, so nothing is
-// written to ~/.claude. The settings come from ClaudeCodeSettings, Claude
-// Code loads only the user's own settings files besides them, never a
-// project's, and the role's instructions are appended to its system prompt.
-func ClaudeCodeArgs(hookCommand, model, instructions string) []string {
+// written to ~/.claude. The settings come from ClaudeCodeSettings. Claude Code
+// loads only the user's own settings files besides them, never a
+// repository's, and no MCP server but those given on the command line, which
+// are none: so none of the repository's provider configuration loads. The
+// role's instructions are appended to its system prompt, with the
+// repository's instruction files when the session works in a repository.
+func ClaudeCodeArgs(hookCommand, model, instructions string, guard WriteGuard) []string {
 	return []string{
-		"--settings", ClaudeCodeSettings(hookCommand),
+		"--settings", ClaudeCodeSettings(hookCommand, guard),
 		"--setting-sources", "user",
+		"--strict-mcp-config",
 		"--model", model,
 		"--append-system-prompt", instructions,
 	}
@@ -65,17 +121,18 @@ func ClaudeCodeArgs(hookCommand, model, instructions string) []string {
 // started with to resume the native session sessionID: ClaudeCodeArgs, and
 // the session to continue. The settings, model and instructions are those of
 // the new session, as Claude Code takes them again on every start.
-func ClaudeCodeResumeArgs(hookCommand, model, instructions, sessionID string) []string {
-	return append(ClaudeCodeArgs(hookCommand, model, instructions), "--resume", sessionID)
+func ClaudeCodeResumeArgs(hookCommand, model, instructions string, guard WriteGuard, sessionID string) []string {
+	return append(ClaudeCodeArgs(hookCommand, model, instructions, guard), "--resume", sessionID)
 }
 
 // HookCommand is the shell command a hook runs: the asmai executable at path
 // with `hook`.
 func HookCommand(path string) string {
-	return shellQuote(path) + " hook"
+	return ShellQuote(path) + " hook"
 }
 
-func shellQuote(s string) string {
+// ShellQuote quotes s as one word of a POSIX shell command.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 

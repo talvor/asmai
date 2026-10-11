@@ -35,6 +35,9 @@ type Paths struct {
 	// Executable is the daemon's copy of the asmai executable, at one fixed
 	// path: every agent session runs it, and its hooks name it.
 	Executable string
+	// GitHooks holds the git hooks every worker's git runs, which add the
+	// commit trailers and then run the repository's own hooks.
+	GitHooks string
 	// Agents holds each agent's working directory, by its address.
 	Agents string
 	// Repositories holds AsmAI's own clone of each registered repository,
@@ -83,6 +86,7 @@ func At(dir string) Paths {
 		Providers:    filepath.Join(dir, "providers"),
 		Bin:          filepath.Join(dir, "bin"),
 		Executable:   filepath.Join(dir, "bin", "asmai"),
+		GitHooks:     filepath.Join(dir, "githooks"),
 		Agents:       filepath.Join(dir, "agents"),
 		Repositories: filepath.Join(dir, "repositories"),
 		Workspaces:   filepath.Join(dir, "workspaces"),

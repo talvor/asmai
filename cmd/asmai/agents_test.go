@@ -318,11 +318,16 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		t.Fatal(err)
 	}
 	flags := map[string]string{}
-	for i := 0; i+1 < len(args); i += 2 {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--strict-mcp-config" {
+			flags[args[i]] = "true"
+			continue
+		}
 		flags[args[i]] = args[i+1]
+		i++
 	}
-	if len(args) != 8 || flags["--setting-sources"] != "user" || flags["--model"] != "opus" || !strings.Contains(flags["--append-system-prompt"], "You are Coordination's leader") {
-		t.Errorf("the session was started with %q, want --settings, --setting-sources user, --model opus and Coordination's instructions", args)
+	if len(args) != 9 || flags["--setting-sources"] != "user" || flags["--strict-mcp-config"] != "true" || flags["--model"] != "opus" || !strings.Contains(flags["--append-system-prompt"], "You are Coordination's leader") {
+		t.Errorf("the session was started with %q, want --settings, --setting-sources user, --strict-mcp-config, --model opus and Coordination's instructions", args)
 	}
 	for _, arg := range args {
 		if strings.Contains(arg, "dangerously") || strings.Contains(arg, "--permission-mode") || strings.Contains(arg, "bypassPermissions\"") {
@@ -339,6 +344,10 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 			Allow       []string `json:"allow"`
 			DefaultMode string   `json:"defaultMode"`
 		} `json:"permissions"`
+		Sandbox struct {
+			Enabled           bool `json:"enabled"`
+			FailIfUnavailable bool `json:"failIfUnavailable"`
+		} `json:"sandbox"`
 	}
 	if err := json.Unmarshal([]byte(flags["--settings"]), &settings); err != nil {
 		t.Fatalf("--settings is %q: %v", flags["--settings"], err)
@@ -349,8 +358,17 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 			t.Errorf("the %s hook is %+v, want the daemon's copy of asmai at %s", event, h, fixedPath)
 		}
 	}
-	if !slices.Equal(settings.Permissions.Allow, []string{"Bash(asmai:*)"}) || settings.Permissions.DefaultMode != "default" {
-		t.Errorf("the session's permissions are %+v, want asmai allowed and the default mode", settings.Permissions)
+	if !slices.Equal(settings.Permissions.Allow, []string{
+		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
+		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
+		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
+		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
+	}) || settings.Permissions.DefaultMode != "default" {
+		t.Errorf("the session's permissions are %+v, want asmai, git and gh allowed and the default mode", settings.Permissions)
+	}
+	if !settings.Sandbox.Enabled || !settings.Sandbox.FailIfUnavailable {
+		t.Errorf("the session's sandbox is %+v, want the write guard on", settings.Sandbox)
 	}
 
 	// AsmAI wrote nothing of Claude Code's in the home.

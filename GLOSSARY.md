@@ -102,6 +102,12 @@ _Avoid_: Worker branch
 The directory set aside for one assignment, where its worker works: the factory's own checkout of the job's repository, or an empty scratch directory for a job without one. A writing assignment's workspace has its own branch; a read-only one is fixed at the commit it examines. Writes outside it are effects.
 _Avoid_: Worktree, sandbox, checkout (when meaning an assignment's working copy)
 
+**Write guard**:
+Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in the workspace, `asmai`, git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt. It guards against mistakes; it is not a security boundary.
+
+**Commit trailers**:
+The `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` lines on every commit a worker makes, naming the job, the worker and the dispatch it worked on. The commit itself is the user's: their git identity and credentials.
+
 **Validation**:
 Quality's independent check of a job branch at one exact commit, re-running the repository's checks and reviewing the change against the repository instructions and the job's mandate. Validation never changes the work.
 _Avoid_: QA, testing (when meaning Quality's check)

@@ -22,8 +22,9 @@ const ghTimeout = 2 * time.Minute
 // follow: the daemon looks the pull request req.Ref names up with gh, in the
 // job's clone, and records it as GitHub has it, with its number and whether
 // it is a draft or opened with "[not ready]" at the start of its title, in
-// the same step as the effect. It must be from the job branch. When it cannot
-// be looked up, nothing is recorded. Anyone else's is an effect like any
+// the same step as the effect. It must be open, in the job's repository, the
+// clone's origin, and from the job branch. When it cannot be looked up,
+// nothing is recorded. Anyone else's is an effect like any
 // other.
 func (d *daemon) pullRequestEffect(req Request) (store.Effect, *store.PullRequest, error) {
 	owner := roles.LeaderOf(roles.Engineering)
@@ -71,6 +72,16 @@ func (d *daemon) pullRequestEffect(req Request) (store.Effect, *store.PullReques
 	found, err := github.ViewPullRequest(ctx, repository.Clone, req.Ref)
 	if err != nil {
 		return store.Effect{}, nil, refuse("nothing is recorded: the daemon could not look up the pull request %s with gh: %v. Record it again with `asmai effect pull-request <the URL gh printed>`", req.Ref, err)
+	}
+	origin, err := github.RepositoryURL(ctx, repository.Clone)
+	if err != nil {
+		return store.Effect{}, nil, refuse("nothing is recorded: the daemon could not look up job %d's repository with gh: %v", j.Number, err)
+	}
+	if !found.In(origin) {
+		return store.Effect{}, nil, refuse("nothing is recorded: pull request %s is not from a branch of job %d's repository %s. Open the pull request in %s from the job branch and record that one", found.URL, j.Number, origin, origin)
+	}
+	if found.State != "OPEN" {
+		return store.Effect{}, nil, refuse("nothing is recorded: pull request #%d is %s, not open. Open a pull request from the job branch and record that one", found.Number, found.State)
 	}
 	if found.HeadBranch != branch.Name {
 		return store.Effect{}, nil, refuse("nothing is recorded: pull request #%d is from %s, not the job branch %s. Open the pull request from the job branch and record that one", found.Number, found.HeadBranch, branch.Name)

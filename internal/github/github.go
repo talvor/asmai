@@ -30,6 +30,9 @@ type PullRequest struct {
 	// that branch's commit on GitHub.
 	HeadBranch string `json:"headRefName"`
 	HeadCommit string `json:"headRefOid"`
+	// CrossRepository is whether the head branch is in another repository
+	// than the one the pull request is in, a fork's.
+	CrossRepository bool `json:"isCrossRepository"`
 	// State is GitHub's: OPEN, CLOSED or MERGED.
 	State string `json:"state"`
 }
@@ -47,7 +50,7 @@ func ViewPullRequest(ctx context.Context, dir, ref string) (PullRequest, error) 
 	if ref == "" || strings.HasPrefix(ref, "-") {
 		return PullRequest{}, fmt.Errorf("%q does not name a pull request: name it by the URL gh printed", ref)
 	}
-	out, err := gh(ctx, dir, "pr", "view", ref, "--json", "number,url,title,isDraft,headRefName,headRefOid,state")
+	out, err := gh(ctx, dir, "pr", "view", ref, "--json", "number,url,title,isDraft,headRefName,headRefOid,isCrossRepository,state")
 	if err != nil {
 		return PullRequest{}, err
 	}
@@ -59,6 +62,31 @@ func ViewPullRequest(ctx context.Context, dir, ref string) (PullRequest, error) 
 		return PullRequest{}, fmt.Errorf("gh pr view %s printed no pull request number or head branch", ref)
 	}
 	return p, nil
+}
+
+// In reports whether the pull request is in the repository whose URL on
+// GitHub is repository, from a branch of that repository.
+func (p PullRequest) In(repository string) bool {
+	return !p.CrossRepository && strings.HasPrefix(p.URL, strings.TrimSuffix(repository, "/")+"/pull/")
+}
+
+// RepositoryURL returns the URL on GitHub of the repository `gh repo view`
+// run in dir shows, dir's origin.
+func RepositoryURL(ctx context.Context, dir string) (string, error) {
+	out, err := gh(ctx, dir, "repo", "view", "--json", "url")
+	if err != nil {
+		return "", err
+	}
+	var r struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(out, &r); err != nil {
+		return "", fmt.Errorf("reading what gh repo view printed: %w", err)
+	}
+	if r.URL == "" {
+		return "", errors.New("gh repo view printed no repository URL")
+	}
+	return r.URL, nil
 }
 
 // gh runs gh in dir, never prompting, and returns what it printed on stdout.

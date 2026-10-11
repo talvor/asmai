@@ -49,10 +49,14 @@ func (s *Store) DispatchJob(dispatch int64) (int64, error) {
 
 // PullRequestRecorded records the effect of kind EffectPullRequest and ref
 // that generation of p.Leader's session made in p.Dispatch, and p, the pull
-// request it names as GitHub had it, from p.Job's branch. It journals both.
+// request it names as GitHub had it, open and from p.Job's branch. It
+// journals both.
 func (s *Store) PullRequestRecorded(p PullRequest, generation int, ref string, at time.Time) (PullRequest, Effect, error) {
 	if p.Number <= 0 {
 		return PullRequest{}, Effect{}, errors.New("a pull request has a number")
+	}
+	if p.State != "OPEN" {
+		return PullRequest{}, Effect{}, fmt.Errorf("pull request #%d is %s, not open", p.Number, p.State)
 	}
 	tx, err := s.db.Begin()
 	if err != nil {

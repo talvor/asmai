@@ -16,7 +16,8 @@ import (
 // opens a pull request with `gh pr create`, numbering them from 7, and
 // refuses a draft while the test's directory holds refuse-draft, as GitHub
 // does for a repository without draft pull requests. `gh pr view` shows one,
-// with its head commit read from origin. It records every call, with where it
+// with its head commit read from origin, and `gh repo view` origin, as
+// talvor/asmai-fixture. It records every call, with where it
 // ran, and does nothing else.
 const fakeGH = `#!/bin/sh
 state="$ASMAI_TEST_DIR/gh"
@@ -49,6 +50,9 @@ case "$1 $2" in
 	;;
 "pr view")
 	cat "$state/pr-${3##*/}.json" 2>/dev/null || { echo "no pull requests found for $3" >&2; exit 1; }
+	;;
+"repo view")
+	echo '{"url":"https://github.com/talvor/asmai-fixture"}'
 	;;
 *)
 	echo "the fake gh does not do: $*" >&2
@@ -115,6 +119,14 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 			// A pull request from another branch is not the job's.
 			fakeRun(`gh pr create --base main --head asmai/job-1/1 --title 'Not the job branch' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull/8"),
 			fakeRun(`asmai effect pull-request https://github.com/talvor/asmai-fixture/pull/8`, 1, "nothing is recorded: pull request #8 is from asmai/job-1/1, not the job branch "+jobBranch),
+			// Nor is one in another repository, or from a fork, or one
+			// that is not open.
+			fakeRun(`printf '{"number":9,"url":"https://github.com/other/asmai-fixture/pull/9","isDraft":true,"headRefName":"`+jobBranch+`","headRefOid":"abc","state":"OPEN"}' > "$ASMAI_TEST_DIR/gh/pr-9.json"`, 0, ""),
+			fakeRun(`asmai effect pull-request https://github.com/other/asmai-fixture/pull/9`, 1, "nothing is recorded: pull request https://github.com/other/asmai-fixture/pull/9 is not from a branch of job 1's repository https://github.com/talvor/asmai-fixture"),
+			fakeRun(`printf '{"number":10,"url":"https://github.com/talvor/asmai-fixture/pull/10","isDraft":true,"headRefName":"`+jobBranch+`","headRefOid":"abc","isCrossRepository":true,"state":"OPEN"}' > "$ASMAI_TEST_DIR/gh/pr-10.json"`, 0, ""),
+			fakeRun(`asmai effect pull-request https://github.com/talvor/asmai-fixture/pull/10`, 1, "nothing is recorded: pull request https://github.com/talvor/asmai-fixture/pull/10 is not from a branch of job 1's repository"),
+			fakeRun(`printf '{"number":11,"url":"https://github.com/talvor/asmai-fixture/pull/11","isDraft":true,"headRefName":"`+jobBranch+`","headRefOid":"abc","state":"CLOSED"}' > "$ASMAI_TEST_DIR/gh/pr-11.json"`, 0, ""),
+			fakeRun(`asmai effect pull-request https://github.com/talvor/asmai-fixture/pull/11`, 1, "nothing is recorded: pull request #11 is CLOSED, not open"),
 			touchFile("leader-done"),
 		},
 	)
@@ -250,10 +262,10 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 		switch {
 		case strings.HasPrefix(args, "pr create "):
 			creates = append(creates, args)
-		case strings.HasPrefix(args, "pr view "):
+		case strings.HasPrefix(args, "pr view "), args == "repo view --json url":
 			views = append(views, args)
 			if dir != clone {
-				t.Errorf("the daemon ran gh pr view in %s, not the job's clone %s", dir, clone)
+				t.Errorf("the daemon ran gh %s in %s, not the job's clone %s", args, dir, clone)
 			}
 		default:
 			t.Errorf("gh ran %q", args)
@@ -269,7 +281,7 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 	if refuseDraft && (strings.Contains(creates[1], "--draft") || !strings.Contains(creates[1], "--title [not ready] Add a greeting")) {
 		t.Errorf("after the refusal, gh pr create ran as %q", creates[1])
 	}
-	if len(views) != 3 || views[1] != "pr view "+url+" --json number,url,title,isDraft,headRefName,headRefOid,state" {
+	if len(views) != 11 || views[1] != "pr view "+url+" --json number,url,title,isDraft,headRefName,headRefOid,isCrossRepository,state" || views[2] != "repo view --json url" {
 		t.Errorf("gh pr view ran as %q", views)
 	}
 	if got, err := os.ReadFile(filepath.Join(testDir, "gh", "body-7.md")); err != nil || string(got) != body {

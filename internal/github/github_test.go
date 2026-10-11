@@ -39,8 +39,45 @@ echo '{"number":7,"url":"https://github.com/o/r/pull/7","title":"[not ready] Add
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(data)); !strings.HasSuffix(got, ": pr view https://github.com/o/r/pull/7 --json number,url,title,isDraft,headRefName,headRefOid,state") || !strings.Contains(got, filepath.Base(dir)) {
+	if got := strings.TrimSpace(string(data)); !strings.HasSuffix(got, ": pr view https://github.com/o/r/pull/7 --json number,url,title,isDraft,headRefName,headRefOid,isCrossRepository,state") || !strings.Contains(got, filepath.Base(dir)) {
 		t.Errorf("gh ran as %q", got)
+	}
+}
+
+func TestAPullRequestIsInARepositoryOnlyFromOneOfItsBranches(t *testing.T) {
+	const repository = "https://github.com/o/r"
+	for name, tt := range map[string]struct {
+		p    PullRequest
+		want bool
+	}{
+		"its own":            {PullRequest{URL: repository + "/pull/7"}, true},
+		"another repository": {PullRequest{URL: "https://github.com/o/r2/pull/7"}, false},
+		"another owner":      {PullRequest{URL: "https://github.com/x/r/pull/7"}, false},
+		"from a fork":        {PullRequest{URL: repository + "/pull/7", CrossRepository: true}, false},
+	} {
+		if got := tt.p.In(repository); got != tt.want {
+			t.Errorf("%s: In(%s) = %v, want %v", name, repository, got, tt.want)
+		}
+	}
+}
+
+func TestRepositoryURLIsTheOneGHShowsInTheDirectory(t *testing.T) {
+	calls := fakeGH(t, `echo '{"url":"https://github.com/o/r"}'`)
+	dir := t.TempDir()
+	url, err := RepositoryURL(context.Background(), dir)
+	if err != nil || url != "https://github.com/o/r" {
+		t.Fatalf("RepositoryURL = %q, %v", url, err)
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); !strings.HasSuffix(got, ": repo view --json url") || !strings.Contains(got, filepath.Base(dir)) {
+		t.Errorf("gh ran as %q", got)
+	}
+	fakeGH(t, `echo '{}'`)
+	if _, err := RepositoryURL(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "no repository URL") {
+		t.Errorf("RepositoryURL without a URL = %v", err)
 	}
 }
 

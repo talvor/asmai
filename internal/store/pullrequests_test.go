@@ -18,10 +18,11 @@ func TestTheDeliveryOwnersPullRequestIsRecordedWithItsEffectAndItsDraftState(t *
 	draft := PullRequest{Job: job, Number: 7, URL: url, Title: "Add a greeting", Draft: true, Branch: branch, Head: otherCommit, State: "OPEN", Leader: owner, Dispatch: d.ID}
 
 	for name, p := range map[string]PullRequest{
-		"from the job branch":          {Job: job, Number: 7, URL: url, Branch: "asmai/job-1/1", Leader: owner, Dispatch: d.ID},
-		"of the dispatch's job":        {Job: job + 1, Number: 7, URL: url, Branch: branch, Leader: owner, Dispatch: d.ID},
-		"of the leader's dispatch":     {Job: job, Number: 7, URL: url, Branch: branch, Leader: "leader@quality", Dispatch: d.ID},
-		"with a pull request's number": {Job: job, URL: url, Branch: branch, Leader: owner, Dispatch: d.ID},
+		"from the job branch":          {Job: job, Number: 7, URL: url, Branch: "asmai/job-1/1", State: "OPEN", Leader: owner, Dispatch: d.ID},
+		"of the dispatch's job":        {Job: job + 1, Number: 7, URL: url, Branch: branch, State: "OPEN", Leader: owner, Dispatch: d.ID},
+		"of the leader's dispatch":     {Job: job, Number: 7, URL: url, Branch: branch, State: "OPEN", Leader: "leader@quality", Dispatch: d.ID},
+		"with a pull request's number": {Job: job, URL: url, Branch: branch, State: "OPEN", Leader: owner, Dispatch: d.ID},
+		"open":                         {Job: job, Number: 7, URL: url, Branch: branch, State: "MERGED", Leader: owner, Dispatch: d.ID},
 	} {
 		if _, _, err := s.PullRequestRecorded(p, 1, url, assignmentsAt); err == nil {
 			t.Errorf("a pull request not %s was recorded", name)

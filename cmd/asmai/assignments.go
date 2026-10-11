@@ -101,6 +101,12 @@ func effect(o *output, paths statedir.Paths, kind, ref string) int {
 	}
 	e := resp.Effect
 	fmt.Fprintf(o.stdout, "effect %d recorded: %s %s (job %d, dispatch %d)\n", e.ID, e.Kind, e.Ref, e.Job, e.Dispatch)
+	if p := resp.PullRequest; p != nil {
+		fmt.Fprintf(o.stdout, "pull request #%d of job %d recorded, as GitHub has it: %s, from %s at %s; the daemon follows it\n", p.Number, p.Job, daemon.PullRequestState(*p), p.Branch, p.Head)
+		if !p.Draft && !p.NotReady {
+			fmt.Fprintln(o.stdout, `note: a pull request opens as a draft, or with "[not ready]" at the start of its title when GitHub refuses a draft`)
+		}
+	}
 	return 0
 }
 

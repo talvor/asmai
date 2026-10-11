@@ -75,6 +75,10 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					if err == nil {
 						pushes, err = d.store.Pushes(j.Number)
 					}
+					var prs []store.PullRequest
+					if err == nil {
+						prs, err = d.store.PullRequests(j.Number)
+					}
 					var branch *store.JobBranch
 					if b, e := d.store.JobBranch(j.Number); e == nil {
 						branch = &b
@@ -82,7 +86,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 						err = e
 					}
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes)
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs)
 					}
 				}
 			}
@@ -113,7 +117,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
@@ -179,9 +183,29 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		}
 		fmt.Fprintf(&b, "- %d refused at %s: outside change, %s has commits AsmAI did not make (%s), %s\n", p.ID, p.Commit, p.Found, strings.Join(p.Outside, ", "), merged)
 	}
+	fmt.Fprintln(&b, "Pull request (the latest the delivery owner recorded, which the daemon follows):")
+	if len(prs) == 0 {
+		fmt.Fprintln(&b, "- none")
+	} else {
+		p := prs[len(prs)-1]
+		fmt.Fprintf(&b, "- #%d %s, %s, from %s at %s, %s on GitHub, effect %d\n", p.Number, p.URL, PullRequestState(p), p.Branch, p.Head, p.State, p.Effect)
+	}
 	fmt.Fprintln(&b, "Pending decisions: none\nGrants: none\nRecent journal:")
 	for _, entry := range entries {
 		fmt.Fprintf(&b, "- %d %s\n", entry.ID, entry.Kind)
 	}
 	return b.String()
+}
+
+// PullRequestState says whether p is a draft, or opened with "[not ready]"
+// at the start of its title, as GitHub had it when it was recorded.
+func PullRequestState(p store.PullRequest) string {
+	switch {
+	case p.Draft:
+		return "a draft"
+	case p.NotReady:
+		return `not a draft, with "[not ready]" at the start of its title`
+	default:
+		return `neither a draft nor marked "[not ready]"`
+	}
 }

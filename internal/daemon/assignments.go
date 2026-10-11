@@ -37,8 +37,15 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 		}
 	case CommandEffect:
 		var e store.Effect
-		if e, err = d.effect(req); err == nil {
-			resp.Effect = &e
+		var pr *store.PullRequest
+		if req.Kind == store.EffectPullRequest {
+			conn.SetDeadline(time.Now().Add(ghTimeout + time.Minute))
+			e, pr, err = d.pullRequestEffect(req)
+		} else {
+			e, err = d.effect(req)
+		}
+		if err == nil {
+			resp.Effect, resp.PullRequest = &e, pr
 		}
 	case CommandAccept, CommandReject, CommandCancel:
 		conn.SetDeadline(time.Now().Add(gitTimeout + stopWait + time.Minute))

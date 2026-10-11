@@ -184,6 +184,9 @@ type Response struct {
 	Decision     *store.Decision    `json:"decision,omitempty"`
 	JobBranch    *store.JobBranch   `json:"job_branch,omitempty"`
 	Push         *store.Push        `json:"push,omitempty"`
+	// PullRequest is the pull request the delivery owner's effect named,
+	// as the daemon recorded it.
+	PullRequest *store.PullRequest `json:"pull_request,omitempty"`
 	// Trailers are the trailers a worker's commit carries, each as
 	// "Key: value".
 	Trailers []string `json:"trailers,omitempty"`

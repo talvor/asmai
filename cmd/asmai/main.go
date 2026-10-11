@@ -68,7 +68,9 @@ commands:
 	asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text>
 	                            Quality's leader gives a validation to a worker, in a clean workspace fixed at the
 	                            job branch's exact head, with the job's mandate and criteria
-	asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch
+	asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch;
+	                            the delivery owner's "asmai effect pull-request <url>" also records the pull
+	                            request as gh shows it, its number and whether it is a draft or "[not ready]"
 	asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>]
 	                            a worker submits its assignment's result; repeat a flag for each value
 	asmai result --evidence <text> --check '<command> -> <outcome>'|none --gap <text>|none --finding '<blocking|advisory|needs-you>: <text>'|none [--resolved <id>] [--unresolved <id>]

@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has eight cases from M1:
+So far it has nine cases from M1:
 
 | Case | What it qualifies |
 |---|---|
@@ -14,6 +14,7 @@ So far it has eight cases from M1:
 | C36 | Instruction files load without the repository's provider configuration |
 | C37 | Provider write guards are switched on |
 | C41 | The daemon's push, and its refusal when origin holds commits AsmAI did not make |
+| C42 | A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft |
 
 Later milestones add the other cases to the same harness.
 
@@ -36,7 +37,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
 5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 runs `git ls-remote` against `https://github.com/git/git` and `gh pr list` against `cli/cli`, so the host needs outbound network access and `gh` on the `PATH`.
-6. For C41, have `gh` signed in as an account that can push to [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture), with git's operations protocol `https`, so that git pushes over HTTPS with that sign-in (`gh auth status` says so).
+6. For C41 and C42, have `gh` signed in as an account that can push to [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) and open and close its pull requests, with git's operations protocol `https`, so that git pushes over HTTPS with that sign-in (`gh auth status` says so).
 
 ## Running it
 
@@ -112,6 +113,15 @@ C41 pushes to [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) on
 
 It runs no provider and starts no agent. Whether it passes or fails, it deletes the scratch branch from GitHub afterwards, and removes its clones.
 
+### C42: a draft pull request, or a "[not ready]" one
+
+C42 opens pull requests on [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) with the harness user's own `gh`, as Engineering's leader does, and looks each up with the code the daemon runs for the leader's `asmai effect pull-request <url>` (`github.ViewPullRequest`), so the lookup qualified is the lookup run. It pushes a scratch job branch `asmai/qualification-c42-<random>` with the daemon's push, and requires:
+
+- `gh pr create --draft` from the branch to open a pull request, which the lookup finds a draft from the branch at its pushed commit, and not marked "[not ready]";
+- with GitHub's refusal of a draft simulated at the gh boundary, `gh pr create --draft` to be refused, and the pull request then opened without `--draft`, with "[not ready]" at the start of its title, to be found not a draft and not ready.
+
+The fixture is public and accepts drafts, so no repository available to the harness refuses one: the refusal is simulated by a `gh` that prints GitHub's refusal for `gh pr create --draft` and otherwise runs the real `gh` ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rule 10). The report says so. It runs no provider and starts no agent, posts no review and merges nothing. Whether it passes or fails, it closes the pull requests it opened and deletes the scratch branch from GitHub afterwards, and removes its clone.
+
 ### C7 and C11: an acknowledged handoff nudge
 
 The harness keeps a small fixture repository in the disposable C7/C11/C19 factory state and, on `asmai-vm`, answers Claude Code's first-use trust prompt in Engineering's qualification directory before the daemon starts that leader. It then opens the conversation and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
@@ -155,8 +165,10 @@ C37 passed  Provider write guards are switched on
     - ...
 C41 passed  The daemon's push, and its refusal when origin holds commits AsmAI did not make
     - ...
+C42 passed  A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft
+    - ...
 
-8 of 8 cases passed.
+9 of 9 cases passed.
 ```
 
 Each case is `passed` or `failed`. The report names the platform, the pinned version from the commit's pins file, the version the installed copy reports, and the commit. It holds no credential and no environment variable's value.

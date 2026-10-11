@@ -200,3 +200,24 @@ func TestEngineeringsInstructionsDecideReadinessHandValidationToQualityAndAssign
 		}
 	}
 }
+
+func TestEngineeringsInstructionsAskForThePushOnceQualityPassesTheHeadAndAssignTheMergeWhenItIsRefused(t *testing.T) {
+	leader, err := LeaderInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Ask for the push",
+		"Quality's report passes the head",
+		"asmai push <job>",
+		"Only the daemon pushes the job branch",
+		"never how the job branch is pushed",
+		"commits AsmAI did not make",
+		"Assign a worker to merge `origin/<job branch>`",
+		"ask for the push again",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Engineering's leader's instructions lack %q", want)
+		}
+	}
+}

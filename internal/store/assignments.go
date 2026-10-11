@@ -59,7 +59,8 @@ const (
 )
 
 // Daemon is the sender of a message the daemon itself makes, such as a
-// resumption.
+// resumption, and the agent of an effect it makes, such as a job branch's
+// push.
 const Daemon = "daemon"
 
 // endedAssignment is the SQL for an assignment that no longer holds its
@@ -550,15 +551,21 @@ func (s *Store) EffectRecorded(agent string, generation int, dispatch int64, kin
 			return "", nil, err
 		}
 		e = Effect{Job: job, Assignment: assignment, Dispatch: dispatch, Agent: agent, Generation: generation, Kind: kind, Ref: ref, At: at.UTC()}
-		result, err := tx.Exec(`INSERT INTO effects (job, assignment, dispatch, agent, generation, kind, ref, at) VALUES (?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?)`,
-			e.Job, e.Assignment, e.Dispatch, e.Agent, e.Generation, e.Kind, e.Ref, timestamp(at))
-		if err != nil {
-			return "", nil, err
-		}
-		e.ID, err = result.LastInsertId()
+		err = insertEffect(tx, &e)
 		return KindEffectRecorded, e, err
 	})
 	return e, err
+}
+
+// insertEffect inserts e in tx, setting its ID.
+func insertEffect(tx *sql.Tx, e *Effect) error {
+	result, err := tx.Exec(`INSERT INTO effects (job, assignment, dispatch, agent, generation, kind, ref, at) VALUES (?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?)`,
+		e.Job, e.Assignment, e.Dispatch, e.Agent, e.Generation, e.Kind, e.Ref, timestamp(e.At))
+	if err != nil {
+		return err
+	}
+	e.ID, err = result.LastInsertId()
+	return err
 }
 
 func dispatchEffects(q interface {

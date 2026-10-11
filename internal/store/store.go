@@ -177,6 +177,15 @@ CREATE TABLE native_sessions (
  PRIMARY KEY (agent, generation)
 );
 `,
+	`
+CREATE TABLE pushes (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ branch TEXT NOT NULL, commit_id TEXT NOT NULL, result TEXT NOT NULL,
+ outside TEXT NOT NULL DEFAULT '[]', found TEXT NOT NULL DEFAULT '',
+ leader TEXT NOT NULL, dispatch INTEGER NOT NULL REFERENCES dispatches(id),
+ effect INTEGER REFERENCES effects(id), merged_in TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -255,6 +264,13 @@ const (
 	// owning leader to reconcile.
 	KindAssignmentResumed             = "assignment.resumed"
 	KindAssignmentNeedsReconciliation = "assignment.needs_reconciliation"
+	// KindJobBranchPushed records the daemon pushing a job branch for its
+	// delivery owner, with the effect it records and the outside changes the
+	// pushed commit took in. KindOutsideChange records a push refused because
+	// origin's job branch has commits AsmAI did not make: the commits and
+	// where they were found.
+	KindJobBranchPushed = "job.branch.pushed"
+	KindOutsideChange   = "outside_change.found"
 )
 
 // The states an agent can be in.

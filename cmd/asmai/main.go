@@ -85,6 +85,10 @@ commands:
 	asmai cancel --assignment <id> --reason <text>
 	                            a leader cancels an assignment it owns; its worker pushes its assignment
 	                            branch, if it has one, and stops
+	asmai push <number>         the delivery owner, Engineering's leader for a code job, asks the daemon to
+	                            push the job branch: it fetches the branch from origin, refuses and records an
+	                            outside change if origin has commits AsmAI did not make, and otherwise pushes
+	                            it with a plain push, never forced, recorded as the daemon's effect
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -124,6 +128,7 @@ var positional = map[string][]string{
 	"repo remove": {"name the repository, as `asmai repo list` shows it"},
 	"job show":    {"name the job number, as `asmai jobs` shows it"},
 	"brief":       {"name the job number, as `asmai jobs` shows it"},
+	"push":        {"name the job number, as `asmai jobs` shows it"},
 	"effect":      {"name the kind of effect, one word such as commit or push", "name what the effect is of, such as the commit or the branch pushed"},
 }
 
@@ -236,7 +241,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "accept", "reject", "cancel":
 		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
-	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
+	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -265,7 +270,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push"}, name) {
 		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -329,6 +334,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return blocked(o, paths, blockedReason, blockedNeeds)
 	case "accept", "reject", "cancel":
 		return decide(o, paths, name, decidedAssignment, reasons)
+	case "push":
+		return push(o, paths, arg)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":

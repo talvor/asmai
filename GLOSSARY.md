@@ -116,6 +116,13 @@ _Avoid_: QA, testing (when meaning Quality's check)
 A problem that validation reports. A blocking finding must be fixed before delivery. An advisory finding is reported, and no fix is required. A needs-you finding challenges the user's stated intent or a recorded decision, so it goes to the user.
 _Avoid_: Issue, comment (when meaning a validation result)
 
+**Delivery owner**:
+The leader that delivers a job: for a code job, Engineering's leader. Only it asks the daemon to push the job branch, and only the daemon pushes it.
+
+**Outside change**:
+Commits on origin's job branch that AsmAI did not make, found when the daemon fetches the branch before a push. The push is refused, and a worker merges them in; they are never force-pushed over.
+_Avoid_: Foreign commits, conflict (when meaning commits someone else pushed)
+
 **Tested pull request**:
 A job's pull request whose exact head commit has passed validation and the repository's CI, with its base taken in and its evidence and gaps stated. It is ready for the user to review and merge, and the factory never merges it.
 _Avoid_: Ready PR, finished PR

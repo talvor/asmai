@@ -208,3 +208,47 @@ func MoveBranch(ctx context.Context, clone, name, to, from string) error {
 	}
 	return nil
 }
+
+// PushBranch pushes the clone's branch name to the same branch of its
+// origin, unless origin's branch has commits AsmAI did not make, since only
+// the daemon pushes a job branch. It fetches origin first, so that origin's
+// branch is read as it is now. With commits on origin the clone's branch does
+// not have, it pushes nothing and returns them, newest first, for a worker to
+// merge in. Otherwise it pushes with a plain push, never forced, which origin
+// refuses unless it is a fast-forward, so that no commit on origin is ever
+// discarded.
+func PushBranch(ctx context.Context, clone, name string) (outside []string, err error) {
+	if err := Fetch(ctx, clone); err != nil {
+		return nil, err
+	}
+	if outside, err = outsideCommits(ctx, clone, name); err != nil || len(outside) > 0 {
+		return outside, err
+	}
+	ref := "refs/heads/" + name
+	if _, err := git(ctx, clone, "push", "--quiet", "origin", ref+":"+ref); err != nil {
+		return nil, fmt.Errorf("pushing %s to origin: %w", name, err)
+	}
+	return nil, nil
+}
+
+// outsideCommits returns the commits origin's branch name has that the
+// clone's branch name does not, newest first, as the last Fetch left them. It
+// returns none when origin has no such branch.
+func outsideCommits(ctx context.Context, clone, name string) ([]string, error) {
+	remote := "refs/remotes/origin/" + name
+	found, err := git(ctx, clone, "for-each-ref", "--format=%(objectname)", remote)
+	if err != nil {
+		return nil, fmt.Errorf("reading origin's branch %s in %s: %w", name, clone, err)
+	}
+	if found == "" {
+		return nil, nil
+	}
+	out, err := git(ctx, clone, "rev-list", "refs/heads/"+name+".."+remote)
+	if err != nil {
+		return nil, fmt.Errorf("comparing origin's branch %s with the clone's: %w", name, err)
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}

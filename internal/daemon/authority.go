@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -52,6 +53,11 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return fmt.Errorf("only leader@engineering or leader@quality may run asmai %s", req.Command)
+	case CommandPush:
+		if ref.address == roles.LeaderOf(roles.Engineering) {
+			return nil
+		}
+		return errors.New("only leader@engineering, the delivery owner of a code job, may run asmai push")
 	case CommandEffect:
 		if ref.address.Name != roles.Leader || ref.address == roles.LeaderOf(roles.Engineering) {
 			return nil
@@ -77,7 +83,7 @@ func isAgentCommand(command string) bool {
 	case CommandJobOpen, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
 		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
-		CommandTrailers:
+		CommandPush, CommandTrailers:
 		return true
 	}
 	return false
@@ -99,7 +105,7 @@ func commandName(command string) string {
 		return "job <number>"
 	case CommandInbox:
 		return "inbox"
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandPush:
 		return command
 	case CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		return "handoff " + strings.TrimPrefix(command, "handoff.")

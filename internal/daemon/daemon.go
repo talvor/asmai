@@ -91,6 +91,9 @@ const (
 	CommandAccept = "accept"
 	CommandReject = "reject"
 	CommandCancel = "cancel"
+	// CommandPush is the delivery owner asking the daemon to push a job's
+	// branch to origin, which it refuses over commits AsmAI did not make.
+	CommandPush = "push"
 	// CommandTrailers answers a worker's git hook with the trailers its
 	// commit carries.
 	CommandTrailers = "trailers"
@@ -180,6 +183,7 @@ type Response struct {
 	Report       *store.Report      `json:"report,omitempty"`
 	Decision     *store.Decision    `json:"decision,omitempty"`
 	JobBranch    *store.JobBranch   `json:"job_branch,omitempty"`
+	Push         *store.Push        `json:"push,omitempty"`
 	// Trailers are the trailers a worker's commit carries, each as
 	// "Key: value".
 	Trailers []string `json:"trailers,omitempty"`
@@ -506,6 +510,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.handoffCommand(conn, req)
 	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel:
 		d.assignmentCommand(conn, req)
+	case CommandPush:
+		d.pushCommand(conn, req)
 	case CommandTrailers:
 		trailers, err := d.trailers(req)
 		if err != nil {

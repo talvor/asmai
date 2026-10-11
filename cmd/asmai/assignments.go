@@ -382,3 +382,21 @@ func printReport(w io.Writer, r store.Report) {
 		fmt.Fprintf(w, "PR section:\n%s\n", r.PRSection)
 	}
 }
+
+// push asks the daemon to push the job branch of the job number names.
+func push(o *output, paths statedir.Paths, number string) int {
+	n, err := jobNumber(number)
+	if err != nil {
+		return o.fail(err)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandPush, Job: n})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.json {
+		return o.printJSON(resp)
+	}
+	p := resp.Push
+	fmt.Fprintf(o.stdout, "job %d: the daemon pushed %s at %s to origin with a plain push; effect %d recorded in dispatch %d\n", p.Job, p.Branch, p.Commit, p.Effect, p.Dispatch)
+	return 0
+}

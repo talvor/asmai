@@ -71,6 +71,10 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					if err == nil {
 						findings, err = d.store.Findings(j.Number)
 					}
+					var pushes []store.Push
+					if err == nil {
+						pushes, err = d.store.Pushes(j.Number)
+					}
 					var branch *store.JobBranch
 					if b, e := d.store.JobBranch(j.Number); e == nil {
 						branch = &b
@@ -78,7 +82,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 						err = e
 					}
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings)
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes)
 					}
 				}
 			}
@@ -109,7 +113,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
@@ -159,6 +163,21 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 			state = fmt.Sprintf(" (cleared by report %d)", f.ClearedBy)
 		}
 		fmt.Fprintf(&b, "- %d %s%s, found at %s: %s\n", f.ID, f.Kind, state, f.Commit, f.Text)
+	}
+	fmt.Fprintln(&b, "Pushes of the job branch:")
+	if len(pushes) == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	for _, p := range pushes {
+		if p.Result == store.PushPushed {
+			fmt.Fprintf(&b, "- %d pushed %s to origin, effect %d\n", p.ID, p.Commit, p.Effect)
+			continue
+		}
+		merged := "not merged in yet"
+		if p.MergedIn != "" {
+			merged = "merged in by " + p.MergedIn
+		}
+		fmt.Fprintf(&b, "- %d refused at %s: outside change, %s has commits AsmAI did not make (%s), %s\n", p.ID, p.Commit, p.Found, strings.Join(p.Outside, ", "), merged)
 	}
 	fmt.Fprintln(&b, "Pending decisions: none\nGrants: none\nRecent journal:")
 	for _, entry := range entries {

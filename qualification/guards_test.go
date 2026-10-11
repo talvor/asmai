@@ -45,8 +45,10 @@ type guardSession struct {
 	// promptsForGit makes git raise a native prompt, which the guard should not.
 	promptsForGit bool
 	// retriesGit makes the session run git push again outside the sandbox.
-	retriesGit         bool
-	ghUnavailable      bool
+	retriesGit    bool
+	ghUnavailable bool
+	// skipsRetry makes the session not retry what the sandbox stopped.
+	skipsRetry         bool
 	noPromptForOutside bool
 	noPromptForCurl    bool
 	commandInstead     map[int]string
@@ -87,9 +89,14 @@ var listed = regexp.MustCompile("(?m)^\\d+\\. `(.*)`$")
 
 func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 	var turn Turn
+	// commandInstead counts the commands of both of C37's turns together.
+	offset := 0
+	if strings.Contains(spec.Prompt, "expected to be stopped by the sandbox") {
+		offset = 6
+	}
 	for i, m := range listed.FindAllStringSubmatch(spec.Prompt, -1) {
 		text := m[1]
-		if instead, ok := g.commandInstead[i]; ok {
+		if instead, ok := g.commandInstead[offset+i]; ok {
 			text = instead
 		}
 		c := Command{Text: text}
@@ -137,7 +144,7 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 			}
 		}
 		turn.Commands = append(turn.Commands, c)
-		if retry != nil {
+		if retry != nil && !(g.skipsRetry && retry.Unsandboxed && c.Failed) {
 			turn.Commands = append(turn.Commands, *retry)
 		}
 	}
@@ -249,6 +256,13 @@ func TestC37FailsWhenAnAllowedCommandIsRetriedOutsideTheSandbox(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{retriesGit: true}), "C37")
 	if r.Outcome != Failed || !strings.Contains(r.Failure, "allows it to run once inside it") {
 		t.Errorf("C37 %s: %q, want it to fail because git push was retried outside the sandbox", r.Outcome, r.Failure)
+	}
+}
+
+func TestC37IsInconclusiveWhenTheSessionSkipsTheRetryOutsideTheSandbox(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{skipsRetry: true}), "C37")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "inconclusive: the session never retried") {
+		t.Errorf("C37 %s: %q, want it to fail as inconclusive because the session did not retry", r.Outcome, r.Failure)
 	}
 }
 

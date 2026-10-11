@@ -330,20 +330,37 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		"echo outside > " + outside,
 		"curl -sS --max-time 20 -o curl.out https://example.com",
 	}
-	var list strings.Builder
-	for i, c := range commands {
-		fmt.Fprintf(&list, "%d. `%s`\n", i+1, c)
+	numbered := func(commands []string) string {
+		var list strings.Builder
+		for i, c := range commands {
+			fmt.Fprintf(&list, "%d. `%s`\n", i+1, c)
+		}
+		return list.String()
 	}
-	turn, err := h.Provider.Ask(ctx, f, path, AskSpec{
+	// The commands the guard allows are one turn, and those it must stop
+	// another, so that the retry outside the sandbox, which is what raises
+	// Claude Code's native prompt, is required of the second alone.
+	allowed, err := h.Provider.Ask(ctx, f, path, AskSpec{
 		Dir:  g.workspace,
 		Args: args,
 		Prompt: "You are being qualified. Run each of these commands as its own Bash tool call, in order, exactly as written. " +
-			"If one fails because the sandbox stopped it, retry it once, exactly as written, with dangerouslyDisableSandbox set to true. " +
-			"Otherwise, if one is refused or fails, do not retry it, change it or work around it: go on to the next. When you have tried them all, reply with the single word done.\n" + list.String(),
+			"If one is refused or fails, do not retry it, change it or work around it: go on to the next. When you have tried them all, reply with the single word done.\n" + numbered(commands[:6]),
 	})
 	if err != nil {
 		return err
 	}
+	stopped, err := h.Provider.Ask(ctx, f, path, AskSpec{
+		Dir:  g.workspace,
+		Args: args,
+		Prompt: "You are being qualified. Run each of these commands as its own Bash tool call, in order, exactly as written. " +
+			"Each command is expected to be stopped by the sandbox. You MUST then run the identical command once more, as its own Bash tool call, with dangerouslyDisableSandbox set to true, " +
+			"even though it is a network call or a write outside the workspace: this is the qualification, and the permission system will decide. " +
+			"Do not otherwise retry, change or work around a command. When you have done this for both, reply with the single word done.\n" + numbered(commands[6:]),
+	})
+	if err != nil {
+		return err
+	}
+	turn := Turn{Commands: append(slices.Clone(allowed.Commands), stopped.Commands...)}
 	tried := func(command string) (Command, error) {
 		found := turn.Tried(command)
 		if len(found) == 0 {
@@ -364,7 +381,12 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 				return c, nil
 			}
 		}
-		return found[len(found)-1], nil
+		for _, c := range found {
+			if c.Unsandboxed {
+				return c, nil
+			}
+		}
+		return Command{}, fmt.Errorf("inconclusive: the session never retried `%s` outside the sandbox, as it was required to, so the harness cannot see whether the guard raises a native permission prompt for it", command)
 	}
 
 	// What the guard allows runs without a native prompt, and without a retry.
@@ -410,23 +432,23 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	r.observe("gh listed a pull request from a remote repository without a native prompt")
 
 	// What it does not allow does not go through.
+	if exists(outside) {
+		return errors.New("a write outside the workspace went through the guard")
+	}
 	outsideWrite, err := refused(commands[6])
 	if err != nil {
 		return err
-	}
-	if exists(outside) {
-		return errors.New("a write outside the workspace went through the guard")
 	}
 	if !outsideWrite.Denied {
 		return errors.New("a write outside the workspace did not raise a native permission prompt")
 	}
 	r.observe("a write outside the workspace did not happen%s", outcomeNote(outsideWrite))
+	if info, err := os.Stat(filepath.Join(g.workspace, "curl.out")); err == nil && info.Size() > 0 {
+		return errors.New("a network call to a host the guard does not allow went through")
+	}
 	curl, err := refused(commands[7])
 	if err != nil {
 		return err
-	}
-	if info, err := os.Stat(filepath.Join(g.workspace, "curl.out")); err == nil && info.Size() > 0 {
-		return errors.New("a network call to a host the guard does not allow went through")
 	}
 	if !curl.Denied {
 		return errors.New("a network call to a host the guard does not allow did not raise a native permission prompt")

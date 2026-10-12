@@ -105,6 +105,10 @@ _Avoid_: Worktree, sandbox, checkout (when meaning an assignment's working copy)
 **Write guard**:
 Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in the workspace, `asmai`, git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt. It guards against mistakes; it is not a security boundary.
 
+**Directory trust**:
+The user's own one-time trust, given to the provider at setup, in the two factory directories where agents start: the one holding the leaders' directories and the one holding the workspaces. It covers every agent directory and workspace the factory later creates in them, so no agent ever waits at the provider's question about trusting its folder.
+_Avoid_: Workspace trust (it covers leaders' directories too), folder approval
+
 **Commit trailers**:
 The `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` lines on every commit a worker makes, naming the job, the worker and the dispatch it worked on. The commit itself is the user's: their git identity and credentials.
 

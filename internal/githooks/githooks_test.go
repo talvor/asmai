@@ -390,7 +390,8 @@ done
 
 // On Linux, Landlock cannot let a hook create packed-refs.lock, which git
 // takes to delete a ref, so dropping the last stash entry, as lint-staged does
-// when it is done, fails there, as the README says.
+// when it is done, succeeds there but leaves refs/stash behind, as the README
+// says.
 func TestAHookThatStagesAndStashesLikeLintStaged(t *testing.T) {
 	clone, _, git := workspace(t)
 	executable(t, filepath.Join(clone, ".git", "hooks", "pre-commit"), `set -e
@@ -413,14 +414,14 @@ git stash drop -q
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.GOOS == "linux" {
-		if code == 0 || !strings.Contains(stderr, "packed-refs.lock") || !strings.Contains(string(stashes), "lint-staged backup") {
-			t.Errorf("pre-commit exited %d (%s) leaving the stashes %q, want dropping the last stash refused for want of packed-refs.lock", code, stderr, stashes)
-		}
-		return
-	}
 	if code != 0 || len(stashes) != 0 {
 		t.Errorf("pre-commit exited %d (%s) leaving the stashes %q, want its stash made, applied and dropped", code, stderr, stashes)
+	}
+	left := exec.Command("git", "rev-parse", "--verify", "-q", "refs/stash").Run() == nil
+	if runtime.GOOS == "linux" && (!left || !strings.Contains(stderr, "packed-refs.lock")) {
+		t.Errorf("refs/stash left behind is %v, with %q, want it left for want of packed-refs.lock", left, stderr)
+	} else if runtime.GOOS != "linux" && left {
+		t.Errorf("the dropped stash left refs/stash behind")
 	}
 	git("commit", "-q", "--no-verify", "-m", "Greet again")
 }

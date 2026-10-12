@@ -429,7 +429,7 @@ func (c Config) MissingStaffing(need []string) []Problem {
 		if !ok {
 			problems = append(problems, Problem{
 				Problem: fmt.Sprintf("there is no [roles.%s], so %s is not staffed", role, roles.Title(role)),
-				Fix:     fmt.Sprintf("add [roles.%s] with %s", role, exampleStaffing())})
+				Fix:     fmt.Sprintf("add [roles.%s] with %s", role, exampleStaffing().inline())})
 			continue
 		}
 		for _, name := range staffingFields {
@@ -443,6 +443,72 @@ func (c Config) MissingStaffing(need []string) []Problem {
 	return problems
 }
 
-func exampleStaffing() string {
-	return `leader_provider = "claude", leader_model, worker_provider = "claude" and worker_model`
+// exampleStaffing is the staffing a missing role's fix suggests, and the
+// staffing of each role in the file `asmai setup` writes.
+func exampleStaffing() Staffing {
+	return Staffing{LeaderProvider: Claude, LeaderModel: "opus", WorkerProvider: Claude, WorkerModel: "opus"}
+}
+
+// assignments returns each of s's fields as a TOML assignment, in the order
+// the file is documented.
+func (s Staffing) assignments() []string {
+	var lines []string
+	for _, name := range staffingFields {
+		lines = append(lines, fmt.Sprintf("%s = %q", name, *s.field(name)))
+	}
+	return lines
+}
+
+func (s Staffing) inline() string {
+	return joinFieldNames(s.assignments())
+}
+
+// Example returns role's table staffed as a missing role's fix suggests.
+func Example(role string) string {
+	return "[roles." + role + "]\n" + strings.Join(exampleStaffing().assignments(), "\n")
+}
+
+// defaultHeader opens the file `asmai setup` writes.
+const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` + "`asmai setup`" + ` wrote it
+# once, with each role staffed, and never changes it. What each table and
+# field means is in the README's section on the configuration file:
+# https://github.com/talvor/asmai#the-configuration-file
+`
+
+// Default returns the configuration file `asmai setup` writes when there is
+// none: a header pointing to the README's section on the file, and a table
+// staffing each role M1 runs as exampleStaffing does. It registers no
+// repository.
+func Default() []byte {
+	var b strings.Builder
+	b.WriteString(defaultHeader)
+	for _, role := range roles.Staffed {
+		b.WriteString("\n" + Example(role) + "\n")
+	}
+	return []byte(b.String())
+}
+
+// CreateDefault writes Default to path, making its directory, unless a file
+// is already there, which it leaves exactly as it is. It reports whether it
+// wrote the file.
+func CreateDefault(path string) (created bool, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, fmt.Errorf("creating the configuration file's directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("creating the configuration file: %w", err)
+	}
+	_, err = f.Write(Default())
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(path)
+		return false, fmt.Errorf("writing the configuration file: %w", err)
+	}
+	return true, nil
 }

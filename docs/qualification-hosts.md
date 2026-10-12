@@ -51,6 +51,8 @@ make qualify
 
 It never runs in hosted CI.
 
+Before the first run, and again whenever the account's state directory is new, run `asmai setup` as `phillip` in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/` and `workspaces/`: C3, C4, C36 and C37 start Coordination's leader in the account's own state directory, and the harness never answers that question there ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). For C7, C11, C19 and C48, the harness runs `asmai setup` for its own disposable state directory and answers it there on the user's behalf.
+
 ### Verified
 
 On 2026-10-07, at commit 76b3d80, on the VM as the harness user:
@@ -67,7 +69,7 @@ On 2026-10-08, at commit 6b52e97, on the VM as the harness user, the first runs 
 
 - `make qualify` built it, and `./bin/qualify` ran C3 and C4 against the real pinned Claude Code 2.1.292, signed in under the harness user's subscription. Both passed.
 - It installed the pinned copy into a new `~/.local/state/asmai` and ran in a staffed `~/.config/asmai/config.toml`. The account had neither before, and both were removed afterwards, along with the harness's scratch clone.
-- Claude Code's trust prompt for the leader's directory selected "No, exit" first, so the harness moves to "Yes, I trust this folder" before it confirms. Claude Code now records that trust in the account's `~/.claude.json`.
+- Claude Code's trust prompt for the leader's directory selected "No, exit" first, so the harness moves to "Yes, I trust this folder" before it confirms. Claude Code now records that trust in the account's `~/.claude.json`. The harness has since stopped answering that prompt for a leader: it gets trust only through `asmai setup`, as below.
 
 On 2026-10-08, at commit 9163957, the harness ran `C7,C11` on this VM against the real pinned Claude Code 2.1.292.
 Both passed: C7 observed Engineering's exact nudge submission and inbox fetch, with the transcript path recorded on its dispatch; C11 recorded the user's witnessed request without treating the nudge as witnessed.
@@ -133,6 +135,8 @@ GOTOOLCHAIN=go1.26.7 make qualify
 ```
 
 It never runs in hosted CI.
+
+Before the first run, and again whenever the account's state directory is new, run `asmai setup` as `phillip` in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/` and `workspaces/`: C3, C4, C36 and C37 start Coordination's leader in the account's own state directory, and the harness never answers that question there ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). For C7, C11, C19 and C48, the harness runs `asmai setup` for its own disposable state directory and answers it there on the user's behalf.
 
 ### Verified
 

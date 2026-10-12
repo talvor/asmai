@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has eleven cases from M1:
+So far it has twelve cases from M1:
 
 | Case | What it qualifies |
 |---|---|
@@ -17,6 +17,7 @@ So far it has eleven cases from M1:
 | C42 | A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft |
 | C43 | The daemon watches CI through gh: green; red with one judged re-run; a newer push replacing the wait |
 | C45 | The daemon marks the pull request ready when CI is green |
+| C48 | With the agents and workspaces folders trusted at setup, a new agent directory and a new workspace start with no trust question |
 
 Later milestones add the other cases to the same harness.
 
@@ -34,8 +35,8 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
 
 1. Sign Claude Code in with its own login, as that user, and check it: `claude auth status` reports `claude.ai`. The harness never starts a sign-in.
 2. Staff the roles in `~/.config/asmai/config.toml` ([the configuration file](../README.md#the-configuration-file)). The harness refuses to run without it and never writes it.
-   For an isolated run, set `ASMAI_CONFIG_FILE` to an absolute path to a scratch config with Coordination and Engineering staffed. C7, C11 and C19 use a dedicated disposable state directory and remove it after the factories stop; the harness refuses to reuse a leftover directory.
-   The configured Coordination agent directory must already be trusted by Claude Code; C3 reports an untrusted-directory prompt rather than accepting it.
+   For an isolated run, set `ASMAI_CONFIG_FILE` to an absolute path to a scratch config with Coordination and Engineering staffed. C7, C11, C19 and C48 use a dedicated disposable state directory and remove it after the factories stop; the harness refuses to reuse a leftover directory.
+   Run `asmai setup` once, as the qualification user, in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/` and `workspaces/` in the configured state directory, where C3, C4, C36 and C37 start Coordination's leader ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). The harness never answers that question there: a leader that asks it fails the case.
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
 5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 runs `git ls-remote` against `https://github.com/git/git` and `gh pr list` against `cli/cli`, so the host needs outbound network access and `gh` on the `PATH`.
@@ -75,7 +76,8 @@ ssh phillip@192.168.1.184 'cd ~/asmai && git fetch origin && git checkout COMMIT
 
 1. It checks the account: not in CI, not root, and `HOME` a directory the running user owns. It checks that the default and environment-selected factories are not already running.
 2. It exports the commit under test with `git archive` into a scratch directory, reads that commit's pins file, and builds `asmai` from it as a development build. The scratch directory is removed when the run ends.
-3. C3 and C4 use the configured factory state. C7, C11 and C19 use `~/.local/state/asmai/qualification`, with the user's `~/.claude` sign-in and no other user's. They drive the factory only through `asmai` commands and the daemon's socket, as a user's terminal does, and stop it afterwards. After the cases stop, the harness removes this qualification state, including the fixture repository, provider copy, and factory records. If the pinned Claude Code is not installed yet, it runs `asmai providers install` and answers yes: the pinned copy is fetched from Claude Code's official channel and checked against the pins file, about 250 MB the first time.
+3. C3 and C4 use the configured factory state. C7, C11, C19 and C48 use `~/.local/state/asmai/qualification`, with the user's `~/.claude` sign-in and no other user's. They drive the factory only through `asmai` commands and the daemon's socket, as a user's terminal does, and stop it afterwards. After the cases stop, the harness removes this qualification state, including the fixture repository, provider copy, and factory records. If the pinned Claude Code is not installed yet, it runs `asmai providers install` and answers yes: the pinned copy is fetched from Claude Code's official channel and checked against the pins file, about 250 MB the first time.
+   The disposable state directory gets the trust of its `agents/` and `workspaces/` folders only through `asmai setup`, which the harness runs for it in a terminal of its own, as its user would: it answers yes to the install, and in each Claude Code session setup opens it answers "Yes, I trust this folder" on the user's behalf, then leaves with `/exit`. It moves to that option if the question starts elsewhere and confirms only while it is selected, so it never chooses to exit. That is the only place anything other than the user answers the question; Claude Code records the answer in the user's `~/.claude.json`, and AsmAI writes nothing there. Anywhere else, the harness never answers it: a session that asks whether to trust its directory fails the case.
 4. It prints the report.
 
 ### C3: the sign-in is reused
@@ -86,7 +88,7 @@ The harness removes provider API-key variables and `CLAUDE_CODE_OAUTH_TOKEN` fro
 - the leader's session reports `SessionStart` through its hook. Claude Code does that only once it is signed in and the session has started;
 - the leader's screen never shows a login prompt.
 
-For C7, C11 and C19 on `asmai-vm`, the harness answers trust prompts for the Coordination and Engineering directories under `~/.local/state/asmai/qualification/agents`. It moves to "Yes, I trust this folder" if the prompt starts elsewhere and confirms only while that option is selected. Claude Code records these directory trusts in the user's `~/.claude.json`. On other hosts, trust prompts fail the case; trust those exact directories before running the harness. C3 does not accept a trust prompt in Coordination's configured factory directory.
+The leader's directory is in `agents/`, which the user trusted with `asmai setup`. If Claude Code asks whether to trust it, the case fails naming `asmai setup`: the harness does not answer.
 
 ### C4: no API-key variables in a session
 
@@ -152,7 +154,7 @@ It runs no provider and starts no agent, posts no review and merges nothing. Whe
 
 ### C7 and C11: an acknowledged handoff nudge
 
-The harness keeps a small fixture repository in the disposable C7/C11/C19 factory state and, on `asmai-vm`, answers Claude Code's first-use trust prompt in Engineering's qualification directory before the daemon starts that leader. It then opens the conversation and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
+The harness keeps a small fixture repository in the disposable C7/C11/C19 factory state, whose `agents/` and `workspaces/` it has trusted through `asmai setup`, so Engineering's leader starts in its new directory with no trust question. It then opens the conversation and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
 
 ### C19: dispatches stay correlated across a stop and a start
 
@@ -167,6 +169,16 @@ C19 runs the same exercise as C7 and C11 until Engineering's leader has fetched 
 The leaders of the real Claude Code do not always assign a worker, and the case does not make them: when no worker carried an assignment at the stop, its evidence says that resuming a worker's native session was not exercised with the real provider, and the development test, which drives it with the fake, is where that is checked. When one did, the evidence lists the assignments the start resumed and those it held for reconciliation.
 
 Because C7, C11 and C19 share one state directory, a job an earlier case left open is restored at C11's and C19's first start, and Coordination is told to load its brief. The case waits, for up to half the usual wait, for Coordination to finish that turn before it types its own request.
+
+### C48: trust given at setup covers new directories
+
+The factory relies on Claude Code 2.1.292 taking the trust of a folder to cover every folder below it ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). Claude Code does not document this, and its changelog shows the behaviour has changed before, so C48 proves it for each pin. In the disposable state directory, which `asmai setup` has just had the user trust, as above, it requires:
+
+- Claude Code's record to trust `agents/` and `workspaces/`, given in the sessions setup opened;
+- Coordination's leader, started by the factory in its new directory under `agents/`, to report `SessionStart` through its hook, with no trust question on its screen;
+- the pinned Claude Code, started with an agent's command line (`providers.ClaudeCodeArgs`, with a hook that only notes the session's start), in a new directory under `agents/` and in a new assignment workspace under `workspaces/`, to report `SessionStart` in each, with no trust question.
+
+A trust question in any of them fails the case, saying that on this pin trusting a folder does not cover the folders below it. The new directories are removed afterwards.
 
 ## Reading the report
 
@@ -199,8 +211,10 @@ C43 passed  The daemon watches CI through gh: green; red with one judged re-run;
     - ...
 C45 passed  The daemon marks the pull request ready when CI is green
     - ...
+C48 passed  With the agents and workspaces folders trusted at setup, a new agent directory and a new workspace start with no trust question
+    - ...
 
-11 of 11 cases passed.
+12 of 12 cases passed.
 ```
 
 Each case is `passed` or `failed`. The report names the platform, the pinned version from the commit's pins file, the version the installed copy reports, and the commit. It holds no credential and no environment variable's value.
@@ -209,7 +223,7 @@ A case passes when AsmAI behaves as decided, through the provider's own signal o
 
 ## What it touches
 
-The C7/C11/C19 qualification state directory is disposable and removed after the cases stop. Claude Code's sign-in is read from the qualification user's account, and the explicitly allowed C7/C11/C19 directory trusts are persisted in `~/.claude.json` on `asmai-vm`. The harness also uses temporary build and Go cache files:
+The C7/C11/C19/C48 qualification state directory is disposable and removed after the cases stop. Claude Code's sign-in is read from the qualification user's account. Claude Code itself records the trust of the disposable directory's `agents/` and `workspaces/`, answered in the sessions `asmai setup` opened, in the user's `~/.claude.json`, where it stays after the directory is removed. The harness also uses temporary build and Go cache files:
 
 The harness never signs the user out and never writes `~/.claude`.
 

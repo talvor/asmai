@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -112,8 +113,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	var qualificationPaths statedir.Paths
-	needsHandoffState := len(ids) == 0 || containsCase(ids, "C7") || containsCase(ids, "C11") || containsCase(ids, "C19")
-	if needsHandoffState {
+	if len(ids) == 0 || slices.ContainsFunc(ids, disposableState) {
 		var cleanup func()
 		qualificationPaths, cleanup, err = createQualificationState(home)
 		if err != nil {
@@ -155,15 +155,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
-}
-
-func containsCase(ids []string, id string) bool {
-	for _, candidate := range ids {
-		if candidate == id {
-			return true
-		}
-	}
-	return false
 }
 
 func createQualificationState(home string) (statedir.Paths, func(), error) {

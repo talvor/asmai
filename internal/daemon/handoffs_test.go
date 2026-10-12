@@ -123,7 +123,7 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	const agent = "leader@engineering"
-	d := &daemon{cfg: Config{Paths: paths, ConfigFile: configFile, Pins: providers.Pins{ClaudeCode: providers.Pin{Version: "v"}}}, leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	d := &daemon{cfg: Config{Paths: paths, ConfigFile: configFile, Pins: providers.Pins{ClaudeCode: providers.Pin{Version: "v"}}, ClaudeRecord: trustingRecord(t, paths)}, leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	l := d.leader(roles.Engineering)
 	t.Cleanup(func() {
 		d.mu.Lock()

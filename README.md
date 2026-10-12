@@ -43,13 +43,23 @@ Switch with `scripts/ci-mode.sh <mode> [minutes]`, then commit and push. See the
 
 ## Running the factory
 
+The first run is `asmai setup`, then `asmai start`. `asmai setup` does what the factory needs once, and skips each step already done, printing one line for each, `done` or `already done`:
+
+1. **Config.** If `~/.config/asmai/config.toml` is missing, it writes it, with Coordination, Engineering and Quality staffed and no repositories (see [The configuration file](#the-configuration-file)). An existing file is never changed: setup reports its problems, as `asmai start` does.
+2. **Folders.** It makes the folders of the state directory, `~/.local/state/asmai`, including `agents/`, which holds the leaders' directories, and `workspaces/`, which holds each assignment's workspace.
+3. **Providers.** It installs the pinned Claude Code, as `asmai providers install` does, once you confirm (see [Pinned providers](#pinned-providers)).
+4. **Trust.** Claude Code asks whether to trust a folder the first time a session starts there, and only Coordination's terminal takes your keys, so every other agent would wait at that question. Trusting a folder also trusts every folder below it, so setup opens the pinned Claude Code in `agents/`, then in `workspaces/`, in your terminal, saying first which folder it is. Choose "Yes, I trust this folder", then leave Claude Code with `/exit`. Claude Code records your answer itself; AsmAI never writes `~/.claude.json` or `~/.claude`. If you choose "No, exit", setup names the folder still untrusted and exits 1, and running it again asks about that folder. `repositories/` and `views/` are not trusted, because no agent starts there.
+
+Run again, every step is `already done` and setup opens no Claude Code. See [ADR 0011](docs/adr/0011-agents-rely-on-one-user-given-directory-trust.md).
+
 `asmai start` starts the per-user daemon in the background and returns once it answers; `asmai start --foreground` keeps it attached to the terminal, showing its log, until `asmai stop` or Ctrl-C. Each user runs at most one daemon: a second start reports the running factory. Every other command is a thin client that reaches the daemon over a Unix socket in the state directory; the daemon opens no network listener.
 
-Every start then runs the checks that exist: the roles are staffed in the configuration file, and the pinned Claude Code is installed. If they pass, the daemon starts Coordination's leader, which runs for as long as the factory runs. If one fails, `asmai start` names it and the fix and exits 1, and the daemon keeps running without starting the leader (a leader already running keeps running), so that you can fix it, for example with `asmai providers install`, and run `asmai start` again.
+Every start then runs the checks that exist: the roles are staffed in the configuration file, the pinned Claude Code is installed, and Claude Code trusts `agents/` and `workspaces/`, which the daemon reads from Claude Code's own record in `~/.claude.json` without changing it. If they pass, the daemon starts Coordination's leader, which runs for as long as the factory runs. If one fails, `asmai start` names it and the fix and exits 1, and the daemon keeps running without starting the leader (a leader already running keeps running), so that you can fix it, for example with `asmai setup`, and run `asmai start` again. `asmai start` itself never asks anything. Before it starts any agent, the daemon reads the record again, and refuses to start one whose folder Claude Code does not trust, naming `asmai setup`, rather than leave it waiting at the question.
 
 | Command | What it does |
 | --- | --- |
 | `asmai`, `asmai chat` | Talk with Coordination: attach this terminal to Coordination's leader with input, starting the factory first if it is stopped (see [The conversation](#the-conversation)) |
+| `asmai setup` | The first run: write the configuration file if it is missing, make the state directory's folders, install the pinned Claude Code, and open it in `agents/` and `workspaces/` for you to trust them. A step already done is skipped |
 | `asmai start [--foreground]` | Start the daemon, run the checks, and start Coordination's leader |
 | `asmai stop` | Stop the agents, persist the factory's state and stop the daemon. Queued messages and open handoffs survive it, and the next `asmai start` continues the work (see [Continuing after a stop](#continuing-after-a-stop)) |
 | `asmai status` | Whether the daemon is running, its version, each leader as running or stopped, who owns a running leader's input, where the conversation is open, and any check that failed |
@@ -69,7 +79,7 @@ Every command prints readable tables, or JSON with `--json`. `asmai attach --jso
 
 ### The configuration file
 
-The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and you edit it by hand. So far it holds the staffing of the roles M1 runs: a table for each of Coordination, Engineering and Quality, with the provider and model of the role's leader and of its workers. Claude is the only provider so far. It also holds a `[repositories.<name>]` table for each registered repository, which `asmai repo add` writes (see [Repositories](#repositories)).
+The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and you edit it by hand. `asmai setup` writes it when it is missing, staffed as below, and never changes it after. So far it holds the staffing of the roles M1 runs: a table for each of Coordination, Engineering and Quality, with the provider and model of the role's leader and of its workers. Claude is the only provider so far. It also holds a `[repositories.<name>]` table for each registered repository, which `asmai repo add` writes (see [Repositories](#repositories)).
 
 ```toml
 [roles.coordination]
@@ -227,7 +237,7 @@ After an unclean stop, which is reconciled in full in a later milestone, the lea
 
 Agents never run your own Claude Code. [`pins.json`](pins.json), the pins file, names the Claude Code version AsmAI runs, Claude Code's official release channel, and the size and SHA-256 of the download for each certified platform; `asmai` embeds it. Codex and Lavish join it in later milestones.
 
-With the factory running, `asmai providers install` shows what it will fetch, from where, how it checks it and where it keeps it, and asks before it fetches anything. Once you confirm, it downloads the pinned Claude Code from `https://downloads.claude.ai/claude-code-releases`, refuses a download whose size or SHA-256 differs from the pins file, and keeps it in `providers/` in the state directory. The store records the install, with a `provider.installed` journal entry, and `asmai providers list` shows it. Installing a pin that is already installed does nothing.
+`asmai setup` installs the pinned Claude Code as `asmai providers install` does; with the factory stopped, the daemon records the install when it next starts, finding the pinned copy at its path. With the factory running, `asmai providers install` shows what it will fetch, from where, how it checks it and where it keeps it, and asks before it fetches anything. Once you confirm, it downloads the pinned Claude Code from `https://downloads.claude.ai/claude-code-releases`, refuses a download whose size or SHA-256 differs from the pins file, and keeps it in `providers/` in the state directory. The store records the install, with a `provider.installed` journal entry, and `asmai providers list` shows it. Installing a pin that is already installed does nothing.
 
 AsmAI never redistributes Claude Code, and never runs, changes or replaces your own copy or touches `~/.claude`.
 

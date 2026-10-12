@@ -151,7 +151,7 @@ func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 	}
 	owner := roles.LeaderOf(roles.Engineering)
 	d := &daemon{
-		cfg: Config{Paths: paths, ConfigFile: configFile, Pins: providers.Pins{ClaudeCode: providers.Pin{Version: "v"}}}, work: context.Background(), store: s,
+		cfg: Config{Paths: paths, ConfigFile: configFile, Pins: providers.Pins{ClaudeCode: providers.Pin{Version: "v"}}, ClaudeRecord: trustingRecord(t, paths)}, work: context.Background(), store: s,
 		leaders:  map[string]*leader{owner.String(): {address: owner, session: &session.Session{}, generation: 1}},
 		sessions: map[string]sessionRef{"credential": {address: owner, generation: 1}},
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -233,7 +233,7 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d = &daemon{cfg: Config{Paths: paths, ConfigFile: configFile, Pins: providers.Pins{ClaudeCode: providers.Pin{Version: "v"}}}, leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	d = &daemon{cfg: Config{Paths: paths, ConfigFile: configFile, Pins: providers.Pins{ClaudeCode: providers.Pin{Version: "v"}}, ClaudeRecord: trustingRecord(t, paths)}, leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	t.Cleanup(func() {
 		d.mu.Lock()
 		d.stopping = true

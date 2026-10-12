@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/talvor/asmai/internal/roles"
 )
 
 const staffed = `# The factory's staffing.
@@ -99,7 +101,7 @@ func TestMissingStaffingNamesEachFieldAndRole(t *testing.T) {
 	}
 	want := []string{
 		`[roles.coordination] has no worker_model / add worker_model under [roles.coordination], such as worker_model = "opus"`,
-		`there is no [roles.quality], so Quality is not staffed / add [roles.quality] with leader_provider = "claude", leader_model, worker_provider = "claude" and worker_model`,
+		`there is no [roles.quality], so Quality is not staffed / add [roles.quality] with leader_provider = "claude", leader_model = "opus", worker_provider = "claude" and worker_model = "opus"`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("MissingStaffing found\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -209,5 +211,54 @@ func TestScratchConfigFileOverride(t *testing.T) {
 	t.Setenv("ASMAI_CONFIG_FILE", "relative.toml")
 	if _, err := ActivePath(t.TempDir()); err == nil {
 		t.Fatal("relative config path was accepted")
+	}
+}
+
+// The file `asmai setup` writes staffs every role M1 runs, points to the
+// README's section on the file, and registers no repository.
+func TestTheDefaultFileStaffsEveryRoleAndRegistersNoRepository(t *testing.T) {
+	data := Default()
+	cfg, problems := Parse(data)
+	if len(problems) != 0 {
+		t.Fatalf("the default file has problems: %v", problems)
+	}
+	if missing := cfg.MissingStaffing(roles.Staffed); len(missing) != 0 {
+		t.Errorf("the default file leaves staffing out: %v", missing)
+	}
+	for _, role := range roles.Staffed {
+		if got := cfg.Roles[role]; got != exampleStaffing() {
+			t.Errorf("the default file staffs %s as %+v, want %+v", role, got, exampleStaffing())
+		}
+	}
+	if len(cfg.Repositories) != 0 {
+		t.Errorf("the default file registers %v", cfg.Repositories)
+	}
+	if !strings.HasPrefix(string(data), "# ") || !strings.Contains(string(data), "README") || !strings.Contains(string(data), "#the-configuration-file") {
+		t.Errorf("the default file opens\n%s\nwant a comment pointing to the README's section on the file", data)
+	}
+}
+
+func TestCreateDefaultWritesOnlyWhenThereIsNoFile(t *testing.T) {
+	path := DefaultPath(t.TempDir())
+	created, err := CreateDefault(path)
+	if err != nil || !created {
+		t.Fatalf("CreateDefault of a missing file = %t, %v, want it written", created, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(Default()) {
+		t.Errorf("the file holds\n%s\nwant the default", got)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("the file's mode is %v (%v), want 0600", info.Mode(), err)
+	}
+	mine := []byte("# mine\n[roles.coordination]\nleader_provider = \"codex\"\n")
+	if err := os.WriteFile(path, mine, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	created, err = CreateDefault(path)
+	if err != nil || created {
+		t.Errorf("CreateDefault of an existing file = %t, %v, want nothing written", created, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(mine) {
+		t.Errorf("an existing file became\n%s\nwant it unchanged", got)
 	}
 }

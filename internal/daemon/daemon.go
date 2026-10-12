@@ -227,6 +227,10 @@ type Config struct {
 	Executable string
 	// Pins are the provider versions agents run on.
 	Pins providers.Pins
+	// ClaudeRecord is the file Claude Code records the user's directory
+	// trust in, ~/.claude.json, which the daemon reads and never writes; with
+	// none, no agent starts.
+	ClaudeRecord string
 }
 
 // Run runs the daemon until `asmai stop` asks it to stop or ctx is done. It

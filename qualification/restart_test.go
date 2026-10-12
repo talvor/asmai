@@ -238,6 +238,8 @@ func TestCoordinationIsBusyWhileADispatchForItIsOnItsWayOrBeingWorkedOn(t *testi
 // plays the scripted fake with the script of the leader's nth session: it
 // counts the sessions each kind of agent has started, so that a leader
 // restored by a start plays a different script than the one before the stop.
+// The sessions `asmai setup` opens in the agents and workspaces folders play
+// setup's.
 type bySessionClaude struct {
 	fakeClaude
 	dir string
@@ -254,7 +256,10 @@ dir=%q
 case "$*" in
 *"You are Coordination's leader in AsmAI"*) role=coordination ;;
 *"You are Engineering's leader in AsmAI"*) role=engineering ;;
-*) role=idle ;;
+*) case "$(basename "$PWD")" in
+	agents|workspaces) role=setup ;;
+	*) role=idle ;;
+	esac ;;
 esac
 n=0
 [ -f "$dir/$role.count" ] && n=$(cat "$dir/$role.count")
@@ -306,7 +311,6 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 	if len(h.QualificationPaths.Socket) > 103 {
 		t.Skipf("the disposable state's socket path, %s, is longer than a Unix socket's path may be on macOS", h.QualificationPaths.Socket)
 	}
-	h.Host = "asmai-vm"
 	h.Number = func() int64 { return 19 }
 	prompt := h.exercisePrompt()
 	t.Cleanup(func() {
@@ -317,6 +321,9 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 	})
 
 	writeSessionScript(t, scripts, "idle-1", `{"screen":"\u001b[?2004h> "}`, `{"expect":"only typed by a test that means to"}`)
+	// asmai setup opens Claude Code in the agents and workspaces folders,
+	// where the user trusts them.
+	writeSessionScript(t, scripts, "setup-1", setupTrusting...)
 	// Before the stop, Coordination opens the job and hands it to
 	// Engineering, whose leader fetches it and stays in its turn.
 	writeSessionScript(t, scripts, "coordination-1",

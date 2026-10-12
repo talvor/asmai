@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -232,8 +233,9 @@ func (d *daemon) agent(address roles.Address) *leader {
 }
 
 // checks runs the checks that exist before agents start: the staffing in the
-// configuration file and the pinned Claude Code installed. It returns the
-// configuration and the install to start agents with.
+// configuration file, the pinned Claude Code installed, and the user's trust
+// of the directories agents start in. It returns the configuration and the
+// install to start agents with.
 func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 	var checks []Check
 	cfg, staffing := d.staffing()
@@ -253,7 +255,66 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 	default:
 		checks = append(checks, Check{Name: name, OK: true})
 	}
+	checks = append(checks, d.trustCheck())
 	return checks, cfg, install
+}
+
+// trustName is the name of the check that the user trusts the directories
+// agents start in.
+const trustName = "directory trust"
+
+// trustCheck checks that Claude Code's record holds the user's trust of the
+// directories every agent starts in: the agents directory, which holds the
+// leaders' directories, and the workspaces directory. An agent started in a
+// directory Claude Code does not trust waits at its question about trusting
+// the folder, which only the user can answer (ADR 0011).
+func (d *daemon) trustCheck() Check {
+	var untrusted []string
+	for _, dir := range []string{d.cfg.Paths.Agents, d.cfg.Paths.Workspaces} {
+		if err := d.trusted(dir); err != nil {
+			var notTrusted *untrustedError
+			if !errors.As(err, &notTrusted) {
+				fix := "make " + d.cfg.ClaudeRecord + " readable, then run `asmai start` again"
+				if d.cfg.ClaudeRecord == "" {
+					fix = "start the factory with `asmai start`"
+				}
+				return Check{Name: trustName, Problem: err.Error(), Fix: fix}
+			}
+			untrusted = append(untrusted, dir)
+		}
+	}
+	if len(untrusted) == 0 {
+		return Check{Name: trustName, OK: true}
+	}
+	return Check{Name: trustName,
+		Problem: fmt.Sprintf("Claude Code does not trust %s, so an agent started there would wait at its question about trusting the folder", strings.Join(untrusted, " or ")),
+		Fix:     "run `asmai setup`, which opens Claude Code there for you to trust it"}
+}
+
+// untrustedError is a directory Claude Code's record does not trust.
+type untrustedError struct {
+	dir string
+}
+
+func (e *untrustedError) Error() string {
+	return fmt.Sprintf("Claude Code does not trust %s, so the agent would wait at its question about trusting the folder; run `asmai setup`", e.dir)
+}
+
+// trusted returns nil when Claude Code's record trusts dir, an
+// untrustedError when it does not, and why the record cannot be read
+// otherwise. It never changes the record.
+func (d *daemon) trusted(dir string) error {
+	if d.cfg.ClaudeRecord == "" {
+		return errors.New("this daemon reads no record of Claude Code's directory trust")
+	}
+	ok, err := providers.Trusted(d.cfg.ClaudeRecord, dir)
+	if err != nil {
+		return fmt.Errorf("reading Claude Code's record of directory trust: %w", err)
+	}
+	if !ok {
+		return &untrustedError{dir: dir}
+	}
+	return nil
 }
 
 // staffing reads the configuration file and checks that the roles M1 runs
@@ -269,7 +330,7 @@ func (d *daemon) staffing() (config.Config, []Check) {
 	cfg, problems, err := config.Load(path)
 	if errors.Is(err, config.ErrMissing) {
 		return cfg, []Check{failed(fmt.Sprintf("%s does not exist, so no role is staffed", path),
-			fmt.Sprintf("create it with a table for each of %s, such as:\n%s", tables(), exampleStaffing))}
+			fmt.Sprintf("run `asmai setup`, which writes it with every role staffed, or create it with a table for each of %s, such as:\n%s", tables(), config.Example(roles.Coordination)))}
 	}
 	if err != nil {
 		return cfg, []Check{failed(fmt.Sprintf("reading %s: %v", path, err), "make the file readable")}
@@ -296,12 +357,6 @@ func tables() string {
 	return t[0] + ", " + t[1] + " and " + t[2]
 }
 
-const exampleStaffing = `[roles.coordination]
-leader_provider = "claude"
-leader_model = "opus"
-worker_provider = "claude"
-worker_model = "opus"`
-
 // claudeCode returns the install of the pinned Claude Code, or why there is
 // none to run.
 func (d *daemon) claudeCode(version string) (store.ProviderInstall, error) {
@@ -319,7 +374,34 @@ func (d *daemon) claudeCode(version string) (store.ProviderInstall, error) {
 		}
 		return p, nil
 	}
+	if p, ok := d.pinnedCopy(); ok && p.Version == version {
+		return p, nil
+	}
 	return store.ProviderInstall{}, fmt.Errorf("the pinned Claude Code %s is not installed", version)
+}
+
+// pinnedCopy records the pinned Claude Code as installed when it is at the
+// path the pins file's plan puts it, matching the pin, though no install
+// records it: as when `asmai setup` fetched it while the daemon was stopped.
+func (d *daemon) pinnedCopy() (store.ProviderInstall, bool) {
+	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		return store.ProviderInstall{}, false
+	}
+	plan, err := d.cfg.Pins.ClaudeCodePlan(platform, d.cfg.Paths.Providers)
+	if err != nil {
+		return store.ProviderInstall{}, false
+	}
+	if present, err := providers.Present(plan); err != nil || !present {
+		return store.ProviderInstall{}, false
+	}
+	install := store.ProviderInstall{Name: plan.Name, Version: plan.Version, Path: plan.Path, SHA256: plan.Download.SHA256, InstalledAt: time.Now()}
+	if _, err := d.store.ProviderInstalled(install); err != nil {
+		d.log.Error("recording a provider install", "error", err.Error())
+		return store.ProviderInstall{}, false
+	}
+	d.log.Info("provider installed", "name", plan.Name, "version", plan.Version, "path", plan.Path, "found", "at its path")
+	return install, true
 }
 
 func failed(checks []Check) bool {
@@ -432,6 +514,11 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.
 // startSession starts l's session on the installed Claude Code as launch
 // says, and journals it. d.mu is held.
 func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch launch) error {
+	// Claude Code asks whether to trust a directory it is not trusted in
+	// before anything else, and only the user can answer it.
+	if err := d.trusted(launch.dir); err != nil {
+		return err
+	}
 	credential, err := newCredential()
 	if err != nil {
 		return err

@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -58,6 +59,21 @@ func writeConfig(t *testing.T, text string) {
 	}
 }
 
+// trustFactory records in the test's home that the user trusts the folders
+// agents start in, in the state directory stateDir, as Claude Code records
+// their answer to the question `asmai setup` has it ask.
+func trustFactory(t *testing.T, stateDir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".claude.json"), []byte(trustRecord(stateDir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// trustRecord is the record trustFactory writes.
+func trustRecord(stateDir string) string {
+	return fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces"))
+}
+
 // startUnready runs `asmai start` in a factory not ready to run agents: it
 // starts the daemon, names the checks that failed and exits 1, leaving the
 // daemon running so that what failed can be fixed. It returns what start
@@ -87,6 +103,7 @@ func readyFactory(t *testing.T, script []string) (stateDir string) {
 	t.Helper()
 	stateDir = factoryHome(t)
 	writeConfig(t, staffing)
+	trustFactory(t, stateDir)
 	path := filepath.Join(t.TempDir(), "leader.jsonl")
 	if err := os.WriteFile(path, []byte(strings.Join(script, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -269,8 +286,8 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		Leaders []leaderJSON `json:"leaders"`
 	}
 	asmaiJSON(t, &started, "start")
-	if started.Started || len(started.Checks) != 2 || !started.Checks[0].OK || !started.Checks[1].OK {
-		t.Errorf("asmai start printed %+v, want the running daemon with both checks passed", started)
+	if started.Started || len(started.Checks) != 3 || !started.Checks[0].OK || !started.Checks[1].OK || !started.Checks[2].OK {
+		t.Errorf("asmai start printed %+v, want the running daemon with every check passed", started)
 	}
 	if len(started.Leaders) != 3 || started.Leaders[0].Agent != "leader@coordination" || started.Leaders[0].State != "running" || started.Leaders[0].Generation != 1 {
 		t.Fatalf("asmai start shows the leaders %+v, want leader@coordination running as generation 1", started.Leaders)
@@ -371,15 +388,19 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		t.Errorf("the session's sandbox is %+v, want the write guard on", settings.Sandbox)
 	}
 
-	// AsmAI wrote nothing of Claude Code's in the home.
+	// AsmAI wrote nothing of Claude Code's in the home, and only read its
+	// record of the user's trust.
 	home, err := os.ReadDir(os.Getenv("HOME"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range home {
-		if e.Name() != ".local" && e.Name() != ".config" {
-			t.Errorf("the home holds %s, want only AsmAI's configuration and state", e.Name())
+		if e.Name() != ".local" && e.Name() != ".config" && e.Name() != ".claude.json" {
+			t.Errorf("the home holds %s, want only AsmAI's configuration and state, and Claude Code's record", e.Name())
 		}
+	}
+	if record, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude.json")); err != nil || string(record) != trustRecord(stateDir) {
+		t.Errorf("Claude Code's record became %s (%v), want it unchanged", record, err)
 	}
 
 	// The session's start is journaled with the provider version, the

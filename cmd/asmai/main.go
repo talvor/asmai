@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -45,6 +44,10 @@ commands:
                               starting the factory first if it is stopped. What you type reaches
                               Coordination, and each message you submit is journaled word for word.
                               Ctrl-] leaves the conversation, which pauses nothing
+  asmai setup                 the first run: write a configuration file staffing every role if there
+                              is none, make the state directory's folders, install the pinned Claude
+                              Code once you confirm, and open it in the agents and workspaces folders
+                              for you to trust them. A step already done is skipped
   asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
                               the daemon runs in the background unless --foreground
   asmai stop                  persist the factory's state and stop its daemon and agents; queued
@@ -259,7 +262,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
+	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -289,7 +292,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
-		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
+		if slices.Contains([]string{"setup", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -317,6 +320,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return o.fail(err)
 	}
 	switch name {
+	case "setup":
+		return setup(o, paths, stdin)
 	case "start":
 		if *foreground {
 			return startForeground(o, paths)
@@ -428,7 +433,7 @@ func startForeground(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	cfg := daemon.Config{Paths: paths, Version: version, ConfigFile: configFile, Executable: executable, Pins: p}
+	cfg := daemon.Config{Paths: paths, Version: version, ConfigFile: configFile, Executable: executable, Pins: p, ClaudeRecord: providers.ClaudeCodeRecord(home, os.Getenv)}
 	// Started in the background, the daemon's stderr is its log, which needs
 	// no copy.
 	if !isFile(o.stderr, paths.Log) {
@@ -705,15 +710,7 @@ func export(o *output, paths statedir.Paths) int {
 // left as it is. It never runs or changes the user's own Claude Code, and
 // never touches ~/.claude.
 func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
-	p, err := providers.ParsePins(pins)
-	if err != nil {
-		return o.fail(err)
-	}
-	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
-	if !ok {
-		return o.fail(fmt.Errorf("Claude Code is not published for %s/%s", runtime.GOOS, runtime.GOARCH))
-	}
-	plan, err := p.ClaudeCodePlan(platform, paths.Providers)
+	plan, err := pinnedPlan(paths)
 	if err != nil {
 		return o.fail(err)
 	}
@@ -737,6 +734,39 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if o.json {
 		w = o.stderr
 	}
+	if err := fetchPinned(w, stdin, plan); err != nil {
+		return o.fail(err)
+	}
+	installed, err := recordInstall(paths, plan)
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.json {
+		return o.printJSON(map[string]any{"installed": true, "provider": installed})
+	}
+	fmt.Fprintf(o.stdout, "Installed %s %s.\n", plan.Title, plan.Version)
+	o.table(installRows(installed))
+	return 0
+}
+
+// pinnedPlan plans installing the pinned Claude Code for this platform in
+// the state directory paths.
+func pinnedPlan(paths statedir.Paths) (providers.Plan, error) {
+	p, err := providers.ParsePins(pins)
+	if err != nil {
+		return providers.Plan{}, err
+	}
+	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		return providers.Plan{}, fmt.Errorf("Claude Code is not published for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return p.ClaudeCodePlan(platform, paths.Providers)
+}
+
+// fetchPinned shows on w what installing plan fetches, from where, how it is
+// checked and where it is kept, and once the user confirms on stdin fetches
+// it, unless the pinned download is already at its path.
+func fetchPinned(w io.Writer, stdin io.Reader, plan providers.Plan) error {
 	fmt.Fprintf(w, "asmai will install %s %s, as pinned in this asmai:\n", plan.Title, plan.Version)
 	writeTable(w, [][]string{
 		{"  fetch", plan.URL},
@@ -746,45 +776,64 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 	})
 	fmt.Fprintf(w, "It is AsmAI's own copy: your own %s and ~/.claude are not touched.\n", plan.Title)
 	fmt.Fprint(w, "Install it? [y/N] ")
-	answer, _ := bufio.NewReader(stdin).ReadString('\n')
+	answer := readLine(stdin)
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
 		if !strings.HasSuffix(answer, "\n") {
 			fmt.Fprintln(w)
 		}
-		return o.fail(errors.New("not confirmed; nothing was fetched or installed"))
+		return errors.New("not confirmed; nothing was fetched or installed")
 	}
-
 	present, err := providers.Present(plan)
 	if err != nil {
-		return o.fail(err)
+		return err
 	}
-	if !present {
-		fmt.Fprintf(w, "Fetching %s...\n", plan.URL)
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-		if err := providers.Fetch(ctx, http.DefaultClient, plan); err != nil {
-			return o.fail(fmt.Errorf("%w; nothing was installed", err))
+	if present {
+		return nil
+	}
+	fmt.Fprintf(w, "Fetching %s...\n", plan.URL)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if err := providers.Fetch(ctx, http.DefaultClient, plan); err != nil {
+		return fmt.Errorf("%w; nothing was installed", err)
+	}
+	return nil
+}
+
+// readLine reads one line from r, newline included, a byte at a time, so
+// that nothing after it is taken from what a program started next reads.
+func readLine(r io.Reader) string {
+	var line []byte
+	b := make([]byte, 1)
+	for {
+		n, err := r.Read(b)
+		if n == 1 {
+			line = append(line, b[0])
+			if b[0] == '\n' {
+				return string(line)
+			}
+		}
+		if err != nil {
+			return string(line)
 		}
 	}
-	resp, err = daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandProviderInstalled, Provider: &store.ProviderInstall{
+}
+
+// recordInstall has the daemon record plan's install, and returns the
+// install as the store holds it.
+func recordInstall(paths statedir.Paths, plan providers.Plan) (store.ProviderInstall, error) {
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandProviderInstalled, Provider: &store.ProviderInstall{
 		Name:    plan.Name,
 		Version: plan.Version,
 		Path:    plan.Path,
 		SHA256:  plan.Download.SHA256,
 	}})
 	if err != nil {
-		return o.fail(err)
+		return store.ProviderInstall{}, err
 	}
 	if len(resp.Providers) != 1 {
-		return o.fail(errors.New("the daemon did not answer with the install it recorded"))
+		return store.ProviderInstall{}, errors.New("the daemon did not answer with the install it recorded")
 	}
-	installed := resp.Providers[0]
-	if o.json {
-		return o.printJSON(map[string]any{"installed": true, "provider": installed})
-	}
-	fmt.Fprintf(o.stdout, "Installed %s %s.\n", plan.Title, plan.Version)
-	o.table(installRows(installed))
-	return 0
+	return resp.Providers[0], nil
 }
 
 func installRows(p store.ProviderInstall) [][]string {

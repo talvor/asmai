@@ -5,6 +5,7 @@
 package statedir
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -104,4 +105,30 @@ func (p Paths) Prepare() error {
 		return fmt.Errorf("making the state directory private: %w", err)
 	}
 	return nil
+}
+
+// Folders are the folders the factory keeps in the state directory, besides
+// the directory itself.
+func (p Paths) Folders() []string {
+	return []string{p.Providers, p.Bin, p.GitHooks, p.Agents, p.Repositories, p.Workspaces, p.Views}
+}
+
+// MakeFolders prepares the state directory and makes each of its Folders
+// that is missing, readable only by the user. It reports whether it made
+// any.
+func (p Paths) MakeFolders() (made bool, err error) {
+	for _, dir := range append([]string{p.Dir}, p.Folders()...) {
+		if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+			made = true
+		}
+	}
+	if err := p.Prepare(); err != nil {
+		return false, err
+	}
+	for _, dir := range p.Folders() {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return false, fmt.Errorf("creating %s: %w", dir, err)
+		}
+	}
+	return made, nil
 }

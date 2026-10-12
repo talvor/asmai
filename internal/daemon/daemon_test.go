@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,10 +36,26 @@ func runDaemon(t *testing.T, p statedir.Paths) (stopped func() error, cancel fun
 	return runDaemonWith(t, Config{Paths: p, Version: "v1.2.3"})
 }
 
-// runDaemonWith is runDaemon with cfg.
+// trustingRecord writes a record of Claude Code's in which the user trusts
+// the folders agents start in, in the state directory p, and returns its path.
+func trustingRecord(t *testing.T, p statedir.Paths) string {
+	t.Helper()
+	record := filepath.Join(t.TempDir(), ".claude.json")
+	data := fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, p.Agents, p.Workspaces)
+	if err := os.WriteFile(record, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+// runDaemonWith is runDaemon with cfg. Unless cfg names Claude Code's
+// record, the user trusts the folders agents start in.
 func runDaemonWith(t *testing.T, cfg Config) (stopped func() error, cancel func()) {
 	t.Helper()
 	p := cfg.Paths
+	if cfg.ClaudeRecord == "" {
+		cfg.ClaudeRecord = trustingRecord(t, p)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	var err error

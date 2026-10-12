@@ -84,17 +84,23 @@ type fakeClaude struct {
 func (fakeClaude) Name() string { return "Claude Code" }
 
 // Install puts the fake where the pins file puts the pinned copy and has the
-// daemon record it, as `asmai providers install` does for the real one.
+// daemon record it, as `asmai providers install` does for the real one. In a
+// folder the test gave a script of its own, by the folder's name, the fake
+// plays that script.
 func (fakeClaude) Install(_ context.Context, f *Factory, pins providers.Pins) error {
 	platform, _ := providers.Platform(runtime.GOOS, runtime.GOARCH)
 	plan, err := pins.ClaudeCodePlan(platform, f.paths.Providers)
 	if err != nil {
 		return err
 	}
-	data, err := os.ReadFile(fakeProvider)
-	if err != nil {
-		return err
-	}
+	data := []byte(`#!/bin/sh
+folder=$(basename "$PWD")
+if [ -e "$ASMAI_TEST_DIR/script-$folder.jsonl" ]; then
+	` + fakeprovider.ScriptEnv + `="$ASMAI_TEST_DIR/script-$folder.jsonl"
+	export ` + fakeprovider.ScriptEnv + `
+fi
+exec ` + providers.ShellQuote(fakeProvider) + ` "$@"
+`)
 	if err := os.MkdirAll(filepath.Dir(plan.Path), 0o700); err != nil {
 		return err
 	}
@@ -138,8 +144,9 @@ var signedIn = fakeClaude{auth: AuthStatus{SignedIn: true, Method: "claude.ai"}}
 // whose leader plays script.
 func harness(t *testing.T, provider Provider, script []string) *Harness {
 	t.Helper()
-	// os.MkdirTemp keeps the socket's path short enough on macOS.
-	home, err := os.MkdirTemp("", "home")
+	// A home in /tmp keeps the disposable state directory's socket path short
+	// enough on macOS, whose own temporary directory is deep.
+	home, err := os.MkdirTemp("/tmp", "home")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,8 +159,21 @@ func harness(t *testing.T, provider Provider, script []string) *Harness {
 	if err := os.WriteFile(config, []byte(staffing), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scriptFile := filepath.Join(t.TempDir(), "leader.jsonl")
+	testDir := t.TempDir()
+	scriptFile := filepath.Join(testDir, "leader.jsonl")
 	if err := os.WriteFile(scriptFile, []byte(strings.Join(script, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The user has trusted the folders agents start in, in their own state
+	// directory, with their own `asmai setup`; the disposable one is the
+	// harness's to set up.
+	state := filepath.Join(home, ".local", "state", "asmai")
+	trusted := filepath.Join(state, "agents") + "\n" + filepath.Join(state, "workspaces") + "\n"
+	if err := os.WriteFile(filepath.Join(testDir, "trusted"), []byte(trusted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record := fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, filepath.Join(state, "agents"), filepath.Join(state, "workspaces"))
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(record), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	pins, err := providers.ParsePins(asmai.Pins)
@@ -165,7 +185,7 @@ func harness(t *testing.T, provider Provider, script []string) *Harness {
 		Provider:           provider,
 		Paths:              statedir.At(filepath.Join(home, ".local", "state", "asmai")),
 		QualificationPaths: statedir.At(filepath.Join(home, ".local", "state", "asmai", "qualification")),
-		Env:                append(os.Environ(), "HOME="+home, fakeprovider.ScriptEnv+"="+scriptFile),
+		Env:                append(os.Environ(), "HOME="+home, fakeprovider.ScriptEnv+"="+scriptFile, "ASMAI_TEST_DIR="+testDir),
 		Host:               "asmai-vm", User: "tester",
 		Wait: 30 * time.Second, Poll: 50 * time.Millisecond,
 	}
@@ -207,16 +227,6 @@ var startsAfterTrust = []string{
 	`{"expect": "only typed by a test that means to"}`,
 }
 
-// startsAfterTrustSelectedFirst is the same with Yes selected from the start,
-// so the user need only confirm.
-var startsAfterTrustSelectedFirst = []string{
-	`{"screen": "\u001b[2J\u001b[HAccessing workspace:\r\n\r\n   No, exit\r\n \u001b[1m\u276f Yes, I trust this folder\u001b[22m\r\n"}`,
-	`{"expect": "\r"}`,
-	`{"hook": "SessionStart", "payload": {"session_id": "fake-session", "hook_event_name": "SessionStart", "source": "startup"}}`,
-	`{"screen": "\u001b[2J\u001b[H> "}`,
-	`{"expect": "only typed by a test that means to"}`,
-}
-
 // startsDirectly is a leader whose directory is already trusted.
 var startsDirectly = []string{
 	`{"hook": "SessionStart", "payload": {"session_id": "fake-session", "hook_event_name": "SessionStart", "source": "startup"}}`,
@@ -224,36 +234,16 @@ var startsDirectly = []string{
 	`{"expect": "only typed by a test that means to"}`,
 }
 
-func TestC3RefusesToAutomaticallyTrustItsDefaultDirectory(t *testing.T) {
+// The harness never answers Claude Code's question about trusting a
+// leader's directory: the user's trust of the agents folder covers it, so the
+// question fails the case, naming `asmai setup`.
+func TestC3FailsWhenClaudeCodeAsksToTrustTheLeadersDirectory(t *testing.T) {
 	h := harness(t, signedIn, startsAfterTrust)
 
 	r := result(t, h, "C3")
 
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "automatic trust acceptance is limited") {
-		t.Fatalf("C3 %s: %s, want trust prompt refusal", r.Outcome, r.Failure)
-	}
-}
-
-func TestAutomaticTrustAcceptanceIsLimitedToQualificationDirectoriesOnTheVM(t *testing.T) {
-	h := harness(t, signedIn, startsDirectly)
-	f := NewFactory(h.Subject.Asmai, h.QualificationPaths, h.Env)
-	for _, address := range []string{"leader@coordination", "leader@engineering"} {
-		if !h.canAutoAcceptTrust(f, address) {
-			t.Errorf("authorized qualification directory %s was not allowed", address)
-		}
-	}
-	h.Host = "Phillips-MacBook-Pro"
-	if h.canAutoAcceptTrust(f, "leader@engineering") {
-		t.Error("automatic trust acceptance was allowed outside asmai-vm")
-	}
-	h.Host = "asmai-vm"
-	if h.canAutoAcceptTrust(f, "leader@quality") {
-		t.Error("automatic trust acceptance was allowed for an unsupported role")
-	}
-	f.paths.Dir = filepath.Join(h.Paths.Dir, "other")
-	f.paths.Agents = filepath.Join(f.paths.Dir, "agents")
-	if h.canAutoAcceptTrust(f, "leader@engineering") {
-		t.Error("automatic trust acceptance was allowed outside the qualification state")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "asked whether to trust leader@coordination's directory") || !strings.Contains(r.Failure, "asmai setup") {
+		t.Fatalf("C3 %s: %s, want a failure at the trust question naming asmai setup", r.Outcome, r.Failure)
 	}
 }
 
@@ -261,7 +251,7 @@ func TestHandoffCasesUseTheDisposableFactoryState(t *testing.T) {
 	h := harness(t, signedIn, startsDirectly)
 	callerState := filepath.Join(t.TempDir(), "caller-state")
 	h.Env = envValue(h.Env, "ASMAI_STATE_DIR", callerState)
-	for _, id := range []string{"C7", "C11"} {
+	for _, id := range []string{"C7", "C11", "C19", "C48"} {
 		f := h.factoryForCase(Case{ID: id, Env: signedInOnly}, &Result{})
 		if f.paths.Dir != h.QualificationPaths.Dir {
 			t.Errorf("%s factory state = %s, want disposable state %s", id, f.paths.Dir, h.QualificationPaths.Dir)
@@ -279,16 +269,6 @@ func TestHandoffCasesUseTheDisposableFactoryState(t *testing.T) {
 	f := h.factoryForCase(Case{ID: "C3", Env: signedInOnly}, &Result{})
 	if f.paths.Dir != h.Paths.Dir {
 		t.Errorf("C3 state = %s, want configured state %s", f.paths.Dir, h.Paths.Dir)
-	}
-}
-
-func TestC3ConfirmsTheTrustPromptWithoutMovingWhenYesIsAlreadySelected(t *testing.T) {
-	h := harness(t, signedIn, startsAfterTrustSelectedFirst)
-
-	r := result(t, h, "C3")
-
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "automatic trust acceptance is limited") {
-		t.Fatalf("C3 %s: %s, want trust prompt refusal", r.Outcome, r.Failure)
 	}
 }
 

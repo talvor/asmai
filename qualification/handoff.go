@@ -72,8 +72,7 @@ type handoffEvidence struct {
 }
 
 func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (handoffEvidence, error) {
-	path, err := h.ready(ctx, f)
-	if err != nil {
+	if _, err := h.ready(ctx, f); err != nil {
 		return handoffEvidence{}, err
 	}
 	leader, ok, err := f.Leader()
@@ -83,10 +82,7 @@ func (h *Harness) exerciseHandoff(ctx context.Context, f *Factory, r *Result) (h
 	if !ok {
 		return handoffEvidence{}, errors.New("Coordination leader did not start")
 	}
-	if _, err = h.awaitSessionStart(ctx, f, leader); err != nil {
-		return handoffEvidence{}, err
-	}
-	if err = h.prepareEngineeringTrust(ctx, f, path); err != nil {
+	if err = h.awaitSessionStart(ctx, f, leader); err != nil {
 		return handoffEvidence{}, err
 	}
 	if err = h.prepareHandoffRepository(ctx, f); err != nil {

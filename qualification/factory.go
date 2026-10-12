@@ -188,36 +188,6 @@ func (f *Factory) Observed(agent string, generation int) ([]string, error) {
 	return events, nil
 }
 
-// Press types keys into Coordination's leader as a user does in the
-// conversation: it opens the conversation, types them and leaves. The harness
-// does this only to answer a native prompt it has recognised.
-func (f *Factory) Press(keys string) error {
-	conn, r, _, err := daemon.Open(f.paths.Socket, daemon.Request{Command: daemon.CommandConversation, Terminal: "the qualification harness"})
-	if conn != nil {
-		defer conn.Close()
-	}
-	if err != nil {
-		return err
-	}
-	closed := make(chan struct{})
-	go func() {
-		io.Copy(io.Discard, r)
-		close(closed)
-	}()
-	enc := json.NewEncoder(conn)
-	if err := enc.Encode(daemon.ClientMessage{Keys: []byte(keys)}); err != nil {
-		return fmt.Errorf("typing into the conversation: %w", err)
-	}
-	if err := enc.Encode(daemon.ClientMessage{Leave: true}); err != nil {
-		return fmt.Errorf("leaving the conversation: %w", err)
-	}
-	select {
-	case <-closed:
-	case <-time.After(5 * time.Second):
-	}
-	return nil
-}
-
 // Submit types a user's prompt and Enter as separate input events in one
 // conversation. Claude Code can treat a long single terminal write as a
 // paste, where its trailing Enter is part of the paste instead of submit.

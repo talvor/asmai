@@ -25,8 +25,8 @@ type Harness struct {
 	Provider Provider
 	// Paths is the configured state directory used by C3 and C4.
 	Paths statedir.Paths
-	// QualificationPaths is the disposable state directory used by C7, C11
-	// and C19.
+	// QualificationPaths is the disposable state directory used by C7, C11,
+	// C19 and C48.
 	QualificationPaths statedir.Paths
 	// Env is the harness's own environment, which each case's factory starts
 	// from.
@@ -90,6 +90,7 @@ var Cases = []Case{
 	{ID: "C42", Title: "A draft pull request, and the \"[not ready]\" fallback when GitHub refuses a draft", Env: signedInOnly, Run: (*Harness).c42},
 	{ID: "C43", Title: "The daemon watches CI through gh: green; red with one judged re-run; a newer push replacing the wait", Env: signedInOnly, Run: (*Harness).c43},
 	{ID: "C45", Title: "The daemon marks the pull request ready when CI is green", Env: signedInOnly, Run: (*Harness).c45},
+	{ID: "C48", Title: "With the agents and workspaces folders trusted at setup, a new agent directory and a new workspace start with no trust question", Env: signedInOnly, Run: (*Harness).c48},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in
@@ -132,11 +133,17 @@ func (h *Harness) runCase(ctx context.Context, c Case) Result {
 func (h *Harness) factoryForCase(c Case, r *Result) *Factory {
 	paths := h.Paths
 	env := c.Env(h.Env, r)
-	if c.ID == "C7" || c.ID == "C11" || c.ID == "C19" {
+	if disposableState(c.ID) {
 		paths = h.QualificationPaths
 		env = envValue(env, "ASMAI_STATE_DIR", paths.Dir)
 	}
 	return NewFactory(h.Subject.Asmai, paths, env)
+}
+
+// disposableState reports whether the case id runs in the disposable state
+// directory, which the harness has `asmai setup` prepare.
+func disposableState(id string) bool {
+	return slices.Contains([]string{"C7", "C11", "C19", "C48"}, id)
 }
 
 // withoutAPIKeys returns environ less any provider API-key variable, and the
@@ -204,7 +211,10 @@ func withAPIKeyCanaries(environ []string, r *Result) []string {
 
 // ready starts the factory with Coordination's leader running the pinned
 // Claude Code, installing it first if it is not installed, and returns where
-// it is. The leader's start is what the case then watches.
+// it is. In the disposable state directory it also runs `asmai setup`, which
+// has the user's trust of the folders agents start in recorded; in the
+// user's own, that trust is theirs to give, with their own `asmai setup`.
+// The leader's start is what the case then watches.
 func (h *Harness) ready(ctx context.Context, f *Factory) (path string, err error) {
 	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
 	if !ok {
@@ -227,6 +237,11 @@ func (h *Harness) ready(ctx context.Context, f *Factory) (path string, err error
 		h.logf("installing the pinned Claude Code %s", plan.Version)
 		if err := h.Provider.Install(ctx, f, h.Subject.Pins); err != nil {
 			return "", err
+		}
+		if f.paths.Dir == h.QualificationPaths.Dir {
+			if err := h.setup(ctx, f); err != nil {
+				return "", err
+			}
 		}
 		if res, code, err = f.Start(ctx); err != nil {
 			return "", err
@@ -279,28 +294,20 @@ func (h *Harness) c3(ctx context.Context, f *Factory, r *Result) error {
 		r.observe("the pinned copy's own status check reports it signed in with %s, in an environment without API-key variables", auth.Method)
 	}
 
-	pressed, err := h.awaitSessionStart(ctx, f, leader)
-	if err != nil {
+	if err := h.awaitSessionStart(ctx, f, leader); err != nil {
 		return err
-	}
-	if pressed > 0 {
-		r.observe("the session first waited at Claude Code's trust prompt for its new directory, which comes after sign-in; the harness answered it as a user does")
 	}
 	r.observe("%s (generation %d, pid %d) reported SessionStart through its hook, with no login prompt on its screen", leader.Agent, leader.Generation, leader.PID)
 	return nil
 }
 
 // awaitSessionStart waits until leader's session reports SessionStart: the
-// session started, which Claude Code does only once it is signed in. A new
-// directory first asks the user to trust it, which the harness answers as a
-// user would: it moves to "Yes, I trust this folder" if the prompt starts
-// elsewhere, and confirms only while that option is the selected one, so it
-// never chooses to exit. A login prompt, or a session that ends, fails the
-// case. It returns how many times it confirmed the trust prompt.
-func (h *Harness) awaitSessionStart(ctx context.Context, f *Factory, leader store.Agent) (pressed int, err error) {
-	const maxKeys, keyGap = 8, time.Second
-	keys := 0
-	var lastKey time.Time
+// session started, which Claude Code does only once it is signed in and past
+// its question about trusting the leader's directory. The harness never
+// answers that question here: the user's trust of the agents folder, given
+// at setup, covers the directory, so the question, a login prompt, or a
+// session that ends fails the case.
+func (h *Harness) awaitSessionStart(ctx context.Context, f *Factory, leader store.Agent) error {
 	var lines []string
 	screenNote := func() string {
 		if h.ShowScreen {
@@ -311,11 +318,11 @@ func (h *Harness) awaitSessionStart(ctx context.Context, f *Factory, leader stor
 	deadline := time.Now().Add(h.Wait)
 	for {
 		if err := ctx.Err(); err != nil {
-			return pressed, err
+			return err
 		}
 		current, ok, err := f.Leader()
 		if err != nil {
-			return pressed, err
+			return err
 		}
 		running := ok && current.State == store.AgentRunning && current.Generation == leader.Generation
 		if running {
@@ -325,45 +332,29 @@ func (h *Harness) awaitSessionStart(ctx context.Context, f *Factory, leader stor
 			if screen, err := f.Screen(); err == nil {
 				lines = screen
 			} else if current, ok, lerr := f.Leader(); lerr != nil || (ok && current.State == store.AgentRunning && current.Generation == leader.Generation) {
-				return pressed, err
+				return err
 			} else {
 				running = false
 			}
 		}
 		if !running {
-			return pressed, fmt.Errorf("the leader's session ended before it reported SessionStart%s%s", exitNote(current.Exit), screenNote())
+			return fmt.Errorf("the leader's session ended before it reported SessionStart%s%s", exitNote(current.Exit), screenNote())
 		}
 		events, err := f.Observed(leader.Agent, leader.Generation)
 		if err != nil {
-			return pressed, err
+			return err
 		}
 		if marker, found := screenHas(lines, loginPromptMarkers...); found {
-			return pressed, fmt.Errorf("Claude Code asked for a login (its screen shows %q) instead of starting signed in%s", marker, screenNote())
+			return fmt.Errorf("Claude Code asked for a login (its screen shows %q) instead of starting signed in%s", marker, screenNote())
 		}
 		if slices.Contains(events, "SessionStart") {
-			return pressed, nil
+			return nil
 		}
-		if _, found := screenHas(lines, trustPromptMarker); found && keys < maxKeys && time.Since(lastKey) >= keyGap {
-			if !h.canAutoAcceptTrust(f, leader.Agent) {
-				return pressed, errors.New("Claude Code needs the Coordination qualification directory trusted; automatic trust acceptance is limited to the authorized asmai-vm qualification directory")
-			}
-			switch selected := selectedOption(lines); {
-			case strings.Contains(selected, trustPromptMarker):
-				h.logf("confirming Claude Code's trust prompt")
-				err = f.Press("\r")
-				pressed++
-			case selected != "":
-				h.logf("moving Claude Code's trust prompt to %q", trustPromptMarker)
-				err = f.Press(keyDown)
-			}
-			if err != nil {
-				return pressed, err
-			}
-			keys++
-			lastKey = time.Now()
+		if _, found := screenHas(lines, trustPromptMarker); found {
+			return fmt.Errorf("Claude Code asked whether to trust %s's directory, which the user's trust of the agents folder should cover: run `asmai setup` for this state directory, and if it reports the folder trusted, this pin's trust no longer covers the folders below a trusted one", leader.Agent)
 		}
 		if time.Now().After(deadline) {
-			return pressed, fmt.Errorf("the leader reported no SessionStart within %s and showed no login prompt%s", h.Wait, screenNote())
+			return fmt.Errorf("the leader reported no SessionStart within %s and showed no login prompt%s", h.Wait, screenNote())
 		}
 		time.Sleep(h.Poll)
 	}

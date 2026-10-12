@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -387,27 +388,39 @@ done
 	}
 }
 
-func TestAHookThatStagesAndStashesLikeLintStagedPasses(t *testing.T) {
+// On Linux, Landlock cannot let a hook create packed-refs.lock, which git
+// takes to delete a ref, so dropping the last stash entry, as lint-staged does
+// when it is done, fails there, as the README says.
+func TestAHookThatStagesAndStashesLikeLintStaged(t *testing.T) {
 	clone, _, git := workspace(t)
 	executable(t, filepath.Join(clone, ".git", "hooks", "pre-commit"), `set -e
 printf 'hello, formatted\n' > greeting.txt
 git add greeting.txt
 git stash push -q -m 'lint-staged backup'
 git stash apply -q --index
+git stash drop -q
 `)
 	if err := os.WriteFile("greeting.txt", []byte("hello again\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "greeting.txt")
-	if code, stderr := run(t, "pre-commit", "/own", trailers); code != 0 {
-		t.Fatalf("pre-commit exited %d: %s", code, stderr)
-	}
+	code, stderr := run(t, "pre-commit", "/own", trailers)
 	staged, err := exec.Command("git", "show", ":greeting.txt").Output()
 	if err != nil || string(staged) != "hello, formatted\n" {
 		t.Errorf("the hook staged %q (%v), want its formatted file", staged, err)
 	}
-	if out, err := exec.Command("git", "stash", "list", "--format=%s").Output(); err != nil || !strings.Contains(string(out), "lint-staged backup") {
-		t.Errorf("the hook's stash is %q (%v), want its backup", out, err)
+	stashes, err := exec.Command("git", "stash", "list", "--format=%s").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "linux" {
+		if code == 0 || !strings.Contains(stderr, "packed-refs.lock") || !strings.Contains(string(stashes), "lint-staged backup") {
+			t.Errorf("pre-commit exited %d (%s) leaving the stashes %q, want dropping the last stash refused for want of packed-refs.lock", code, stderr, stashes)
+		}
+		return
+	}
+	if code != 0 || len(stashes) != 0 {
+		t.Errorf("pre-commit exited %d (%s) leaving the stashes %q, want its stash made, applied and dropped", code, stderr, stashes)
 	}
 	git("commit", "-q", "--no-verify", "-m", "Greet again")
 }

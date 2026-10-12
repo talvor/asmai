@@ -14,12 +14,16 @@ import (
 // write as well as its workspace.
 var devices = []string{"/dev/null", "/dev/zero", "/dev/tty"}
 
-// writable returns the directories a repository's hook may write: the
-// workspace git runs it in, the workspace's own git directory, which holds
-// the message being committed and the index, and the worker's temporary
-// directory. The clone's shared git directory, of objects, refs,
-// configuration and hooks, is not among them, nor is anywhere else. Each is
-// absolute, with its symbolic links resolved.
+// shared are the entries of the clone's shared git directory that git writes
+// for the objects and refs a hook's own git commands make. The rest of it, its
+// configuration, hooks and info among them, a hook may not write.
+var shared = []string{"objects", "refs", "logs", "packed-refs", "packed-refs.lock"}
+
+// writable returns the paths a repository's hook may write: the workspace git
+// runs it in, the workspace's own git directory, which holds the message being
+// committed and the index, the shared entries of the clone's git directory,
+// the system's temporary directory and the worker's. Nowhere else is among
+// them. Each is absolute, with its symbolic links resolved.
 func writable(ctx context.Context) []string {
 	var dirs []string
 	for _, flag := range []string{"--show-toplevel", "--absolute-git-dir"} {
@@ -28,6 +32,16 @@ func writable(ctx context.Context) []string {
 			dirs = append(dirs, dir)
 		}
 	}
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if common := strings.TrimSpace(string(out)); err == nil && common != "" {
+		if real, err := filepath.EvalSymlinks(common); err == nil {
+			common = real
+		}
+		for _, entry := range shared {
+			dirs = append(dirs, filepath.Join(common, entry))
+		}
+	}
+	dirs = append(dirs, "/tmp")
 	if tmp := os.Getenv("TMPDIR"); tmp != "" {
 		dirs = append(dirs, tmp)
 	}

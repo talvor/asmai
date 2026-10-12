@@ -317,41 +317,97 @@ func TestTheHooksDirectoryIsAddedAfterTheConfigurationAlreadyInTheEnvironment(t 
 	}
 }
 
-func TestARepositorysHookRunsConfinedToItsWorkspace(t *testing.T) {
-	clone := repo(t)
-	git := func(args ...string) {
+// workspace makes a clone with a first commit and a worker's workspace, a
+// worktree of it, and enters the workspace. It returns the clone's directory,
+// a directory outside both and outside every temporary directory, which
+// t.TempDir is not on Linux, and git run with an identity.
+func workspace(t *testing.T) (clone, outside string, git func(args ...string)) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err = os.MkdirTemp(wd, ".outside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(outside) })
+	clone = repo(t)
+	git = func(args ...string) {
 		t.Helper()
 		if out, err := exec.Command("git", append([]string{"-c", "user.name=Una User", "-c", "user.email=una@example.test"}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
-	git("commit", "-q", "--allow-empty", "-m", "Start")
-	workspace := filepath.Join(t.TempDir(), "repo")
-	git("worktree", "add", "-q", "-b", "asmai/job-1/1", workspace)
-	t.Chdir(workspace)
-	outside := filepath.Join(t.TempDir(), "outside")
-	shared := filepath.Join(clone, ".git", "shared")
-	executable(t, filepath.Join(clone, ".git", "hooks", "pre-commit"), `touch inside "$TMPDIR/temporary" "$(git rev-parse --absolute-git-dir)/own"
-for path in `+outside+` `+shared+`; do
-	if touch "$path" 2>/dev/null; then echo "$path" >> escaped; else echo "$path" >> blocked; fi
+	if err := os.WriteFile(filepath.Join(clone, "greeting.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "greeting.txt")
+	git("commit", "-q", "-m", "Start")
+	dir := filepath.Join(t.TempDir(), "repo")
+	git("worktree", "add", "-q", "-b", "asmai/job-1/1", dir)
+	t.Chdir(dir)
+	return clone, outside, git
+}
+
+func TestARepositorysHookRunsConfinedToItsWorkspace(t *testing.T) {
+	clone, outsideDir, _ := workspace(t)
+	workspace, _ := os.Getwd()
+	outside := filepath.Join(outsideDir, "outside")
+	common := filepath.Join(clone, ".git")
+	system := filepath.Join("/tmp", "asmai-hook-"+filepath.Base(outsideDir))
+	t.Cleanup(func() { os.Remove(system) })
+	refused := []string{outside, filepath.Join(common, "shared"), filepath.Join(common, "hooks", "planted"), filepath.Join(common, "config"), filepath.Join(common, "info", "exclude")}
+	executable(t, filepath.Join(common, "hooks", "pre-commit"), `touch inside "$TMPDIR/temporary" `+system+` "$(git rev-parse --absolute-git-dir)/own"
+for path in `+strings.Join(refused, " ")+`; do
+	if { echo planted >> "$path"; } 2>/dev/null; then echo "$path" >> escaped; else echo "$path" >> blocked; fi
 done
 `)
+	before := map[string][]byte{}
+	for _, path := range refused {
+		before[path], _ = os.ReadFile(path)
+	}
 	if code, stderr := run(t, "pre-commit", "/own", trailers); code != 0 {
 		t.Fatalf("pre-commit exited %d: %s", code, stderr)
 	}
-	ownGitDir := filepath.Join(clone, ".git", "worktrees", "repo")
-	for _, path := range []string{filepath.Join(workspace, "inside"), filepath.Join(os.Getenv("TMPDIR"), "temporary"), filepath.Join(ownGitDir, "own")} {
+	ownGitDir := filepath.Join(common, "worktrees", "repo")
+	for _, path := range []string{filepath.Join(workspace, "inside"), filepath.Join(os.Getenv("TMPDIR"), "temporary"), system, filepath.Join(ownGitDir, "own")} {
 		if _, err := os.Stat(path); err != nil {
-			t.Errorf("the hook could not write %s in its workspace: %v", path, err)
+			t.Errorf("the hook could not write %s: %v", path, err)
 		}
 	}
-	for _, path := range []string{outside, shared} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("the hook wrote %s outside its workspace (%v)", path, err)
+	for _, path := range refused {
+		if got, _ := os.ReadFile(path); !bytes.Equal(got, before[path]) {
+			t.Errorf("the hook wrote %s, outside what it may write", path)
 		}
 	}
 	escaped, _ := os.ReadFile(filepath.Join(workspace, "escaped"))
-	if blocked, _ := os.ReadFile(filepath.Join(workspace, "blocked")); string(blocked) != outside+"\n"+shared+"\n" {
-		t.Errorf("the hook was blocked writing %q and not %q, want it blocked writing both paths outside its workspace", blocked, escaped)
+	if blocked, _ := os.ReadFile(filepath.Join(workspace, "blocked")); string(blocked) != strings.Join(refused, "\n")+"\n" {
+		t.Errorf("the hook was blocked writing %q and not %q, want it blocked writing every path it may not", blocked, escaped)
 	}
+}
+
+func TestAHookThatStagesAndStashesLikeLintStagedPasses(t *testing.T) {
+	clone, _, git := workspace(t)
+	executable(t, filepath.Join(clone, ".git", "hooks", "pre-commit"), `set -e
+printf 'hello, formatted\n' > greeting.txt
+git add greeting.txt
+git stash push -q -m 'lint-staged backup'
+git stash apply -q --index
+`)
+	if err := os.WriteFile("greeting.txt", []byte("hello again\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "greeting.txt")
+	if code, stderr := run(t, "pre-commit", "/own", trailers); code != 0 {
+		t.Fatalf("pre-commit exited %d: %s", code, stderr)
+	}
+	staged, err := exec.Command("git", "show", ":greeting.txt").Output()
+	if err != nil || string(staged) != "hello, formatted\n" {
+		t.Errorf("the hook staged %q (%v), want its formatted file", staged, err)
+	}
+	if out, err := exec.Command("git", "stash", "list", "--format=%s").Output(); err != nil || !strings.Contains(string(out), "lint-staged backup") {
+		t.Errorf("the hook's stash is %q (%v), want its backup", out, err)
+	}
+	git("commit", "-q", "--no-verify", "-m", "Greet again")
 }

@@ -102,7 +102,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		// The repository's own pre-commit hook runs for the worker's commit,
 		// confined to the workspace: its write there is made, its write
 		// outside is blocked, and the commit goes ahead.
-		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && printf '#!/bin/sh\necho inside > hook-wrote-inside\n{ echo escaped > "$ASMAI_TEST_DIR/hook-escaped"; } 2>/dev/null || echo blocked > "$TMPDIR/hook-blocked"\n' > "$hooks/pre-commit" && chmod +x "$hooks/pre-commit"`, 0, ""),
+		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && printf '#!/bin/sh\necho inside > hook-wrote-inside\n{ echo "# escaped" >> "$(git rev-parse --git-common-dir)/config"; } 2>/dev/null || echo blocked > "$TMPDIR/hook-blocked"\n' > "$hooks/pre-commit" && chmod +x "$hooks/pre-commit"`, 0, ""),
 		fakeRun(`printf 'hello again\n' >> greeting.txt && git commit -q -am 'Greet again' && cat hook-wrote-inside "$TMPDIR/hook-blocked" && rm hook-wrote-inside && git log -1 --format=%s`, 0, "^inside\nblocked\nGreet again\n$"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
@@ -126,13 +126,14 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join(testDir, "hook-escaped")); !os.IsNotExist(err) {
-		t.Errorf("the repository's pre-commit hook wrote outside the workspace (%v)", err)
-	}
-
 	// AsmAI set no identity and no hooks in the clone, and wrote its hooks
 	// into its own state directory.
 	clone := filepath.Join(stateDir, "repositories", "fixture")
+	if out, err := exec.Command("git", "-C", clone, "rev-parse", "--path-format=absolute", "--git-common-dir").Output(); err != nil {
+		t.Errorf("finding the clone's git directory: %v", err)
+	} else if config, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), "config")); err != nil || strings.Contains(string(config), "escaped") {
+		t.Errorf("the repository's pre-commit hook wrote the clone's configuration, outside the workspace (%v)", err)
+	}
 	for _, key := range []string{"user.name", "user.email", "core.hooksPath", "credential.helper"} {
 		if out, err := exec.Command("git", "-C", clone, "config", "--local", "--get", key).Output(); err == nil {
 			t.Errorf("AsmAI's clone sets %s to %s", key, strings.TrimSpace(string(out)))

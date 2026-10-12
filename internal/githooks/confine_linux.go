@@ -22,9 +22,9 @@ const (
 		unix.LANDLOCK_ACCESS_FS_MAKE_SYM
 )
 
-// startConfined starts cmd under Landlock, able to write only the
-// directories dirs and the devices any program writes to. Everything else it
-// may read and run as before. The restriction is put on a thread of this
+// startConfined starts cmd under Landlock, able to write only beneath the
+// paths dirs, those that exist, and the devices any program writes to.
+// Everything else it may read and run as before. The restriction is put on a thread of this
 // process that starts cmd, which inherits it, and that thread then ends, so
 // that the rest of the process is never confined.
 func startConfined(cmd *exec.Cmd, dirs []string) error {

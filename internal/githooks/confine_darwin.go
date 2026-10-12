@@ -12,7 +12,7 @@ import (
 // uses there.
 const sandboxExec = "/usr/bin/sandbox-exec"
 
-// startConfined starts cmd in Seatbelt, able to write only the directories
+// startConfined starts cmd in Seatbelt, able to write only beneath the paths
 // dirs and the devices any program writes to. Everything else it may read
 // and run as before.
 func startConfined(cmd *exec.Cmd, dirs []string) error {

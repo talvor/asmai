@@ -112,6 +112,10 @@ type setupTerminal struct {
 	read chan struct{}
 }
 
+// setupReturned is what the test writes on setup's terminal once setup
+// returns.
+const setupReturned = "(asmai setup returned)"
+
 func setupInTerminal(t *testing.T, args ...string) *setupTerminal {
 	t.Helper()
 	ptmx, tty, err := pty.Open()
@@ -122,7 +126,10 @@ func setupInTerminal(t *testing.T, args ...string) *setupTerminal {
 		t.Fatal(err)
 	}
 	s := &setupTerminal{ptmx: ptmx, term: vt.New(200, 40), code: make(chan int, 1), read: make(chan struct{})}
-	t.Cleanup(func() { ptmx.Close() })
+	t.Cleanup(func() {
+		tty.Close()
+		ptmx.Close()
+	})
 	go func() {
 		defer close(s.read)
 		buf := make([]byte, 4096)
@@ -131,15 +138,19 @@ func setupInTerminal(t *testing.T, args ...string) *setupTerminal {
 			s.mu.Lock()
 			s.term.Write(buf[:n])
 			s.out.Write(buf[:n])
+			done := strings.Contains(s.out.String(), setupReturned)
 			s.mu.Unlock()
-			if err != nil {
+			if done || err != nil {
 				return
 			}
 		}
 	}()
+	// The terminal stays open once setup returns: macOS drops what is still
+	// unread on a terminal whose last other end is closed. The mark, written
+	// after everything setup wrote, tells the reader it has it all.
 	go func() {
 		code := run(append([]string{"setup"}, args...), tty, tty, tty)
-		tty.Close()
+		tty.WriteString(setupReturned)
 		s.code <- code
 	}()
 	return s

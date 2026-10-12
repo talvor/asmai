@@ -6,8 +6,8 @@
 // which adds the trailers to a commit's message and runs the hook the
 // repository would have run, so the repository's own hooks still apply. A
 // repository's hook runs in the system's sandbox, Seatbelt on macOS and
-// Landlock on Linux, which lets it write only its workspace, as the write
-// guard lets the worker.
+// Landlock on Linux, which lets it write only the paths writable returns, as
+// the write guard confines the worker.
 package githooks
 
 import (
@@ -98,9 +98,9 @@ func Environment(environ []string, dir string) map[string]string {
 // Run runs the hook name that git called with args, with its standard input,
 // and returns the exit status git should see. For every hook, the
 // repository's own hook of that name runs if it has one, and decides the
-// status; it runs confined to writing the workspace, and when it cannot be
-// confined it does not run and the status is 1. The message then gets the trailers, both when it is prepared, which
-// `--no-verify` never skips, and again after the repository's commit-msg,
+// status; it runs confined to writing the paths writable returns, and when it
+// cannot be confined it does not run and the status is 1. The message then
+// gets the trailers, both when it is prepared, which `--no-verify` never skips, and again after the repository's commit-msg,
 // which can rewrite it, so that the message git commits carries them, for a
 // merge as for a commit. ownDir is AsmAI's hooks directory, which is never run
 // as the repository's.

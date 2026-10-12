@@ -269,7 +269,7 @@ func (h *Harness) c48(ctx context.Context, f *Factory, r *Result) error {
 		if h.answered[dir] {
 			r.observe("asmai setup for the disposable state directory had Claude Code record the user's trust of %s, answered in the session setup opened there: the only place the harness answers that question", dir)
 		} else {
-			r.observe("asmai setup for the disposable state directory found %s trusted already in Claude Code's record, from an earlier run, and opened no session there", dir)
+			r.observe("asmai setup for the disposable state directory found %s trusted already in Claude Code's record (from an earlier run or a trusted folder above it), and opened no session there", dir)
 		}
 	}
 

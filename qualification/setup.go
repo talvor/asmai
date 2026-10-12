@@ -21,13 +21,19 @@ import (
 // first install fetches about 250 MB.
 const setupWaits = 5
 
+// setupAgreeMarker starts the line on which `asmai setup`, after saying how
+// to answer Claude Code's question about trusting a folder, asks whether to
+// open Claude Code there; the folder follows it.
+const setupAgreeMarker = "press enter to open claude code in "
+
 // setupColumns is the width of the terminal `asmai setup` runs in: wide
 // enough that none of its lines wraps.
 const setupColumns = 400
 
 // setup runs `asmai setup` for the factory's disposable state directory, in
 // a terminal of its own, as its user would. It confirms installing the
-// pinned Claude Code, and in each Claude Code session setup opens it answers
+// pinned Claude Code, agrees with Enter when setup asks to open it in a
+// folder, and in each Claude Code session setup opens it answers
 // "Yes, I trust this folder" on the user's behalf, then leaves the session
 // with /exit. This is the only place the harness answers Claude Code's
 // question about trusting a folder (ADR 0011), and only in the disposable
@@ -56,6 +62,7 @@ func (h *Harness) setup(ctx context.Context, f *Factory) error {
 		}
 	}
 	confirmed := false
+	agreed := map[string]bool{}
 	keys := map[string]int{}
 	left := map[string]bool{}
 	if h.answered == nil {
@@ -96,18 +103,30 @@ func (h *Harness) setup(ctx context.Context, f *Factory) error {
 				return err
 			}
 		}
-		_, asked := screenHas(lines, trustPromptMarker)
+		// Setup's explanation above its question names Claude Code's answers
+		// too, so once the harness has agreed, only the screen below the
+		// question is Claude Code's.
+		agree := setupAgreeMarker + strings.ToLower(dir)
+		claude := lines
+		if agreed[dir] {
+			claude = linesBelow(lines, agree)
+		}
+		_, asked := screenHas(claude, trustPromptMarker)
 		switch {
 		case time.Since(lastKey) < keyGap:
 		case !confirmed && screenShows(lines, "install it? [y/n]"):
 			h.logf("confirming the install of the pinned Claude Code")
 			err = s.Input([]byte("y\r"))
 			confirmed, lastKey = true, time.Now()
-		case asked && !trusted && dir != "":
+		case dir != "" && !agreed[dir] && screenShows(lines, agree):
+			h.logf("agreeing, as asmai setup asks, to open Claude Code in %s", dir)
+			err = s.Input([]byte("\r"))
+			agreed[dir], lastKey = true, time.Now()
+		case agreed[dir] && asked && !trusted:
 			if keys[dir]++; keys[dir] > maxKeys {
 				return fmt.Errorf("Claude Code's question about trusting %s did not clear after %d keys", dir, maxKeys)
 			}
-			if strings.Contains(selectedOption(lines), trustPromptMarker) {
+			if strings.Contains(selectedOption(claude), trustPromptMarker) {
 				h.logf("answering \"Yes, I trust this folder\" for %s, in the Claude Code asmai setup opened", dir)
 				err = s.Input([]byte("\r"))
 				h.answered[dir] = true
@@ -117,7 +136,7 @@ func (h *Harness) setup(ctx context.Context, f *Factory) error {
 			}
 			lastKey = time.Now()
 		// Setup itself reports a folder Claude Code did not record trusted.
-		case !asked && (trusted || h.answered[dir]) && dir != "" && promptSurface(lines):
+		case agreed[dir] && !asked && (trusted || h.answered[dir]) && promptSurface(claude):
 			h.logf("leaving the Claude Code asmai setup opened in %s", dir)
 			// Typed at once, Claude Code may take the Enter as part of a paste.
 			if err = s.Input([]byte("/exit")); err == nil {
@@ -168,6 +187,17 @@ func (h *Harness) screenNote(lines []string) string {
 		return "\nthe last screen:\n" + strings.Join(lines, "\n")
 	}
 	return " (run with --show-screen to see the screen; it may show the signed-in account)"
+}
+
+// linesBelow returns the lines below the last that shows text, whatever its
+// case, or all of them when none does.
+func linesBelow(lines []string, text string) []string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(strings.ToLower(lines[i]), text) {
+			return lines[i+1:]
+		}
+	}
+	return lines
 }
 
 // screenShows reports whether the screen shows text, whatever its case.

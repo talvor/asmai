@@ -122,10 +122,11 @@ func setupInTerminal(t *testing.T, args ...string) *setupTerminal {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 200, Rows: 40}); err != nil {
+	// Wide enough that no line setup prints wraps.
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 400, Rows: 40}); err != nil {
 		t.Fatal(err)
 	}
-	s := &setupTerminal{ptmx: ptmx, term: vt.New(200, 40), code: make(chan int, 1), read: make(chan struct{})}
+	s := &setupTerminal{ptmx: ptmx, term: vt.New(400, 40), code: make(chan int, 1), read: make(chan struct{})}
 	t.Cleanup(func() {
 		tty.Close()
 		ptmx.Close()
@@ -202,10 +203,20 @@ func (s *setupTerminal) confirmInstall(t *testing.T) {
 	s.typeKeys(t, "y\r")
 }
 
-// trust answers Claude Code's question about trusting its folder as a user
-// does, "Yes, I trust this folder", then leaves Claude Code.
-func (s *setupTerminal) trust(t *testing.T) {
+// agree waits for setup to explain trusting dir and ask to open Claude Code
+// there, and agrees with Enter.
+func (s *setupTerminal) agree(t *testing.T, dir string) {
 	t.Helper()
+	waitFor(t, "setup to ask to open Claude Code in "+dir, s.shows(trustPrompt+dir))
+	s.typeKeys(t, "\r")
+}
+
+// trust agrees to open Claude Code in dir, answers its question about
+// trusting its folder as a user does, "Yes, I trust this folder", then
+// leaves Claude Code.
+func (s *setupTerminal) trust(t *testing.T, dir string) {
+	t.Helper()
+	s.agree(t, dir)
 	waitFor(t, "Claude Code to ask about trusting its folder", s.shows("❯ No, exit"))
 	s.typeKeys(t, "\x1b[B")
 	waitFor(t, "Yes to be selected", s.shows("❯ Yes, I trust this folder"))
@@ -214,9 +225,10 @@ func (s *setupTerminal) trust(t *testing.T) {
 	s.typeKeys(t, "/exit\r")
 }
 
-// refuse answers "No, exit".
-func (s *setupTerminal) refuse(t *testing.T) {
+// refuse agrees to open Claude Code in dir, and answers "No, exit".
+func (s *setupTerminal) refuse(t *testing.T, dir string) {
 	t.Helper()
+	s.agree(t, dir)
 	waitFor(t, "Claude Code to ask about trusting its folder", s.shows("❯ No, exit"))
 	s.typeKeys(t, "\r")
 }
@@ -245,16 +257,16 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	startUnready(t)
 	configFile := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
 
+	agents, workspaces := filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces")
 	s := setupInTerminal(t)
 	s.confirmInstall(t)
-	s.trust(t)
-	s.trust(t)
+	s.trust(t, agents)
+	s.trust(t, workspaces)
 	if code := s.exited(t); code != 0 {
 		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
 	}
 
 	out := s.printed()
-	agents, workspaces := filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces")
 	for prefix, want := range map[string]string{
 		"config:":            "config: done. Wrote " + configFile + ", staffing Coordination, Engineering and Quality",
 		"folders:":           "folders: done.",
@@ -266,7 +278,33 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 			t.Errorf("setup reported %q, want %q", got, want)
 		}
 	}
-	if !strings.Contains(out, "Trusting "+agents) || strings.Index(out, "Trusting "+agents) > strings.Index(out, "Trusting "+workspaces) {
+	// Each stage is headed, in order.
+	at := 0
+	for _, heading := range []string{"== 1/4 Config ", "== 2/4 Folders ", "== 3/4 Claude Code ", "== 4/4 Trust "} {
+		i := strings.Index(out[at:], heading)
+		if i < 0 {
+			t.Errorf("setup printed no heading %q after the one before it:\n%s", heading, out)
+			break
+		}
+		at += i
+	}
+	// Before opening Claude Code in each folder, setup says which folder,
+	// which answer to choose, and what the other one does.
+	for _, want := range []string{
+		"You are needed: trust " + agents,
+		"Agents start in this folder: every leader's directory is made in it.",
+		"You are needed: trust " + workspaces,
+		"Agents start in this folder: every assignment's workspace is made in it.",
+		`"Yes, I trust this folder"   <- choose this one`,
+		`"No, exit"`,
+		"type /exit and press Enter",
+		`If you choose "No, exit", setup stops with exit status 1, naming this folder`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("setup printed\n%s\nwant it to say %q", out, want)
+		}
+	}
+	if strings.Index(out, "You are needed: trust "+agents) > strings.Index(out, "You are needed: trust "+workspaces) {
 		t.Errorf("setup did not say it was about to trust agents/, then workspaces/:\n%s", out)
 	}
 	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces"}) {
@@ -346,8 +384,8 @@ func TestAnsweringNoMakesSetupNameTheUntrustedFolderAndTheNextRunAsksOnlyAboutIt
 
 	s := setupInTerminal(t)
 	s.confirmInstall(t)
-	s.trust(t)
-	s.refuse(t)
+	s.trust(t, filepath.Join(stateDir, "agents"))
+	s.refuse(t, workspaces)
 	if code := s.exited(t); code != 1 {
 		t.Fatalf("asmai setup exited %d after No, want 1; it printed\n%s", code, s.printed())
 	}
@@ -365,7 +403,7 @@ func TestAnsweringNoMakesSetupNameTheUntrustedFolderAndTheNextRunAsksOnlyAboutIt
 
 	setScripts(t, testDir, map[string][]string{"workspaces": trusting})
 	again := setupInTerminal(t)
-	again.trust(t)
+	again.trust(t, workspaces)
 	if code := again.exited(t); code != 0 {
 		t.Fatalf("asmai setup again exited %d, printing\n%s", code, again.printed())
 	}
@@ -412,6 +450,83 @@ func TestSetupLeavesAnExistingConfigurationFileAsItIsAndReportsItsProblems(t *te
 	}
 	if info, _ := os.Stat(configFile); info.Mode().Perm() != 0o644 {
 		t.Errorf("the configuration file's mode became %v", info.Mode())
+	}
+}
+
+// Setup opens no Claude Code until the user agrees to. Declining stops setup
+// with exit 1, naming the folder still untrusted and how to go on.
+func TestSetupOpensClaudeCodeOnlyOnceTheUserAgrees(t *testing.T) {
+	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting})
+	agents := filepath.Join(stateDir, "agents")
+
+	s := setupInTerminal(t)
+	s.confirmInstall(t)
+	waitFor(t, "setup to ask to open Claude Code in agents/", s.shows(trustPrompt+agents))
+	if got := opened(testDir); len(got) != 0 {
+		t.Errorf("before the user agreed, setup opened Claude Code in %q", got)
+	}
+	s.typeKeys(t, "n\r")
+	if code := s.exited(t); code != 1 {
+		t.Fatalf("asmai setup exited %d after the user declined, want 1; it printed\n%s", code, s.printed())
+	}
+	out := s.printed()
+	if got := lineSaying(out, "trust agents/:"); !strings.HasPrefix(got, "trust agents/: stopped. You stopped setup before Claude Code opened, so "+agents+" is still untrusted") {
+		t.Errorf("after the user declined, setup reported %q", got)
+	}
+	if !strings.Contains(out, "Claude Code does not trust "+agents) || !strings.Contains(out, "run `asmai setup` again") {
+		t.Errorf("after the user declined, setup printed\n%s\nwant it to name %s and `asmai setup`", out, agents)
+	}
+	if got := opened(testDir); len(got) != 0 {
+		t.Errorf("after the user declined, setup had opened Claude Code in %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".claude.json")); err == nil {
+		t.Error("after the user declined, the home holds ~/.claude.json")
+	}
+
+	again := setupInTerminal(t)
+	again.trust(t, agents)
+	again.trust(t, filepath.Join(stateDir, "workspaces"))
+	if code := again.exited(t); code != 0 {
+		t.Fatalf("asmai setup again exited %d, printing\n%s", code, again.printed())
+	}
+}
+
+// With a folder untrusted and stdin not a terminal, setup opens no Claude
+// Code and exits 1, saying trusting it needs a terminal.
+func TestSetupNeedsATerminalToTrustAFolder(t *testing.T) {
+	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting})
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"setup"}, strings.NewReader("y\n\n\n"), &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("asmai setup with no terminal exited %d, want 1", code)
+	}
+	agents := filepath.Join(stateDir, "agents")
+	if got := lineSaying(stdout.String(), "trust agents/:"); !strings.HasPrefix(got, "trust agents/: failed.") {
+		t.Errorf("setup with no terminal reported %q, want trust agents/ failed", got)
+	}
+	if want := "trusting " + agents + " needs you at a terminal"; !strings.Contains(stderr.String(), want) || !strings.Contains(stderr.String(), "Run `asmai setup` in a terminal") {
+		t.Errorf("setup's error is %q, want it to say %q", stderr.String(), want)
+	}
+	if strings.Contains(stdout.String(), "\x1b") {
+		t.Errorf("setup styled its output for a terminal it does not have:\n%q", stdout.String())
+	}
+	if got := opened(testDir); len(got) != 0 {
+		t.Errorf("with no terminal, setup opened Claude Code in %q", got)
+	}
+
+	var result struct {
+		Error string      `json:"error"`
+		Steps []setupStep `json:"steps"`
+	}
+	stdout.Reset()
+	run([]string{"setup", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
+	}
+	if last := result.Steps[len(result.Steps)-1]; last.Step != "trust agents/" || last.State != stepFailed || !strings.Contains(last.Detail, "needs you at a terminal") {
+		t.Errorf("asmai setup --json reported its last step %+v, want trust agents/ failed for want of a terminal", last)
 	}
 }
 

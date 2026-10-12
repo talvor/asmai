@@ -73,6 +73,31 @@ func TestC48PassesWhenTheFoldersTrustedAtSetupCoverNewDirectories(t *testing.T) 
 	}
 }
 
+// A Claude Code that draws in place below what setup printed, with no clear
+// of the screen, leaves setup's explanation, which names the answers too, in
+// view above it: the harness answers only Claude Code's question, and leaves
+// once it is answered.
+func TestTheHarnessAnswersClaudeCodeNotSetupsExplanation(t *testing.T) {
+	h := harness(t, signedIn, startsDirectly)
+	var inline []string
+	for i, step := range setupTrusting {
+		// Each screen after the first moves up over the four lines of the one
+		// before, and redraws from there.
+		from := `\u001b[4A\r\u001b[J`
+		if i == 0 {
+			from = ""
+		}
+		inline = append(inline, strings.Replace(step, `\u001b[2J\u001b[H`, from, 1))
+	}
+	perFolder(t, h, map[string][]string{"agents": inline, "workspaces": inline})
+
+	r := result(t, h, "C48")
+
+	if r.Outcome != Passed {
+		t.Fatalf("C48 %s: %s", r.Outcome, r.Failure)
+	}
+}
+
 func TestC48FailsWhenANewDirectoryBelowATrustedFolderAsksToBeTrusted(t *testing.T) {
 	h := harness(t, signedIn, startsDirectly)
 	perFolder(t, h, map[string][]string{"agents": setupTrusting, "workspaces": setupTrusting, "repo": startsAfterTrust})

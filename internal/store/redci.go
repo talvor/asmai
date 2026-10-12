@@ -68,8 +68,9 @@ func FailedChecks(checks []CheckState) []CheckState {
 // ChecksRed tells recipient, with a message of kind MessageChecksRed with
 // body, that o, the latest observation of o.Job's checks, is red, and returns
 // its dispatch. The delivery owner is told once each time the head's checks
-// turn red: when it was already told since they were last not red, as while
-// a failed check stays failed, nothing is sent and it returns false.
+// turn red, and again on the first red observation of the head after its
+// failed jobs were re-run: when it was already told since, as while a failed
+// check stays failed, nothing is sent and it returns false.
 func (s *Store) ChecksRed(o ChecksObservation, recipient, body string, at time.Time) (Dispatch, bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -83,10 +84,16 @@ func (s *Store) ChecksRed(o ChecksObservation, recipient, body string, at time.T
 	if last.ID != o.ID || last.Verdict != "red" {
 		return Dispatch{}, false, fmt.Errorf("observation %d is not the latest red one of job %d's checks", o.ID, o.Job)
 	}
-	var since int64
-	if err := tx.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM check_observations WHERE job = ? AND (verdict != 'red' OR head != ?)`, o.Job, o.Head).Scan(&since); err != nil {
+	var since, rerun int64
+	if err := tx.QueryRow(`SELECT
+ (SELECT COALESCE(MAX(id), 0) FROM check_observations WHERE job = ? AND (verdict != 'red' OR head != ?)),
+ (SELECT COALESCE(MAX(observation), 0) FROM reruns WHERE job = ? AND head = ?)`, o.Job, o.Head, o.Job, o.Head).Scan(&since, &rerun); err != nil {
 		return Dispatch{}, false, err
 	}
+	if o.ID <= rerun {
+		return Dispatch{}, false, nil
+	}
+	since = max(since, rerun)
 	var told int
 	if err := tx.QueryRow(`SELECT count(*) FROM red_checks WHERE job = ? AND head = ? AND observation > ?`, o.Job, o.Head, since).Scan(&told); err != nil {
 		return Dispatch{}, false, err
@@ -157,7 +164,7 @@ func (s *Store) RerunDecided(d DecisionRecord, r Rerun, generation int, at time.
 		return DecisionRecord{}, Rerun{}, err
 	}
 	r.Decision, r.At = d.ID, at.UTC()
-	result, err = tx.Exec(`INSERT INTO reruns (job, number, head, runs, checks, decision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, r.Job, r.Number, r.Head, string(runs), string(checks), r.Decision, timestamp(at))
+	result, err = tx.Exec(`INSERT INTO reruns (job, number, head, runs, checks, decision, observation, created_at) VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(id), 0) FROM check_observations WHERE job = ?), ?)`, r.Job, r.Number, r.Head, string(runs), string(checks), r.Decision, r.Job, timestamp(at))
 	if err != nil {
 		return DecisionRecord{}, Rerun{}, err
 	}
@@ -168,6 +175,18 @@ func (s *Store) RerunDecided(d DecisionRecord, r Rerun, generation int, at time.
 		return DecisionRecord{}, Rerun{}, err
 	}
 	return d, r, tx.Commit()
+}
+
+// WorkingOn returns the job of dispatch, which generation of agent's session
+// must be working on.
+func (s *Store) WorkingOn(dispatch int64, agent string, generation int) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	job, _, err := currentDispatch(tx, dispatch, agent, generation)
+	return job, err
 }
 
 // RerunRefused is the refusal of a second re-run of the head earlier re-ran.

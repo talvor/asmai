@@ -220,8 +220,8 @@ CREATE TABLE decision_records (
 CREATE TABLE reruns (
  id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
  number INTEGER NOT NULL, head TEXT NOT NULL, runs TEXT NOT NULL, checks TEXT NOT NULL,
- decision INTEGER NOT NULL REFERENCES decision_records(id), created_at TEXT NOT NULL,
- UNIQUE (job, head)
+ decision INTEGER NOT NULL REFERENCES decision_records(id), observation INTEGER NOT NULL,
+ created_at TEXT NOT NULL, UNIQUE (job, head)
 );
 `,
 }

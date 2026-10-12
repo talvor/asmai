@@ -181,12 +181,13 @@ func (s *scratchPullRequests) close(ctx context.Context) error {
 
 // untilGreen reads the checks on pull request number's head with the code
 // the daemon's CI watch runs (github.ViewChecks and its verdict) until they
-// are green on head, which it requires the pull request's head to be, and
+// are green on head, which it requires the pull request's head to be once
+// GitHub moved it from previous, the head pushed before head, if any, and
 // returns what it saw each time it changed. A head with no checks is never
 // green, so it keeps looking until the checks appear. A red verdict, or no
 // green within ciWait, fails.
-func untilGreen(ctx context.Context, clone string, number int, head string) ([]string, github.Checks, error) {
-	return watchUntil(ctx, clone, number, head, "green", func(c github.Checks) (bool, error) {
+func untilGreen(ctx context.Context, clone string, number int, previous, head string) ([]string, github.Checks, error) {
+	return watchUntil(ctx, clone, number, previous, head, "green", func(c github.Checks) (bool, error) {
 		switch c.Verdict() {
 		case github.Green:
 			return true, nil
@@ -199,8 +200,8 @@ func untilGreen(ctx context.Context, clone string, number int, head string) ([]s
 
 // untilRed is untilGreen for the fixture's CI forced red: it reads the checks
 // on head until a check failed, and fails if they are green.
-func untilRed(ctx context.Context, clone string, number int, head string) ([]string, github.Checks, error) {
-	return watchUntil(ctx, clone, number, head, "red", func(c github.Checks) (bool, error) {
+func untilRed(ctx context.Context, clone string, number int, previous, head string) ([]string, github.Checks, error) {
+	return watchUntil(ctx, clone, number, previous, head, "red", func(c github.Checks) (bool, error) {
 		switch c.Verdict() {
 		case github.Red:
 			return true, nil
@@ -214,8 +215,11 @@ func untilRed(ctx context.Context, clone string, number int, head string) ([]str
 // watchUntil reads the checks on pull request number's head with the code
 // the daemon's CI watch runs until done says they are what it waits for,
 // requiring the pull request's head to be head, and returns what it saw each
-// time it changed. Nothing within ciWait fails, saying what it waited for.
-func watchUntil(ctx context.Context, clone string, number int, head, what string, done func(github.Checks) (bool, error)) ([]string, github.Checks, error) {
+// time it changed. Until GitHub moves the pull request to head, its head may
+// still be previous, the head pushed before head, if any: those checks are
+// not head's, and are skipped. Nothing within ciWait fails, saying what it
+// waited for.
+func watchUntil(ctx context.Context, clone string, number int, previous, head, what string, done func(github.Checks) (bool, error)) ([]string, github.Checks, error) {
 	deadline := time.Now().Add(ciWait)
 	var seen []string
 	for {
@@ -223,18 +227,24 @@ func watchUntil(ctx context.Context, clone string, number int, head, what string
 		if err != nil {
 			return seen, github.Checks{}, err
 		}
-		if c.HeadCommit != head {
+		switch {
+		case c.HeadCommit == head:
+			previous = ""
+			saw := c.Verdict() + ": " + describeChecks(c.Checks)
+			if len(seen) == 0 || seen[len(seen)-1] != saw {
+				seen = append(seen, saw)
+			}
+			ok, err := done(c)
+			if err != nil || ok {
+				return seen, c, err
+			}
+		case previous == "" || c.HeadCommit != previous:
 			return seen, c, fmt.Errorf("pull request #%d's head is %s, not the pushed %s", number, c.HeadCommit, head)
 		}
-		saw := c.Verdict() + ": " + describeChecks(c.Checks)
-		if len(seen) == 0 || seen[len(seen)-1] != saw {
-			seen = append(seen, saw)
-		}
-		ok, err := done(c)
-		if err != nil || ok {
-			return seen, c, err
-		}
 		if time.Now().After(deadline) {
+			if c.HeadCommit != head {
+				return seen, c, fmt.Errorf("pull request #%d's head is still %s, not the pushed %s, after %s", number, c.HeadCommit, head, ciWait)
+			}
 			return seen, c, fmt.Errorf("the checks on %s were not %s within %s: %s", head, what, ciWait, strings.Join(seen, "; "))
 		}
 		select {
@@ -291,7 +301,7 @@ func (h *Harness) c43(ctx context.Context, f *Factory, r *Result) (err error) {
 	if err != nil {
 		return fmt.Errorf("opening a draft pull request from %s: %w", s.branch, err)
 	}
-	seen, c, err := untilGreen(ctx, s.clone, number, s.head)
+	seen, c, err := untilGreen(ctx, s.clone, number, "", s.head)
 	if err != nil {
 		return err
 	}
@@ -307,7 +317,7 @@ func (h *Harness) c43(ctx context.Context, f *Factory, r *Result) (err error) {
 	if err := s.pushNewer(ctx, scratch, "red", "C43: force the fixture's CI red"); err != nil {
 		return err
 	}
-	seen, c, err = untilRed(ctx, s.clone, number, s.head)
+	seen, c, err = untilRed(ctx, s.clone, number, green, s.head)
 	if err != nil {
 		return err
 	}
@@ -322,7 +332,7 @@ func (h *Harness) c43(ctx context.Context, f *Factory, r *Result) (err error) {
 		return fmt.Errorf("re-running the failed jobs of runs %v: %w", runs, err)
 	}
 	r.observe("the daemon's code re-ran the failed jobs of the red checks %s once, in workflow runs %v", describeChecks(failed), rerun)
-	seen, c, err = watchUntil(ctx, s.clone, number, s.head, "re-run", func(c github.Checks) (bool, error) {
+	seen, c, err = watchUntil(ctx, s.clone, number, "", s.head, "re-run", func(c github.Checks) (bool, error) {
 		switch c.Verdict() {
 		case github.Green:
 			return false, fmt.Errorf("the re-run of the checks on %s, which its .ci-mode forces red, is green: %s", s.head, describeChecks(c.Checks))
@@ -342,7 +352,7 @@ func (h *Harness) c43(ctx context.Context, f *Factory, r *Result) (err error) {
 	if err := s.pushNewer(ctx, scratch, "", "C43: fix the fixture's CI"); err != nil {
 		return err
 	}
-	seen, c, err = untilGreen(ctx, s.clone, number, s.head)
+	seen, c, err = untilGreen(ctx, s.clone, number, red, s.head)
 	if err != nil {
 		return err
 	}
@@ -400,7 +410,7 @@ func (h *Harness) c45(ctx context.Context, f *Factory, r *Result) (err error) {
 		if err != nil {
 			return github.PullRequest{}, url, fmt.Errorf("opening a pull request from %s: %w", s.branch, err)
 		}
-		seen, c, err := untilGreen(ctx, s.clone, number, s.head)
+		seen, c, err := untilGreen(ctx, s.clone, number, "", s.head)
 		if err != nil {
 			return github.PullRequest{}, url, err
 		}

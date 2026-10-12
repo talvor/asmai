@@ -149,3 +149,41 @@ func TestANewerPushReplacesTheCIWaitOnTheOlderHeadOnce(t *testing.T) {
 		t.Errorf("the replacements journaled are %+v", entries)
 	}
 }
+
+func TestTheDeliveryOwnerIsToldAgainOfTheFirstRedChecksOfAHeadAfterItsReRun(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job, d := pushedAndRecorded(t, s)
+	tell := func(o ChecksObservation) bool {
+		t.Helper()
+		_, told, err := s.ChecksRed(o, owner, "red", assignmentsAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return told
+	}
+	if !tell(observe(t, s, job, tipCommit, "red", redTest)) {
+		t.Fatal("red checks were not told")
+	}
+	decision := DecisionRecord{Job: job, Leader: owner, Choice: ChoiceRerunFailed, Rationale: "the runner lost its network", Evidence: "the log shows a DNS failure", Dispatch: d.ID}
+	if _, _, err := s.RerunDecided(decision, Rerun{Job: job, Number: 7, Head: tipCommit, Runs: []int64{41}, Checks: redTest}, 1, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	// The observation from before the re-run is not told again.
+	before, err := s.LatestChecks(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tell(before) {
+		t.Error("the red checks from before the re-run were told again")
+	}
+	// The re-run fails fast, with no pending observation between: red again.
+	again := []CheckState{redTest[0]}
+	again[0].URL = "https://github.com/talvor/asmai-fixture/actions/runs/41/job/2"
+	red := observe(t, s, job, tipCommit, "red", again)
+	if !tell(red) {
+		t.Error("the re-run's red checks were not told")
+	}
+	if tell(red) {
+		t.Error("the re-run's red checks were told twice")
+	}
+}

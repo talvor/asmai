@@ -34,7 +34,10 @@ const (
 // returns. A pull request's head is origin's branch, as GitHub's follows each
 // push. Each pull request's checks are rollups, one per look, the last
 // repeated. gh run rerun re-runs nothing itself: the rollups say what follows.
-// With ignoreReady, gh pr ready does nothing.
+// With ignoreReady, gh pr ready does nothing. When the test writes a lag
+// file in the directory, the first look at the checks after each push still
+// shows the head before it, as GitHub's lags behind a push; with a stuck
+// file too, every look does.
 func fakeCI(t *testing.T, origin string, ignoreReady bool, rollups ...string) string {
 	t.Helper()
 	ciWait, ciPoll = 5*time.Second, 10*time.Millisecond
@@ -91,6 +94,14 @@ case "$1 $2" in
 	esac
 	head=$(git ls-remote ` + origin + ` "refs/heads/$(cat "$state/pr-$n/branch")" | cut -f1)
 	[ -n "$head" ] && printf '%s %s\n' "$head" "$(git --git-dir=` + origin + ` show "$head:.ci-mode" 2>/dev/null)" >> "$state/heads"
+	if [ -n "$rollup" ] && [ -e "$state/lag" ] && [ -e "$state/pr-$n/shown" ]; then
+		shown=$(cat "$state/pr-$n/shown")
+		if [ "$shown" != "$head" ] && { [ -e "$state/stuck" ] || [ ! -e "$state/lagged-$head" ]; }; then
+			touch "$state/lagged-$head"
+			head=$shown
+		fi
+	fi
+	[ -n "$rollup" ] && echo "$head" > "$state/pr-$n/shown"
 	s=OPEN
 	[ -e "$state/closed-$n" ] && s=CLOSED
 	printf '{"number":%d,"url":"https://github.com/o/r/pull/%d","title":"%s","isDraft":%s,"headRefName":"%s","headRefOid":"%s","state":"%s"%s}\n' "$n" "$n" "$(cat "$state/pr-$n/title")" "$(cat "$state/pr-$n/draft")" "$(cat "$state/pr-$n/branch")" "$head" "$s" "$rollup"
@@ -179,6 +190,51 @@ func TestC43PassesGreenThenRedWithOneReRunThenANewerPushReplacingTheWait(t *test
 	}
 	if len(heads) != 3 || !slices.Equal(modes, []string{"", "red", ""}) {
 		t.Errorf("the checks were read on heads %q with .ci-mode %q, want three heads in turn: green, forced red, the fix", heads, modes)
+	}
+	leftNothing(t, state, origin, 1)
+}
+
+func TestC43PassesWhenThePullRequestsHeadLagsBehindEachNewerPush(t *testing.T) {
+	origin := localPushFixture(t)
+	usePushFixture(t, origin)
+	// c43Path, with a look at the older head after each newer push.
+	lagging := []string{noChecks, noChecks, checkRunning, checkGreen, checkGreen, checkRunning, runRed, runRed, rerunning, rerunRed, rerunRed, checkRunning, checkGreen}
+	state := fakeCI(t, origin, false, lagging...)
+	if err := os.WriteFile(filepath.Join(state, "lag"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := result(t, harness(t, signedIn, startsDirectly), "C43")
+	if r.Outcome != Passed {
+		t.Fatalf("C43 %s: %s\n%s", r.Outcome, r.Failure, strings.Join(r.Evidence, "\n"))
+	}
+	if lagged, _ := filepath.Glob(filepath.Join(state, "lagged-*")); len(lagged) != 2 {
+		t.Errorf("the head lagged behind %d pushes, want 2", len(lagged))
+	}
+	evidence := strings.Join(r.Evidence, "\n")
+	for _, want := range []string{
+		"the new head as: waiting: CI / test pending; red: CI / test failed",
+		"waiting: CI / test pending; green: CI / test passed, and the pull request is still a draft",
+	} {
+		if !strings.Contains(evidence, want) {
+			t.Errorf("C43's evidence\n%s\ndoes not say %q", evidence, want)
+		}
+	}
+	leftNothing(t, state, origin, 1)
+}
+
+func TestC43FailsWhenThePullRequestsHeadNeverMovesToTheNewerPush(t *testing.T) {
+	origin := localPushFixture(t)
+	usePushFixture(t, origin)
+	state := fakeCI(t, origin, false, checkGreen)
+	if err := os.WriteFile(filepath.Join(state, "lag"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "stuck"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := result(t, harness(t, signedIn, startsDirectly), "C43")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "is still") {
+		t.Errorf("C43 %s: %q, want it to fail on a head that never moves to the newer push", r.Outcome, r.Failure)
 	}
 	leftNothing(t, state, origin, 1)
 }

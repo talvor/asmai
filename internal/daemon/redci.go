@@ -135,6 +135,11 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 	if j.State != store.JobOpen {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("job %d is %s, so its checks are not re-run", j.Number, j.State)
 	}
+	if job, err := d.store.WorkingOn(dispatch, ref.address.String(), ref.generation); err != nil {
+		return store.DecisionRecord{}, store.Rerun{}, refuse("%v", err)
+	} else if job != j.Number {
+		return store.DecisionRecord{}, store.Rerun{}, refuse("dispatch %d, the one %s is working on, is of job %d, not job %d; record the decision while working on a dispatch of job %d", dispatch, ref.address, job, j.Number, j.Number)
+	}
 	pr, head, ok := d.watched(j.Number)
 	if !ok {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("job %d has no pushed head with a pull request whose checks the daemon watches, so there is nothing to re-run", j.Number)
@@ -177,7 +182,7 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 	r := store.Rerun{Job: j.Number, Number: pr.Number, Head: head, Runs: rerun, Checks: failed}
 	record, r, err = d.store.RerunDecided(record, r, ref.generation, time.Now())
 	if err != nil {
-		return store.DecisionRecord{}, store.Rerun{}, refuse("%v", err)
+		return store.DecisionRecord{}, store.Rerun{}, fmt.Errorf("gh re-ran runs %v of head %s, but the decision and its re-run were not recorded: %w", rerun, head, err)
 	}
 	d.log.Info("failed jobs re-run on a delegated decision", "job", j.Number, "head", head, "runs", fmt.Sprint(r.Runs), "decision", record.ID, "leader", record.Leader)
 	d.lookSoon()

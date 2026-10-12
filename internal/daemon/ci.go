@@ -149,47 +149,52 @@ func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
 	case o.Verdict != github.Green:
 		return changed
 	}
+	d.assignMu.Lock()
 	if err := d.store.TestedPR(j.Number, w.head); err != nil {
+		d.assignMu.Unlock()
 		if why := err.Error(); why != w.unmet {
 			w.unmet = why
 			d.log.Warn("every check is green, but the head is not a tested pull request, so it is not marked ready", "job", j.Number, "head", w.head, "reason", why)
 		}
 		return changed
 	}
-	d.deliver(ctx, j, repository, found, o)
+	dispatch, ok := d.deliver(ctx, j, repository, found, o)
+	d.assignMu.Unlock()
+	if ok {
+		d.nudge(dispatch.Agent)
+		d.removeJobLocal(j.Number)
+	}
 	return true
 }
 
 // deliver marks the pull request found ready for review, a draft with gh pr
 // ready and one opened with "[not ready]" by taking that out of its title,
-// records the delivery of j with its pull request, head and time, ends j and
-// tells Coordination's leader, and then removes everything local to j. AsmAI
-// never merges: ready never means merged.
-func (d *daemon) deliver(ctx context.Context, j store.Job, repository store.Repository, found github.Checks, o store.ChecksObservation) {
+// records the delivery of j with its pull request, head and time, and ends j
+// with a dispatch telling Coordination's leader, which it returns with whether
+// j was delivered. AsmAI never merges: ready never means merged. assignMu is
+// held.
+func (d *daemon) deliver(ctx context.Context, j store.Job, repository store.Repository, found github.Checks, o store.ChecksObservation) (store.Dispatch, bool) {
 	if err := github.MarkReady(ctx, repository.Clone, found.PullRequest); err != nil {
 		d.log.Error("marking a job's pull request ready; the daemon tries again", "job", j.Number, "number", found.Number, "error", err.Error())
-		return
+		return store.Dispatch{}, false
 	}
 	ready, err := github.ViewPullRequest(ctx, repository.Clone, found.URL)
 	if err != nil {
 		d.log.Error("looking up a pull request just marked ready; the daemon looks again", "job", j.Number, "number", found.Number, "error", err.Error())
-		return
+		return store.Dispatch{}, false
 	}
 	if ready.Draft || ready.IsNotReady() || ready.State != "OPEN" || ready.HeadCommit != found.HeadCommit {
 		d.log.Error("a pull request just marked ready is not ready at the head", "job", j.Number, "number", ready.Number, "draft", ready.Draft, "title", ready.Title, "state", ready.State, "head", ready.HeadCommit)
-		return
+		return store.Dispatch{}, false
 	}
 	delivery := store.Delivery{Job: j.Number, Number: ready.Number, URL: ready.URL, Head: ready.HeadCommit, Checks: o.Checks}
-	d.assignMu.Lock()
 	delivery, dispatch, err := d.store.JobDelivered(delivery, deliveryBody(j, delivery), time.Now())
-	d.assignMu.Unlock()
 	if err != nil {
 		d.log.Error("recording a job's delivery", "job", j.Number, "error", err.Error())
-		return
+		return store.Dispatch{}, false
 	}
 	d.log.Info("job delivered", "job", j.Number, "number", delivery.Number, "url", delivery.URL, "head", delivery.Head, "dispatch", dispatch.ID)
-	d.nudge(dispatch.Agent)
-	d.removeJobLocal(j.Number)
+	return dispatch, true
 }
 
 // deliveryBody is what Coordination's leader is told of a job's delivery.

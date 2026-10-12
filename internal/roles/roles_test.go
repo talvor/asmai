@@ -221,3 +221,40 @@ func TestEngineeringsInstructionsAskForThePushOnceQualityPassesTheHeadAndAssignT
 		}
 	}
 }
+
+func TestEngineeringsInstructionsOpenADraftPullRequestOrANotReadyOneRecordItAndComposeTheBody(t *testing.T) {
+	leader, err := LeaderInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Open the pull request",
+		"gh pr create --draft --base <default branch> --head <job branch>",
+		"If GitHub refuses a draft",
+		"`[not ready]` at the start of its title",
+		"never open a second one",
+		"Never post a GitHub review, never merge the pull request",
+		"asmai effect pull-request <the URL gh printed>",
+		"how the daemon learns which pull request to follow",
+		"the workers' PR sections",
+		"Quality's report",
+		"merge danger",
+		"the repository's PR template",
+		"the pr skill's template",
+		"## Summary",
+		"## Evidence",
+		"## Merge Danger",
+		"`## AsmAI` section",
+		"the job's number and its mandate",
+		"the head commit Quality passed",
+		"CI's results",
+		"every advisory finding",
+		"every gap",
+		"`Closes #<n>` only when the job's mandate is to resolve that issue",
+		"`Refs #<n>` otherwise",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Engineering's leader's instructions lack %q", want)
+		}
+	}
+}

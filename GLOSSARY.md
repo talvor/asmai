@@ -117,11 +117,15 @@ A problem that validation reports. A blocking finding must be fixed before deliv
 _Avoid_: Issue, comment (when meaning a validation result)
 
 **Delivery owner**:
-The leader that delivers a job: for a code job, Engineering's leader. Only it asks the daemon to push the job branch, and only the daemon pushes it.
+The leader that delivers a job: for a code job, Engineering's leader. Only it asks the daemon to push the job branch, and only the daemon pushes it. It opens the job's pull request itself, and records it as its effect.
 
 **Outside change**:
 Commits on origin's job branch that AsmAI did not make, found when the daemon fetches the branch before a push. The push is refused, and a worker merges them in; they are never force-pushed over.
 _Avoid_: Foreign commits, conflict (when meaning commits someone else pushed)
+
+**Not ready**:
+A pull request that opened normally, with "[not ready]" at the start of its title, because GitHub refused it as a draft. It stands for a draft until it is ready.
+_Avoid_: WIP
 
 **Tested pull request**:
 A job's pull request whose exact head commit has passed validation and the repository's CI, with its base taken in and its evidence and gaps stated. It is ready for the user to review and merge, and the factory never merges it.

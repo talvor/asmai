@@ -87,6 +87,7 @@ var Cases = []Case{
 	{ID: "C36", Title: "Instruction files load without the repository's provider configuration", Env: signedInOnly, Run: (*Harness).c36},
 	{ID: "C37", Title: "Provider write guards are switched on", Env: signedInOnly, Run: (*Harness).c37},
 	{ID: "C41", Title: "The daemon's push, and its refusal when origin holds commits AsmAI did not make", Env: signedInOnly, Run: (*Harness).c41},
+	{ID: "C42", Title: "A draft pull request, and the \"[not ready]\" fallback when GitHub refuses a draft", Env: signedInOnly, Run: (*Harness).c42},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in

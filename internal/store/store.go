@@ -186,6 +186,15 @@ CREATE TABLE pushes (
  effect INTEGER REFERENCES effects(id), merged_in TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 );
 `,
+	`
+CREATE TABLE pull_requests (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ number INTEGER NOT NULL, url TEXT NOT NULL, title TEXT NOT NULL, draft INTEGER NOT NULL,
+ not_ready INTEGER NOT NULL, branch TEXT NOT NULL, head TEXT NOT NULL, state TEXT NOT NULL,
+ leader TEXT NOT NULL, dispatch INTEGER NOT NULL REFERENCES dispatches(id),
+ effect INTEGER NOT NULL REFERENCES effects(id), created_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -271,6 +280,10 @@ const (
 	// where they were found.
 	KindJobBranchPushed = "job.branch.pushed"
 	KindOutsideChange   = "outside_change.found"
+	// KindPullRequestRecorded records the pull request the delivery owner
+	// opened or updated, as GitHub had it when the daemon looked it up for
+	// the effect that names it.
+	KindPullRequestRecorded = "pull_request.recorded"
 )
 
 // The states an agent can be in.

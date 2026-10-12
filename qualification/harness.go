@@ -88,7 +88,7 @@ var Cases = []Case{
 	{ID: "C37", Title: "Provider write guards are switched on", Env: signedInOnly, Run: (*Harness).c37},
 	{ID: "C41", Title: "The daemon's push, and its refusal when origin holds commits AsmAI did not make", Env: signedInOnly, Run: (*Harness).c41},
 	{ID: "C42", Title: "A draft pull request, and the \"[not ready]\" fallback when GitHub refuses a draft", Env: signedInOnly, Run: (*Harness).c42},
-	{ID: "C43", Title: "The daemon watches CI on the pushed head through gh until it is green", Env: signedInOnly, Run: (*Harness).c43},
+	{ID: "C43", Title: "The daemon watches CI through gh: green; red with one judged re-run; a newer push replacing the wait", Env: signedInOnly, Run: (*Harness).c43},
 	{ID: "C45", Title: "The daemon marks the pull request ready when CI is green", Env: signedInOnly, Run: (*Harness).c45},
 }
 

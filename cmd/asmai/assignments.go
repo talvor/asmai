@@ -406,3 +406,38 @@ func push(o *output, paths statedir.Paths, number string) int {
 	fmt.Fprintf(o.stdout, "job %d: the daemon pushed %s at %s to origin with a plain push; effect %d recorded in dispatch %d\n", p.Job, p.Branch, p.Commit, p.Effect, p.Dispatch)
 	return 0
 }
+
+// decisionRecord has Engineering's leader record its judgment on a head's
+// red checks, on which the daemon re-runs their failed jobs once.
+func decisionRecord(o *output, paths statedir.Paths, job int64, choice, rationale, evidence string) int {
+	switch {
+	case job <= 0:
+		return o.fail(errors.New("decision record needs --job"))
+	case choice == "":
+		return o.fail(fmt.Errorf("decision record needs --choice: %s", store.ChoiceRerunFailed))
+	case strings.TrimSpace(rationale) == "":
+		return o.fail(errors.New("decision record needs --rationale: why"))
+	case strings.TrimSpace(evidence) == "":
+		return o.fail(errors.New("decision record needs --evidence: what the decision rests on"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRecord, Job: job, Choice: choice, Rationale: rationale, Evidence: evidence})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.json {
+		return o.printJSON(resp)
+	}
+	d, r := resp.DecisionRecord, resp.Rerun
+	fmt.Fprintf(o.stdout, "job %d: decision %d recorded, %s by %s: %s\n", d.Job, d.ID, d.Source, d.Leader, d.Choice)
+	fmt.Fprintf(o.stdout, "the daemon re-ran the failed jobs of head %s once, in workflow runs %s: %s\n", r.Head, runList(r.Runs), store.CheckNames(r.Checks))
+	fmt.Fprintln(o.stdout, "next: the daemon watches the head's checks again; a second re-run of this head is refused, so if they stay red assign a fix")
+	return 0
+}
+
+func runList(runs []int64) string {
+	ids := make([]string, 0, len(runs))
+	for _, run := range runs {
+		ids = append(ids, strconv.FormatInt(run, 10))
+	}
+	return strings.Join(ids, ", ")
+}

@@ -5,7 +5,9 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -177,4 +179,45 @@ func ReadyTitle(title string) string {
 		return title
 	}
 	return strings.TrimSpace(strings.TrimPrefix(title, NotReady))
+}
+
+// FailedRuns returns the workflow runs of the failed checks among checks,
+// each once, as GitHub Actions numbers them in a check run's details URL,
+// .../actions/runs/<run>/job/<job>. A failed commit status, or a check run of
+// another app, has no workflow run to re-run, and is not among them.
+func FailedRuns(checks []Check) []int64 {
+	var runs []int64
+	for _, c := range checks {
+		if c.State != CheckFailed {
+			continue
+		}
+		_, after, ok := strings.Cut(c.URL, "/actions/runs/")
+		if !ok {
+			continue
+		}
+		id, _, _ := strings.Cut(after, "/")
+		run, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || run <= 0 || slices.Contains(runs, run) {
+			continue
+		}
+		runs = append(runs, run)
+	}
+	return runs
+}
+
+// RerunFailed re-runs the failed jobs of each of runs with `gh run rerun
+// <run> --failed`, run in dir, whose origin is the runs' repository. It stops
+// at the first run gh does not re-run, and returns the runs it re-ran.
+func RerunFailed(ctx context.Context, dir string, runs []int64) ([]int64, error) {
+	if len(runs) == 0 {
+		return nil, errors.New("there is no workflow run to re-run")
+	}
+	var rerun []int64
+	for _, run := range runs {
+		if _, err := gh(ctx, dir, "run", "rerun", strconv.FormatInt(run, 10), "--failed"); err != nil {
+			return rerun, err
+		}
+		rerun = append(rerun, run)
+	}
+	return rerun, nil
 }

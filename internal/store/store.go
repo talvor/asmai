@@ -206,6 +206,24 @@ CREATE TABLE deliveries (
  head TEXT NOT NULL, checks TEXT NOT NULL, created_at TEXT NOT NULL
 );
 `,
+	`
+CREATE TABLE red_checks (
+ observation INTEGER PRIMARY KEY REFERENCES check_observations(id),
+ job INTEGER NOT NULL REFERENCES jobs(number), head TEXT NOT NULL,
+ dispatch INTEGER NOT NULL REFERENCES dispatches(id)
+);
+CREATE TABLE decision_records (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ leader TEXT NOT NULL, source TEXT NOT NULL, choice TEXT NOT NULL, rationale TEXT NOT NULL,
+ evidence TEXT NOT NULL, dispatch INTEGER NOT NULL REFERENCES dispatches(id), created_at TEXT NOT NULL
+);
+CREATE TABLE reruns (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ number INTEGER NOT NULL, head TEXT NOT NULL, runs TEXT NOT NULL, checks TEXT NOT NULL,
+ decision INTEGER NOT NULL REFERENCES decision_records(id), observation INTEGER NOT NULL,
+ created_at TEXT NOT NULL, UNIQUE (job, head)
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -299,6 +317,16 @@ const (
 	// request, as the daemon read them from GitHub through gh, each time they
 	// change: each check's state, and the verdict on them.
 	KindChecksObserved = "checks.observed"
+	// KindDecisionRecorded records a leader's decision with asmai decision
+	// record: the job, the choice, its rationale and evidence, and its
+	// source. KindChecksRerun records the daemon re-running the failed jobs
+	// of a head's red checks once, on the delegated decision it cites.
+	KindDecisionRecorded = "decision.recorded"
+	KindChecksRerun      = "checks.rerun"
+	// KindCIWaitReplaced records the daemon dropping its wait on the checks
+	// of an older head of a job's pull request for those of the head it
+	// pushed since.
+	KindCIWaitReplaced = "ci.wait.replaced"
 	// KindJobDelivered records the daemon marking a job's pull request ready
 	// for review once every check on the pushed head is green: the delivery,
 	// with the pull request, the head commit and the time. KindJobEnded

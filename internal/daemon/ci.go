@@ -35,7 +35,9 @@ type watch struct {
 
 // watchCI watches CI for every open job with a pull request and a pushed
 // head, through gh and with no agent, until the daemon stops. It runs no
-// worker and changes nothing on GitHub but marking a pull request ready.
+// worker and changes nothing on GitHub but marking a pull request ready. A
+// newer push replaces the wait on the older head: only the head the daemon
+// pushed last is watched.
 func (d *daemon) watchCI() {
 	defer d.wg.Done()
 	watches := map[int64]*watch{}
@@ -46,6 +48,10 @@ func (d *daemon) watchCI() {
 		case <-d.work.Done():
 			return
 		case <-tick.C:
+		case <-d.lookNow:
+			for _, w := range watches {
+				w.every, w.next = firstLook, time.Now()
+			}
 		}
 		jobs, err := d.store.Jobs()
 		if err != nil {
@@ -64,6 +70,7 @@ func (d *daemon) watchCI() {
 			watched[j.Number] = true
 			w := watches[j.Number]
 			if w == nil || w.head != head {
+				d.replaceWait(j.Number, w, head)
 				w = &watch{head: head, every: firstLook, next: time.Now()}
 				watches[j.Number] = w
 			}
@@ -84,6 +91,37 @@ func (d *daemon) watchCI() {
 				delete(watches, job)
 			}
 		}
+	}
+}
+
+// replaceWait journals that the daemon drops its wait on the checks of an
+// older head of job's pull request, w's or, when the daemon has just started,
+// the latest it recorded, for those of head, which it pushed since.
+func (d *daemon) replaceWait(job int64, w *watch, head string) {
+	var from string
+	if w != nil {
+		from = w.head
+	} else if o, err := d.store.LatestChecks(job); err == nil {
+		from = o.Head
+	}
+	if from == "" || from == head {
+		return
+	}
+	replaced, err := d.store.CIWaitReplaced(job, from, head, time.Now())
+	if err != nil {
+		d.log.Error("journaling the CI wait on a newer head", "job", job, "error", err.Error())
+		return
+	}
+	if replaced {
+		d.log.Info("a newer push replaces the CI wait on the older head", "job", job, "from", from, "to", head)
+	}
+}
+
+// lookSoon has the CI watch look at every job's checks at once.
+func (d *daemon) lookSoon() {
+	select {
+	case d.lookNow <- struct{}{}:
+	default:
 	}
 }
 
@@ -108,8 +146,9 @@ func (d *daemon) watched(job int64) (store.PullRequest, string, bool) {
 }
 
 // lookAtCI reads the checks on the head of j's pull request through gh, in
-// AsmAI's clone, records each check's state when they changed, and delivers
-// the job when every check on the head the daemon pushed is green. A head with
+// AsmAI's clone, records each check's state when they changed, tells the
+// delivery owner when the checks on the head the daemon pushed are red, and
+// delivers the job when every check on that head is green. A head with
 // no checks is never green: the daemon keeps waiting. It returns whether what
 // it saw changed.
 func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
@@ -145,6 +184,9 @@ func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
 	case found.HeadCommit != w.head:
 		// GitHub does not have the pushed head on the pull request yet, or
 		// has another: these checks are not the pushed head's.
+		return changed
+	case o.Verdict == github.Red:
+		d.tellRed(j, o)
 		return changed
 	case o.Verdict != github.Green:
 		return changed

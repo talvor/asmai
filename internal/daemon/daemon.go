@@ -94,6 +94,11 @@ const (
 	// CommandPush is the delivery owner asking the daemon to push a job's
 	// branch to origin, which it refuses over commits AsmAI did not make.
 	CommandPush = "push"
+	// CommandDecisionRecord is a leader recording a decision. Of
+	// Engineering's leader, it is its judgment that a head's red checks
+	// failed for a reason unrelated to the change, on which the daemon
+	// re-runs their failed jobs once.
+	CommandDecisionRecord = "decision.record"
 	// CommandTrailers answers a worker's git hook with the trailers its
 	// commit carries.
 	CommandTrailers = "trailers"
@@ -152,6 +157,10 @@ type Request struct {
 	// commit, which is the job branch's tip.
 	ReadOnly bool   `json:"read_only,omitempty"`
 	Commit   string `json:"commit,omitempty"`
+	// Choice and Rationale are what a recorded decision chose and why, with
+	// Evidence what it rests on.
+	Choice    string `json:"choice,omitempty"`
+	Rationale string `json:"rationale,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -187,6 +196,10 @@ type Response struct {
 	// PullRequest is the pull request the delivery owner's effect named,
 	// as the daemon recorded it.
 	PullRequest *store.PullRequest `json:"pull_request,omitempty"`
+	// DecisionRecord is the decision a leader recorded, and Rerun the
+	// daemon's re-run of a head's failed jobs on it.
+	DecisionRecord *store.DecisionRecord `json:"decision_record,omitempty"`
+	Rerun          *store.Rerun          `json:"rerun,omitempty"`
 	// Trailers are the trailers a worker's commit carries, each as
 	// "Key: value".
 	Trailers []string `json:"trailers,omitempty"`
@@ -296,7 +309,8 @@ func Run(ctx context.Context, cfg Config) error {
 			PID:       os.Getpid(),
 			StartedAt: time.Now(),
 		},
-		stop: make(chan *net.UnixConn),
+		stop:    make(chan *net.UnixConn),
+		lookNow: make(chan struct{}, 1),
 	}
 	previous, err := st.Started(d.status.Version, d.status.PID, d.status.StartedAt)
 	if err != nil {
@@ -377,6 +391,9 @@ type daemon struct {
 	// answered once it has.
 	stop chan *net.UnixConn
 	wg   sync.WaitGroup
+	// lookNow has the CI watch look at every job's checks at once, as after
+	// a push or a re-run.
+	lookNow chan struct{}
 
 	// assignMu makes giving assignments one at a time: each makes a job
 	// branch and a workspace of AsmAI's clone, and takes the next worker
@@ -520,6 +537,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.assignmentCommand(conn, req)
 	case CommandPush:
 		d.pushCommand(conn, req)
+	case CommandDecisionRecord:
+		d.decisionRecordCommand(conn, req)
 	case CommandTrailers:
 		trailers, err := d.trailers(req)
 		if err != nil {

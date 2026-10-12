@@ -57,7 +57,8 @@ var refusing = []string{trustAsked, `{"expect": "\r"}`}
 // setupFactory gives the test a fresh home with its pinned Claude Code a
 // stand-in that plays, through the fake, the script the test gives for the
 // folder it runs in, and otherwise the fake's own script. Each folder it is
-// started in is appended to the test directory's opened file. It returns the
+// started in is appended to the test directory's opened file, and with its
+// DISABLE_AUTOUPDATER to its environments file. It returns the
 // state directory and the test directory.
 func setupFactory(t *testing.T, scripts map[string][]string) (stateDir, testDir string) {
 	t.Helper()
@@ -73,6 +74,7 @@ func setupFactory(t *testing.T, scripts map[string][]string) (stateDir, testDir 
 	claude := []byte(`#!/bin/sh
 folder=$(basename "$PWD")
 echo "$folder" >> "$ASMAI_TEST_DIR/opened"
+echo "$folder DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER-}" >> "$ASMAI_TEST_DIR/environments"
 if [ -e "$ASMAI_TEST_DIR/script-$folder.jsonl" ]; then
 	ASMAI_FAKE_PROVIDER_SCRIPT="$ASMAI_TEST_DIR/script-$folder.jsonl"
 	export ASMAI_FAKE_PROVIDER_SCRIPT
@@ -258,6 +260,11 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	}
 	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces"}) {
 		t.Errorf("setup opened Claude Code in %q, want agents, then workspaces", got)
+	}
+	// Claude Code's auto-updater, which would install a Claude Code of the
+	// user's own, is off in the sessions setup opens.
+	if got, _ := os.ReadFile(filepath.Join(testDir, "environments")); string(got) != "agents DISABLE_AUTOUPDATER=1\nworkspaces DISABLE_AUTOUPDATER=1\n" {
+		t.Errorf("setup opened Claude Code with\n%swant DISABLE_AUTOUPDATER=1 in agents and workspaces", got)
 	}
 	if got, _ := os.ReadFile(configFile); string(got) != string(config.Default()) {
 		t.Errorf("the configuration file holds\n%s\nwant the default", got)

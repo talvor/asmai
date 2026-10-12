@@ -190,15 +190,17 @@ func staffedRoles() string {
 // openForTrust runs the pinned Claude Code at path in dir, on the user's own
 // terminal, until the user leaves it: it asks them whether to trust dir, and
 // records their answer itself. It starts with the user's environment, less
-// any provider API-key variable, and loads no repository's settings or MCP
-// server. An interrupt reaches Claude Code, and leaves setup running.
+// any provider API-key variable and with Claude Code's auto-updater off, so
+// it installs no Claude Code of the user's own, and loads no repository's
+// settings or MCP server. An interrupt reaches Claude Code, and leaves setup running.
 func openForTrust(path, dir string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var env []string
 	for _, kv := range os.Environ() {
-		if name, _, _ := strings.Cut(kv, "="); !providers.IsAPIKeyVariable(name) {
+		if name, _, _ := strings.Cut(kv, "="); !providers.IsAPIKeyVariable(name) && name != "DISABLE_AUTOUPDATER" {
 			env = append(env, kv)
 		}
 	}
+	env = append(env, "DISABLE_AUTOUPDATER=1")
 	cmd := exec.Command(path, "--setting-sources", "user", "--strict-mcp-config")
 	cmd.Dir, cmd.Env = dir, env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr

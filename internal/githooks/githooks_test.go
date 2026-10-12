@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -17,11 +18,13 @@ var trailers = Trailers(func() ([]string, error) {
 	return []string{"AsmAI-Job: 4", "AsmAI-Agent: worker1@engineering", "AsmAI-Dispatch: 9"}, nil
 })
 
-// repo makes a repository and enters it, as git does for a hook.
+// repo makes a repository and enters it, as git does for a hook, with a
+// worker's temporary directory beside it.
 func repo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Setenv("TMPDIR", t.TempDir())
 	for name, value := range map[string]string{"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"} {
 		t.Setenv(name, value)
 	}
@@ -90,7 +93,7 @@ func executable(t *testing.T, path, script string) {
 
 func TestTheRepositorysOwnPrepareHookRunsBeforeTheTrailers(t *testing.T) {
 	dir := repo(t)
-	record := filepath.Join(t.TempDir(), "seen")
+	record := filepath.Join(dir, "seen")
 	executable(t, filepath.Join(dir, ".git", "hooks", PrepareCommitMessage), `cp "$1" `+record+"\nprintf 'Repository detail\\n' >> \"$1\"\n")
 	file := message(t, "Add a greeting\n")
 	if code, stderr := run(t, PrepareCommitMessage, "/own", trailers, file); code != 0 {
@@ -240,7 +243,7 @@ func TestAHooksDirectoryTheRepositorySetsIsFoundEvenThoughAsmAIsIsInTheEnvironme
 	if out, err := exec.Command("git", "config", "core.hooksPath", ".husky").CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	record := filepath.Join(t.TempDir(), "args")
+	record := filepath.Join(dir, "args")
 	executable(t, filepath.Join(dir, ".husky", "pre-push"), `echo "$@" > `+record+"; cat >> "+record+"\n")
 	var errOut bytes.Buffer
 	code := Run(context.Background(), "pre-push", []string{"origin", "url"}, strings.NewReader("refs\n"), &bytes.Buffer{}, &errOut, own, trailers)
@@ -313,4 +316,119 @@ func TestTheHooksDirectoryIsAddedAfterTheConfigurationAlreadyInTheEnvironment(t 
 	if env := Environment(nil, "/d"); env["GIT_CONFIG_COUNT"] != "1" || env["GIT_CONFIG_KEY_0"] != "core.hooksPath" {
 		t.Errorf("with none before, the variables are %v", env)
 	}
+}
+
+// workspace makes a clone with a first commit and a worker's workspace, a
+// worktree of it, and enters the workspace. It returns the clone's directory,
+// a directory outside both, and git run with an identity. The clone and that
+// directory are outside every temporary directory, which t.TempDir is not on
+// Linux, as a hook may write anywhere beneath those.
+func workspace(t *testing.T) (clone, outside string, git func(args ...string)) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beyondTemp := func(prefix string) string {
+		dir, err := os.MkdirTemp(wd, prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		return dir
+	}
+	outside, clone = beyondTemp(".outside-"), beyondTemp(".clone-")
+	repo(t)
+	t.Chdir(clone)
+	git = func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-c", "user.name=Una User", "-c", "user.email=una@example.test"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(clone, "greeting.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "greeting.txt")
+	git("commit", "-q", "-m", "Start")
+	dir := filepath.Join(t.TempDir(), "repo")
+	git("worktree", "add", "-q", "-b", "asmai/job-1/1", dir)
+	t.Chdir(dir)
+	return clone, outside, git
+}
+
+func TestARepositorysHookRunsConfinedToItsWorkspace(t *testing.T) {
+	clone, outsideDir, _ := workspace(t)
+	workspace, _ := os.Getwd()
+	outside := filepath.Join(outsideDir, "outside")
+	common := filepath.Join(clone, ".git")
+	system := filepath.Join("/tmp", "asmai-hook-"+filepath.Base(outsideDir))
+	t.Cleanup(func() { os.Remove(system) })
+	refused := []string{outside, filepath.Join(common, "shared"), filepath.Join(common, "hooks", "planted"), filepath.Join(common, "config"), filepath.Join(common, "info", "exclude")}
+	executable(t, filepath.Join(common, "hooks", "pre-commit"), `touch inside "$TMPDIR/temporary" `+system+` "$(git rev-parse --absolute-git-dir)/own"
+for path in `+strings.Join(refused, " ")+`; do
+	if { echo planted >> "$path"; } 2>/dev/null; then echo "$path" >> escaped; else echo "$path" >> blocked; fi
+done
+`)
+	before := map[string][]byte{}
+	for _, path := range refused {
+		before[path], _ = os.ReadFile(path)
+	}
+	if code, stderr := run(t, "pre-commit", "/own", trailers); code != 0 {
+		t.Fatalf("pre-commit exited %d: %s", code, stderr)
+	}
+	ownGitDir := filepath.Join(common, "worktrees", "repo")
+	for _, path := range []string{filepath.Join(workspace, "inside"), filepath.Join(os.Getenv("TMPDIR"), "temporary"), system, filepath.Join(ownGitDir, "own")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("the hook could not write %s: %v", path, err)
+		}
+	}
+	for _, path := range refused {
+		if got, _ := os.ReadFile(path); !bytes.Equal(got, before[path]) {
+			t.Errorf("the hook wrote %s, outside what it may write", path)
+		}
+	}
+	escaped, _ := os.ReadFile(filepath.Join(workspace, "escaped"))
+	if blocked, _ := os.ReadFile(filepath.Join(workspace, "blocked")); string(blocked) != strings.Join(refused, "\n")+"\n" {
+		t.Errorf("the hook was blocked writing %q and not %q, want it blocked writing every path it may not", blocked, escaped)
+	}
+}
+
+// On Linux, Landlock cannot let a hook create packed-refs.lock, which git
+// takes to delete a ref, so dropping the last stash entry, as lint-staged does
+// when it is done, succeeds there but leaves refs/stash behind, as the README
+// says.
+func TestAHookThatStagesAndStashesLikeLintStaged(t *testing.T) {
+	clone, _, git := workspace(t)
+	executable(t, filepath.Join(clone, ".git", "hooks", "pre-commit"), `set -e
+printf 'hello, formatted\n' > greeting.txt
+git add greeting.txt
+git stash push -q -m 'lint-staged backup'
+git stash apply -q --index
+git stash drop -q
+`)
+	if err := os.WriteFile("greeting.txt", []byte("hello again\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "greeting.txt")
+	code, stderr := run(t, "pre-commit", "/own", trailers)
+	staged, err := exec.Command("git", "show", ":greeting.txt").Output()
+	if err != nil || string(staged) != "hello, formatted\n" {
+		t.Errorf("the hook staged %q (%v), want its formatted file", staged, err)
+	}
+	stashes, err := exec.Command("git", "stash", "list", "--format=%s").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || len(stashes) != 0 {
+		t.Errorf("pre-commit exited %d (%s) leaving the stashes %q, want its stash made, applied and dropped", code, stderr, stashes)
+	}
+	left := exec.Command("git", "rev-parse", "--verify", "-q", "refs/stash").Run() == nil
+	if runtime.GOOS == "linux" && (!left || !strings.Contains(stderr, "packed-refs.lock")) {
+		t.Errorf("refs/stash left behind is %v, with %q, want it left for want of packed-refs.lock", left, stderr)
+	} else if runtime.GOOS != "linux" && left {
+		t.Errorf("the dropped stash left refs/stash behind")
+	}
+	git("commit", "-q", "--no-verify", "-m", "Greet again")
 }

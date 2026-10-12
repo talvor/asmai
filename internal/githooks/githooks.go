@@ -4,7 +4,10 @@
 // worker's git is given a hooks directory of AsmAI's through its environment,
 // not the repository's configuration: each hook in it runs `asmai git-hook`,
 // which adds the trailers to a commit's message and runs the hook the
-// repository would have run, so the repository's own hooks still apply.
+// repository would have run, so the repository's own hooks still apply. A
+// repository's hook runs in the system's sandbox, Seatbelt on macOS and
+// Landlock on Linux, which lets it write only the paths writable returns, as
+// the write guard confines the worker.
 package githooks
 
 import (
@@ -95,8 +98,9 @@ func Environment(environ []string, dir string) map[string]string {
 // Run runs the hook name that git called with args, with its standard input,
 // and returns the exit status git should see. For every hook, the
 // repository's own hook of that name runs if it has one, and decides the
-// status. The message then gets the trailers, both when it is prepared, which
-// `--no-verify` never skips, and again after the repository's commit-msg,
+// status; it runs confined to writing the paths writable returns, and when it
+// cannot be confined it does not run and the status is 1. The message then
+// gets the trailers, both when it is prepared, which `--no-verify` never skips, and again after the repository's commit-msg,
 // which can rewrite it, so that the message git commits carries them, for a
 // merge as for a commit. ownDir is AsmAI's hooks directory, which is never run
 // as the repository's.
@@ -116,7 +120,10 @@ func Run(ctx context.Context, name string, args []string, stdin io.Reader, stdou
 	if hook != "" {
 		cmd := exec.CommandContext(ctx, hook, args...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-		if err := cmd.Run(); err != nil {
+		if err := startConfined(cmd, writable(ctx)); err != nil {
+			fmt.Fprintf(stderr, "asmai git-hook: the repository's %s cannot run confined to the workspace: %v\n", name, err)
+			status = 1
+		} else if err := cmd.Wait(); err != nil {
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
 				status = exit.ExitCode()

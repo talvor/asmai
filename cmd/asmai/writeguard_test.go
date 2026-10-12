@@ -80,6 +80,19 @@ func argValue(args []string, flag string) string {
 func TestAWorkerCommitsAsTheUserWithAsmAITrailersInsideTheWriteGuardFollowingTheRepositoryInstructionsButNotItsProviderConfiguration(t *testing.T) {
 	const branch = "asmai/job-1/1"
 	trailers := "AsmAI-Job: 1\nAsmAI-Agent: worker1@engineering\nAsmAI-Dispatch: 3\n"
+	// A path outside the workspace and outside every temporary directory,
+	// which a hook may write beneath and which hold HOME, and so the clone,
+	// on Linux.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := os.MkdirTemp(wd, ".outside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(outside) })
+	escaped := filepath.Join(outside, "escaped")
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		// The identity is the user's own, from their git configuration, and
@@ -102,7 +115,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		// The repository's own pre-commit hook runs for the worker's commit,
 		// confined to the workspace: its write there is made, its write
 		// outside is blocked, and the commit goes ahead.
-		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && printf '#!/bin/sh\necho inside > hook-wrote-inside\n{ echo "# escaped" >> "$(git rev-parse --git-common-dir)/config"; } 2>/dev/null || echo blocked > "$TMPDIR/hook-blocked"\n' > "$hooks/pre-commit" && chmod +x "$hooks/pre-commit"`, 0, ""),
+		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && printf '#!/bin/sh\necho inside > hook-wrote-inside\n{ echo escaped > `+escaped+`; } 2>/dev/null || echo blocked > "$TMPDIR/hook-blocked"\n' > "$hooks/pre-commit" && chmod +x "$hooks/pre-commit"`, 0, ""),
 		fakeRun(`printf 'hello again\n' >> greeting.txt && git commit -q -am 'Greet again' && cat hook-wrote-inside "$TMPDIR/hook-blocked" && rm hook-wrote-inside && git log -1 --format=%s`, 0, "^inside\nblocked\nGreet again\n$"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
@@ -129,10 +142,8 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 	// AsmAI set no identity and no hooks in the clone, and wrote its hooks
 	// into its own state directory.
 	clone := filepath.Join(stateDir, "repositories", "fixture")
-	if out, err := exec.Command("git", "-C", clone, "rev-parse", "--path-format=absolute", "--git-common-dir").Output(); err != nil {
-		t.Errorf("finding the clone's git directory: %v", err)
-	} else if config, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), "config")); err != nil || strings.Contains(string(config), "escaped") {
-		t.Errorf("the repository's pre-commit hook wrote the clone's configuration, outside the workspace (%v)", err)
+	if _, err := os.Stat(escaped); err == nil {
+		t.Errorf("the repository's pre-commit hook wrote %s, outside the workspace", escaped)
 	}
 	for _, key := range []string{"user.name", "user.email", "core.hooksPath", "credential.helper"} {
 		if out, err := exec.Command("git", "-C", clone, "config", "--local", "--get", key).Output(); err == nil {

@@ -320,26 +320,33 @@ func TestTheHooksDirectoryIsAddedAfterTheConfigurationAlreadyInTheEnvironment(t 
 
 // workspace makes a clone with a first commit and a worker's workspace, a
 // worktree of it, and enters the workspace. It returns the clone's directory,
-// a directory outside both and outside every temporary directory, which
-// t.TempDir is not on Linux, and git run with an identity.
+// a directory outside both, and git run with an identity. The clone and that
+// directory are outside every temporary directory, which t.TempDir is not on
+// Linux, as a hook may write anywhere beneath those.
 func workspace(t *testing.T) (clone, outside string, git func(args ...string)) {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	outside, err = os.MkdirTemp(wd, ".outside-")
-	if err != nil {
-		t.Fatal(err)
+	beyondTemp := func(prefix string) string {
+		dir, err := os.MkdirTemp(wd, prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		return dir
 	}
-	t.Cleanup(func() { os.RemoveAll(outside) })
-	clone = repo(t)
+	outside, clone = beyondTemp(".outside-"), beyondTemp(".clone-")
+	repo(t)
+	t.Chdir(clone)
 	git = func(args ...string) {
 		t.Helper()
 		if out, err := exec.Command("git", append([]string{"-c", "user.name=Una User", "-c", "user.email=una@example.test"}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
+	git("init", "-q")
 	if err := os.WriteFile(filepath.Join(clone, "greeting.txt"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

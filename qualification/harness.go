@@ -46,6 +46,9 @@ type Harness struct {
 	Number func() int64
 
 	reported string
+	// answered holds the folders whose trust question the harness answered
+	// in a Claude Code session `asmai setup` opened.
+	answered map[string]bool
 }
 
 func (h *Harness) logf(format string, args ...any) {

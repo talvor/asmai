@@ -57,7 +57,10 @@ func (h *Harness) setup(ctx context.Context, f *Factory) error {
 	}
 	confirmed := false
 	keys := map[string]int{}
-	answered, left := map[string]bool{}, map[string]bool{}
+	left := map[string]bool{}
+	if h.answered == nil {
+		h.answered = map[string]bool{}
+	}
 	var lastKey time.Time
 	var lines []string
 	deadline := time.Now().Add(setupWaits * h.Wait)
@@ -107,14 +110,14 @@ func (h *Harness) setup(ctx context.Context, f *Factory) error {
 			if strings.Contains(selectedOption(lines), trustPromptMarker) {
 				h.logf("answering \"Yes, I trust this folder\" for %s, in the Claude Code asmai setup opened", dir)
 				err = s.Input([]byte("\r"))
-				answered[dir] = true
+				h.answered[dir] = true
 			} else {
 				h.logf("moving Claude Code's question about trusting %s to %q", dir, trustPromptMarker)
 				err = s.Input([]byte(keyDown))
 			}
 			lastKey = time.Now()
 		// Setup itself reports a folder Claude Code did not record trusted.
-		case !asked && (trusted || answered[dir]) && dir != "" && promptSurface(lines):
+		case !asked && (trusted || h.answered[dir]) && dir != "" && promptSurface(lines):
 			h.logf("leaving the Claude Code asmai setup opened in %s", dir)
 			// Typed at once, Claude Code may take the Enter as part of a paste.
 			if err = s.Input([]byte("/exit")); err == nil {
@@ -262,7 +265,13 @@ func (h *Harness) c48(ctx context.Context, f *Factory, r *Result) error {
 			return fmt.Errorf("Claude Code's record does not trust %s after asmai setup", dir)
 		}
 	}
-	r.observe("asmai setup for the disposable state directory had Claude Code record the user's trust of %s and %s, answered in the sessions setup opened there: the only place the harness answers that question", f.paths.Agents, f.paths.Workspaces)
+	for _, dir := range []string{f.paths.Agents, f.paths.Workspaces} {
+		if h.answered[dir] {
+			r.observe("asmai setup for the disposable state directory had Claude Code record the user's trust of %s, answered in the session setup opened there: the only place the harness answers that question", dir)
+		} else {
+			r.observe("asmai setup for the disposable state directory found %s trusted already in Claude Code's record, from an earlier run, and opened no session there", dir)
+		}
+	}
 
 	leader, ok, err := f.Leader()
 	if err != nil {

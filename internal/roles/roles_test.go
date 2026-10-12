@@ -258,3 +258,40 @@ func TestEngineeringsInstructionsOpenADraftPullRequestOrANotReadyOneRecordItAndC
 		}
 	}
 }
+
+func TestCoordinationsInstructionsReportEachDeliveryStepAndTheLinkWhenAJobEnds(t *testing.T) {
+	leader, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Report each delivery step to the user",
+		"the link when a job ends",
+		"A message of kind `delivery`",
+		"in a line tagged with the job's number",
+		"with the pull request's link",
+		"AsmAI never merges",
+		"its branches stay on origin",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+}
+
+func TestEngineeringsInstructionsLeaveCIAndMarkingThePullRequestReadyToTheDaemon(t *testing.T) {
+	leader, err := LeaderInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"The daemon watches the checks on the head it pushed through gh",
+		"A head with no checks is never green",
+		"the daemon marks the pull request ready for review itself",
+		"You never mark it ready, and nothing merges it",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Engineering's leader's instructions lack %q", want)
+		}
+	}
+}

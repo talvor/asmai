@@ -85,8 +85,20 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					} else if !errors.Is(e, sql.ErrNoRows) {
 						err = e
 					}
+					var checks *store.ChecksObservation
+					if o, e := d.store.LatestChecks(j.Number); e == nil {
+						checks = &o
+					} else if !errors.Is(e, sql.ErrNoRows) && err == nil {
+						err = e
+					}
+					var delivery *store.Delivery
+					if del, e := d.store.JobDelivery(j.Number); e == nil {
+						delivery = &del
+					} else if !errors.Is(e, sql.ErrNoRows) && err == nil {
+						err = e
+					}
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs)
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery)
 					}
 				}
 			}
@@ -117,7 +129,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
@@ -127,6 +139,8 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		fmt.Fprintf(&b, "Repository clone: %s\nDefault branch (the base the job branch takes in): %s\n", repository.Clone, repository.DefaultBranch)
 	}
 	switch {
+	case branch != nil && j.State == store.JobEnded:
+		fmt.Fprintf(&b, "Job branch: %s (started from %s, tip %s), kept on origin; the job ended, so its view and its branches in AsmAI's clone are removed\n", branch.Name, branch.StartedFrom, branch.Tip)
 	case branch != nil:
 		fmt.Fprintf(&b, "Job branch: %s (started from %s, tip %s)\nRead-only view of the job at the job branch's tip: %s\nRead the job's code and the repository's instructions there. Never write in it: it is not a workspace.\n", branch.Name, branch.StartedFrom, branch.Tip, branch.View)
 	case j.Repository != "":
@@ -189,6 +203,24 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	} else {
 		p := prs[len(prs)-1]
 		fmt.Fprintf(&b, "- #%d %s, %s, from %s at %s, %s on GitHub, effect %d\n", p.Number, p.URL, PullRequestState(p), p.Branch, p.Head, p.State, p.Effect)
+	}
+	fmt.Fprintln(&b, "Checks on the pull request's head (the daemon watches them through gh; a head with no checks is never green):")
+	if checks == nil {
+		fmt.Fprintln(&b, "- not read yet")
+	} else {
+		fmt.Fprintf(&b, "- %s at %s, %s\n", checks.Verdict, checks.Head, checks.At.Format(time.RFC3339))
+		if len(checks.Checks) == 0 {
+			fmt.Fprintln(&b, "  - no checks")
+		}
+		for _, c := range checks.Checks {
+			fmt.Fprintf(&b, "  - %s: %s\n", c.Name, c.State)
+		}
+	}
+	fmt.Fprintln(&b, "Delivery:")
+	if delivery == nil {
+		fmt.Fprintln(&b, "- not delivered")
+	} else {
+		fmt.Fprintf(&b, "- pull request #%d %s marked ready for review at %s, %s, with every check green; the job ended. AsmAI never merges\n", delivery.Number, delivery.URL, delivery.Head, delivery.At.Format(time.RFC3339))
 	}
 	fmt.Fprintln(&b, "Pending decisions: none\nGrants: none\nRecent journal:")
 	for _, entry := range entries {

@@ -74,7 +74,8 @@ func TestWhenGitHubRefusesADraftThePullRequestOpensNotReadyAndTheDaemonRecordsTh
 // Engineering's leader opens the pull request with gh as a draft, or, when
 // refuseDraft has GitHub refuse the draft, normally with "[not ready]" at the
 // start of its title, and records it with `asmai effect`. The daemon looks it
-// up with gh and records its number and draft state.
+// up with gh and records its number and draft state. The pull request has no
+// checks, so the daemon watching them never marks it ready.
 func deliverPullRequest(t *testing.T, refuseDraft bool) {
 	gitIdentity(t)
 	testDir := t.TempDir()
@@ -262,6 +263,12 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 		switch {
 		case strings.HasPrefix(args, "pr create "):
 			creates = append(creates, args)
+		case args == "pr view 7 --json number,url,title,isDraft,headRefName,headRefOid,isCrossRepository,state,statusCheckRollup":
+			// The daemon watching the checks on the pushed head, which
+			// this pull request has none of: it is never marked ready.
+			if dir != clone {
+				t.Errorf("the daemon ran gh %s in %s, not the job's clone %s", args, dir, clone)
+			}
 		case strings.HasPrefix(args, "pr view "), args == "repo view --json url":
 			views = append(views, args)
 			if dir != clone {

@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has nine cases from M1:
+So far it has eleven cases from M1:
 
 | Case | What it qualifies |
 |---|---|
@@ -15,6 +15,8 @@ So far it has nine cases from M1:
 | C37 | Provider write guards are switched on |
 | C41 | The daemon's push, and its refusal when origin holds commits AsmAI did not make |
 | C42 | A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft |
+| C43 | The daemon watches CI on the pushed head through gh until it is green (the green path) |
+| C45 | The daemon marks the pull request ready when CI is green |
 
 Later milestones add the other cases to the same harness.
 
@@ -37,7 +39,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
 5. On Linux, have `bubblewrap` (`bwrap`) and `socat` on the `PATH`: Claude Code's write guard needs them, and every agent session is started so that it does not start without it. C37 names them when they are missing. On the Mac the guard is built in. C37 runs `git ls-remote` against `https://github.com/git/git` and `gh pr list` against `cli/cli`, so the host needs outbound network access and `gh` on the `PATH`.
-6. For C41 and C42, have `gh` signed in as an account that can push to [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) and open and close its pull requests, with git's operations protocol `https`, so that git pushes over HTTPS with that sign-in (`gh auth status` says so).
+6. For C41, C42, C43 and C45, have `gh` signed in as an account that can push to [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) and open and close its pull requests, with git's operations protocol `https`, so that git pushes over HTTPS with that sign-in (`gh auth status` says so).
 
 ## Running it
 
@@ -122,6 +124,26 @@ C42 opens pull requests on [talvor/asmai-fixture](https://github.com/talvor/asma
 
 The fixture is public and accepts drafts, so no repository available to the harness refuses one: the refusal is simulated by a `gh` that prints GitHub's refusal for `gh pr create --draft` and otherwise runs the real `gh` ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rule 10). The report says so. It runs no provider and starts no agent, posts no review and merges nothing. Whether it passes or fails, it closes the pull requests it opened and deletes the scratch branch from GitHub afterwards, and removes its clone.
 
+### C43: watching CI on the pushed head, the green path
+
+C43 reads CI on [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) with the harness user's own `gh` and the code the daemon's CI watch runs (`github.ViewChecks` and its verdict), so the watch qualified is the watch run. It pushes a scratch job branch `asmai/qualification-c43-<random>` with the daemon's push, opens a draft pull request from it, and reads the checks on its head, every 10 seconds for up to 10 minutes, until they are green. It requires:
+
+- the pull request's head to be the pushed commit at every look;
+- each check's state to be read, and a head with no checks never to be green: while the fixture's CI has not reported, the case keeps looking;
+- every check to end green, with the fixture's CI in its default `green` mode; a red check fails the case;
+- the pull request to be still a draft afterwards: watching changes nothing.
+
+Its evidence lists what it saw each time it changed, such as `waiting: no checks; waiting: CI / test pending; green: CI / test passed`. The red path, with one judged re-run and a newer push replacing the wait, arrives later. It runs no provider and starts no agent, marks nothing ready and merges nothing. Whether it passes or fails, it closes the pull request and deletes the scratch branch from GitHub afterwards, and removes its clone.
+
+### C45: marking the pull request ready when CI is green
+
+C45 marks pull requests on [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) ready with the code the daemon runs when CI is green (`github.MarkReady`), and looks each up with the daemon's lookup. It pushes a scratch job branch `asmai/qualification-c45-<random>` with the daemon's push, and requires:
+
+- for a draft pull request from the branch, once every check on its pushed head is green, as C43 reads them, the daemon's code to mark it ready with `gh pr ready`, and the lookup to find it not a draft, and open: ready is not merged;
+- for a pull request opened normally with "[not ready]" at the start of its title, as when GitHub refuses a draft, once green, the daemon's code to take "[not ready]" out of its title with `gh pr edit`, and the lookup to find it not a draft, not "[not ready]", and open.
+
+It runs no provider and starts no agent, posts no review and merges nothing. Whether it passes or fails, it closes the pull requests it opened and deletes the scratch branch from GitHub afterwards, and removes its clone.
+
 ### C7 and C11: an acknowledged handoff nudge
 
 The harness keeps a small fixture repository in the disposable C7/C11/C19 factory state and, on `asmai-vm`, answers Claude Code's first-use trust prompt in Engineering's qualification directory before the daemon starts that leader. It then opens the conversation and asks Coordination to open a job and hand it to Engineering. It requires a witnessed entry for the user's exact request, a dispatch for Engineering, a `UserPromptSubmit` observation for the exact one-line nudge in Engineering's session, and an inbox fetch. C7 also requires the provider's transcript location on that dispatch. C11 refuses a witnessed entry for the nudge. The exercise uses the real pinned Claude Code and can fail if the agents do not carry out the requested commands.
@@ -167,8 +189,12 @@ C41 passed  The daemon's push, and its refusal when origin holds commits AsmAI d
     - ...
 C42 passed  A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft
     - ...
+C43 passed  The daemon watches CI on the pushed head through gh until it is green
+    - ...
+C45 passed  The daemon marks the pull request ready when CI is green
+    - ...
 
-9 of 9 cases passed.
+11 of 11 cases passed.
 ```
 
 Each case is `passed` or `failed`. The report names the platform, the pinned version from the commit's pins file, the version the installed copy reports, and the commit. It holds no credential and no environment variable's value.

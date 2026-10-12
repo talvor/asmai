@@ -134,7 +134,7 @@ C43 reads CI on [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) 
 
 It requires:
 
-- the pull request's head to be the commit last pushed at every look, so that each newer push replaces the wait on the older head;
+- the pull request's head to be the commit last pushed at every look, so that each newer push replaces the wait on the older head; until GitHub moves the pull request to a newer push, looks that still show the head pushed before it are skipped, and a head that is neither, or no move within the 10 minutes, fails the case;
 - each check's state to be read at every step;
 - the failed check to be a GitHub Actions run that the daemon's code can re-run, and its re-run to report as a new check run;
 - the pull request to be still a draft afterwards: watching changes nothing.

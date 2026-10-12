@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,14 +19,22 @@ const (
 	checkRunning = `[{"__typename":"CheckRun","name":"test","workflowName":"CI","status":"IN_PROGRESS","conclusion":""}]`
 	checkGreen   = `[{"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS"}]`
 	checkRed     = `[{"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"FAILURE"}]`
+	// A red check on a head forced red, and its re-run, a new check run of
+	// the same workflow run, red again or green.
+	runRed     = `[{"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/41/job/1"}]`
+	rerunning  = `[{"__typename":"CheckRun","name":"test","workflowName":"CI","status":"IN_PROGRESS","conclusion":"","detailsUrl":"https://github.com/o/r/actions/runs/41/job/2"}]`
+	rerunRed   = `[{"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/41/job/2"}]`
+	rerunGreen = `[{"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://github.com/o/r/actions/runs/41/job/2"}]`
 )
 
 // fakeCI puts a gh on the PATH that stands in for GitHub with a local bare
 // repository as origin: it opens pull requests, shows them, with the checks
 // on their head when asked for statusCheckRollup, readies them, retitles them
 // and closes them, keeping them in a directory of the test's, which it
-// returns. Each pull request's checks are rollups, one per look, the last
-// repeated. With ignoreReady, gh pr ready does nothing.
+// returns. A pull request's head is origin's branch, as GitHub's follows each
+// push. Each pull request's checks are rollups, one per look, the last
+// repeated. gh run rerun re-runs nothing itself: the rollups say what follows.
+// With ignoreReady, gh pr ready does nothing.
 func fakeCI(t *testing.T, origin string, ignoreReady bool, rollups ...string) string {
 	t.Helper()
 	ciWait, ciPoll = 5*time.Second, 10*time.Millisecond
@@ -35,7 +45,7 @@ func fakeCI(t *testing.T, origin string, ignoreReady bool, rollups ...string) st
 		t.Fatal(err)
 	}
 	for i, rollup := range rollups {
-		if err := os.WriteFile(filepath.Join(state, "rollup-"+string(rune('1'+i))), []byte(rollup), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(state, "rollup-"+strconv.Itoa(i+1)), []byte(rollup), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,7 +75,6 @@ case "$1 $2" in
 	printf '%s' "$title" > "$state/pr-$n/title"
 	echo "$draft" > "$state/pr-$n/draft"
 	echo "$head" > "$state/pr-$n/branch"
-	git ls-remote ` + origin + ` "refs/heads/$head" | cut -f1 > "$state/pr-$n/head"
 	echo "Creating pull request for $head"
 	echo "https://github.com/o/r/pull/$n"
 	;;
@@ -80,13 +89,16 @@ case "$1 $2" in
 		rollup=",\"statusCheckRollup\":$(cat "$state/rollup-$look")"
 		;;
 	esac
+	head=$(git ls-remote ` + origin + ` "refs/heads/$(cat "$state/pr-$n/branch")" | cut -f1)
+	[ -n "$head" ] && printf '%s %s\n' "$head" "$(git --git-dir=` + origin + ` show "$head:.ci-mode" 2>/dev/null)" >> "$state/heads"
 	s=OPEN
 	[ -e "$state/closed-$n" ] && s=CLOSED
-	printf '{"number":%d,"url":"https://github.com/o/r/pull/%d","title":"%s","isDraft":%s,"headRefName":"%s","headRefOid":"%s","state":"%s"%s}\n' "$n" "$n" "$(cat "$state/pr-$n/title")" "$(cat "$state/pr-$n/draft")" "$(cat "$state/pr-$n/branch")" "$(cat "$state/pr-$n/head")" "$s" "$rollup"
+	printf '{"number":%d,"url":"https://github.com/o/r/pull/%d","title":"%s","isDraft":%s,"headRefName":"%s","headRefOid":"%s","state":"%s"%s}\n' "$n" "$n" "$(cat "$state/pr-$n/title")" "$(cat "$state/pr-$n/draft")" "$(cat "$state/pr-$n/branch")" "$head" "$s" "$rollup"
 	;;
 "pr ready") ` + ready + ` ;;
 "pr edit") printf '%s' "$5" > "$state/pr-$3/title" ;;
 "pr close") touch "$state/closed-${3##*/}" ;;
+"run rerun") ;;
 *) echo "the fake gh does not do: $*" >&2; exit 1 ;;
 esac
 `
@@ -119,16 +131,31 @@ func leftNothing(t *testing.T, state, origin string, opened int) {
 	}
 }
 
-func TestC43PassesWhenTheChecksOnThePushedHeadTurnGreenAfterNoneAndOneRunning(t *testing.T) {
+// c43Path is the checks C43's pull request has at each look: green on the
+// first head, red on the newer one forced red, its re-run red again, and
+// green on the fix.
+var c43Path = []string{noChecks, noChecks, checkRunning, checkGreen, checkRunning, runRed, runRed, rerunning, rerunRed, checkRunning, checkGreen}
+
+func TestC43PassesGreenThenRedWithOneReRunThenANewerPushReplacingTheWait(t *testing.T) {
 	origin := localPushFixture(t)
 	usePushFixture(t, origin)
-	state := fakeCI(t, origin, false, noChecks, noChecks, checkRunning, checkGreen)
+	state := fakeCI(t, origin, false, c43Path...)
 	r := result(t, harness(t, signedIn, startsDirectly), "C43")
 	if r.Outcome != Passed {
-		t.Fatalf("C43 %s: %s", r.Outcome, r.Failure)
+		t.Fatalf("C43 %s: %s\n%s", r.Outcome, r.Failure, strings.Join(r.Evidence, "\n"))
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"as: waiting: no checks; waiting: CI / test pending; green: CI / test passed", "still a draft: watching changes nothing"} {
+	for _, want := range []string{
+		"as: waiting: no checks; waiting: CI / test pending; green: CI / test passed",
+		"still a draft: watching changes nothing",
+		"replaced the wait on",
+		"the new head as: waiting: CI / test pending; red: CI / test failed",
+		"re-ran the failed jobs of the red checks CI / test failed once, in workflow runs [41]",
+		"the re-run reported on",
+		"red: CI / test failed; waiting: CI / test pending; red: CI / test failed; it is the head's one re-run, so a fix follows",
+		"the fix's newer push of",
+		"waiting: CI / test pending; green: CI / test passed, and the pull request is still a draft",
+	} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C43's evidence\n%s\ndoes not say %q", evidence, want)
 		}
@@ -136,6 +163,55 @@ func TestC43PassesWhenTheChecksOnThePushedHeadTurnGreenAfterNoneAndOneRunning(t 
 	calls, _ := os.ReadFile(filepath.Join(state, "calls"))
 	if strings.Contains(string(calls), "pr ready") || strings.Contains(string(calls), "pr edit") {
 		t.Errorf("C43 marked the pull request ready:\n%s", calls)
+	}
+	if n := strings.Count(string(calls), "run rerun 41 --failed\n"); n != 1 {
+		t.Errorf("C43 re-ran the failed jobs %d times, want once:\n%s", n, calls)
+	}
+	// The checks were read on three heads in turn, each pushed after the
+	// last: the green one, the newer one forced red, and the fix.
+	data, _ := os.ReadFile(filepath.Join(state, "heads"))
+	var heads, modes []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		head, mode, _ := strings.Cut(line, " ")
+		if len(heads) == 0 || heads[len(heads)-1] != head {
+			heads, modes = append(heads, head), append(modes, mode)
+		}
+	}
+	if len(heads) != 3 || !slices.Equal(modes, []string{"", "red", ""}) {
+		t.Errorf("the checks were read on heads %q with .ci-mode %q, want three heads in turn: green, forced red, the fix", heads, modes)
+	}
+	leftNothing(t, state, origin, 1)
+}
+
+func TestC43FailsWhenTheReRunNeverReports(t *testing.T) {
+	origin := localPushFixture(t)
+	usePushFixture(t, origin)
+	state := fakeCI(t, origin, false, checkGreen, runRed)
+	r := result(t, harness(t, signedIn, startsDirectly), "C43")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "were not re-run within") {
+		t.Errorf("C43 %s: %q, want it to fail waiting for the re-run", r.Outcome, r.Failure)
+	}
+	leftNothing(t, state, origin, 1)
+}
+
+func TestC43FailsWhenTheReRunOfAHeadForcedRedIsGreen(t *testing.T) {
+	origin := localPushFixture(t)
+	usePushFixture(t, origin)
+	state := fakeCI(t, origin, false, checkGreen, runRed, rerunGreen)
+	r := result(t, harness(t, signedIn, startsDirectly), "C43")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "which its .ci-mode forces red, is green") {
+		t.Errorf("C43 %s: %q, want it to fail on a green re-run", r.Outcome, r.Failure)
+	}
+	leftNothing(t, state, origin, 1)
+}
+
+func TestC43FailsWhenARedCheckCannotBeReRun(t *testing.T) {
+	origin := localPushFixture(t)
+	usePushFixture(t, origin)
+	state := fakeCI(t, origin, false, checkGreen, checkRed)
+	r := result(t, harness(t, signedIn, startsDirectly), "C43")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "is a GitHub Actions run to re-run") {
+		t.Errorf("C43 %s: %q, want it to fail with nothing to re-run", r.Outcome, r.Failure)
 	}
 	leftNothing(t, state, origin, 1)
 }

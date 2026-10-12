@@ -295,3 +295,29 @@ func TestEngineeringsInstructionsLeaveCIAndMarkingThePullRequestReadyToTheDaemon
 		}
 	}
 }
+
+func TestEngineeringsInstructionsHandleRedCIWithAtMostOneJudgedReRunOrAFix(t *testing.T) {
+	leader, err := LeaderInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"handle red CI with at most one judged re-run",
+		"a message of kind `checks-red` naming each failing check on that head",
+		"Only if you judge that the failure is unrelated to the change",
+		"`asmai decision record --job <number> --choice rerun-failed --rationale <why the failure is unrelated to the change> --evidence <",
+		"as a delegated decision",
+		"never re-run checks yourself",
+		"A second re-run of the same head is refused",
+		"Assign the fix as a new writing assignment with `asmai assign`, naming the failing checks",
+		"hand validation of the new head to Quality",
+		"ask for the push with `asmai push`",
+		"a newer push replaces the wait",
+		"Whenever the evidence changes",
+		"record each update with `asmai effect pull-request <the pull request's URL>`",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Engineering's leader's instructions lack %q", want)
+		}
+	}
+}

@@ -97,8 +97,16 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					} else if !errors.Is(e, sql.ErrNoRows) && err == nil {
 						err = e
 					}
+					var reruns []store.Rerun
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery)
+						reruns, err = d.store.Reruns(j.Number)
+					}
+					var records []store.DecisionRecord
+					if err == nil {
+						records, err = d.store.DecisionRecords(j.Number)
+					}
+					if err == nil {
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records)
 					}
 				}
 			}
@@ -129,7 +137,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
@@ -216,11 +224,25 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 			fmt.Fprintf(&b, "  - %s: %s\n", c.Name, c.State)
 		}
 	}
+	fmt.Fprintln(&b, "Judged re-runs of red checks (once per head):")
+	if len(reruns) == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	for _, r := range reruns {
+		fmt.Fprintf(&b, "- the failed jobs of %s re-run once on decision %d, %s: %s\n", r.Head, r.Decision, r.At.Format(time.RFC3339), store.CheckNames(r.Checks))
+	}
 	fmt.Fprintln(&b, "Delivery:")
 	if delivery == nil {
 		fmt.Fprintln(&b, "- not delivered")
 	} else {
 		fmt.Fprintf(&b, "- pull request #%d %s marked ready for review at %s, %s, with every check green; the job ended. AsmAI never merges\n", delivery.Number, delivery.URL, delivery.Head, delivery.At.Format(time.RFC3339))
+	}
+	fmt.Fprintln(&b, "Decisions:")
+	if len(records) == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	for _, r := range records {
+		fmt.Fprintf(&b, "- %d %s by %s: %s. Rationale: %s. Evidence: %s\n", r.ID, r.Source, r.Leader, r.Choice, r.Rationale, r.Evidence)
 	}
 	fmt.Fprintln(&b, "Pending decisions: none\nGrants: none\nRecent journal:")
 	for _, entry := range entries {

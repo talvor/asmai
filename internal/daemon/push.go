@@ -117,6 +117,8 @@ func (d *daemon) push(req Request) (store.Push, error) {
 		return store.Push{}, err
 	}
 	d.log.Info("job branch pushed", "job", j.Number, "branch", branch.Name, "commit", p.Commit, "effect", p.Effect)
+	// A newer push replaces the CI wait on the older head.
+	d.lookSoon()
 	return p, nil
 }
 

@@ -17,12 +17,15 @@ import (
 // keeps its pull requests in the test's directory, one directory each. It
 // opens one with `gh pr create`, numbering them from 7, and refuses a draft
 // while the test's directory holds refuse-draft. `gh pr view` shows it as
-// GitHub would, with its head commit read from origin when it opened, and
-// with the checks the test's directory holds in rollup, none until the test
-// writes some, when asked for statusCheckRollup. `gh pr ready` makes it no
-// longer a draft and `gh pr edit --title` retitles it. `gh repo view` shows
-// origin as talvor/asmai-fixture. It records every call, with where it ran,
-// and does nothing else: nothing merges.
+// GitHub would, with its head commit read from origin's job branch, which
+// GitHub's follows each push, and when asked for statusCheckRollup with the
+// checks the test's directory holds in rollup-<head> for that head, or else
+// in rollup, none until the test writes some. `gh pr ready` makes it no
+// longer a draft, `gh pr edit --title` retitles it and `gh pr edit
+// --body-file` replaces its body. `gh run rerun` re-runs nothing itself: the
+// test writes the checks that follow. `gh repo view` shows origin as
+// talvor/asmai-fixture. It records every call, with where it ran, and does
+// nothing else: nothing merges.
 const fakeCIGH = `#!/bin/sh
 state="$ASMAI_TEST_DIR/gh"
 mkdir -p "$state"
@@ -51,25 +54,34 @@ case "$1 $2" in
 	printf '%s' "$title" > "$state/pr-$n/title"
 	echo "$draft" > "$state/pr-$n/draft"
 	echo "$head" > "$state/pr-$n/branch"
-	git ls-remote "$(cat "$ASMAI_TEST_DIR/origin")" "refs/heads/$head" | cut -f1 > "$state/pr-$n/head"
 	cp "$body" "$state/body-$n.md"
 	echo "https://github.com/talvor/asmai-fixture/pull/$n"
 	;;
 "pr view")
 	n=${3##*/}
 	[ -d "$state/pr-$n" ] || { echo "no pull requests found for $3" >&2; exit 1; }
+	head=$(git ls-remote "$(cat "$ASMAI_TEST_DIR/origin")" "refs/heads/$(cat "$state/pr-$n/branch")" | cut -f1)
 	rollup=
 	case "$5" in
-	*statusCheckRollup*) rollup=",\"statusCheckRollup\":$(cat "$ASMAI_TEST_DIR/rollup" 2>/dev/null || echo '[]')" ;;
+	*statusCheckRollup*)
+		checks="$ASMAI_TEST_DIR/rollup-$head"
+		[ -e "$checks" ] || checks="$ASMAI_TEST_DIR/rollup"
+		rollup=",\"statusCheckRollup\":$(cat "$checks" 2>/dev/null || echo '[]')"
+		;;
 	esac
-	printf '{"number":%d,"url":"https://github.com/talvor/asmai-fixture/pull/%d","title":"%s","isDraft":%s,"headRefName":"%s","headRefOid":"%s","state":"OPEN"%s}\n' "$n" "$n" "$(cat "$state/pr-$n/title")" "$(cat "$state/pr-$n/draft")" "$(cat "$state/pr-$n/branch")" "$(cat "$state/pr-$n/head")" "$rollup"
+	printf '{"number":%d,"url":"https://github.com/talvor/asmai-fixture/pull/%d","title":"%s","isDraft":%s,"headRefName":"%s","headRefOid":"%s","state":"OPEN"%s}\n' "$n" "$n" "$(cat "$state/pr-$n/title")" "$(cat "$state/pr-$n/draft")" "$(cat "$state/pr-$n/branch")" "$head" "$rollup"
 	;;
 "pr ready")
 	echo false > "$state/pr-$3/draft"
 	;;
 "pr edit")
-	[ "$4" = --title ] || { echo "the fake gh edits only a title" >&2; exit 1; }
-	printf '%s' "$5" > "$state/pr-$3/title"
+	case "$4" in
+	--title) printf '%s' "$5" > "$state/pr-$3/title" ;;
+	--body-file) cp "$5" "$state/body-$3.md" ;;
+	*) echo "the fake gh edits only a title or a body" >&2; exit 1 ;;
+	esac
+	;;
+"run rerun")
 	;;
 "repo view")
 	echo '{"url":"https://github.com/talvor/asmai-fixture"}'
@@ -198,7 +210,7 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 		turn(2, "reply", fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering")),
 		turn(10, "delivery",
 			fakeRun(`asmai inbox --dispatch 10`, 0, "(?s)message [0-9]+ \\| dispatch 10 \\| job 1 \\| delivery from daemon\nJob 1 is delivered: its pull request #7, "+url+", is ready for review at head "+sha+", with every check green \\(CI / test\\)\\. The job has ended.*AsmAI never merges.*in a line tagged with job 1, with the link"),
-			fakeRun(`asmai brief 1`, 0, "(?s)Job 1 \\| role: coordination \\| state: ended.*kept on origin; the job ended.*Checks on the pull request's head.*\n- green at "+sha+".*\n  - CI / test: passed\nDelivery:\n- pull request #7 "+url+" marked ready for review at "+sha),
+			fakeRun(`asmai brief 1`, 0, "(?s)Job 1 \\| role: coordination \\| state: ended.*kept on origin; the job ended.*Checks on the pull request's head.*\n- green at "+sha+".*\n  - CI / test: passed\nJudged re-runs of red checks \\(once per head\\):\n- none\nDelivery:\n- pull request #7 "+url+" marked ready for review at "+sha),
 			`{"screen":"`+report+`\r\n> "}`,
 			touchFile("coordination-done"),
 		),

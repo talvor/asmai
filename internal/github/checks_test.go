@@ -5,6 +5,8 @@ package github
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -103,5 +105,49 @@ func TestMarkReadyReportsWhatGHPrintedWhenItFails(t *testing.T) {
 	err := MarkReady(context.Background(), t.TempDir(), PullRequest{Number: 7, Draft: true})
 	if err == nil || !strings.Contains(err.Error(), "gh pr ready: GraphQL: not allowed") {
 		t.Errorf("MarkReady returned %v", err)
+	}
+}
+
+func TestFailedRunsAreTheWorkflowRunsOfTheFailedCheckRunsEachOnce(t *testing.T) {
+	checks := []Check{
+		{Name: "CI / test", State: CheckFailed, URL: "https://github.com/o/r/actions/runs/41/job/1"},
+		{Name: "CI / lint", State: CheckFailed, URL: "https://github.com/o/r/actions/runs/41/job/2"},
+		{Name: "CI / build", State: CheckPassed, URL: "https://github.com/o/r/actions/runs/42/job/3"},
+		{Name: "Other / e2e", State: CheckFailed, URL: "https://github.com/o/r/actions/runs/43/job/4"},
+		{Name: "deploy", State: CheckFailed, URL: "https://deploy.example/status/9"},
+		{Name: "app", State: CheckFailed},
+	}
+	if got := FailedRuns(checks); !slices.Equal(got, []int64{41, 43}) {
+		t.Errorf("the failed runs are %v, want [41 43]", got)
+	}
+	if got := FailedRuns(checks[2:3]); len(got) != 0 {
+		t.Errorf("a passed check's run is failed: %v", got)
+	}
+}
+
+func TestRerunFailedReRunsOnlyTheFailedJobsOfEachRun(t *testing.T) {
+	calls := fakeGH(t, `:`)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerun, err := RerunFailed(context.Background(), dir, []int64{41, 43})
+	if err != nil || !slices.Equal(rerun, []int64{41, 43}) {
+		t.Fatalf("re-ran %v, %v", rerun, err)
+	}
+	data, _ := os.ReadFile(calls)
+	if got := strings.TrimSpace(string(data)); got != dir+": run rerun 41 --failed\n"+dir+": run rerun 43 --failed" {
+		t.Errorf("gh ran as %q", got)
+	}
+	if _, err := RerunFailed(context.Background(), dir, nil); err == nil {
+		t.Error("re-running no runs succeeded")
+	}
+}
+
+func TestRerunFailedStopsAtTheFirstRunGHDoesNotReRun(t *testing.T) {
+	fakeGH(t, `[ "$3" = 43 ] && { echo 'run 43 cannot be rerun' >&2; exit 1; }; :`)
+	rerun, err := RerunFailed(context.Background(), t.TempDir(), []int64{41, 43, 44})
+	if err == nil || !strings.Contains(err.Error(), "cannot be rerun") || !slices.Equal(rerun, []int64{41}) {
+		t.Errorf("re-ran %v, %v", rerun, err)
 	}
 }

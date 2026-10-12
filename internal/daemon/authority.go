@@ -58,6 +58,11 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return errors.New("only leader@engineering, the delivery owner of a code job, may run asmai push")
+	case CommandDecisionRecord:
+		if ref.address == roles.LeaderOf(roles.Engineering) {
+			return nil
+		}
+		return errors.New("only leader@engineering, judging a red head's checks, may run asmai decision record")
 	case CommandEffect:
 		if ref.address.Name != roles.Leader || ref.address == roles.LeaderOf(roles.Engineering) {
 			return nil
@@ -83,7 +88,7 @@ func isAgentCommand(command string) bool {
 	case CommandJobOpen, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
 		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
-		CommandPush, CommandTrailers:
+		CommandPush, CommandDecisionRecord, CommandTrailers:
 		return true
 	}
 	return false
@@ -107,6 +112,8 @@ func commandName(command string) string {
 		return "inbox"
 	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandPush:
 		return command
+	case CommandDecisionRecord:
+		return "decision record"
 	case CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		return "handoff " + strings.TrimPrefix(command, "handoff.")
 	default:

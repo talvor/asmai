@@ -91,6 +91,10 @@ commands:
 	                            push the job branch: it fetches the branch from origin, refuses and records an
 	                            outside change if origin has commits AsmAI did not make, and otherwise pushes
 	                            it with a plain push, never forced, recorded as the daemon's effect
+	asmai decision record --job <number> --choice rerun-failed --rationale <text> --evidence <text>
+	                            Engineering's leader records its judgment that the red checks on the pushed head
+	                            failed for a reason unrelated to the change, as a delegated decision, and the
+	                            daemon re-runs their failed jobs once; a second re-run of the same head is refused
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -119,6 +123,7 @@ var groups = map[string][]string{
 	"providers": {"install", "list"},
 	"repo":      {"add", "list", "show", "remove"},
 	"handoff":   {"send", "accept", "clarify", "decline"},
+	"decision":  {"record"},
 }
 
 // positional are the commands that take arguments, with what to say when
@@ -169,7 +174,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if subcommands, ok := groups[name]; ok {
 		if len(args) == 0 || !slices.Contains(subcommands, args[0]) {
-			fmt.Fprintf(stderr, "asmai %s: want %s\n\n%s", name, strings.Join(subcommands[:len(subcommands)-1], ", ")+" or "+subcommands[len(subcommands)-1], usage)
+			want := subcommands[len(subcommands)-1]
+			if len(subcommands) > 1 {
+				want = strings.Join(subcommands[:len(subcommands)-1], ", ") + " or " + want
+			}
+			fmt.Fprintf(stderr, "asmai %s: want %s\n\n%s", name, want, usage)
 			return 2
 		}
 		name, args = name+" "+args[0], args[1:]
@@ -192,6 +201,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var assignOutcome, blockedReason, blockedNeeds string
 	var decidedAssignment int64
 	var reasons listFlags
+	var decisionJob int64
+	var choice, rationale string
 	var resultArgs resultFlags
 	switch name {
 	case "start":
@@ -243,6 +254,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "accept", "reject", "cancel":
 		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
+	case "decision record":
+		flags.Int64Var(&decisionJob, "job", 0, "job number")
+		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
+		flags.StringVar(&rationale, "rationale", "", "why")
+		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
 	case "chat", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
@@ -272,7 +288,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
 		if slices.Contains([]string{"start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -338,6 +354,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return decide(o, paths, name, decidedAssignment, reasons)
 	case "push":
 		return push(o, paths, arg)
+	case "decision record":
+		return decisionRecord(o, paths, decisionJob, choice, rationale, evidence)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "attach":

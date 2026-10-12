@@ -15,7 +15,7 @@ So far it has eleven cases from M1:
 | C37 | Provider write guards are switched on |
 | C41 | The daemon's push, and its refusal when origin holds commits AsmAI did not make |
 | C42 | A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft |
-| C43 | The daemon watches CI on the pushed head through gh until it is green (the green path) |
+| C43 | The daemon watches CI through gh: green; red with one judged re-run; a newer push replacing the wait |
 | C45 | The daemon marks the pull request ready when CI is green |
 
 Later milestones add the other cases to the same harness.
@@ -124,16 +124,22 @@ C42 opens pull requests on [talvor/asmai-fixture](https://github.com/talvor/asma
 
 The fixture is public and accepts drafts, so no repository available to the harness refuses one: the refusal is simulated by a `gh` that prints GitHub's refusal for `gh pr create --draft` and otherwise runs the real `gh` ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rule 10). The report says so. It runs no provider and starts no agent, posts no review and merges nothing. Whether it passes or fails, it closes the pull requests it opened and deletes the scratch branch from GitHub afterwards, and removes its clone.
 
-### C43: watching CI on the pushed head, the green path
+### C43: watching CI: green, red with one judged re-run, and a newer push
 
-C43 reads CI on [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) with the harness user's own `gh` and the code the daemon's CI watch runs (`github.ViewChecks` and its verdict), so the watch qualified is the watch run. It pushes a scratch job branch `asmai/qualification-c43-<random>` with the daemon's push, opens a draft pull request from it, and reads the checks on its head, every 10 seconds for up to 10 minutes, until they are green. It requires:
+C43 reads CI on [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture) with the harness user's own `gh` and the code the daemon's CI watch runs (`github.ViewChecks` and its verdict), so the watch qualified is the watch run. It pushes a scratch job branch `asmai/qualification-c43-<random>` with the daemon's push, opens a draft pull request from it, and reads the checks on its head, every 10 seconds for up to 10 minutes at each step:
 
-- the pull request's head to be the pushed commit at every look;
-- each check's state to be read, and a head with no checks never to be green: while the fixture's CI has not reported, the case keeps looking;
-- every check to end green, with the fixture's CI in its default `green` mode; a red check fails the case;
+1. **Green.** Until the checks on the pushed head are green, with the fixture's CI in its default `green` mode. While the fixture's CI has not reported, the case keeps looking: a head with no checks is never green. A red check fails the case.
+2. **Red, with one judged re-run.** It pushes a newer head, whose `.ci-mode` file says `red`, with the daemon's push, and reads its checks until one has failed. It then re-runs the failed jobs once with the daemon's code (`github.FailedRuns`, then `github.RerunFailed`, which runs `gh run rerun <run> --failed`), and reads the checks until the re-run reports, as a new check run, red again, since the fixture's CI stays forced red.
+3. **A newer push replacing the wait.** It pushes a fix, a newer head with the default branch's `.ci-mode`, and reads the checks until they are green on it.
+
+It requires:
+
+- the pull request's head to be the commit last pushed at every look, so that each newer push replaces the wait on the older head;
+- each check's state to be read at every step;
+- the failed check to be a GitHub Actions run that the daemon's code can re-run, and its re-run to report as a new check run;
 - the pull request to be still a draft afterwards: watching changes nothing.
 
-Its evidence lists what it saw each time it changed, such as `waiting: no checks; waiting: CI / test pending; green: CI / test passed`. The red path, with one judged re-run and a newer push replacing the wait, arrives later. It runs no provider and starts no agent, marks nothing ready and merges nothing. Whether it passes or fails, it closes the pull request and deletes the scratch branch from GitHub afterwards, and removes its clone.
+Its evidence lists what it saw each time it changed at each step, such as `waiting: no checks; waiting: CI / test pending; green: CI / test passed`, the workflow runs it re-ran, and the heads each push replaced. The refusal of a second re-run of the same head, and the delegated decision the re-run rests on, are the daemon's and the store's, and the development tests cover them. It runs no provider and starts no agent, marks nothing ready and merges nothing. Whether it passes or fails, it closes the pull request and deletes the scratch branch from GitHub afterwards, and removes its clone.
 
 ### C45: marking the pull request ready when CI is green
 
@@ -189,7 +195,7 @@ C41 passed  The daemon's push, and its refusal when origin holds commits AsmAI d
     - ...
 C42 passed  A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft
     - ...
-C43 passed  The daemon watches CI on the pushed head through gh until it is green
+C43 passed  The daemon watches CI through gh: green; red with one judged re-run; a newer push replacing the wait
     - ...
 C45 passed  The daemon marks the pull request ready when CI is green
     - ...

@@ -135,6 +135,10 @@ _Avoid_: Ready PR, finished PR
 The daemon marking a job's tested pull request ready for review, once every check on the head it pushed is green, recorded with the pull request, the head commit and the time. The job ends with it: what was local to it is removed, and its branches stay on origin. A head with no checks is never green. Ready never means merged.
 _Avoid_: Merge, completion
 
+**Judged re-run**:
+The one re-run of the failed jobs of a head's red checks, which the daemon makes on Engineering's leader's delegated decision that the failure is unrelated to the change. A head is re-run at most once; red again, it needs a fix, and a newer push replaces the wait on it.
+_Avoid_: Retry, rerun-until-green
+
 **Qualification**:
 The recorded proof, by running the qualification cases with real provider CLIs, that one combination of pinned provider versions behaves as the factory relies on, on one platform.
 _Avoid_: Certification (for a combination), testing

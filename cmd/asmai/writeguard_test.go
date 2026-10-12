@@ -99,6 +99,11 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		// commit-msg hook rewrites the message.
 		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && mkdir -p "$hooks" && printf '#!/bin/sh\nsed -i.bak "/^AsmAI-/d" "$1"\n' > "$hooks/commit-msg" && chmod +x "$hooks/commit-msg"`, 0, ""),
 		fakeRun(`git checkout -q -b side HEAD~1 && printf 'side\n' > side.txt && git add side.txt && git commit -q -m 'Add side.txt' && git checkout -q `+branch+` && git merge -q --no-edit side && git log -1 --format='%p%n%(trailers:only,unfold)'`, 0, "(?s)^[0-9a-f]+ [0-9a-f]+\n"+trailers),
+		// The repository's own pre-commit hook runs for the worker's commit,
+		// confined to the workspace: its write there is made, its write
+		// outside is blocked, and the commit goes ahead.
+		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && printf '#!/bin/sh\necho inside > hook-wrote-inside\n{ echo escaped > "$ASMAI_TEST_DIR/hook-escaped"; } 2>/dev/null || echo blocked > "$TMPDIR/hook-blocked"\n' > "$hooks/pre-commit" && chmod +x "$hooks/pre-commit"`, 0, ""),
+		fakeRun(`printf 'hello again\n' >> greeting.txt && git commit -q -am 'Greet again' && cat hook-wrote-inside "$TMPDIR/hook-blocked" && rm hook-wrote-inside && git log -1 --format=%s`, 0, "^inside\nblocked\nGreet again\n$"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	}
@@ -119,6 +124,10 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		if got := gitIn(t, fixture.origin, "log", "-1", "--format=%(trailers:only,unfold)", commit); got+"\n" != trailers {
 			t.Errorf("commit %s carries the trailers %q, want %q", commit, got, trailers)
 		}
+	}
+
+	if _, err := os.Stat(filepath.Join(testDir, "hook-escaped")); !os.IsNotExist(err) {
+		t.Errorf("the repository's pre-commit hook wrote outside the workspace (%v)", err)
 	}
 
 	// AsmAI set no identity and no hooks in the clone, and wrote its hooks

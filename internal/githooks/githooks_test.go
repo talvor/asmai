@@ -17,11 +17,13 @@ var trailers = Trailers(func() ([]string, error) {
 	return []string{"AsmAI-Job: 4", "AsmAI-Agent: worker1@engineering", "AsmAI-Dispatch: 9"}, nil
 })
 
-// repo makes a repository and enters it, as git does for a hook.
+// repo makes a repository and enters it, as git does for a hook, with a
+// worker's temporary directory beside it.
 func repo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Setenv("TMPDIR", t.TempDir())
 	for name, value := range map[string]string{"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"} {
 		t.Setenv(name, value)
 	}
@@ -90,7 +92,7 @@ func executable(t *testing.T, path, script string) {
 
 func TestTheRepositorysOwnPrepareHookRunsBeforeTheTrailers(t *testing.T) {
 	dir := repo(t)
-	record := filepath.Join(t.TempDir(), "seen")
+	record := filepath.Join(dir, "seen")
 	executable(t, filepath.Join(dir, ".git", "hooks", PrepareCommitMessage), `cp "$1" `+record+"\nprintf 'Repository detail\\n' >> \"$1\"\n")
 	file := message(t, "Add a greeting\n")
 	if code, stderr := run(t, PrepareCommitMessage, "/own", trailers, file); code != 0 {
@@ -240,7 +242,7 @@ func TestAHooksDirectoryTheRepositorySetsIsFoundEvenThoughAsmAIsIsInTheEnvironme
 	if out, err := exec.Command("git", "config", "core.hooksPath", ".husky").CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	record := filepath.Join(t.TempDir(), "args")
+	record := filepath.Join(dir, "args")
 	executable(t, filepath.Join(dir, ".husky", "pre-push"), `echo "$@" > `+record+"; cat >> "+record+"\n")
 	var errOut bytes.Buffer
 	code := Run(context.Background(), "pre-push", []string{"origin", "url"}, strings.NewReader("refs\n"), &bytes.Buffer{}, &errOut, own, trailers)
@@ -312,5 +314,44 @@ func TestTheHooksDirectoryIsAddedAfterTheConfigurationAlreadyInTheEnvironment(t 
 	}
 	if env := Environment(nil, "/d"); env["GIT_CONFIG_COUNT"] != "1" || env["GIT_CONFIG_KEY_0"] != "core.hooksPath" {
 		t.Errorf("with none before, the variables are %v", env)
+	}
+}
+
+func TestARepositorysHookRunsConfinedToItsWorkspace(t *testing.T) {
+	clone := repo(t)
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-c", "user.name=Una User", "-c", "user.email=una@example.test"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("commit", "-q", "--allow-empty", "-m", "Start")
+	workspace := filepath.Join(t.TempDir(), "repo")
+	git("worktree", "add", "-q", "-b", "asmai/job-1/1", workspace)
+	t.Chdir(workspace)
+	outside := filepath.Join(t.TempDir(), "outside")
+	shared := filepath.Join(clone, ".git", "shared")
+	executable(t, filepath.Join(clone, ".git", "hooks", "pre-commit"), `touch inside "$TMPDIR/temporary" "$(git rev-parse --absolute-git-dir)/own"
+for path in `+outside+` `+shared+`; do
+	if touch "$path" 2>/dev/null; then echo "$path" >> escaped; else echo "$path" >> blocked; fi
+done
+`)
+	if code, stderr := run(t, "pre-commit", "/own", trailers); code != 0 {
+		t.Fatalf("pre-commit exited %d: %s", code, stderr)
+	}
+	ownGitDir := filepath.Join(clone, ".git", "worktrees", "repo")
+	for _, path := range []string{filepath.Join(workspace, "inside"), filepath.Join(os.Getenv("TMPDIR"), "temporary"), filepath.Join(ownGitDir, "own")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("the hook could not write %s in its workspace: %v", path, err)
+		}
+	}
+	for _, path := range []string{outside, shared} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("the hook wrote %s outside its workspace (%v)", path, err)
+		}
+	}
+	escaped, _ := os.ReadFile(filepath.Join(workspace, "escaped"))
+	if blocked, _ := os.ReadFile(filepath.Join(workspace, "blocked")); string(blocked) != outside+"\n"+shared+"\n" {
+		t.Errorf("the hook was blocked writing %q and not %q, want it blocked writing both paths outside its workspace", blocked, escaped)
 	}
 }

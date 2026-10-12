@@ -322,6 +322,11 @@ func Run(ctx context.Context, cfg Config) error {
 	// factory does, and every leader whose role has open work.
 	d.ensureCoordination()
 	d.restoreLeaders()
+	// The daemon watches CI itself, with no agent, and removes what a job
+	// that ended left local.
+	d.removeEndedJobsLocal()
+	d.wg.Add(1)
+	go d.watchCI()
 
 	var by string
 	var asker *net.UnixConn

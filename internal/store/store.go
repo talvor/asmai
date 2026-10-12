@@ -195,6 +195,17 @@ CREATE TABLE pull_requests (
  effect INTEGER NOT NULL REFERENCES effects(id), created_at TEXT NOT NULL
 );
 `,
+	`
+CREATE TABLE check_observations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ number INTEGER NOT NULL, head TEXT NOT NULL, checks TEXT NOT NULL, verdict TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE TABLE deliveries (
+ job INTEGER PRIMARY KEY REFERENCES jobs(number), number INTEGER NOT NULL, url TEXT NOT NULL,
+ head TEXT NOT NULL, checks TEXT NOT NULL, created_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -284,6 +295,19 @@ const (
 	// opened or updated, as GitHub had it when the daemon looked it up for
 	// the effect that names it.
 	KindPullRequestRecorded = "pull_request.recorded"
+	// KindChecksObserved records the checks on the head of a job's pull
+	// request, as the daemon read them from GitHub through gh, each time they
+	// change: each check's state, and the verdict on them.
+	KindChecksObserved = "checks.observed"
+	// KindJobDelivered records the daemon marking a job's pull request ready
+	// for review once every check on the pushed head is green: the delivery,
+	// with the pull request, the head commit and the time. KindJobEnded
+	// records the job ending in the same step, and KindJobLocalRemoved the
+	// daemon removing everything local to it afterwards: its view and its
+	// branches in AsmAI's clone, which stay on origin.
+	KindJobDelivered    = "job.delivered"
+	KindJobEnded        = "job.ended"
+	KindJobLocalRemoved = "job.local.removed"
 )
 
 // The states an agent can be in.

@@ -252,3 +252,22 @@ func outsideCommits(ctx context.Context, clone, name string) ([]string, error) {
 	}
 	return strings.Split(out, "\n"), nil
 }
+
+// RemoveView removes the read-only view at dir, which EnsureView made, and
+// the clone's record of it.
+func RemoveView(ctx context.Context, clone, dir string) error {
+	return clearWorktree(ctx, clone, dir)
+}
+
+// DeleteBranch deletes the branch name from the clone, if it has it. The
+// branch on the origin stays.
+func DeleteBranch(ctx context.Context, clone, name string) (deleted bool, err error) {
+	found, err := git(ctx, clone, "for-each-ref", "--format=%(refname)", "refs/heads/"+name)
+	if err != nil || found == "" {
+		return false, err
+	}
+	if _, err := git(ctx, clone, "branch", "-D", name); err != nil {
+		return false, fmt.Errorf("deleting branch %s: %w", name, err)
+	}
+	return true, nil
+}

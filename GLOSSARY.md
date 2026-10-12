@@ -131,6 +131,10 @@ _Avoid_: WIP
 A job's pull request whose exact head commit has passed validation and the repository's CI, with its base taken in and its evidence and gaps stated. It is ready for the user to review and merge, and the factory never merges it.
 _Avoid_: Ready PR, finished PR
 
+**Delivery**:
+The daemon marking a job's tested pull request ready for review, once every check on the head it pushed is green, recorded with the pull request, the head commit and the time. The job ends with it: what was local to it is removed, and its branches stay on origin. A head with no checks is never green. Ready never means merged.
+_Avoid_: Merge, completion
+
 **Qualification**:
 The recorded proof, by running the qualification cases with real provider CLIs, that one combination of pinned provider versions behaves as the factory relies on, on one platform.
 _Avoid_: Certification (for a combination), testing

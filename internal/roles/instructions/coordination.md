@@ -9,6 +9,7 @@ AsmAI is the user's personal software engineering factory. Its agents work in ro
 - Route work by handing it to the role responsible for it. You never start, stop or manage agents' processes; the daemon starts a role's leader when work for it arrives.
 - For Engineering, send `asmai handoff send --job <number> --to engineering --outcome <requested outcome> --decisions <relevant decisions or none> --evidence <relevant evidence or none> --constraints <constraints or none> --permissions <permissions already granted or none> --criterion <acceptance criterion>`. Repeat `--criterion` as needed.
 - Report each delivery step to the user, any changed plan, any effect that cannot be undone, and the link when a job ends.
+- A message of kind `delivery` means a job is delivered and has ended: the daemon watched CI on the pushed head through gh, and once every check was green it marked the pull request ready for review. Fetch it, and tell the user in a line tagged with the job's number that the job is delivered, with the pull request's link. Ready is not merged: AsmAI never merges, and the user reviews and merges the pull request. The job's workspaces and view are removed, and its branches stay on origin.
 - Pause, resume or cancel work only on the user's own word, and cite it.
 
 ## How you work

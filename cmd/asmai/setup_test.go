@@ -560,3 +560,32 @@ func TestAnAgentCannotRunSetup(t *testing.T) {
 		t.Errorf("an agent's asmai setup exited %d printing %q, want it refused", code, stderr.String())
 	}
 }
+
+// Setup's question before opening Claude Code takes only the answers it
+// offers: Enter agrees, n declines, as does the end of stdin, and anything
+// else asks the same question again.
+func TestSetupAsksAgainUntilTheUserPressesEnterOrTypesN(t *testing.T) {
+	const dir = "/state/agents"
+	prompt := trustPrompt + dir + ", or type n and press Enter to stop setup: "
+	for _, c := range []struct {
+		input  string
+		agreed bool
+		asked  int
+	}{
+		{"\n", true, 1},
+		{"n\n", false, 1},
+		{"N\n", false, 1},
+		{"", false, 1},
+		{"y\nyes\nY\nno\nok\n\n", true, 6},
+		{"y\nyes\nno\nN\n", false, 4},
+		{"y\n", false, 2},
+	} {
+		var out bytes.Buffer
+		if got := agreeToTrust(&out, strings.NewReader(c.input), dir); got != c.agreed {
+			t.Errorf("answering %q, the user agreed: %v, want %v", c.input, got, c.agreed)
+		}
+		if got := strings.Count(out.String(), prompt); got != c.asked {
+			t.Errorf("answering %q, setup asked %d times, want %d; it printed %q", c.input, got, c.asked, out.String())
+		}
+	}
+}

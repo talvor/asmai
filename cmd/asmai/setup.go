@@ -263,20 +263,20 @@ func explainTrust(w io.Writer, plan providers.Plan, dir string) {
 }
 
 // agreeToTrust asks on w whether to open Claude Code in dir, and reports
-// whether the user agreed on stdin: Enter, or y or yes, agrees, and n, no or
-// the end of stdin declines. Anything else asks again.
+// whether the user agreed on stdin: Enter agrees, and n or the end of stdin
+// declines. Anything else asks again.
 func agreeToTrust(w io.Writer, stdin io.Reader, dir string) bool {
 	for {
 		fmt.Fprintf(w, "%s%s, or type n and press Enter to stop setup: ", trustPrompt, dir)
 		answer := readLine(stdin)
 		switch strings.ToLower(strings.TrimSpace(answer)) {
-		case "", "y", "yes":
+		case "":
 			if strings.HasSuffix(answer, "\n") {
 				return true
 			}
 			fmt.Fprintln(w)
 			return false
-		case "n", "no":
+		case "n":
 			return false
 		}
 	}

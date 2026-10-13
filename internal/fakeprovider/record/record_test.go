@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -193,13 +194,25 @@ func startTerminal(t *testing.T, cmd *exec.Cmd, columns, rows int) *terminal {
 	t.Helper()
 	term := &terminal{t: t, cmd: cmd}
 	cmd.Stderr = &term.stderr
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(columns)})
+	// The test holds the terminal open until cleanup: macOS drops what is
+	// still unread on a terminal whose last other end is closed, so a program
+	// that draws and exits at once would otherwise leave nothing to read.
+	ptmx, tty, err := pty.Open()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(columns)}); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdin, cmd.Stdout = tty, tty
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	term.ptmx = ptmx
 	t.Cleanup(func() {
 		cmd.Process.Kill()
+		tty.Close()
 		ptmx.Close()
 	})
 	go func() {

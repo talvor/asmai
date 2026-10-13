@@ -466,6 +466,44 @@ func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
 	}
 }
 
+// Dispatches changed within one millisecond are still nudged in the order they
+// were changed, not by id.
+func TestNextDispatchOrdersUpdatesWithinAMillisecond(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	jobResult, err := s.db.Exec(`INSERT INTO jobs(repository,state) VALUES('fixture',?)`, JobOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := jobResult.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for _, updated := range []time.Time{at.Add(300 * time.Microsecond), at.Add(100 * time.Microsecond)} {
+		result, err := s.db.Exec(`INSERT INTO messages(job,sender,recipient,kind,body) VALUES(?,'leader@coordination','leader@engineering','handoff','outcome')`, jobID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		messageID, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err = s.db.Exec(`INSERT INTO dispatches(message,agent,state,updated_at) VALUES(?,'leader@engineering',?,?)`, messageID, DispatchCreated, timestamp(updated))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if d, err := s.NextDispatch("leader@engineering"); err != nil || d.ID != ids[1] {
+		t.Fatalf("the next dispatch is %d (%v), want %d, the one changed first", d.ID, err, ids[1])
+	}
+}
+
 func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)

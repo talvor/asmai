@@ -369,7 +369,10 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 
 // NextDispatch prefers unfetched messages, and among them one never nudged,
 // then the dispatch nudged least recently, so a nudged dispatch the recipient
-// has not answered, fetched or not, cannot starve a later one.
+// has not answered, fetched or not, cannot starve a later one. updated_at is
+// compared at its full stored precision, as its fixed-width UTC seconds and
+// then its fraction: julianday rounds to milliseconds, so two dispatches
+// changed within one millisecond would tie and the lower id would always win.
 func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 	var d Dispatch
 	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND (
@@ -377,7 +380,7 @@ func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
 			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
 		))
-	) ORDER BY m.fetched_at IS NOT NULL, d.state<>?, julianday(d.updated_at), d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending, DispatchCreated).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
+	) ORDER BY m.fetched_at IS NOT NULL, d.state<>?, substr(d.updated_at,1,19), CAST(rtrim(substr(d.updated_at,20),'Z') AS REAL), d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending, DispatchCreated).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
 	return d, err
 }
 

@@ -166,6 +166,13 @@ C19 runs the same exercise as C7 and C11 until Engineering's leader has fetched 
 - no dispatch that had stopped before the restart was changed after it, so older evidence never completes a newer dispatch;
 - every result in the journal is tied to a dispatch that gave its worker the assignment, a resumption among them.
 
+Once the restored leaders have answered their nudges and Coordination's leader has finished what it was restored to do, the case asks Coordination's leader, through the conversation, to run `asmai brief <job>; echo ----; asmai inbox` for the open job as one Bash call, inside the sandbox, as a restored leader loads its brief and inbox. That compound command does not match the guard's `asmai *` exclusion, so Claude Code runs it in the sandbox, which reaches the daemon only through the one socket the session's settings allow. The case requires, on the Mac:
+
+- no agent to have raised a native permission prompt since the stop, which the session's `PermissionRequest` hook would report: neither the restored leaders loading their briefs and inboxes, nor the compound command;
+- the session's transcript, which its `Stop` hook names, to show the command run as one Bash call, never outside the sandbox (`dangerouslyDisableSandbox`), not failing, and printing the brief, then `----`, then the inbox. If the session never ran it, the case fails as inconclusive and says so.
+
+On Linux, Claude Code's sandbox cannot allow one Unix socket alone, so the compound command is not required to reach the daemon there, and the evidence lists that as a known limitation. This part extends C19, not C37, because it needs the factory's daemon and a stop and a start in a state directory of the harness's own, which C19 already has and C37, which runs Claude Code without a daemon, does not.
+
 The leaders of the real Claude Code do not always assign a worker, and the case does not make them: when no worker carried an assignment at the stop, its evidence says that resuming a worker's native session was not exercised with the real provider, and the development test, which drives it with the fake, is where that is checked. When one did, the evidence lists the assignments the start resumed and those it held for reconciliation.
 
 Because C7, C11 and C19 share one state directory, a job an earlier case left open is restored at C11's and C19's first start, and Coordination is told to load its brief. The case waits, for up to half the usual wait, for Coordination to finish that turn before it types its own request.
@@ -223,7 +230,7 @@ A case passes when AsmAI behaves as decided, through the provider's own signal o
 
 ## What it touches
 
-The C7/C11/C19/C48 qualification state directory is disposable and removed after the cases stop. Claude Code's sign-in is read from the qualification user's account. Claude Code itself records the trust of the disposable directory's `agents/` and `workspaces/`, answered in the sessions `asmai setup` opened, in the user's `~/.claude.json`, where it stays after the directory is removed. The harness also uses temporary build and Go cache files:
+The C7/C11/C19/C48 qualification state directory is disposable and removed after the cases stop. Claude Code's sign-in is read from the qualification user's account. C19 reads the transcript of the Coordination leader's session that the session's `Stop` hook names, in the user's `~/.claude`, to see how its compound `asmai` command ran; it only reads it. Claude Code itself records the trust of the disposable directory's `agents/` and `workspaces/`, answered in the sessions `asmai setup` opened, in the user's `~/.claude.json`, where it stays after the directory is removed. The harness also uses temporary build and Go cache files:
 
 The harness never signs the user out and never writes `~/.claude`.
 

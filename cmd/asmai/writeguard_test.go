@@ -206,7 +206,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 				Filesystem               struct {
 					AllowWrite []string `json:"allowWrite"`
 				} `json:"filesystem"`
-				Network map[string]any `json:"network"`
+				Network map[string][]string `json:"network"`
 			} `json:"sandbox"`
 		}
 		if err := json.Unmarshal([]byte(argValue(args, "--settings")), &settings); err != nil {
@@ -225,8 +225,13 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 			"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
 			"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
 		}) ||
-			settings.Permissions.DefaultMode != "default" || settings.Permissions.BypassDenied != "disable" || len(sb.Network) != 0 {
+			settings.Permissions.DefaultMode != "default" || settings.Permissions.BypassDenied != "disable" {
 			t.Errorf("%s was started with the settings %s, want the write guard on and the native prompts kept", agent, argValue(args, "--settings"))
+		}
+		// The guard lets commands reach the daemon's socket, in this state
+		// directory, and no other.
+		if want := filepath.Join(stateDir, "daemon.sock"); len(sb.Network) != 1 || !slices.Equal(sb.Network["allowUnixSockets"], []string{want}) {
+			t.Errorf("%s's write guard lets commands reach %v, want only the Unix socket %s", agent, sb.Network, want)
 		}
 		wantWritable := []string(nil)
 		if agent == "worker1@engineering" {

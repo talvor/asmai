@@ -303,6 +303,45 @@ func hook(event, promptID, prompt string) string {
 	return fmt.Sprintf(`{"hook":%q,"payload":%s}`, event, encoded)
 }
 
+// hookWithTranscript is hook for an event whose payload names the session's
+// transcript at path.
+func hookWithTranscript(event, promptID, path string) string {
+	encoded, _ := json.Marshal(map[string]string{"hook_event_name": event, "session_id": "fake-session", "transcript_path": path, "prompt_id": promptID})
+	return fmt.Sprintf(`{"hook":%q,"payload":%s}`, event, encoded)
+}
+
+// writeTranscript writes a session's transcript at path, as Claude Code
+// keeps one, in which the session ran command once in a Bash call, outside
+// the sandbox if unsandboxed, and was told output, as an error if failed.
+func writeTranscript(t *testing.T, path, command string, unsandboxed, failed bool, output string) {
+	t.Helper()
+	input := map[string]any{"command": command}
+	if unsandboxed {
+		input["dangerouslyDisableSandbox"] = true
+	}
+	lines := []any{
+		map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "run it"}},
+		map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": input},
+		}}},
+		map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": "toolu_1", "content": output, "is_error": failed},
+		}}},
+		map[string]any{"type": "file-history-snapshot", "snapshot": map[string]any{}},
+	}
+	var data []byte
+	for _, line := range lines {
+		encoded, err := json.Marshal(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(append(data, encoded...), '\n')
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func scriptRun(command string, status int, output string) string {
 	return fmt.Sprintf(`{"run":%q,"status":%d,"output":%q}`, command, status, output)
 }
@@ -315,6 +354,11 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 	}
 	h.Number = func() int64 { return 19 }
 	prompt := h.exercisePrompt()
+	// The fake runs commands in no sandbox, so the case's check of the
+	// compound command runs on every host.
+	allows := sandboxAllowsOneSocket
+	sandboxAllowsOneSocket = true
+	t.Cleanup(func() { sandboxAllowsOneSocket = allows })
 	t.Cleanup(func() {
 		if t.Failed() {
 			log, _ := os.ReadFile(h.QualificationPaths.Log)
@@ -350,6 +394,13 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 	// After the start, both are restored: Coordination is told to load the
 	// brief of the open job, and Engineering to load it and then to answer
 	// the handoff that was still open.
+	// Once it has, the case asks Coordination to run the compound command a
+	// restored leader runs, which the session's transcript shows ran in the
+	// sandbox and reached the daemon.
+	compound := compoundAsmai(1)
+	asked := compoundPrompt(19, compound)
+	transcript := filepath.Join(scripts, "coordination-2-transcript.jsonl")
+	writeTranscript(t, transcript, compound, false, false, "Job 1: Handoff test\n----\nNothing is waiting for you.")
 	writeSessionScript(t, scripts, "coordination-2",
 		hook("SessionStart", "", ""),
 		`{"screen":"\u001b[?2004h> "}`,
@@ -358,6 +409,11 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 		scriptRun(`asmai inbox --dispatch 2`, 0, "(?s)restoration from daemon.*asmai brief 1"),
 		scriptRun(`asmai brief 1`, 0, "(?s)Handoffs:\n- 1 leader@coordination -> leader@engineering: pending"),
 		hook("Stop", "restore", ""),
+		fmt.Sprintf(`{"expect":%q}`, asked),
+		`{"expect":"\r"}`,
+		hook("UserPromptSubmit", "compound", asked),
+		scriptRun(compound, 0, "(?s)Handoffs:.*\n----\n"),
+		hookWithTranscript("Stop", "compound", transcript),
 		`{"expect":"only typed by a test that means to"}`,
 	)
 	writeSessionScript(t, scripts, "engineering-2",
@@ -386,6 +442,8 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 		"leader@coordination was restored in generation 2",
 		"leader@engineering was restored in generation 2",
 		"no dispatch that had stopped before the restart changed after it",
+		"the restored leaders leader@coordination and leader@engineering loaded their briefs and inboxes with no native prompt",
+		"ran `asmai brief 1; echo ----; asmai inbox` as one Bash call inside the sandbox",
 	} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C19's evidence\n%s\ndoes not say %q", evidence, want)

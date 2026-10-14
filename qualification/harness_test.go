@@ -185,6 +185,7 @@ func harness(t *testing.T, provider Provider, script []string) *Harness {
 		Provider:           provider,
 		Paths:              statedir.At(filepath.Join(home, ".local", "state", "asmai")),
 		QualificationPaths: statedir.At(filepath.Join(home, ".local", "state", "asmai", "qualification")),
+		ConfigFile:         config,
 		Env:                append(os.Environ(), "HOME="+home, fakeprovider.ScriptEnv+"="+scriptFile, "ASMAI_TEST_DIR="+testDir),
 		Host:               "asmai-vm", User: "tester",
 		Wait: 30 * time.Second, Poll: 50 * time.Millisecond,
@@ -195,6 +196,7 @@ func harness(t *testing.T, provider Provider, script []string) *Harness {
 			env := h.Env
 			if paths.Dir == h.QualificationPaths.Dir {
 				env = envValue(env, "ASMAI_STATE_DIR", paths.Dir)
+				env = envValue(env, "ASMAI_CONFIG_FILE", h.disposableConfig())
 			}
 			f := NewFactory(h.Subject.Asmai, paths, env)
 			f.Stop(context.Background())

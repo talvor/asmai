@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/statedir"
 )
 
@@ -130,7 +131,9 @@ func TestQualificationStateIsDisposableAndDoesNotReuseAnExistingDirectory(t *tes
 	if err := os.WriteFile(filepath.Join(paths.Dir, "fixture"), []byte("temporary"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cleanup()
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(paths.Dir); !os.IsNotExist(err) {
 		t.Fatalf("qualification state remains after cleanup: %v", err)
 	}
@@ -143,6 +146,70 @@ func TestQualificationStateIsDisposableAndDoesNotReuseAnExistingDirectory(t *tes
 	}
 	if _, err := os.Stat(paths.Dir); err != nil {
 		t.Fatalf("existing qualification directory was removed: %v", err)
+	}
+}
+
+// A job leaves a read-only view of its repository in the disposable state,
+// which the cleanup removes with the rest.
+func TestTheCleanupRemovesAJobsReadOnlyView(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths, cleanup, err := createQualificationState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone := filepath.Join(paths.Repositories, "fixture")
+	if _, err := git(ctx, "/", "init", "-b", "main", clone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(ctx, clone, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Initial"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := repos.Commit(ctx, clone, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := filepath.Join(paths.Views, "job-1")
+	if err := repos.EnsureView(ctx, clone, view, head); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(view, "x"), nil, 0o600); err == nil {
+		t.Fatal("the view is not read-only, so the test shows nothing")
+	}
+
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if _, err := os.Stat(paths.Dir); !os.IsNotExist(err) {
+		t.Fatalf("the disposable state remains after cleanup: %v", err)
+	}
+}
+
+// A cleanup that cannot remove the disposable state says so, naming it.
+func TestACleanupThatFailsSaysWhy(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root removes what the test makes unremovable")
+	}
+	home := t.TempDir()
+	paths, cleanup, err := createQualificationState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Dir(paths.Dir)
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o700) })
+
+	err = cleanup()
+
+	if err == nil || !strings.Contains(err.Error(), paths.Dir) || !strings.Contains(err.Error(), "remove it by hand") {
+		t.Fatalf("cleanup = %v, want a failure naming %s", err, paths.Dir)
+	}
+	var out bytes.Buffer
+	Report{Results: []Result{{ID: "C7", Outcome: Passed}}, Cleanup: err.Error()}.WriteText(&out)
+	if !strings.Contains(out.String(), "CLEANUP FAILED: "+err.Error()) {
+		t.Errorf("the report does not show the failed cleanup:\n%s", out.String())
 	}
 }
 

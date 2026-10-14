@@ -71,6 +71,9 @@ type Report struct {
 	User     string         `json:"user"`
 	Provider ProviderReport `json:"provider"`
 	Results  []Result       `json:"results"`
+	// Cleanup is why the harness could not remove what the run left, such as
+	// the disposable state directory, which the next run refuses to reuse.
+	Cleanup string `json:"cleanup_failure,omitempty"`
 }
 
 // ProviderReport is the provider combination the cases ran against.
@@ -125,6 +128,9 @@ func (r Report) WriteText(w io.Writer) {
 		fmt.Fprint(w, "; the combination is not qualified on this platform")
 	}
 	fmt.Fprintln(w, ".")
+	if r.Cleanup != "" {
+		fmt.Fprintf(w, "CLEANUP FAILED: %s\n", r.Cleanup)
+	}
 }
 
 // WriteJSON writes the report as JSON.

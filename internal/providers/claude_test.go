@@ -105,7 +105,7 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		// without a prompt; every other command is either guarded or raises
 		// the prompt.
 		if want := []string{
-			"asmai *", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"asmai *", "echo *", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
 			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
 			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
 			"git status *", "git rev-parse *", "git merge *", "git var *",

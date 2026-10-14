@@ -298,8 +298,8 @@ func (e *restartEvidence) problems(stoppedAgents []string) (problems []string, w
 // it, and that nothing which stopped before the restart was changed after it.
 // What the stop did to workers, and the results they submitted, is read from
 // the same journal when the leaders gave any. Last, it requires a compound
-// asmai command a leader runs after the start to reach the daemon from inside
-// the sandbox with no native prompt (compoundAsmaiReachesTheDaemon).
+// asmai command a leader runs after the start to reach the daemon with no
+// native prompt (compoundAsmaiReachesTheDaemon).
 func (h *Harness) c19(ctx context.Context, f *Factory, r *Result) error {
 	e, err := h.exerciseHandoff(ctx, f, r)
 	if err != nil {

@@ -9,23 +9,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/talvor/asmai/internal/store"
 )
 
-// sandboxAllowsOneSocket reports whether Claude Code's sandbox on this host
-// can let a guarded command connect to the daemon's socket alone. On Linux it
-// cannot: it allows every Unix socket or none, so a guarded `asmai` command
-// reaches no daemon there. A test replaces it.
-var sandboxAllowsOneSocket = runtime.GOOS == "darwin"
-
 // compoundAsmai is the compound command the case has Coordination's leader
 // run after the start: the brief of job and the leader's inbox, as a restored
 // leader loads them, in one Bash call that the guard's `asmai *` exclusion
-// does not match, so it runs in the sandbox.
+// does not match as a whole. The guard leaves it alone because every command
+// in it, `echo` among them, is excluded; on the Mac the socket its settings
+// allow would also let it reach the daemon from inside the guard.
 func compoundAsmai(job int64) string {
 	return fmt.Sprintf("asmai brief %d; echo ----; asmai inbox", job)
 }
@@ -100,19 +95,21 @@ func compoundEvidenceOf(entries []store.Entry, stop int64, prompt string, genera
 	return e
 }
 
-// ranInTheSandbox checks what the session's transcript shows of command: it
-// ran, every time inside the sandbox, never failed, and printed both halves.
-func ranInTheSandbox(turn Turn, command string) error {
+// reachedTheDaemon checks what the session's transcript shows of command: it
+// ran, every time as the guard ran it and never retried outside it
+// (dangerouslyDisableSandbox), which is what raises the native prompt, never
+// failed, and printed both halves.
+func reachedTheDaemon(turn Turn, command string) error {
 	tried := turn.Tried(command)
 	if len(tried) == 0 {
 		return fmt.Errorf("inconclusive: Coordination's leader never ran `%s` as one Bash call, so the harness cannot show that a compound asmai command reaches the daemon", command)
 	}
 	for _, c := range tried {
 		if c.Unsandboxed {
-			return fmt.Errorf("`%s` was run outside the sandbox (dangerouslyDisableSandbox), so the sandbox did not let it reach the daemon: %s", command, strings.TrimSpace(c.Output))
+			return fmt.Errorf("`%s` was retried outside the sandbox (dangerouslyDisableSandbox), so the guard did not let it reach the daemon: %s", command, strings.TrimSpace(c.Output))
 		}
 		if c.Failed {
-			return fmt.Errorf("`%s` failed in the sandbox, so it did not reach the daemon: %s", command, strings.TrimSpace(c.Output))
+			return fmt.Errorf("`%s` failed, so it did not reach the daemon: %s", command, strings.TrimSpace(c.Output))
 		}
 		before, after, ok := strings.Cut(c.Output, "----")
 		if !ok || strings.TrimSpace(before) == "" || strings.TrimSpace(after) == "" {
@@ -166,15 +163,11 @@ func lastJob(entries []store.Entry) int64 {
 // compoundAsmaiReachesTheDaemon is the part of C19 after the restored
 // leaders have answered their nudges. Once they have finished what they were
 // restored to do, it has Coordination's leader run compoundAsmai of the open
-// job, and requires the command to run inside the sandbox and reach the
-// daemon, as the transcript of the session shows, and no agent to have
+// job, and requires the command to reach the daemon without a retry outside
+// the sandbox, as the transcript of the session shows, and no agent to have
 // raised a native prompt since the stop: neither for that command, nor for
 // what the restored leaders ran to load their briefs and inboxes.
 func (h *Harness) compoundAsmaiReachesTheDaemon(ctx context.Context, f *Factory, r *Result, restart *restartEvidence) error {
-	if !sandboxAllowsOneSocket {
-		r.observe("known limitation: Claude Code's sandbox on %s cannot allow only the daemon's socket, so a compound asmai command, which the sandbox runs, was not required to reach the daemon without a native prompt", runtime.GOOS)
-		return nil
-	}
 	// The case's request is typed once Coordination's leader has finished
 	// what it was restored to do, not into that turn.
 	if err := h.awaitSettled(ctx, f); err != nil {
@@ -226,10 +219,10 @@ func (h *Harness) compoundAsmaiReachesTheDaemon(ctx context.Context, f *Factory,
 	if err != nil {
 		return fmt.Errorf("reading the transcript of Coordination's leader: %w", err)
 	}
-	if err := ranInTheSandbox(turn, command); err != nil {
+	if err := reachedTheDaemon(turn, command); err != nil {
 		return err
 	}
 	r.observe("after the start, the restored leaders %s loaded their briefs and inboxes with no native prompt", strings.Join(restart.restore, " and "))
-	r.observe("Coordination's leader ran `%s` as one Bash call inside the sandbox, which reached the daemon with no native prompt", command)
+	r.observe("Coordination's leader ran `%s` as one Bash call, which reached the daemon with no native prompt", command)
 	return nil
 }

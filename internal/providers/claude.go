@@ -26,6 +26,17 @@ const AllowedAsmai = "Bash(asmai:*)"
 // and a pattern the guard leaves alone.
 var unguardedCommands = []string{"asmai"}
 
+// separatorCommands are the read-only commands an agent puts between its
+// `asmai` commands in one compound command, such as `echo ----` in
+// `asmai brief 1; echo ----; asmai inbox`. Claude Code takes a call out of
+// the guard only when every command in it matches an exclusion, so each of
+// them is excluded too: without it, the compound command stays in the guard,
+// which on Linux cannot let it reach the daemon's socket, and its retry
+// outside the guard raises the native permission prompt. They need no
+// permission rule, as Claude Code allows read-only commands, and a redirect
+// to a file keeps a call that has one in the guard.
+var separatorCommands = []string{"echo"}
+
 var unguardedGHCommands = []string{
 	"pr create", "pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
 }
@@ -45,9 +56,11 @@ type WriteGuard struct {
 	Writable []string
 	// Socket is the daemon's Unix socket, the only Unix socket a guarded
 	// command may connect to, so that an `asmai` command the guard does not
-	// leave alone, such as one in a compound command, still reaches the
-	// daemon. Claude Code allows it on macOS only: on Linux its guard cannot
-	// allow one socket, so a guarded command reaches none. Empty allows none.
+	// leave alone, such as one in a compound command with other commands,
+	// still reaches the daemon. Claude Code allows it on macOS only: on
+	// Linux its guard cannot allow one socket, so a guarded command reaches
+	// none, and a compound command of `asmai` and separatorCommands is left
+	// alone by the guard instead. Empty allows none.
 	Socket string
 }
 
@@ -74,6 +87,9 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 	var allow, excluded []string
 	for _, command := range unguardedCommands {
 		allow = append(allow, "Bash("+command+":*)")
+		excluded = append(excluded, command+" *")
+	}
+	for _, command := range separatorCommands {
 		excluded = append(excluded, command+" *")
 	}
 	for _, command := range unguardedGHCommands {

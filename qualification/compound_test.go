@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,7 +55,7 @@ func TestANativePromptAfterTheStartIsNamedWithItsAgentAndCommand(t *testing.T) {
 	}
 }
 
-func TestTheCompoundCommandMustRunInTheSandboxAndReachTheDaemon(t *testing.T) {
+func TestTheCompoundCommandMustReachTheDaemonWithoutARetryOutsideTheSandbox(t *testing.T) {
 	command := compoundAsmai(1)
 	reached := "Job 1: Handoff test\n----\nNothing is waiting for you."
 	for name, c := range map[string]struct {
@@ -66,11 +65,11 @@ func TestTheCompoundCommandMustRunInTheSandboxAndReachTheDaemon(t *testing.T) {
 		output      string
 		want        string
 	}{
-		"run in the sandbox":     {command: command, output: reached},
-		"never run":              {command: "asmai brief 1", output: "Job 1", want: "inconclusive"},
-		"run outside it":         {command: command, unsandboxed: true, output: reached, want: "outside the sandbox"},
-		"stopped by the sandbox": {command: command, failed: true, output: "connecting to the daemon: operation not permitted\n----\n", want: "failed in the sandbox"},
-		"printing half":          {command: command, output: "----\nNothing is waiting for you.", want: "not the brief, then the inbox"},
+		"run as the guard ran it": {command: command, output: reached},
+		"never run":               {command: "asmai brief 1", output: "Job 1", want: "inconclusive"},
+		"retried outside it":      {command: command, unsandboxed: true, output: reached, want: "retried outside the sandbox"},
+		"stopped by the sandbox":  {command: command, failed: true, output: "connecting to the daemon: operation not permitted\n----\n", want: "failed, so it did not reach"},
+		"printing half":           {command: command, output: "----\nNothing is waiting for you.", want: "not the brief, then the inbox"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "transcript.jsonl")
@@ -79,7 +78,7 @@ func TestTheCompoundCommandMustRunInTheSandboxAndReachTheDaemon(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = ranInTheSandbox(turn, command)
+			err = reachedTheDaemon(turn, command)
 			if c.want == "" && err != nil {
 				t.Errorf("it fails: %v", err)
 			}
@@ -87,19 +86,5 @@ func TestTheCompoundCommandMustRunInTheSandboxAndReachTheDaemon(t *testing.T) {
 				t.Errorf("it gives %v, want it to say %q", err, c.want)
 			}
 		})
-	}
-}
-
-func TestWhereTheSandboxCannotAllowOneSocketTheCompoundCommandIsAKnownLimitation(t *testing.T) {
-	allows := sandboxAllowsOneSocket
-	sandboxAllowsOneSocket = false
-	t.Cleanup(func() { sandboxAllowsOneSocket = allows })
-	var r Result
-
-	if err := (&Harness{}).compoundAsmaiReachesTheDaemon(context.Background(), nil, &r, newRestartEvidence(0)); err != nil {
-		t.Fatal(err)
-	}
-	if len(r.Evidence) != 1 || !strings.HasPrefix(r.Evidence[0], "known limitation:") {
-		t.Errorf("the evidence is %q, want the known limitation", r.Evidence)
 	}
 }

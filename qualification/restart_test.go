@@ -354,11 +354,6 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 	}
 	h.Number = func() int64 { return 19 }
 	prompt := h.exercisePrompt()
-	// The fake runs commands in no sandbox, so the case's check of the
-	// compound command runs on every host.
-	allows := sandboxAllowsOneSocket
-	sandboxAllowsOneSocket = true
-	t.Cleanup(func() { sandboxAllowsOneSocket = allows })
 	t.Cleanup(func() {
 		if t.Failed() {
 			log, _ := os.ReadFile(h.QualificationPaths.Log)
@@ -395,8 +390,8 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 	// brief of the open job, and Engineering to load it and then to answer
 	// the handoff that was still open.
 	// Once it has, the case asks Coordination to run the compound command a
-	// restored leader runs, which the session's transcript shows ran in the
-	// sandbox and reached the daemon.
+	// restored leader runs, which the session's transcript shows reached the
+	// daemon without a retry outside the sandbox.
 	compound := compoundAsmai(1)
 	asked := compoundPrompt(19, compound)
 	transcript := filepath.Join(scripts, "coordination-2-transcript.jsonl")
@@ -443,7 +438,7 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 		"leader@engineering was restored in generation 2",
 		"no dispatch that had stopped before the restart changed after it",
 		"the restored leaders leader@coordination and leader@engineering loaded their briefs and inboxes with no native prompt",
-		"ran `asmai brief 1; echo ----; asmai inbox` as one Bash call inside the sandbox",
+		"ran `asmai brief 1; echo ----; asmai inbox` as one Bash call, which reached the daemon with no native prompt",
 	} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C19's evidence\n%s\ndoes not say %q", evidence, want)

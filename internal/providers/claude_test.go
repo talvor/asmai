@@ -4,6 +4,8 @@ package providers
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -209,5 +211,32 @@ func TestAResumedSessionIsStartedWithTheSameSettingsAndTheSessionToContinue(t *t
 	}
 	if len(fresh) != 9 {
 		t.Errorf("a new session's command line has %d arguments, want it unchanged by resuming: %q", len(fresh), fresh)
+	}
+}
+
+func TestASessionsWriteGuardAllowsTheDaemonsSocketByItsResolvedPath(t *testing.T) {
+	// Claude Code's guard checks the path a connection resolves to, so a
+	// state directory under a symlink, such as macOS's /tmp, is allowed by
+	// the directory it links to.
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "state")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Sandbox struct {
+			Network struct {
+				AllowUnixSockets []string `json:"allowUnixSockets"`
+			} `json:"network"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Socket: filepath.Join(link, "daemon.sock")})), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join(real, "daemon.sock")}; !slices.Equal(settings.Sandbox.Network.AllowUnixSockets, want) {
+		t.Errorf("the sandbox allows the Unix sockets %q, want the daemon's by its resolved path, %q", settings.Sandbox.Network.AllowUnixSockets, want)
 	}
 }

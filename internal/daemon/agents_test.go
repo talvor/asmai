@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,25 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	}
 	if !strings.Contains(got[4], `"by":"signal"`) {
 		t.Errorf("the session's end is journaled as %s, want it ended by the signal that stopped the daemon", got[4])
+	}
+	// The session's guard lets it reach this daemon's socket, in this state
+	// directory, and no other.
+	var started struct {
+		Args []string `json:"args"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(got[2], store.KindSessionStarted+" ")), &started); err != nil || len(started.Args) < 2 || started.Args[0] != "--settings" {
+		t.Fatalf("the session's start is journaled as %s (%v), want its command line, --settings first", got[2], err)
+	}
+	var settings struct {
+		Sandbox struct {
+			Network map[string][]string `json:"network"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(started.Args[1]), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string][]string{"allowUnixSockets": {p.Socket}}; len(settings.Sandbox.Network) != 1 || !slices.Equal(settings.Sandbox.Network["allowUnixSockets"], want["allowUnixSockets"]) {
+		t.Errorf("the session's sandbox network settings are %v, want %v", settings.Sandbox.Network, want)
 	}
 }
 

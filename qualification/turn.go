@@ -22,8 +22,11 @@ import (
 type Turn struct {
 	// MCPServers are the names of the MCP servers the session started with.
 	MCPServers []string
-	// Commands are the shell commands the session tried, in order.
+	// Commands are the shell commands the session tried, in order, and
+	// Files the files it tried to write or change with the Write and Edit
+	// tools, each as a Command whose Text is the file's path.
 	Commands []Command
+	Files    []Command
 	// Reply is what the session answered last.
 	Reply string
 	// Said is everything it wrote to the user along the way, its reply
@@ -95,7 +98,7 @@ func (ClaudeCode) Ask(ctx context.Context, f *Factory, path string, spec AskSpec
 // stream-json.
 func parseTurn(r io.Reader) (Turn, error) {
 	var turn Turn
-	byID := map[string]int{}
+	byID := map[string]toolUse{}
 	lines := bufio.NewReader(r)
 	for {
 		line, err := lines.ReadBytes('\n')
@@ -114,7 +117,22 @@ func parseTurn(r io.Reader) (Turn, error) {
 	return turn, nil
 }
 
-func (t *Turn) add(line []byte, byID map[string]int) error {
+// toolUse is where a Turn keeps a tool call it read: the index of one of its
+// Files, or else of its Commands.
+type toolUse struct {
+	file  bool
+	index int
+}
+
+// use returns the Command a tool call was read into.
+func (t *Turn) use(u toolUse) *Command {
+	if u.file {
+		return &t.Files[u.index]
+	}
+	return &t.Commands[u.index]
+}
+
+func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 	var event struct {
 		Type    string `json:"type"`
 		Subtype string `json:"subtype"`
@@ -152,6 +170,7 @@ func (t *Turn) add(line []byte, byID map[string]int) error {
 			Text  string `json:"text"`
 			Input struct {
 				Command     string `json:"command"`
+				FilePath    string `json:"file_path"`
 				Unsandboxed bool   `json:"dangerouslyDisableSandbox"`
 			} `json:"input"`
 		}
@@ -160,9 +179,13 @@ func (t *Turn) add(line []byte, byID map[string]int) error {
 				if b.Type == "text" {
 					t.Said += b.Text + "\n"
 				}
-				if b.Type == "tool_use" && b.Name == "Bash" {
-					byID[b.ID] = len(t.Commands)
+				switch {
+				case b.Type == "tool_use" && b.Name == "Bash":
+					byID[b.ID] = toolUse{index: len(t.Commands)}
 					t.Commands = append(t.Commands, Command{Text: b.Input.Command, Unsandboxed: b.Input.Unsandboxed})
+				case b.Type == "tool_use" && (b.Name == "Write" || b.Name == "Edit"):
+					byID[b.ID] = toolUse{file: true, index: len(t.Files)}
+					t.Files = append(t.Files, Command{Text: b.Input.FilePath})
 				}
 			}
 		}
@@ -175,8 +198,9 @@ func (t *Turn) add(line []byte, byID map[string]int) error {
 		}
 		if json.Unmarshal(message.Content, &blocks) == nil {
 			for _, b := range blocks {
-				if i, ok := byID[b.ID]; ok && b.Type == "tool_result" {
-					t.Commands[i].Output, t.Commands[i].Failed = contentText(b.Content), b.Error
+				if u, ok := byID[b.ID]; ok && b.Type == "tool_result" {
+					c := t.use(u)
+					c.Output, c.Failed = contentText(b.Content), b.Error
 				}
 			}
 		}
@@ -184,8 +208,8 @@ func (t *Turn) add(line []byte, byID map[string]int) error {
 		t.Reply = event.Result
 		t.Said += event.Result + "\n"
 		for _, d := range event.Denials {
-			if i, ok := byID[d.ID]; ok {
-				t.Commands[i].Denied = true
+			if u, ok := byID[d.ID]; ok {
+				t.use(u).Denied = true
 			}
 		}
 	}

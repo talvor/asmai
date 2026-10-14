@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -96,6 +97,10 @@ type Frame struct {
 	Output []byte    `json:"output,omitempty"`
 	Ended  string    `json:"ended,omitempty"`
 	Left   bool      `json:"left,omitempty"`
+	// Prompts, when set, are the native prompts agents now wait at that
+	// nobody can answer, as the status line shows them: the stream sends
+	// them first and whenever they change.
+	Prompts *[]string `json:"prompts,omitempty"`
 }
 
 // ClientMessage is what an attach client sends the daemon after its
@@ -166,6 +171,9 @@ type leader struct {
 	currentPromptID string
 	pendingPrompt   string
 	transcript      string
+	// prompt is the native permission prompt the session waits at that
+	// nobody can answer, if it waits at one.
+	prompt *WaitingPrompt
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -479,8 +487,10 @@ type launch struct {
 	dir          string
 	env          map[string]string
 	// writable are the directories besides dir that the session's write
-	// guard lets its commands write.
+	// guard lets its commands write, and editable those its Edit and Write
+	// tools change files in without a prompt.
 	writable []string
+	editable []string
 	// assignment is the assignment a worker's session carries, and resume
 	// the provider's own session it continues, when it continues one.
 	assignment int64
@@ -530,7 +540,7 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.
 	}
 	// The worker's git adds the trailers to each commit, as the user.
 	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, assignment: a.ID, resume: resume})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume})
 }
 
 // startSession starts l's session on the installed Claude Code as launch
@@ -547,9 +557,13 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	}
 	hook := providers.HookCommand(d.cfg.Paths.Executable)
 	guard := providers.WriteGuard{Writable: launch.writable, Socket: d.cfg.Paths.Socket}
-	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, guard)
+	// Only Coordination's terminal takes the user's keys, in the
+	// conversation: every other session would wait at a native prompt
+	// nobody can answer, so it is denied what its rules do not allow.
+	perms := providers.Permissions{Unattended: l.address.Role != roles.Coordination, Editable: launch.editable}
+	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, guard, perms)
 	if launch.resume != "" {
-		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, guard, launch.resume)
+		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, guard, perms, launch.resume)
 	}
 	set := map[string]string{SessionCredential: credential}
 	maps.Copy(set, launch.env)
@@ -580,6 +594,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.session, l.generation, l.startedAt = s, generation, at
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", ""
+	l.prompt = nil
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
 	d.agents.Add(1)
@@ -738,6 +753,7 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 	if fields.Event == "" {
 		return errors.New("the hook's payload names no hook_event_name")
 	}
+	d.promptObserved(ref, fields.Event, compact.Bytes())
 	if fields.Session != "" {
 		// Every hook of a session carries the provider's own identifier of
 		// it, which resuming the session after a restart needs.
@@ -1017,10 +1033,23 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return enc.Encode(f) == nil
 	}
+	// The prompts go with the first frame, and on their own whenever they
+	// change.
+	prompts := d.promptLines()
+	pending := &prompts
+	check := time.NewTicker(promptCheck)
+	defer check.Stop()
 	events, stop := s.Follow()
 	defer func() { stop() }()
 	for {
 		select {
+		case <-check.C:
+			if now := d.promptLines(); !slices.Equal(now, prompts) {
+				prompts = now
+				if pending == nil && !send(Frame{Prompts: &prompts}) {
+					return LeftByTerminalClose
+				}
+			}
 		case <-gone:
 			if leaving {
 				return LeftByDetaching
@@ -1028,9 +1057,10 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 			return LeftByTerminalClose
 		case e, ok := <-events:
 			if ok {
-				if !send(Frame{State: e.State, Output: e.Output}) {
+				if !send(Frame{State: e.State, Output: e.Output, Prompts: pending}) {
 					return LeftByTerminalClose
 				}
+				pending = nil
 				continue
 			}
 			select {

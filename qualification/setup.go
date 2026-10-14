@@ -270,7 +270,7 @@ func (h *Harness) startsWithoutTrustQuestion(ctx context.Context, f *Factory, pa
 	}
 	defer os.RemoveAll(marks)
 	started := filepath.Join(marks, "started")
-	args := providers.ClaudeCodeArgs("touch "+providers.ShellQuote(started), "sonnet", "", providers.WriteGuard{})
+	args := providers.ClaudeCodeArgs("touch "+providers.ShellQuote(started), "sonnet", "", providers.WriteGuard{}, providers.Permissions{})
 	s, err := session.Start(session.Spec{Path: path, Args: args, Env: providers.SessionEnv(f.env, f.paths.Bin, nil), Dir: dir, Columns: 80, Rows: 24})
 	if err != nil {
 		return err

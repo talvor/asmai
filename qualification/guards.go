@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/talvor/asmai/internal/providers"
-	"github.com/talvor/asmai/internal/roles"
 )
 
 // noopHook is the hook command the cases give a session: its payloads go
@@ -165,21 +164,16 @@ func runGit(dir string, args ...string) error {
 }
 
 // sessionArgs returns the command line a worker of Engineering is started
-// with in the fixture's workspace: the code under test builds it, as the
-// daemon does for a real worker.
+// with in the fixture's workspace, with hooks whose payloads go nowhere.
 func (g guardFixture) sessionArgs(f *Factory) ([]string, error) {
-	instructions, err := roles.WorkerInstructions(roles.Engineering)
-	if err != nil {
-		return nil, err
-	}
-	repository, err := roles.RepositoryInstructions(g.workspace)
-	if err != nil {
-		return nil, err
-	}
-	if repository != "" {
-		instructions += "\n" + repository
-	}
-	return providers.ClaudeCodeArgs(noopHook, guardModel, instructions, providers.WriteGuard{Writable: []string{g.tmp}}), nil
+	return g.workerArgs(noopHook)
+}
+
+// permissions are the permissions a worker of Engineering is started with in
+// the fixture's workspace, as the daemon gives a real worker: nobody answers
+// its terminal, and it edits files in its workspace and temporary directory.
+func (g guardFixture) permissions() providers.Permissions {
+	return providers.Permissions{Unattended: true, Editable: []string{g.workspace, g.tmp}}
 }
 
 // checkGuardDependencies is guardDependencies, which a test replaces.
@@ -296,7 +290,9 @@ func mcpNote(t Turn) string {
 // a workspace of a repository whose own configuration would switch the guard
 // off, writes inside the workspace and runs git and gh, with network access,
 // without a native prompt, while a write outside the workspace and a network
-// call to a host the guard does not allow do not go through.
+// call to a host the guard does not allow do not go through: their retries
+// outside the sandbox are denied in the dontAsk mode a worker runs in, with
+// no native prompt (ADR 0012).
 func (h *Harness) c37(ctx context.Context, f *Factory, r *Result) error {
 	if err := checkGuardDependencies(); err != nil {
 		return err
@@ -338,8 +334,8 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		return list.String()
 	}
 	// The commands the guard allows are one turn, and those it must stop
-	// another, so that the retry outside the sandbox, which is what raises
-	// Claude Code's native prompt, is required of the second alone.
+	// another, so that the retry outside the sandbox, which is what would
+	// raise Claude Code's native prompt, is required of the second alone.
 	allowed, err := h.Provider.Ask(ctx, f, path, AskSpec{
 		Dir:  g.workspace,
 		Args: args,
@@ -368,9 +364,10 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 		}
 		return found[0], nil
 	}
-	// refused returns the attempt at command that raised a native prompt:
-	// Claude Code raises one when the session retries a command the sandbox
-	// stopped outside the sandbox.
+	// refused returns the attempt at command that was denied: Claude Code
+	// would raise a native prompt when the session retries a command the
+	// sandbox stopped outside the sandbox, and denies it instead in dontAsk
+	// mode.
 	refused := func(command string) (Command, error) {
 		found := turn.Tried(command)
 		if len(found) == 0 {
@@ -386,7 +383,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 				return c, nil
 			}
 		}
-		return Command{}, fmt.Errorf("inconclusive: the session never retried `%s` outside the sandbox, as it was required to, so the harness cannot see whether the guard raises a native permission prompt for it", command)
+		return Command{}, fmt.Errorf("inconclusive: the session never retried `%s` outside the sandbox, as it was required to, so the harness cannot see whether the retry is denied", command)
 	}
 
 	// What the guard allows runs without a native prompt, and without a retry.
@@ -399,7 +396,7 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 			return fmt.Errorf("`%s` was tried %d times or outside the sandbox, but the guard allows it to run once inside it", c.Text, n)
 		}
 		if c.Denied {
-			return fmt.Errorf("`%s` raised a native permission prompt, but the guard allows it", c.Text)
+			return fmt.Errorf("`%s` was denied, but the guard allows it", c.Text)
 		}
 		if c.Failed {
 			return fmt.Errorf("`%s` failed in the guard: %s", c.Text, strings.TrimSpace(c.Output))
@@ -439,8 +436,8 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	if err != nil {
 		return err
 	}
-	if !outsideWrite.Denied {
-		return errors.New("a write outside the workspace did not raise a native permission prompt")
+	if !deniedWithoutPrompt(outsideWrite) {
+		return fmt.Errorf("a write outside the workspace was not denied in dontAsk mode, so in a worker's terminal it would wait at a native prompt nobody can answer: %s", strings.TrimSpace(outsideWrite.Output))
 	}
 	r.observe("a write outside the workspace did not happen%s", outcomeNote(outsideWrite))
 	if info, err := os.Stat(filepath.Join(g.workspace, "curl.out")); err == nil && info.Size() > 0 {
@@ -450,8 +447,8 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 	if err != nil {
 		return err
 	}
-	if !curl.Denied {
-		return errors.New("a network call to a host the guard does not allow did not raise a native permission prompt")
+	if !deniedWithoutPrompt(curl) {
+		return fmt.Errorf("a network call to a host the guard does not allow was not denied in dontAsk mode, so in a worker's terminal it would wait at a native prompt nobody can answer: %s", strings.TrimSpace(curl.Output))
 	}
 	r.observe("a network call to a host the guard does not allow did not go through%s", outcomeNote(curl))
 	r.observe("the repository's own configuration, which would have switched the guard off and allowed curl, was not loaded")
@@ -460,10 +457,10 @@ func (h *Harness) writeGuardIsOn(ctx context.Context, f *Factory, path string, r
 
 func outcomeNote(c Command) string {
 	if c.Denied && c.Unsandboxed {
-		return ": the sandbox stopped it, and its retry outside the sandbox raised a native permission prompt, which a non-interactive run cannot answer"
+		return ": the sandbox stopped it, and its retry outside the sandbox was denied in dontAsk mode, with no native prompt"
 	}
 	if c.Denied {
-		return ": it raised a native permission prompt, which a non-interactive run cannot answer"
+		return ": it was denied in dontAsk mode, with no native prompt"
 	}
 	return ": the guard stopped it"
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -421,6 +422,28 @@ func TestAWorkerThatCannotGoOnReportsItBlockedAndItsAssignmentStaysActive(t *tes
 	reports := journaled(t, "blocked.reported")
 	if len(reports) != 1 || len(journaled(t, "result.submitted")) != 0 {
 		t.Errorf("blocked reports %+v and results %+v, want one blocked report and no result", reports, journaled(t, "result.submitted"))
+	}
+}
+
+// A worker's native prompt waits for an answer nobody can give, so the
+// factory shows it until the worker's session is past it.
+func TestAWorkerWaitingAtANativePromptIsShownInStatusUntilItIsPastIt(t *testing.T) {
+	waits := "worker1@engineering waits at a native prompt nobody can answer: Bash `cat > test/index.test.js <<'EOF'`"
+	worker := []string{
+		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
+		`{"hook": "PermissionRequest", "payload": {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "cat > test/index.test.js <<'EOF'\nimport { test } from 'node:test';\nEOF"}}}`,
+		fakeRun(`asmai status`, 0, "(?m)^native prompt +"+regexp.QuoteMeta(waits)+"$"),
+		fakeRun(`asmai status --json`, 0, `"prompts": \[\s*\{\s*"agent": "worker1@engineering",\s*"generation": 1,\s*"about": "Bash `+"`"+`cat [^"]*test/index.test.js [^"]*'EOF'`+"`"+`"`),
+		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Notes so far' && git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`asmai blocked --reason 'Writing the test was denied' --needs 'a way to write it'`, 0, "blocked recorded for assignment 1"),
+	}
+	leader := []string{
+		fakeRun(`asmai inbox --dispatch 4`, 0, "blocked 1 \\| assignment 1"),
+	}
+	assignmentFlow(t, worker, leader)
+	// The worker's later events show it is past the prompt.
+	if stdout, stderr, code := runAsmai(t, "status"); code != 0 || strings.Contains(stdout, "native prompt") {
+		t.Errorf("asmai status printed %s%s, want no native prompt once the worker is past it", stdout, stderr)
 	}
 }
 

@@ -31,6 +31,12 @@ func deniedWithoutPrompt(c Command) bool {
 // Code's shell analyser refuse to judge a command that holds it.
 const testFile = "import { test } from 'node:test';\ntest('greets', () => {});\n"
 
+// demoHeredoc is the shell command the #36 demo's worker stalled at: it
+// writes testFile through a heredoc and runs the tests, a compound Claude Code
+// 2.1.292 marks too complex to judge (a brace next to a quote character),
+// whatever rules allow cat, so it would ask before running it.
+const demoHeredoc = "mkdir -p test && cat > test/index.test.js <<'EOF'\n" + testFile + "EOF\nnpm test 2>&1 | tail -12"
+
 // hookLog is the hook command that appends every payload a session's hooks
 // report to the file at path, one per line, so that a case can see whether
 // the session raised a native prompt.
@@ -65,9 +71,10 @@ func permissionRequests(path string) ([]string, error) {
 // prompt (ADR 0012): a session started with the command line AsmAI gives a
 // worker writes a JavaScript test with braces and quotes in its workspace
 // with the Write tool, with no native prompt; and the same content written
-// through a shell heredoc, which Claude Code's shell analyser cannot judge,
-// is denied, and the session told so, with no native prompt, after which it
-// reports itself blocked rather than stalling.
+// through the shell heredoc compound the #36 demo's stalled worker ran, which
+// Claude Code's shell analyser marks too complex to judge, is denied, and the
+// session told so, with no native prompt, after which it reports itself
+// blocked rather than stalling.
 func (h *Harness) c49(ctx context.Context, f *Factory, r *Result) error {
 	if err := checkGuardDependencies(); err != nil {
 		return err
@@ -115,11 +122,15 @@ func (h *Harness) noNativePromptWithoutTheUser(ctx context.Context, f *Factory, 
 	}
 	r.observe("a worker's session wrote a JavaScript test with braces and quotes in its workspace with the Write tool, with no native prompt")
 
-	heredoc := "cat > test/heredoc.test.js <<'EOF'\n" + testFile + "EOF"
+	// The heredoc writes the file the Write tool wrote, as the demo's worker
+	// did, so it goes first to show whether the heredoc wrote it.
+	if err := os.Remove(written); err != nil {
+		return err
+	}
 	turn, err = h.Provider.Ask(ctx, f, path, AskSpec{
 		Dir:  g.workspace,
 		Args: args,
-		Prompt: "You are being qualified. Run this command as one Bash tool call, exactly as written, with no other tool before it:\n```\n" + heredoc + "\n```\n" +
+		Prompt: "You are being qualified. Run this command as one Bash tool call, exactly as written, with no other tool before it:\n```\n" + demoHeredoc + "\n```\n" +
 			"If it is refused, do not retry it, change it, write the file any other way or work around it: reply with the single word blocked. If it ran, reply with the single word done.",
 	})
 	if err != nil {
@@ -127,7 +138,7 @@ func (h *Harness) noNativePromptWithoutTheUser(ctx context.Context, f *Factory, 
 	}
 	var attempt *Command
 	for i, c := range turn.Commands {
-		if strings.HasPrefix(strings.TrimSpace(c.Text), "cat > test/heredoc.test.js <<") {
+		if strings.HasPrefix(strings.TrimSpace(c.Text), "mkdir -p test && cat > test/index.test.js <<") {
 			attempt = &turn.Commands[i]
 			break
 		}
@@ -135,13 +146,13 @@ func (h *Harness) noNativePromptWithoutTheUser(ctx context.Context, f *Factory, 
 	if attempt == nil {
 		return errors.New("inconclusive: the session never ran the heredoc, so the harness cannot show how a worker's shell file write is treated")
 	}
-	if exists(filepath.Join(g.workspace, "test", "heredoc.test.js")) {
+	if exists(written) {
 		return errors.New("the heredoc wrote its file: Claude Code judged and allowed a command it was expected to be unable to judge, so the case shows nothing of its denial")
 	}
 	if !deniedWithoutPrompt(*attempt) {
 		return fmt.Errorf("the heredoc was not denied in dontAsk mode, so in a worker's terminal it would wait at a native prompt nobody can answer: %s", strings.TrimSpace(attempt.Output))
 	}
-	r.observe("the same content written through a shell heredoc was denied, and the session told it was denied in dontAsk mode, with no native prompt")
+	r.observe("the same content written through the demo's shell heredoc compound %q was denied, and the session told it was denied in dontAsk mode, with no native prompt", attempt.Text)
 	if !strings.Contains(strings.ToLower(turn.Reply), "blocked") {
 		return fmt.Errorf("after the denial the session replied %q, not that it was blocked", turn.Reply)
 	}

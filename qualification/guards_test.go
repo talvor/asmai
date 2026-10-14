@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,11 +129,11 @@ func (g guardSession) unattended(spec AskSpec) (Turn, error) {
 		}
 		return Turn{Files: []Command{file}, Reply: "done"}, nil
 	}
-	c := Command{Text: "cat > test/heredoc.test.js <<'EOF'\n" + testFile + "EOF", Denied: true, Failed: true, Output: deniedOutput(g.heredocAsks)}
+	c := Command{Text: demoHeredoc, Denied: true, Failed: true, Output: deniedOutput(g.heredocAsks)}
 	reply := "blocked"
 	if g.heredocRuns {
 		os.MkdirAll(filepath.Join(spec.Dir, "test"), 0o755)
-		if err := os.WriteFile(filepath.Join(spec.Dir, "test", "heredoc.test.js"), []byte(testFile), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(spec.Dir, "test", "index.test.js"), []byte(testFile), 0o644); err != nil {
 			return Turn{}, err
 		}
 		c, reply = Command{Text: c.Text}, "done"
@@ -144,7 +145,7 @@ func (g guardSession) unattended(spec AskSpec) (Turn, error) {
 }
 
 func (g guardSession) guarded(spec AskSpec) (Turn, error) {
-	if strings.Contains(spec.Prompt, "With the Write tool") || strings.Contains(spec.Prompt, "heredoc.test.js") {
+	if strings.Contains(spec.Prompt, "With the Write tool") || strings.Contains(spec.Prompt, demoHeredoc) {
 		return g.unattended(spec)
 	}
 	var turn Turn
@@ -425,7 +426,7 @@ func TestC49PassesWhenAWorkerWritesWithTheWriteToolAndItsHeredocIsDeniedWithoutA
 		t.Fatalf("C49 %s: %s", r.Outcome, r.Failure)
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"with the Write tool, with no native prompt", "told it was denied in dontAsk mode", "reported itself blocked", "no PermissionRequest"} {
+	for _, want := range []string{"with the Write tool, with no native prompt", fmt.Sprintf("demo's shell heredoc compound %q", demoHeredoc), "told it was denied in dontAsk mode", "reported itself blocked", "no PermissionRequest"} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C49's evidence\n%s\ndoes not say %q", evidence, want)
 		}

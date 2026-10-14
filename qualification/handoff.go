@@ -143,9 +143,9 @@ func (h *Harness) exercisePrompt() string {
 
 // record folds one journal entry made after the case began into the evidence.
 // The case's handoff is the first dispatch created for Engineering's leader:
-// a session shared with an earlier case may also create dispatches for other
-// agents, such as the reply to that case's handoff for Coordination, which
-// the leader this case watches never receives.
+// the case may also create dispatches for other agents, such as the reply to
+// its handoff for Coordination, which the leader this case watches never
+// receives.
 func (e *handoffEvidence) record(entry store.Entry, prompt string) {
 	switch entry.Kind {
 	case store.KindMessageWitnessed:
@@ -198,15 +198,16 @@ func (e *handoffEvidence) record(entry store.Entry, prompt string) {
 	}
 }
 
-// awaitSettled waits until the leader of Coordination has finished what it
-// was told when the factory started, such as the brief a restored leader loads
-// when an earlier case left a job open in the same state: the case's own
-// request is typed after it, not into the turn that work is. It waits at
-// most half as long as a case waits for anything, and then goes on, as the
-// case's own evidence says whether it held.
+// awaitSettled waits until the leader of Coordination has no dispatch on its
+// way to it or being worked on: the case's own request is typed after that
+// work, not into its turn, where the daemon would not journal it as the
+// user's. Each case starts in a disposable state of its own, so there is
+// normally none. It waits at most half as long as a case waits for anything,
+// and then fails the case, since a request typed into a busy turn fails it
+// later with less to say why.
 func (h *Harness) awaitSettled(ctx context.Context, f *Factory) error {
 	deadline := time.Now().Add(h.Wait / 2)
-	for time.Now().Before(deadline) {
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -217,9 +218,11 @@ func (h *Harness) awaitSettled(ctx context.Context, f *Factory) error {
 		if !coordinationBusy(entries) {
 			return nil
 		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("Coordination still busy with earlier work after %s: a dispatch to its leader was on its way or being worked on, so the case's request was not typed", h.Wait/2)
+		}
 		time.Sleep(h.Poll)
 	}
-	return nil
 }
 
 // coordinationBusy reports whether a dispatch for Coordination's leader is on

@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"os/user"
@@ -88,6 +89,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err := checkFactory(defaultPaths); err != nil {
 		return fail(err)
 	}
+	configFile, err := config.ActivePath(home)
+	if err != nil {
+		return fail(err)
+	}
 	if paths.Dir != defaultPaths.Dir {
 		if err := checkFactory(paths); err != nil {
 			return fail(err)
@@ -113,13 +118,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	var qualificationPaths statedir.Paths
+	// cleanup removes the disposable state once the cases have run, and is
+	// left to the deferred call only when the run ends early.
+	var cleanup func() error
+	defer func() {
+		if cleanup != nil {
+			if err := cleanup(); err != nil {
+				fmt.Fprintf(stderr, "qualify: %v\n", err)
+			}
+		}
+	}()
 	if len(ids) == 0 || slices.ContainsFunc(ids, disposableState) {
-		var cleanup func()
 		qualificationPaths, cleanup, err = createQualificationState(home)
 		if err != nil {
 			return fail(err)
 		}
-		defer cleanup()
 	}
 
 	host, _ := os.Hostname()
@@ -132,6 +145,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Provider:           ClaudeCode{},
 		Paths:              paths,
 		QualificationPaths: qualificationPaths,
+		ConfigFile:         configFile,
 		Env:                os.Environ(),
 		Host:               host,
 		User:               account,
@@ -141,6 +155,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Log:                stderr,
 	}
 	report := h.Run(ctx, ids)
+	if cleanup != nil {
+		if err := cleanup(); err != nil {
+			report.Cleanup = err.Error()
+		}
+		cleanup = nil
+	}
 	if ctx.Err() != nil {
 		return fail(errors.New("interrupted"))
 	}
@@ -154,10 +174,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if report.Failed() {
 		return 1
 	}
+	if report.Cleanup != "" {
+		return 2
+	}
 	return 0
 }
 
-func createQualificationState(home string) (statedir.Paths, func(), error) {
+// createQualificationState makes the disposable state directory, and returns
+// it with the cleanup that removes it, which says why when it cannot.
+func createQualificationState(home string) (statedir.Paths, func() error, error) {
 	dir := filepath.Join(home, ".local", "state", "asmai", "qualification")
 	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
 		return statedir.Paths{}, nil, err
@@ -165,7 +190,27 @@ func createQualificationState(home string) (statedir.Paths, func(), error) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return statedir.Paths{}, nil, fmt.Errorf("creating disposable qualification state %s: %w; remove a stale qualification directory only after confirming no factory is using it", dir, err)
 	}
-	return statedir.At(dir), func() { _ = os.RemoveAll(dir) }, nil
+	return statedir.At(dir), func() error {
+		if err := removeTree(dir); err != nil {
+			return fmt.Errorf("removing the disposable qualification state %s: %w; remove it by hand once no factory is using it", dir, err)
+		}
+		return nil
+	}, nil
+}
+
+// removeTree removes dir and everything in it. It first gives the owner
+// write permission on every directory under dir, as repos.RemoveView does
+// before it removes a view, because a job's view is made read-only.
+func removeTree(dir string) error {
+	filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err == nil && entry.IsDir() {
+			if info, err := entry.Info(); err == nil {
+				os.Chmod(path, info.Mode().Perm()|0o700)
+			}
+		}
+		return nil
+	})
+	return os.RemoveAll(dir)
 }
 
 func envValue(env []string, name, value string) []string {

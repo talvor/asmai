@@ -21,9 +21,8 @@ import (
 type restartEvidence struct {
 	phase restartPhase
 	// stop is the entry that journals the stop the case made, which is the
-	// last: an earlier case's stops and starts, in the same state directory,
-	// are not it, though what they left, such as a handoff still open, is
-	// the case's to restore.
+	// last: an earlier stop in the journal is not it, though what it left,
+	// such as a handoff still open, is the case's to restore.
 	stop int64
 
 	// Before the stop.

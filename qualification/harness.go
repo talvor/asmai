@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -28,6 +30,11 @@ type Harness struct {
 	// QualificationPaths is the disposable state directory used by C7, C11,
 	// C19 and C48.
 	QualificationPaths statedir.Paths
+	// ConfigFile is the active configuration file. Each case in the
+	// disposable state directory runs with a copy of it there, so that what
+	// the case registers is removed with the state, and the file itself is
+	// never written.
+	ConfigFile string
 	// Env is the harness's own environment, which each case's factory starts
 	// from.
 	Env []string
@@ -119,6 +126,12 @@ func (h *Harness) Run(ctx context.Context, ids []string) Report {
 
 func (h *Harness) runCase(ctx context.Context, c Case) Result {
 	r := Result{ID: c.ID, Title: c.Title, Outcome: Passed}
+	if disposableState(c.ID) {
+		if err := h.resetDisposableState(); err != nil {
+			r.Outcome, r.Failure = Failed, err.Error()
+			return r
+		}
+	}
 	f := h.factoryForCase(c, &r)
 	err := c.Run(h, ctx, f, &r)
 	// The factory is the harness user's own, so each case leaves it stopped.
@@ -139,8 +152,54 @@ func (h *Harness) factoryForCase(c Case, r *Result) *Factory {
 	if disposableState(c.ID) {
 		paths = h.QualificationPaths
 		env = envValue(env, "ASMAI_STATE_DIR", paths.Dir)
+		if h.ConfigFile != "" {
+			env = envValue(env, "ASMAI_CONFIG_FILE", h.disposableConfig())
+		}
 	}
 	return NewFactory(h.Subject.Asmai, paths, env)
+}
+
+// disposableConfig is the copy of the configuration file that a case in the
+// disposable state directory runs with.
+func (h *Harness) disposableConfig() string {
+	return filepath.Join(h.QualificationPaths.Dir, "config.toml")
+}
+
+// resetDisposableState gives a case that runs in the disposable state
+// directory a state of its own: it removes what an earlier case left there,
+// such as a job, a handoff, its read-only view and the work a start would
+// restore, so that the case's leaders start with nothing to do but the
+// case's own request. It keeps the pinned provider copy, which takes long to
+// fetch, and puts a fresh copy of the configuration file there.
+func (h *Harness) resetDisposableState() error {
+	p := h.QualificationPaths
+	if _, err := daemon.Call(p.Socket, daemon.Request{Command: daemon.CommandStatus}); err == nil {
+		return fmt.Errorf("a factory still runs in the disposable state %s, so the harness cannot clear what the case before left: stop it with `ASMAI_STATE_DIR=%s asmai stop`", p.Dir, p.Dir)
+	}
+	entries, err := os.ReadDir(p.Dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(p.Dir, entry.Name())
+		if path == p.Providers {
+			continue
+		}
+		if err := removeTree(path); err != nil {
+			return fmt.Errorf("clearing what the case before left in the disposable state: %w", err)
+		}
+	}
+	if err := os.MkdirAll(p.Dir, 0o700); err != nil {
+		return err
+	}
+	if h.ConfigFile == "" {
+		return nil
+	}
+	data, err := os.ReadFile(h.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("copying the configuration file into the disposable state: %w", err)
+	}
+	return os.WriteFile(h.disposableConfig(), data, 0o600)
 }
 
 // disposableState reports whether the case id runs in the disposable state

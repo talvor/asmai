@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -388,5 +389,81 @@ func TestC19StopsTheFactoryStartsItAgainAndRequiresTheRestoredLeadersToBeDeliver
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C19's evidence\n%s\ndoes not say %q", evidence, want)
 		}
+	}
+}
+
+// handoffScripts are the sessions of one handoff case: Coordination's leader,
+// in its nth session, takes the user's prompt as the first thing it is given,
+// opens job 1 from it and hands it to Engineering, whose leader fetches it.
+func handoffScripts(t *testing.T, dir string, n int, prompt string) {
+	t.Helper()
+	writeSessionScript(t, dir, fmt.Sprintf("coordination-%d", n),
+		hook("SessionStart", "", ""),
+		`{"screen":"\u001b[?2004h> "}`,
+		fmt.Sprintf(`{"expect":%q}`, prompt),
+		`{"expect":"\r"}`,
+		hook("UserPromptSubmit", "", prompt),
+		scriptRun(`asmai job open --message latest --repository qualification-handoff --reading 'Handoff test' --criterion 'Engineering confirms'`, 0, "Opened job 1"),
+		scriptRun(`asmai handoff send --job 1 --to engineering --outcome 'Acknowledge it' --decisions none --evidence none --constraints none --permissions none --criterion 'Engineering confirms'`, 0, "dispatch 1"),
+		hook("Stop", "", ""),
+		`{"expect":"only typed by a test that means to"}`,
+	)
+	writeSessionScript(t, dir, fmt.Sprintf("engineering-%d", n),
+		hook("SessionStart", "", ""),
+		`{"screen":"\u001b[?2004h> "}`,
+		`{"expect":"asmai inbox --dispatch 1\r"}`,
+		hook("UserPromptSubmit", "handoff", "asmai inbox --dispatch 1"),
+		scriptRun(`asmai inbox --dispatch 1`, 0, "(?s)handoff 1.*Acknowledge it"),
+		hook("Stop", "handoff", ""),
+		`{"expect":"only typed by a test that means to"}`,
+	)
+}
+
+// C11 run after C7 starts as C11 run alone does: C7's open job, handoff,
+// view and restored work stay behind with C7, so Coordination's leader is
+// given the user's request first, not the brief of C7's job. Neither case
+// leaves its fixture registered in the configuration file, and the fixture
+// registers again in the second.
+func TestEachHandoffCaseStartsWithNothingAnEarlierCaseLeft(t *testing.T) {
+	scripts := t.TempDir()
+	h := harness(t, bySessionClaude{fakeClaude: signedIn, dir: scripts}, startsDirectly)
+	if len(h.QualificationPaths.Socket) > 103 {
+		t.Skipf("the disposable state's socket path, %s, is longer than a Unix socket's path may be on macOS", h.QualificationPaths.Socket)
+	}
+	t.Cleanup(func() {
+		if t.Failed() {
+			log, _ := os.ReadFile(h.QualificationPaths.Log)
+			t.Logf("the daemon's log:\n%s", log)
+		}
+	})
+	before, err := os.ReadFile(h.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var number int64
+	h.Number = func() int64 { number++; return number }
+	first, second := h.exercisePrompt(), h.exercisePrompt()
+	number = 0
+	writeSessionScript(t, scripts, "idle-1", `{"screen":"\u001b[?2004h> "}`, `{"expect":"only typed by a test that means to"}`)
+	writeSessionScript(t, scripts, "setup-1", setupTrusting...)
+	handoffScripts(t, scripts, 1, first)
+	handoffScripts(t, scripts, 2, second)
+
+	report := h.Run(context.Background(), []string{"C7", "C11"})
+
+	for _, r := range report.Results {
+		if r.Outcome != Passed {
+			t.Errorf("%s %s: %s", r.ID, r.Outcome, r.Failure)
+		}
+	}
+	if len(report.Results) != 2 {
+		t.Fatalf("ran %+v, want C7 and C11", report.Results)
+	}
+	after, err := os.ReadFile(h.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("the configuration file changed in the run:\n%s\nwant\n%s", after, before)
 	}
 }

@@ -128,7 +128,7 @@ func readTranscript(path string) (Turn, error) {
 		return Turn{}, err
 	}
 	var turn Turn
-	byID := map[string]int{}
+	byID := map[string]toolUse{}
 	for line := range bytes.Lines(data) {
 		if len(bytes.TrimSpace(line)) > 0 {
 			turn.add(line, byID)

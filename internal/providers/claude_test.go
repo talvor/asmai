@@ -17,7 +17,7 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 		t.Errorf("the hook command is %s, want %s", hook, want)
 	}
 	guard := WriteGuard{Writable: []string{"/state/workspaces/job-1/assignment-1/tmp"}}
-	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.", guard)
+	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.", guard, Permissions{})
 	if want := []string{"--setting-sources", "user", "--strict-mcp-config", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
 		t.Errorf("the command line is %q, want --settings, then %q", args, want)
 	}
@@ -94,7 +94,7 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		"a leader's": {},
 	} {
 		settings.Sandbox.Filesystem, settings.Sandbox.Network = nil, nil
-		if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard)), &settings); err != nil {
+		if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard, Permissions{})), &settings); err != nil {
 			t.Fatal(err)
 		}
 		sb := settings.Sandbox
@@ -131,7 +131,7 @@ func TestASessionsWriteGuardLetsItReachTheDaemonsSocketAndNoOther(t *testing.T) 
 	var settings struct {
 		Sandbox map[string]json.RawMessage `json:"sandbox"`
 	}
-	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Writable: []string{"/state/tmp"}, Socket: socket})), &settings); err != nil {
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Writable: []string{"/state/tmp"}, Socket: socket}, Permissions{})), &settings); err != nil {
 		t.Fatal(err)
 	}
 	var network map[string]json.RawMessage
@@ -153,7 +153,7 @@ func TestASessionsWriteGuardLetsItReachTheDaemonsSocketAndNoOther(t *testing.T) 
 	var without struct {
 		Sandbox map[string]json.RawMessage `json:"sandbox"`
 	}
-	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Writable: []string{"/state/tmp"}})), &without); err != nil {
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Writable: []string{"/state/tmp"}}, Permissions{})), &without); err != nil {
 		t.Fatal(err)
 	}
 	delete(settings.Sandbox, "network")
@@ -203,8 +203,9 @@ func TestEveryListedAPIKeyVariableIsOneAndTheListIsACopy(t *testing.T) {
 // model and instructions, as every start does, and the session to continue.
 func TestAResumedSessionIsStartedWithTheSameSettingsAndTheSessionToContinue(t *testing.T) {
 	hook := HookCommand("/state/bin/asmai")
-	fresh := ClaudeCodeArgs(hook, "opus", "Be a worker.", WriteGuard{})
-	resumed := ClaudeCodeResumeArgs(hook, "opus", "Be a worker.", WriteGuard{}, "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3")
+	worker := Permissions{Unattended: true, Editable: []string{"/state/workspaces/job-1/assignment-1/checkout"}}
+	fresh := ClaudeCodeArgs(hook, "opus", "Be a worker.", WriteGuard{}, worker)
+	resumed := ClaudeCodeResumeArgs(hook, "opus", "Be a worker.", WriteGuard{}, worker, "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3")
 
 	if want := append(slices.Clone(fresh), "--resume", "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3"); !slices.Equal(resumed, want) {
 		t.Errorf("the resumed command line is %q, want %q", resumed, want)
@@ -233,10 +234,86 @@ func TestASessionsWriteGuardAllowsTheDaemonsSocketByItsResolvedPath(t *testing.T
 			} `json:"network"`
 		} `json:"sandbox"`
 	}
-	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Socket: filepath.Join(link, "daemon.sock")})), &settings); err != nil {
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Socket: filepath.Join(link, "daemon.sock")}, Permissions{})), &settings); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{filepath.Join(real, "daemon.sock")}; !slices.Equal(settings.Sandbox.Network.AllowUnixSockets, want) {
 		t.Errorf("the sandbox allows the Unix sockets %q, want the daemon's by its resolved path, %q", settings.Sandbox.Network.AllowUnixSockets, want)
+	}
+}
+
+// permissionsOf returns the permission settings ClaudeCodeSettings gives a
+// session perms describes.
+func permissionsOf(t *testing.T, perms Permissions) (allow []string, mode, bypass string) {
+	t.Helper()
+	var settings struct {
+		Permissions struct {
+			Allow                        []string `json:"allow"`
+			DefaultMode                  string   `json:"defaultMode"`
+			DisableBypassPermissionsMode string   `json:"disableBypassPermissionsMode"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{}, perms)), &settings); err != nil {
+		t.Fatal(err)
+	}
+	p := settings.Permissions
+	return p.Allow, p.DefaultMode, p.DisableBypassPermissionsMode
+}
+
+// Coordination's leader, whose terminal is the user's conversation, keeps
+// the native prompts; every other agent's session, whose prompts nobody
+// would answer, is denied instead, and a worker edits its own workspace and
+// temporary directory without a prompt.
+func TestOnlyASessionTheUserAnswersKeepsTheNativePrompts(t *testing.T) {
+	workspace, tmp := "/state/workspaces/job-1/assignment-1/checkout", "/state/workspaces/job-1/assignment-1/tmp"
+	common, _, _ := permissionsOf(t, Permissions{})
+	for name, c := range map[string]struct {
+		perms Permissions
+		mode  string
+		files []string
+	}{
+		"Coordination's leader": {Permissions{}, "default", nil},
+		"another leader":        {Permissions{Unattended: true}, "dontAsk", nil},
+		"a worker": {Permissions{Unattended: true, Editable: []string{workspace, tmp}}, "dontAsk", []string{
+			"Read(//state/workspaces/job-1/assignment-1/checkout/**)", "Edit(//state/workspaces/job-1/assignment-1/checkout/**)",
+			"Read(//state/workspaces/job-1/assignment-1/tmp/**)", "Edit(//state/workspaces/job-1/assignment-1/tmp/**)",
+		}},
+	} {
+		allow, mode, bypass := permissionsOf(t, c.perms)
+		if mode != c.mode || mode != c.perms.Mode() {
+			t.Errorf("%s runs in the %q permission mode, want %q", name, mode, c.mode)
+		}
+		if bypass != "disable" {
+			t.Errorf("%s may bypass permissions: %q", name, bypass)
+		}
+		if want := append(slices.Clone(common), c.files...); !slices.Equal(allow, want) {
+			t.Errorf("%s is allowed %q, want %q", name, allow, want)
+		}
+	}
+}
+
+// Claude Code allows a file only when both the path asked for and the path
+// it resolves to match a rule, so a directory under a symlink is allowed by
+// both its paths.
+func TestAWorkersFileRulesCoverItsWorkspaceByBothItsPaths(t *testing.T) {
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	unresolved, err := filepath.Abs(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow, _, _ := permissionsOf(t, Permissions{Unattended: true, Editable: []string{unresolved + "/"}})
+	for _, path := range []string{unresolved, real} {
+		for _, tool := range []string{"Read", "Edit"} {
+			if rule := tool + "(/" + path + "/**)"; !slices.Contains(allow, rule) {
+				t.Errorf("the worker's rules %q lack %s", allow, rule)
+			}
+		}
 	}
 }

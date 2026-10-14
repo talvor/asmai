@@ -212,21 +212,48 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		if err := json.Unmarshal([]byte(argValue(args, "--settings")), &settings); err != nil {
 			t.Fatalf("%s: %v", agent, err)
 		}
+		// Only Coordination's leader, whose terminal is the user's
+		// conversation, keeps the native prompts: every other agent is
+		// denied what its rules do not allow, and a worker edits its own
+		// workspace and temporary directory, by both their paths, without a
+		// prompt.
+		wantMode, wantFiles := "dontAsk", []string(nil)
+		switch agent {
+		case "leader@coordination":
+			wantMode = "default"
+		case "worker1@engineering":
+			for _, dir := range []string{"repo", "tmp"} {
+				path := filepath.Join(stateDir, "workspaces", "job-1", "assignment-1", dir)
+				resolved, err := filepath.EvalSymlinks(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, p := range slices.Compact([]string{path, resolved}) {
+					wantFiles = append(wantFiles, "Read(/"+p+"/**)", "Edit(/"+p+"/**)")
+				}
+			}
+		}
+		if settings.Permissions.DefaultMode != wantMode {
+			t.Errorf("%s runs in the %q permission mode, want %q", agent, settings.Permissions.DefaultMode, wantMode)
+		}
+		allow := settings.Permissions.Allow
+		if !slices.Equal(allow[min(len(allow), 19):], wantFiles) {
+			t.Errorf("%s is allowed the files %q, want %q", agent, allow[min(len(allow), 19):], wantFiles)
+		}
 		sb := settings.Sandbox
 		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed || !slices.Equal(sb.ExcludedCommands, []string{
 			"asmai *", "echo *", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
 			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
 			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
 			"git status *", "git rev-parse *", "git merge *", "git var *",
-		}) || !slices.Equal(settings.Permissions.Allow, []string{
+		}) || !slices.Equal(allow[:min(len(allow), 19)], []string{
 			"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 			"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
 			"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 			"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
 			"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
-		}) ||
-			settings.Permissions.DefaultMode != "default" || settings.Permissions.BypassDenied != "disable" {
-			t.Errorf("%s was started with the settings %s, want the write guard on and the native prompts kept", agent, argValue(args, "--settings"))
+		}) || settings.Permissions.BypassDenied != "disable" {
+			t.Errorf("%s was started with the settings %s, want the write guard on and bypassing permissions disabled", agent, argValue(args, "--settings"))
 		}
 		// The guard lets commands reach the daemon's socket, in this state
 		// directory, and no other, by the path it resolves to, as macOS's

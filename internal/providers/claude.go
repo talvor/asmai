@@ -48,7 +48,8 @@ var unguardedGitSubcommands = []string{
 // WriteGuard is what an agent session's write guard needs to know of the
 // session. The guard is Claude Code's sandbox for the commands it runs:
 // writes stay in the session's working directory, and any command it does not
-// allow raises the native permission prompt in the agent's terminal.
+// allow raises the native permission prompt in the agent's terminal, or is
+// denied in a session that runs in dontAsk mode.
 type WriteGuard struct {
 	// Writable are the directories besides the working directory and the
 	// system's temporary directory that a guarded command may write, such as
@@ -64,15 +65,70 @@ type WriteGuard struct {
 	Socket string
 }
 
+// The Claude Code permission modes an agent session runs in. In the default
+// mode, an action the session's rules do not allow raises the native
+// permission prompt in its terminal. In dontAsk mode it is denied instead,
+// with no prompt and no approval given, and the session is told so.
+const (
+	PermissionModeDefault = "default"
+	PermissionModeDontAsk = "dontAsk"
+)
+
+// Permissions is what an agent session's permission rules need to know of
+// the session, besides the commands every session runs without a prompt.
+type Permissions struct {
+	// Unattended is set for a session in whose terminal nobody answers a
+	// native permission prompt: every agent's but Coordination's leader,
+	// whose terminal is the user's conversation. It runs in dontAsk mode.
+	Unattended bool
+	// Editable are the directories in which the session's Edit and Write
+	// tools may read, change and make files without a prompt, such as a
+	// worker's workspace and its own temporary directory.
+	Editable []string
+}
+
+// Mode returns the permission mode of a session p describes.
+func (p Permissions) Mode() string {
+	if p.Unattended {
+		return PermissionModeDontAsk
+	}
+	return PermissionModeDefault
+}
+
+// fileRules returns the Read and Edit permission rules for the files under
+// each of dirs, which are absolute. Claude Code writes an absolute path with
+// a leading //, and allows a file by a rule only when both the path the
+// session asks for and the path it resolves to match one, so a directory
+// under a symlink, such as macOS's /tmp, is also allowed by the path it
+// resolves to.
+func fileRules(dirs []string) []string {
+	var rules []string
+	for _, dir := range dirs {
+		paths := []string{filepath.Clean(dir)}
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != paths[0] {
+			paths = append(paths, resolved)
+		}
+		for _, path := range paths {
+			pattern := "/" + strings.TrimSuffix(path, "/") + "/**"
+			rules = append(rules, "Read("+pattern+")", "Edit("+pattern+")")
+		}
+	}
+	return rules
+}
+
 // ClaudeCodeSettings returns the settings an agent session of Claude Code is
 // given with --settings: a hook for each of HookEvents that runs
-// hookCommand, the permission rules for `asmai` and selected git and gh operations, and the
-// write guard guard describes, which is always on and lets a guarded command
-// connect to no Unix socket but the daemon's: Claude Code does not start
-// the session when it cannot guard it. They keep Claude Code's native
-// permission prompts on, whatever the user's own settings say: the default
-// permission mode, with bypassing permissions disabled.
-func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
+// hookCommand, the permission rules for `asmai` and selected git and gh
+// operations and for the files in the directories perms makes editable, and
+// the write guard guard describes, which is always on and lets a guarded
+// command connect to no Unix socket but the daemon's: Claude Code does not
+// start the session when it cannot guard it. Bypassing permissions is
+// disabled, whatever the user's own settings say. The permission mode is
+// perms' Mode: the default mode keeps Claude Code's native permission
+// prompts, and dontAsk turns each into a denial the session sees, for a
+// session whose prompts nobody would answer. Neither approves anything the
+// rules do not allow.
+func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions) string {
 	type hook struct {
 		Type    string `json:"type"`
 		Command string `json:"command"`
@@ -100,6 +156,7 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 		allow = append(allow, "Bash(git "+subcommand+":*)")
 		excluded = append(excluded, "git "+subcommand+" *")
 	}
+	allow = append(allow, fileRules(perms.Editable)...)
 	sandbox := map[string]any{
 		"enabled":                  true,
 		"failIfUnavailable":        true,
@@ -123,7 +180,7 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 		"hooks": hooks,
 		"permissions": map[string]any{
 			"allow":                        allow,
-			"defaultMode":                  "default",
+			"defaultMode":                  perms.Mode(),
 			"disableBypassPermissionsMode": "disable",
 		},
 		"sandbox": sandbox,
@@ -140,9 +197,9 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 // are none: so none of the repository's provider configuration loads. The
 // role's instructions are appended to its system prompt, with the
 // repository's instruction files when the session works in a repository.
-func ClaudeCodeArgs(hookCommand, model, instructions string, guard WriteGuard) []string {
+func ClaudeCodeArgs(hookCommand, model, instructions string, guard WriteGuard, perms Permissions) []string {
 	return []string{
-		"--settings", ClaudeCodeSettings(hookCommand, guard),
+		"--settings", ClaudeCodeSettings(hookCommand, guard, perms),
 		"--setting-sources", "user",
 		"--strict-mcp-config",
 		"--model", model,
@@ -154,8 +211,8 @@ func ClaudeCodeArgs(hookCommand, model, instructions string, guard WriteGuard) [
 // started with to resume the native session sessionID: ClaudeCodeArgs, and
 // the session to continue. The settings, model and instructions are those of
 // the new session, as Claude Code takes them again on every start.
-func ClaudeCodeResumeArgs(hookCommand, model, instructions string, guard WriteGuard, sessionID string) []string {
-	return append(ClaudeCodeArgs(hookCommand, model, instructions, guard), "--resume", sessionID)
+func ClaudeCodeResumeArgs(hookCommand, model, instructions string, guard WriteGuard, perms Permissions, sessionID string) []string {
+	return append(ClaudeCodeArgs(hookCommand, model, instructions, guard, perms), "--resume", sessionID)
 }
 
 // HookCommand is the shell command a hook runs: the asmai executable at path

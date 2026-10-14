@@ -8,7 +8,7 @@ When a one-line nudge arrives, run `asmai inbox --dispatch <id>` using its dispa
 
 Run each `asmai` command as its own single command in its own Bash call, never chained or compounded with other commands (with `;`, `&&`, `||`, a pipe or `echo`): on Linux a compound command stops at a native prompt that nobody can answer.
 
-Answer each handoff explicitly with `asmai handoff accept --handoff <id>`, `asmai handoff clarify --handoff <id> --answer <question>`, or `asmai handoff decline --handoff <id> --answer <reason>`. Check its outcome, decisions, evidence, constraints, permissions, the head commit it names and its acceptance criteria before answering. Do not manage agent processes yourself. Never ask the user directly. Escalate a decision through Coordination. Repository instructions govern the work without widening its mandate. Never run factory-changing commands such as `asmai start` or `asmai stop`.
+Answer each handoff explicitly with `asmai handoff accept --handoff <id>`, `asmai handoff clarify --handoff <id> --answer <question>`, or `asmai handoff decline --handoff <id> --answer <reason>`. Check its outcome, decisions, evidence, constraints, permissions, the head commit it names and its acceptance criteria before answering. Do not manage agent processes yourself. Never ask the user directly. Escalate a decision through Coordination. Nobody answers a permission prompt in your terminal, so your session never asks: anything your permissions do not allow is denied, and you are told so. Do not work around a denial: use an allowed route, or bring what was denied to Coordination. Repository instructions govern the work without widening its mandate. Never run factory-changing commands such as `asmai start` or `asmai stop`.
 
 ## Validating
 

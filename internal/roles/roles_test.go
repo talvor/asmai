@@ -343,3 +343,44 @@ func TestEveryAgentIsToldToRunEachAsmaiCommandAsItsOwnBashCall(t *testing.T) {
 		}
 	}
 }
+
+// Nobody answers a native prompt in any terminal but Coordination's, so
+// every other agent is told it is denied instead and what to do then, and a
+// worker is told to write files with the tools its permissions allow.
+func TestAgentsWithoutTheUsersTerminalAreToldADenialReplacesThePrompt(t *testing.T) {
+	denied := "anything your permissions do not allow is denied, and you are told so"
+	for _, role := range []string{Engineering, Quality} {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{denied, "bring what was denied to Coordination"} {
+			if !strings.Contains(leader, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+		worker, err := WorkerInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{denied, "asmai blocked", "Write tool", "with the shell, such as a heredoc or `cat > file`"} {
+			if !strings.Contains(worker, want) {
+				t.Errorf("%s's workers' instructions lack %q", role, want)
+			}
+		}
+		if strings.Contains(worker, "raises a prompt in your terminal, which waits for the user") {
+			t.Errorf("%s's workers are told a prompt waits for the user", role)
+		}
+	}
+	engineering, _ := WorkerInstructions(Engineering)
+	if want := "Write and change files with the Edit and Write tools"; !strings.Contains(engineering, want) {
+		t.Errorf("Engineering's workers' instructions lack %q", want)
+	}
+	coordination, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "any native permission prompt another agent waits at, which nobody can answer: tell the user"; !strings.Contains(coordination, want) {
+		t.Errorf("Coordination's leader's instructions lack %q", want)
+	}
+}

@@ -97,6 +97,14 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if _, err := Call(p.Socket, Request{Command: CommandHook, Session: string(credential), Payload: json.RawMessage(`{"hook_event_name": "Stop"}`)}); err != nil {
 		t.Errorf("a hook was refused: %v", err)
 	}
+	// Coordination's native prompts are the user's to answer, in the
+	// conversation, so none is reported as one nobody can answer.
+	if _, err := Call(p.Socket, Request{Command: CommandHook, Session: string(credential), Payload: json.RawMessage(`{"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "rm -rf build"}}`)}); err != nil {
+		t.Errorf("a permission request was refused: %v", err)
+	}
+	if status, err := Call(p.Socket, Request{Command: CommandStatus}); err != nil || len(status.Prompts) != 0 {
+		t.Errorf("the status shows the prompts %+v (%v), want none for Coordination's", status.Prompts, err)
+	}
 	for name, req := range map[string]Request{
 		"another credential": {Command: CommandHook, Session: "not-a-session", Payload: json.RawMessage(`{"hook_event_name": "Stop"}`)},
 		"no event":           {Command: CommandHook, Session: string(credential), Payload: json.RawMessage(`{}`)},
@@ -120,6 +128,9 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	first := readFrame(t, r)
 	if first.State == nil || first.State.Columns != 50 || first.State.Rows != 10 {
 		t.Fatalf("the first frame is %+v, want the 50 by 10 terminal's state", first)
+	}
+	if first.Prompts == nil || len(*first.Prompts) != 0 {
+		t.Errorf("the first frame carries the prompts %v, want the status line told there are none", first.Prompts)
 	}
 	if term, _ := vt.FromState(*first.State); !strings.Contains(term.String(), "leader up") {
 		t.Errorf("the attached screen shows %q", term.String())
@@ -155,12 +166,12 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	for _, e := range got {
 		kinds = append(kinds, strings.Fields(e)[0])
 	}
-	want := "daemon.started provider.installed session.started observation session.ended daemon.stopped"
+	want := "daemon.started provider.installed session.started observation observation session.ended daemon.stopped"
 	if strings.Join(kinds, " ") != want {
 		t.Errorf("the journal holds\n%s\nwant %s", strings.Join(got, "\n"), want)
 	}
-	if !strings.Contains(got[4], `"by":"signal"`) {
-		t.Errorf("the session's end is journaled as %s, want it ended by the signal that stopped the daemon", got[4])
+	if !strings.Contains(got[5], `"by":"signal"`) {
+		t.Errorf("the session's end is journaled as %s, want it ended by the signal that stopped the daemon", got[5])
 	}
 	// The session's guard lets it reach this daemon's socket, in this state
 	// directory, and no other.

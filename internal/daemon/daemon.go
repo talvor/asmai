@@ -170,9 +170,12 @@ type Response struct {
 	Journal   []store.Entry           `json:"journal,omitempty"`
 	Providers []store.ProviderInstall `json:"providers,omitempty"`
 	// Checks are the checks the last start ran.
-	Checks  []Check       `json:"checks,omitempty"`
-	Leaders []Leader      `json:"leaders,omitempty"`
-	Agents  []store.Agent `json:"agents,omitempty"`
+	Checks  []Check  `json:"checks,omitempty"`
+	Leaders []Leader `json:"leaders,omitempty"`
+	// Prompts are the native prompts agents wait at that nobody can
+	// answer.
+	Prompts []WaitingPrompt `json:"prompts,omitempty"`
+	Agents  []store.Agent   `json:"agents,omitempty"`
 	// Attached is the agent an attach follows, and Screen its screen when
 	// a snapshot was asked for.
 	Attached *Leader   `json:"attached,omitempty"`
@@ -461,7 +464,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.mu.Lock()
 		checks := d.lastChecks
 		d.mu.Unlock()
-		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates()})
+		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates(), Prompts: d.waitingPrompts()})
 	case CommandStart:
 		checks := d.ensureCoordination()
 		if !failed(checks) {

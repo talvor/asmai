@@ -566,9 +566,16 @@ func status(o *output, paths statedir.Paths) int {
 		checks = []daemon.Check{}
 	}
 	if o.json {
-		return o.printJSON(map[string]any{"daemon": runningJSON(*resp.Status), "leaders": resp.Leaders, "checks": checks, "state_dir": paths.Dir})
+		prompts := resp.Prompts
+		if prompts == nil {
+			prompts = []daemon.WaitingPrompt{}
+		}
+		return o.printJSON(map[string]any{"daemon": runningJSON(*resp.Status), "leaders": resp.Leaders, "prompts": prompts, "checks": checks, "state_dir": paths.Dir})
 	}
 	rows := append(runningRows(*resp.Status, paths), leaderRows(resp.Leaders)...)
+	for _, p := range resp.Prompts {
+		rows = append(rows, []string{"native prompt", p.String()})
+	}
 	failed := false
 	for _, c := range checks {
 		if !c.OK {

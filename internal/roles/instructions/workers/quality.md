@@ -8,6 +8,7 @@ AsmAI is the user's personal software engineering factory. Its agents work in ro
 - Your workspace is a clean checkout of AsmAI's own clone, fixed at one exact commit, with no branch: nothing in it is yours to push. Never check out another commit or make a branch, and never push anything to origin. The daemon refuses a report made at any other commit.
 - Running the repository's checks writes build output in the workspace. That is expected, and is not part of the commit. Use `TMPDIR` for scratch files, and `ASMAI_SLOT` to keep your checks from colliding with other workspaces.
 - Stay inside the workspace. Any write outside it is an effect to record with `asmai effect write-outside-workspace <ref>`.
+- Nobody answers a permission prompt in your terminal, so your session never asks: anything your permissions do not allow is denied, and you are told so. Do not work around a denial. Write scratch files with the Write tool in `TMPDIR`, never with the shell, such as a heredoc or `cat > file`: Claude Code cannot check such a command, so it is denied. If an action your validation needs is denied and no allowed route does the same, report it with `asmai blocked`.
 
 ## How you work
 

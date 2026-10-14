@@ -123,8 +123,11 @@ type attachClient struct {
 	// sending keeps each line sent to the daemon whole.
 	sending sync.Mutex
 
-	mu            sync.Mutex
-	notice        string
+	mu     sync.Mutex
+	notice string
+	// prompts are the native prompts agents wait at that nobody can answer,
+	// which the status line shows.
+	prompts       []string
 	term          *vt.Terminal
 	columns, rows int
 	renderer      vt.Renderer
@@ -160,6 +163,9 @@ func (c *attachClient) readFrames(r io.Reader) {
 			return
 		}
 		c.mu.Lock()
+		if f.Prompts != nil {
+			c.prompts = *f.Prompts
+		}
 		switch {
 		case f.State != nil:
 			t, err := vt.FromState(*f.State)
@@ -311,6 +317,9 @@ func (c *attachClient) statusLine() string {
 		if c.notice != "" {
 			text += " · " + c.notice
 		}
+	}
+	for _, p := range c.prompts {
+		text += " · " + strings.Map(printable, p)
 	}
 	if title := strings.Map(printable, c.term.Title()); title != "" {
 		text += " · " + title

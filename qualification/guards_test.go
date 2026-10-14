@@ -53,6 +53,12 @@ type guardSession struct {
 	noPromptForCurl    bool
 	commandInstead     map[int]string
 	environmentCommand *Command
+	// C49's: writeDenied denies the Write tool's write, heredocRuns lets the
+	// heredoc write its file, heredocAsks denies it as a non-interactive run
+	// denies a native prompt it cannot raise, notBlocked has the session not
+	// report itself blocked, and requestsPermission has its hooks report a
+	// native prompt.
+	writeDenied, heredocRuns, heredocAsks, notBlocked, requestsPermission bool
 }
 
 var codeWord = regexp.MustCompile(`Code word: (\S+)`)
@@ -85,9 +91,62 @@ func (g guardSession) ask(spec AskSpec) (Turn, error) {
 	return turn, nil
 }
 
+// deniedOutput is what the session is told of its retry outside the
+// sandbox: that dontAsk mode denied it, unless it failed otherwise.
+func deniedOutput(otherwise bool) string {
+	if otherwise {
+		return "requires approval"
+	}
+	return "Permission to use Bash has been denied because Claude Code is running in don't ask mode."
+}
+
 var listed = regexp.MustCompile("(?m)^\\d+\\. `(.*)`$")
 
+// unattended plays C49's turns: a write with the Write tool, and the same
+// content through a heredoc, with the session's hooks logged beside the
+// workspace.
+func (g guardSession) unattended(spec AskSpec) (Turn, error) {
+	log := []string{`{"hook_event_name":"SessionStart"}`}
+	if g.requestsPermission {
+		log = append(log, `{"hook_event_name":"PermissionRequest","tool_name":"Write"}`)
+	}
+	hooks, err := os.OpenFile(filepath.Join(filepath.Dir(spec.Dir), "marks", "hooks.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return Turn{}, err
+	}
+	defer hooks.Close()
+	hooks.WriteString(strings.Join(log, "\n") + "\n")
+	if strings.Contains(spec.Prompt, "With the Write tool") {
+		file := Command{Text: filepath.Join(spec.Dir, "test", "index.test.js")}
+		if g.writeDenied {
+			file.Denied, file.Failed, file.Output = true, true, "Permission to use Write has been denied because Claude Code is running in don't ask mode."
+		} else {
+			os.MkdirAll(filepath.Dir(file.Text), 0o755)
+			if err := os.WriteFile(file.Text, []byte(testFile), 0o644); err != nil {
+				return Turn{}, err
+			}
+		}
+		return Turn{Files: []Command{file}, Reply: "done"}, nil
+	}
+	c := Command{Text: "cat > test/heredoc.test.js <<'EOF'\n" + testFile + "EOF", Denied: true, Failed: true, Output: deniedOutput(g.heredocAsks)}
+	reply := "blocked"
+	if g.heredocRuns {
+		os.MkdirAll(filepath.Join(spec.Dir, "test"), 0o755)
+		if err := os.WriteFile(filepath.Join(spec.Dir, "test", "heredoc.test.js"), []byte(testFile), 0o644); err != nil {
+			return Turn{}, err
+		}
+		c, reply = Command{Text: c.Text}, "done"
+	}
+	if g.notBlocked {
+		reply = "done"
+	}
+	return Turn{Commands: []Command{c}, Reply: reply}, nil
+}
+
 func (g guardSession) guarded(spec AskSpec) (Turn, error) {
+	if strings.Contains(spec.Prompt, "With the Write tool") || strings.Contains(spec.Prompt, "heredoc.test.js") {
+		return g.unattended(spec)
+	}
 	var turn Turn
 	// commandInstead counts the commands of both of C37's turns together.
 	offset := 0
@@ -119,7 +178,7 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 				cmd.Run()
 			} else {
 				c.Failed, c.Output = true, "Read-only file system"
-				retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: "requires approval", Denied: !g.noPromptForOutside}
+				retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: deniedOutput(g.noPromptForOutside), Denied: !g.noPromptForOutside}
 			}
 		case strings.HasPrefix(text, "curl"):
 			if g.guardOff {
@@ -128,7 +187,7 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 				}
 			} else {
 				c.Failed, c.Output = true, "network is unavailable"
-				retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: "requires approval", Denied: !g.noPromptForCurl}
+				retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: deniedOutput(g.noPromptForCurl), Denied: !g.noPromptForCurl}
 			}
 		default:
 			if g.promptsForGit && strings.HasPrefix(text, "git push") {
@@ -217,7 +276,7 @@ func TestC37PassesWhenTheGuardKeepsWritesInTheWorkspaceAndLetsGitAndGhThrough(t 
 		t.Fatalf("C37 %s: %s", r.Outcome, r.Failure)
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"ran without a native prompt", "a write outside the workspace did not happen", "did not go through: the sandbox stopped it, and its retry outside the sandbox raised a native permission prompt", "was not loaded"} {
+	for _, want := range []string{"ran without a native prompt", "a write outside the workspace did not happen", "did not go through: the sandbox stopped it, and its retry outside the sandbox was denied in dontAsk mode, with no native prompt", "was not loaded"} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C37's evidence\n%s\ndoes not say %q", evidence, want)
 		}
@@ -233,21 +292,21 @@ func TestC37FailsWhenAWriteOutsideTheWorkspaceGoesThrough(t *testing.T) {
 
 func TestC37FailsWhenAnOutsideWriteFailsWithoutRaisingAPrompt(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{noPromptForOutside: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "did not raise a native permission prompt") {
-		t.Errorf("C37 %s: %q, want it to fail because the outside write did not raise a prompt", r.Outcome, r.Failure)
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "outside the workspace was not denied in dontAsk mode") {
+		t.Errorf("C37 %s: %q, want it to fail because the outside write was not denied", r.Outcome, r.Failure)
 	}
 }
 
 func TestC37FailsWhenCurlFailsWithoutRaisingAPrompt(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{noPromptForCurl: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "did not raise a native permission prompt") {
-		t.Errorf("C37 %s: %q, want it to fail because curl did not raise a prompt", r.Outcome, r.Failure)
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "does not allow was not denied in dontAsk mode") {
+		t.Errorf("C37 %s: %q, want it to fail because curl was not denied", r.Outcome, r.Failure)
 	}
 }
 
 func TestC37FailsWhenGitRaisesANativePrompt(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{promptsForGit: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "raised a native permission prompt, but the guard allows it") {
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "was denied, but the guard allows it") {
 		t.Errorf("C37 %s: %q, want it to fail because git was stopped", r.Outcome, r.Failure)
 	}
 }
@@ -332,5 +391,63 @@ func TestATurnReadsTheEventsClaudeCodePrints(t *testing.T) {
 	}
 	if _, err := parseTurn(strings.NewReader("not json\n")); err == nil {
 		t.Error("a line that is not JSON was accepted")
+	}
+}
+
+// The Write and Edit tools' calls are read as the files the session tried
+// to write, with what came of each, beside its shell commands.
+func TestATurnReadsTheFilesTheSessionWrote(t *testing.T) {
+	stream := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"/ws/a.js","content":"x"}},{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"ls"}},{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/elsewhere/b.js"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"w1","content":"written","is_error":false},{"type":"tool_result","tool_use_id":"b1","content":"a.js"},{"type":"tool_result","tool_use_id":"e1","content":"Permission to use Edit has been denied because Claude Code is running in don't ask mode.","is_error":true}]}}
+{"type":"result","subtype":"success","result":"blocked","permission_denials":[{"tool_name":"Edit","tool_use_id":"e1","tool_input":{}}]}
+`
+	turn, err := parseTurn(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turn.Commands) != 1 || turn.Commands[0].Text != "ls" || turn.Commands[0].Output != "a.js" {
+		t.Errorf("the commands are %+v, want ls alone", turn.Commands)
+	}
+	if len(turn.Files) != 2 {
+		t.Fatalf("the files are %+v, want the write and the edit", turn.Files)
+	}
+	if f := turn.Files[0]; f.Text != "/ws/a.js" || f.Output != "written" || f.Failed || f.Denied || deniedWithoutPrompt(f) {
+		t.Errorf("the write is %+v", f)
+	}
+	if f := turn.Files[1]; f.Text != "/elsewhere/b.js" || !f.Failed || !deniedWithoutPrompt(f) {
+		t.Errorf("the edit is %+v, want it denied in dontAsk mode", f)
+	}
+}
+
+func TestC49PassesWhenAWorkerWritesWithTheWriteToolAndItsHeredocIsDeniedWithoutAPrompt(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{}), "C49")
+	if r.Outcome != Passed {
+		t.Fatalf("C49 %s: %s", r.Outcome, r.Failure)
+	}
+	evidence := strings.Join(r.Evidence, "\n")
+	for _, want := range []string{"with the Write tool, with no native prompt", "told it was denied in dontAsk mode", "reported itself blocked", "no PermissionRequest"} {
+		if !strings.Contains(evidence, want) {
+			t.Errorf("C49's evidence\n%s\ndoes not say %q", evidence, want)
+		}
+	}
+}
+
+func TestC49FailsWhenAWorkerCannotPromptlesslyLeaveItsWorkspaceSafe(t *testing.T) {
+	for name, c := range map[string]struct {
+		session guardSession
+		failure string
+	}{
+		"the Write tool denied":            {guardSession{writeDenied: true}, "was denied or failed"},
+		"the heredoc allowed":              {guardSession{heredocRuns: true}, "the heredoc wrote its file"},
+		"the heredoc at a native prompt":   {guardSession{heredocAsks: true}, "would wait at a native prompt nobody can answer"},
+		"the session not reported blocked": {guardSession{notBlocked: true}, "not that it was blocked"},
+		"a native prompt raised":           {guardSession{requestsPermission: true}, "raised a native permission prompt"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := result(t, guardHarness(t, c.session), "C49")
+			if r.Outcome != Failed || !strings.Contains(r.Failure, c.failure) {
+				t.Errorf("C49 %s: %q, want it to fail with %q", r.Outcome, r.Failure, c.failure)
+			}
+		})
 	}
 }

@@ -176,7 +176,13 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if err := json.Unmarshal([]byte(started.Args[1]), &settings); err != nil {
 		t.Fatal(err)
 	}
-	if want := map[string][]string{"allowUnixSockets": {p.Socket}}; len(settings.Sandbox.Network) != 1 || !slices.Equal(settings.Sandbox.Network["allowUnixSockets"], want["allowUnixSockets"]) {
+	// The guard names the socket by the path it resolves to, as macOS's
+	// temporary directory is under a symlink.
+	stateDir, err := filepath.EvalSymlinks(filepath.Dir(p.Socket))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string][]string{"allowUnixSockets": {filepath.Join(stateDir, filepath.Base(p.Socket))}}; len(settings.Sandbox.Network) != 1 || !slices.Equal(settings.Sandbox.Network["allowUnixSockets"], want["allowUnixSockets"]) {
 		t.Errorf("the session's sandbox network settings are %v, want %v", settings.Sandbox.Network, want)
 	}
 }

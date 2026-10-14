@@ -229,8 +229,13 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 			t.Errorf("%s was started with the settings %s, want the write guard on and the native prompts kept", agent, argValue(args, "--settings"))
 		}
 		// The guard lets commands reach the daemon's socket, in this state
-		// directory, and no other.
-		if want := filepath.Join(stateDir, "daemon.sock"); len(sb.Network) != 1 || !slices.Equal(sb.Network["allowUnixSockets"], []string{want}) {
+		// directory, and no other, by the path it resolves to, as macOS's
+		// temporary directory is under a symlink.
+		resolvedStateDir, err := filepath.EvalSymlinks(stateDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := filepath.Join(resolvedStateDir, "daemon.sock"); len(sb.Network) != 1 || !slices.Equal(sb.Network["allowUnixSockets"], []string{want}) {
 			t.Errorf("%s's write guard lets commands reach %v, want only the Unix socket %s", agent, sb.Network, want)
 		}
 		wantWritable := []string(nil)

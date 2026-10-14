@@ -15,9 +15,10 @@ import (
 
 // recordTrust is the fake's stand-in for Claude Code recording the user's
 // trust of the folder it runs in, by its resolved path, in ~/.claude.json:
-// it keeps every folder trusted so far.
+// it keeps every folder trusted so far, and writes the record beside it and
+// moves it into place, as Claude Code does, so it is never read half written.
 var recordTrust = func() string {
-	command := `pwd -P >> "$ASMAI_TEST_DIR/trusted" && { printf '{"projects": {'; sep=; while read -r d; do printf '%s"%s": {"hasTrustDialogAccepted": true}' "$sep" "$d"; sep=', '; done < "$ASMAI_TEST_DIR/trusted"; printf '}}'; } > "$HOME/.claude.json"`
+	command := `pwd -P >> "$ASMAI_TEST_DIR/trusted" && { printf '{"projects": {'; sep=; while read -r d; do printf '%s"%s": {"hasTrustDialogAccepted": true}' "$sep" "$d"; sep=', '; done < "$ASMAI_TEST_DIR/trusted"; printf '}}'; } > "$HOME/.claude.json.$$" && mv "$HOME/.claude.json.$$" "$HOME/.claude.json"`
 	step, _ := json.Marshal(map[string]any{"run": command, "status": 0})
 	return string(step)
 }()

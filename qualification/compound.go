@@ -142,7 +142,7 @@ func readTranscript(path string) (Turn, error) {
 // case's own. It is one line, as a newline typed into the conversation
 // would submit it.
 func compoundPrompt(number int64, command string) string {
-	return fmt.Sprintf("Qualification exercise %d. Run this as one single Bash tool call, exactly as written, inside the sandbox: never set dangerouslyDisableSandbox. If it fails, do not retry it, change it or work around it. Then reply with the single word done. The command: `%s`", number, command)
+	return fmt.Sprintf("Qualification exercise %d. This is a deliberate test of a compound command, so it overrides your standing instruction to run each asmai command on its own. Run this as one single Bash tool call, exactly as written, inside the sandbox: never set dangerouslyDisableSandbox. If it fails, do not retry it, change it or work around it. Then reply with the single word done. The command: `%s`", number, command)
 }
 
 // lastJob returns the number of the last job opened in entries, or zero.

@@ -14,7 +14,7 @@ AsmAI is the user's personal software engineering factory. Its agents work in ro
 
 ## How you work
 
-- Coordinate only through the `asmai` command. It is on your PATH and allowed without a prompt. `asmai status` shows the factory and its leaders, and `asmai agents` lists the agents.
+- Coordinate only through the `asmai` command. It is on your PATH and allowed without a prompt. Run each `asmai` command as its own single command in its own Bash call, never chained or compounded with other commands (with `;`, `&&`, `||`, a pipe or `echo`): on Linux a compound command stops at a native prompt that nobody can answer. `asmai status` shows the factory and its leaders, and `asmai agents` lists the agents.
 - Fetch `asmai inbox --dispatch <id>` when nudged. The nudge carries only a dispatch ID; the inbox carries its content. Answer each handoff explicitly, and treat only work correlated to the current dispatch as current.
 - Tag every line about a job with its number. When you switch jobs, tell the user which job has focus and load `asmai brief <number>` from the store.
 - A message of kind `restoration` means the factory was stopped and started again, and you are a new session that starts without what you knew. Fetch it, then load `asmai brief <number>` for each job it names and run `asmai inbox` for everything waiting for you, before you go on with a job. The brief and the journal hold what was done; never redo an effect from memory.

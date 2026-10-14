@@ -321,3 +321,25 @@ func TestEngineeringsInstructionsHandleRedCIWithAtMostOneJudgedReRunOrAFix(t *te
 		}
 	}
 }
+
+func TestEveryAgentIsToldToRunEachAsmaiCommandAsItsOwnBashCall(t *testing.T) {
+	want := "Run each `asmai` command as its own single command in its own Bash call, never chained or compounded with other commands"
+	for _, role := range []string{Coordination, Engineering, Quality} {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(leader, want) {
+			t.Errorf("%s's leader's instructions lack %q", Title(role), want)
+		}
+	}
+	for _, role := range []string{Engineering, Quality} {
+		worker, err := WorkerInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(worker, want) {
+			t.Errorf("%s's workers' instructions lack %q", Title(role), want)
+		}
+	}
+}

@@ -297,7 +297,9 @@ func (e *restartEvidence) problems(stoppedAgents []string) (problems []string, w
 // restored in a new generation and delivered a dispatch by its exact nudge in
 // it, and that nothing which stopped before the restart was changed after it.
 // What the stop did to workers, and the results they submitted, is read from
-// the same journal when the leaders gave any.
+// the same journal when the leaders gave any. Last, it requires a compound
+// asmai command a leader runs after the start to reach the daemon from inside
+// the sandbox with no native prompt (compoundAsmaiReachesTheDaemon).
 func (h *Harness) c19(ctx context.Context, f *Factory, r *Result) error {
 	e, err := h.exerciseHandoff(ctx, f, r)
 	if err != nil {
@@ -382,7 +384,7 @@ func (h *Harness) c19(ctx context.Context, f *Factory, r *Result) error {
 	for _, result := range evidence.results {
 		r.observe("the result of assignment %d is tied to dispatch %d, which gave %s its assignment", result.Assignment, result.Dispatch, result.Agent)
 	}
-	return nil
+	return h.compoundAsmaiReachesTheDaemon(ctx, f, r, evidence)
 }
 
 // lastStop returns the ID of the last daemon stop in entries, or zero.

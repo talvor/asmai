@@ -4,6 +4,8 @@ package providers
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -122,6 +124,49 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 	}
 }
 
+func TestASessionsWriteGuardLetsItReachTheDaemonsSocketAndNoOther(t *testing.T) {
+	// The socket of a state directory ASMAI_STATE_DIR names, not the
+	// default one.
+	socket := "/Users/it's/scratch/asmai-state/asmai.sock"
+	var settings struct {
+		Sandbox map[string]json.RawMessage `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Writable: []string{"/state/tmp"}, Socket: socket})), &settings); err != nil {
+		t.Fatal(err)
+	}
+	var network map[string]json.RawMessage
+	if err := json.Unmarshal(settings.Sandbox["network"], &network); err != nil {
+		t.Fatalf("the sandbox's network settings %s: %v", settings.Sandbox["network"], err)
+	}
+	if len(network) != 1 {
+		t.Errorf("the sandbox's network settings are %s, want only the Unix sockets it allows", settings.Sandbox["network"])
+	}
+	var sockets []string
+	if err := json.Unmarshal(network["allowUnixSockets"], &sockets); err != nil {
+		t.Fatalf("the sandbox's Unix sockets %s: %v", network["allowUnixSockets"], err)
+	}
+	if !slices.Equal(sockets, []string{socket}) {
+		t.Errorf("the sandbox allows the Unix sockets %q, want exactly the daemon's, %q", sockets, socket)
+	}
+	// The socket is the only allowance it adds: the guard is otherwise as
+	// it is without one.
+	var without struct {
+		Sandbox map[string]json.RawMessage `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Writable: []string{"/state/tmp"}})), &without); err != nil {
+		t.Fatal(err)
+	}
+	delete(settings.Sandbox, "network")
+	if len(settings.Sandbox) != len(without.Sandbox) {
+		t.Errorf("with the daemon's socket the sandbox's settings are %v, want those without it, %v, and the socket", settings.Sandbox, without.Sandbox)
+	}
+	for key, value := range without.Sandbox {
+		if string(settings.Sandbox[key]) != string(value) {
+			t.Errorf("with the daemon's socket the sandbox's %s is %s, want %s as without it", key, settings.Sandbox[key], value)
+		}
+	}
+}
+
 func TestASessionsEnvironmentHasNoProviderAPIKey(t *testing.T) {
 	environ := []string{
 		"HOME=/home/u", "PATH=/usr/bin", "TERM=screen", "ANTHROPIC_API_KEY=x", "ANTHROPIC_AUTH_TOKEN=x",
@@ -166,5 +211,32 @@ func TestAResumedSessionIsStartedWithTheSameSettingsAndTheSessionToContinue(t *t
 	}
 	if len(fresh) != 9 {
 		t.Errorf("a new session's command line has %d arguments, want it unchanged by resuming: %q", len(fresh), fresh)
+	}
+}
+
+func TestASessionsWriteGuardAllowsTheDaemonsSocketByItsResolvedPath(t *testing.T) {
+	// Claude Code's guard checks the path a connection resolves to, so a
+	// state directory under a symlink, such as macOS's /tmp, is allowed by
+	// the directory it links to.
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "state")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Sandbox struct {
+			Network struct {
+				AllowUnixSockets []string `json:"allowUnixSockets"`
+			} `json:"network"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Socket: filepath.Join(link, "daemon.sock")})), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join(real, "daemon.sock")}; !slices.Equal(settings.Sandbox.Network.AllowUnixSockets, want) {
+		t.Errorf("the sandbox allows the Unix sockets %q, want the daemon's by its resolved path, %q", settings.Sandbox.Network.AllowUnixSockets, want)
 	}
 }

@@ -546,7 +546,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 		return err
 	}
 	hook := providers.HookCommand(d.cfg.Paths.Executable)
-	guard := providers.WriteGuard{Writable: launch.writable}
+	guard := providers.WriteGuard{Writable: launch.writable, Socket: d.cfg.Paths.Socket}
 	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, guard)
 	if launch.resume != "" {
 		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, guard, launch.resume)

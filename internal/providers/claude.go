@@ -43,12 +43,19 @@ type WriteGuard struct {
 	// system's temporary directory that a guarded command may write, such as
 	// a worker's own temporary directory.
 	Writable []string
+	// Socket is the daemon's Unix socket, the only Unix socket a guarded
+	// command may connect to, so that an `asmai` command the guard does not
+	// leave alone, such as one in a compound command, still reaches the
+	// daemon. Claude Code allows it on macOS only: on Linux its guard cannot
+	// allow one socket, so a guarded command reaches none. Empty allows none.
+	Socket string
 }
 
 // ClaudeCodeSettings returns the settings an agent session of Claude Code is
 // given with --settings: a hook for each of HookEvents that runs
 // hookCommand, the permission rules for `asmai` and selected git and gh operations, and the
-// write guard guard describes, which is always on: Claude Code does not start
+// write guard guard describes, which is always on and lets a guarded command
+// connect to no Unix socket but the daemon's: Claude Code does not start
 // the session when it cannot guard it. They keep Claude Code's native
 // permission prompts on, whatever the user's own settings say: the default
 // permission mode, with bypassing permissions disabled.
@@ -85,6 +92,16 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard) string {
 	}
 	if len(guard.Writable) > 0 {
 		sandbox["filesystem"] = map[string]any{"allowWrite": guard.Writable}
+	}
+	if guard.Socket != "" {
+		// Claude Code's guard checks the path a connection resolves to, so
+		// a socket under a symlink, such as macOS's /tmp, is allowed by the
+		// directory it links to.
+		socket := guard.Socket
+		if dir, err := filepath.EvalSymlinks(filepath.Dir(socket)); err == nil {
+			socket = filepath.Join(dir, filepath.Base(socket))
+		}
+		sandbox["network"] = map[string]any{"allowUnixSockets": []string{socket}}
 	}
 	settings := map[string]any{
 		"hooks": hooks,

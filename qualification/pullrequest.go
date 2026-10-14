@@ -60,7 +60,7 @@ func (h *Harness) c42(ctx context.Context, f *Factory, r *Result) (err error) {
 	if err != nil {
 		return err
 	}
-	work, err := git(ctx, clone, "-c", "user.name=AsmAI Qualification", "-c", "user.email=qualification@example.invalid", "-c", "commit.gpgsign=false", "commit-tree", start+"^{tree}", "-p", start, "-m", "C42: the job branch's work")
+	work, err := gitAs(ctx, clone, harnessAuthor, "commit-tree", start+"^{tree}", "-p", start, "-m", "C42: the job branch's work")
 	if err != nil {
 		return err
 	}

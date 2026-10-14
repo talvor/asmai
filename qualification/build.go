@@ -74,6 +74,26 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
+// author is who makes a commit, tag or merge in a disposable repository: the
+// harness's fixtures, or a test's.
+type author struct{ name, email string }
+
+// harnessAuthor makes the harness's own commits.
+var harnessAuthor = author{"AsmAI Qualification", "qualification@example.invalid"}
+
+// config is the git configuration a's commits run with: a's identity, and no
+// signing whatever the user's configuration says, since a disposable
+// repository's commits must not depend on a key or a gpg program the user
+// signs their own with.
+func (a author) config() []string {
+	return []string{"-c", "user.name=" + a.name, "-c", "user.email=" + a.email, "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}
+}
+
+// gitAs runs git in dir as a, never signing.
+func gitAs(ctx context.Context, dir string, a author, args ...string) (string, error) {
+	return git(ctx, dir, append(a.config(), args...)...)
+}
+
 // build exports commit from repo into scratch, so that exactly the commit is
 // built whatever the working tree holds, and builds asmai from it as a
 // development build, as `make build` does. It reads the commit's own pins

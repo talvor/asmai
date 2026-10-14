@@ -9,14 +9,17 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 )
 
 // repoAdd registers the repository source names, as name when the user chose
 // one. The daemon makes AsmAI's clone, writes the configuration entry and
-// records it. A source that is a path on this host is given to the daemon
-// absolute, because the daemon does not run where this command does.
+// records it. It says when Claude Code does not trust the clone yet, which
+// `asmai setup` has the user trust. A source that is a path on this host is
+// given to the daemon absolute, because the daemon does not run where this
+// command does.
 func repoAdd(o *output, paths statedir.Paths, source, name string) int {
 	if _, err := os.Stat(source); err == nil {
 		if source, err = filepath.Abs(source); err != nil {
@@ -31,13 +34,22 @@ func repoAdd(o *output, paths statedir.Paths, source, name string) int {
 		return o.fail(fmt.Errorf("the daemon did not answer with the repository it registered"))
 	}
 	r := *resp.Repository
+	// Workers start in worktrees of the clone, which Claude Code trusts only
+	// once the user trusts the clone itself, with `asmai setup` (ADR 0011).
+	trusted := false
+	if home, err := os.UserHomeDir(); err == nil {
+		trusted, _ = providers.Trusted(providers.ClaudeCodeRecord(home, os.Getenv), r.Clone)
+	}
 	if o.json {
-		return o.printJSON(map[string]any{"registered": true, "repository": r})
+		return o.printJSON(map[string]any{"registered": true, "repository": r, "trusted": trusted})
 	}
 	fmt.Fprintf(o.stdout, "Registered %s, and made AsmAI's clone of it from its origin.\n", r.Name)
 	o.table(repositoryRows(r))
 	if r.Location != "" {
 		fmt.Fprintf(o.stdout, "Your own checkout is recorded but never used for work.\n")
+	}
+	if !trusted {
+		fmt.Fprintf(o.stdout, "Claude Code does not trust the clone yet, so no worker can start in a workspace of %s: run `asmai setup`, which opens Claude Code in %s for you to trust it.\n", r.Name, r.Clone)
 	}
 	return 0
 }

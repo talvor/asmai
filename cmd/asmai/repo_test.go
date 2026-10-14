@@ -5,6 +5,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,12 +117,13 @@ func TestRepositoriesAreRegisteredListedShownAndRemovedEndToEnd(t *testing.T) {
 	var added struct {
 		Registered bool           `json:"registered"`
 		Repository repositoryJSON `json:"repository"`
+		Trusted    bool           `json:"trusted"`
 	}
 	asmaiJSON(t, &added, "repo", "add", "fixture")
 	clone := filepath.Join(stateDir, "repositories", "fixture")
 	want := repositoryJSON{Name: "fixture", Location: checkout, Origin: origin, DefaultBranch: "trunk", Clone: clone}
-	if !added.Registered || added.Repository != want {
-		t.Fatalf("asmai repo add printed %+v, want fixture registered as %+v", added, want)
+	if !added.Registered || added.Repository != want || !added.Trusted {
+		t.Fatalf("asmai repo add printed %+v, want fixture registered as %+v, its clone trusted", added, want)
 	}
 
 	// It is recorded in the configuration file, beside what was there, and
@@ -161,11 +163,17 @@ func TestRepositoriesAreRegisteredListedShownAndRemovedEndToEnd(t *testing.T) {
 	}
 
 	// The same repository, by URL and under another name, has no checkout.
+	// Claude Code does not trust its new clone yet, which the user is told
+	// to have `asmai setup` trust.
+	second := repositoryJSON{Name: "second", Origin: "file://" + origin, DefaultBranch: "trunk", Clone: filepath.Join(stateDir, "repositories", "second")}
+	stdout, stderr, code := runAsmai(t, "repo", "add", "file://"+origin, "--name", "second")
+	if code != 0 || !strings.Contains(stdout, "Claude Code does not trust the clone yet") || !strings.Contains(stdout, "run `asmai setup`, which opens Claude Code in "+second.Clone) {
+		t.Errorf("registering by URL exited %d printing %q, %q, want it to say to trust the new clone with `asmai setup`", code, stdout, stderr)
+	}
 	var byURL struct {
 		Repository repositoryJSON `json:"repository"`
 	}
-	asmaiJSON(t, &byURL, "repo", "add", "file://"+origin, "--name", "second")
-	second := repositoryJSON{Name: "second", Origin: "file://" + origin, DefaultBranch: "trunk", Clone: filepath.Join(stateDir, "repositories", "second")}
+	asmaiJSON(t, &byURL, "repo", "show", "second")
 	if byURL.Repository != second {
 		t.Errorf("registering by URL recorded %+v, want %+v", byURL.Repository, second)
 	}
@@ -174,7 +182,7 @@ func TestRepositoriesAreRegisteredListedShownAndRemovedEndToEnd(t *testing.T) {
 	}
 
 	// The user's tables show what was recorded, and the clone's path.
-	stdout, stderr, code := runAsmai(t, "repo", "list")
+	stdout, stderr, code = runAsmai(t, "repo", "list")
 	if code != 0 {
 		t.Fatalf("asmai repo list exited %d: %s", code, stderr)
 	}
@@ -205,9 +213,18 @@ func TestRepositoriesAreRegisteredListedShownAndRemovedEndToEnd(t *testing.T) {
 		t.Errorf("registering fixture again exited %d printing %q, want it refused", code, stderr)
 	}
 
-	// The registry survives the factory stopping and starting.
+	// The registry survives the factory stopping and starting. A start
+	// refuses while Claude Code does not trust a clone a worker would start
+	// in a worktree of, naming `asmai setup`, and starts once it does.
 	if _, stderr, code := runAsmai(t, "stop"); code != 0 {
 		t.Fatalf("asmai stop exited %d: %s", code, stderr)
+	}
+	if stderr := startUnready(t); !strings.Contains(stderr, "Claude Code does not trust "+second.Clone) || !strings.Contains(stderr, "asmai setup") {
+		t.Errorf("asmai start with the clone %s untrusted printed %q, want the check naming it and `asmai setup`", second.Clone, stderr)
+	}
+	record := strings.TrimSuffix(trustRecord(stateDir), "}}") + fmt.Sprintf(`, %q: {"hasTrustDialogAccepted": true}}}`, second.Clone)
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if _, stderr, code := runAsmai(t, "start"); code != 0 {
 		t.Fatalf("asmai start exited %d: %s", code, stderr)

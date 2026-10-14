@@ -375,6 +375,75 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	}
 }
 
+// A registered repository's clone is trusted at setup too: a worker starts
+// in a git worktree of it, which on the pinned Claude Code only the clone's
+// own trust covers. Setup run after `asmai repo add` asks only about the new
+// clone, explaining why, and run again finds every folder trusted.
+func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
+	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting, "fixture": trusting})
+	startUnready(t)
+	s := setupInTerminal(t)
+	s.confirmInstall(t)
+	s.trust(t, filepath.Join(stateDir, "agents"))
+	s.trust(t, filepath.Join(stateDir, "workspaces"))
+	if code := s.exited(t); code != 0 {
+		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+	}
+
+	origin := filepath.Join(t.TempDir(), "fixture.git")
+	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
+	work := t.TempDir()
+	gitIn(t, work, "clone", "--quiet", origin, "fixture")
+	gitIn(t, filepath.Join(work, "fixture"), "commit", "--allow-empty", "-m", "initial")
+	gitIn(t, filepath.Join(work, "fixture"), "push", "--quiet", "origin", "HEAD:main")
+	if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
+		t.Fatalf("repo add: %s", stderr)
+	}
+	clone := filepath.Join(stateDir, "repositories", "fixture")
+
+	again := setupInTerminal(t)
+	again.trust(t, clone)
+	if code := again.exited(t); code != 0 {
+		t.Fatalf("asmai setup after repo add exited %d, printing\n%s", code, again.printed())
+	}
+	out := again.printed()
+	for prefix, want := range map[string]string{
+		"trust agents/:":               "trust agents/: already done.",
+		"trust workspaces/:":           "trust workspaces/: already done.",
+		"trust repositories/fixture/:": "trust repositories/fixture/: done. Claude Code trusts " + clone,
+	} {
+		if got := lineSaying(out, prefix); !strings.HasPrefix(got, want) {
+			t.Errorf("setup after repo add reported %q, want %q", got, want)
+		}
+	}
+	for _, want := range []string{
+		"You are needed: trust " + clone,
+		"Workers start in git worktrees of this clone, one per assignment, and",
+		"Claude Code trusts a worktree only when it trusts the clone itself.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("setup after repo add printed\n%s\nwant it to say %q", out, want)
+		}
+	}
+	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces", "fixture"}) {
+		t.Errorf("Claude Code was opened in %q, want agents and workspaces, then only the new clone", got)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"setup", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("asmai setup --json exited %d: %s%s", code, stdout.String(), stderr.String())
+	}
+	var result struct {
+		Steps []setupStep `json:"steps"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
+	}
+	if len(result.Steps) != 6 || result.Steps[5].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+		t.Errorf("asmai setup --json reported %+v, want six steps already done, the clone's last", result.Steps)
+	}
+}
+
 // Answering "No, exit" makes setup exit 1 naming the folder still untrusted.
 // The next run asks only about that folder.
 func TestAnsweringNoMakesSetupNameTheUntrustedFolderAndTheNextRunAsksOnlyAboutIt(t *testing.T) {

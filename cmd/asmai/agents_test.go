@@ -69,9 +69,10 @@ func trustFactory(t *testing.T, stateDir string) {
 	}
 }
 
-// trustRecord is the record trustFactory writes.
+// trustRecord is the record trustFactory writes: it trusts the agents and
+// workspaces folders and the clone of the tests' repository, fixture.
 func trustRecord(stateDir string) string {
-	return fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces"))
+	return fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces"), filepath.Join(stateDir, "repositories", "fixture"))
 }
 
 // startUnready runs `asmai start` in a factory not ready to run agents: it

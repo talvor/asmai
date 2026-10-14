@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxSocketPath is the longest path a Unix socket can be bound to on every
@@ -131,4 +132,25 @@ func (p Paths) MakeFolders() (made bool, err error) {
 		}
 	}
 	return made, nil
+}
+
+// Clones returns AsmAI's clone of each registered repository, in
+// Repositories, by name: every directory there but a registration's
+// unfinished clone, whose name starts with a dot. It returns none when
+// Repositories is missing.
+func (p Paths) Clones() ([]string, error) {
+	entries, err := os.ReadDir(p.Repositories)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading the registered repositories' clones: %w", err)
+	}
+	var clones []string
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			clones = append(clones, filepath.Join(p.Repositories, entry.Name()))
+		}
+	}
+	return clones, nil
 }

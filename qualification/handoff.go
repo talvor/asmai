@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -57,7 +58,16 @@ func (h *Harness) prepareHandoffRepository(ctx context.Context, f *Factory) erro
 	if code != 0 && !strings.Contains(stderr, "already registered") {
 		return fmt.Errorf("registering qualification fixture: %s%s", out, stderr)
 	}
-	return nil
+	// A worker starts in a worktree of the clone, which Claude Code trusts
+	// only once the user trusts the clone itself, with asmai setup.
+	if f.paths.Dir != h.QualificationPaths.Dir {
+		return nil
+	}
+	record := providers.ClaudeCodeRecord(envLookup(f.env, "HOME"), func(name string) string { return envLookup(f.env, name) })
+	if ok, err := providers.Trusted(record, filepath.Join(f.paths.Repositories, qualificationRepository)); err != nil || ok {
+		return err
+	}
+	return h.setup(ctx, f)
 }
 
 type handoffEvidence struct {

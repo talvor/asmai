@@ -265,12 +265,28 @@ const trustName = "directory trust"
 
 // trustCheck checks that Claude Code's record holds the user's trust of the
 // directories every agent starts in: the agents directory, which holds the
-// leaders' directories, and the workspaces directory. An agent started in a
+// leaders' directories, the workspaces directory, and AsmAI's clone of each
+// registered repository, whose trust covers every workspace checked out from
+// it, as the workspaces directory's does not. An agent started in a
 // directory Claude Code does not trust waits at its question about trusting
 // the folder, which only the user can answer (ADR 0011).
 func (d *daemon) trustCheck() Check {
+	dirs := []string{d.cfg.Paths.Agents, d.cfg.Paths.Workspaces}
+	if d.store != nil {
+		registered, err := d.store.Repositories()
+		if err != nil {
+			return Check{Name: trustName, Problem: fmt.Sprintf("reading the registered repositories: %v", err), Fix: "run `asmai start` again"}
+		}
+		// A clone that is missing has no workspace to start a worker in, and
+		// `asmai setup` has none to trust.
+		for _, r := range registered {
+			if _, err := os.Stat(r.Clone); err == nil {
+				dirs = append(dirs, r.Clone)
+			}
+		}
+	}
 	var untrusted []string
-	for _, dir := range []string{d.cfg.Paths.Agents, d.cfg.Paths.Workspaces} {
+	for _, dir := range dirs {
 		if err := d.trusted(dir); err != nil {
 			var notTrusted *untrustedError
 			if !errors.As(err, &notTrusted) {
@@ -280,7 +296,7 @@ func (d *daemon) trustCheck() Check {
 				}
 				return Check{Name: trustName, Problem: err.Error(), Fix: fix}
 			}
-			untrusted = append(untrusted, dir)
+			untrusted = append(untrusted, notTrusted.folder)
 		}
 	}
 	if len(untrusted) == 0 {
@@ -291,12 +307,17 @@ func (d *daemon) trustCheck() Check {
 		Fix:     "run `asmai setup`, which opens Claude Code there for you to trust it"}
 }
 
-// untrustedError is a directory Claude Code's record does not trust.
+// untrustedError is a directory Claude Code's record does not trust, and
+// the folder whose trust Claude Code looks for, when that is another: the
+// main repository a workspace is checked out from.
 type untrustedError struct {
-	dir string
+	dir, folder string
 }
 
 func (e *untrustedError) Error() string {
+	if e.folder != e.dir {
+		return fmt.Sprintf("Claude Code does not trust %s, the repository %s is checked out from, so the agent would wait at its question about trusting the folder; run `asmai setup`, which opens Claude Code there for you to trust it", e.folder, e.dir)
+	}
 	return fmt.Sprintf("Claude Code does not trust %s, so the agent would wait at its question about trusting the folder; run `asmai setup`", e.dir)
 }
 
@@ -312,7 +333,8 @@ func (d *daemon) trusted(dir string) error {
 		return fmt.Errorf("reading Claude Code's record of directory trust: %w", err)
 	}
 	if !ok {
-		return &untrustedError{dir: dir}
+		folder, _ := providers.TrustFolder(dir)
+		return &untrustedError{dir: filepath.Clean(dir), folder: folder}
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -48,10 +49,11 @@ type setupStep struct {
 // setup is the first run: it writes a configuration file staffing every role
 // when there is none, makes the state directory's folders, installs the
 // pinned Claude Code once the user confirms, and opens it in the agents and
-// workspaces folders in the user's own terminal, for the user to trust each
-// (ADR 0011). Each of its stages is headed and says what it is about to do;
-// each step is skipped when it is already done, and reports one line, done,
-// already done, or failed before the error. Before opening Claude Code in a
+// workspaces folders and in each registered repository's clone, in the
+// user's own terminal, for the user to trust each (ADR 0011). Each of its
+// stages is headed and says what it is about to do; each step is skipped
+// when it is already done, and reports one line, done, already done, or
+// failed before the error. Before opening Claude Code in a
 // folder, setup says how to answer its question and waits for the user to
 // agree, on a terminal: it opens none without one. An existing
 // configuration file is never changed: its problems are only reported.
@@ -182,10 +184,15 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 		report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 	}
 
-	stage(4, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, and the trust covers every folder below them.", plan.Title))
+	stage(4, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
 	record := providers.ClaudeCodeRecord(home, os.Getenv)
-	for _, dir := range []string{paths.Agents, paths.Workspaces} {
-		step := "trust " + filepath.Base(dir) + "/"
+	current = "trust"
+	clones, err := paths.Clones()
+	if err != nil {
+		return fail(err)
+	}
+	for _, dir := range append([]string{paths.Agents, paths.Workspaces}, clones...) {
+		step := "trust " + trustStep(paths, dir)
 		current = step
 		trusted, err := providers.Trusted(record, dir)
 		if err != nil {
@@ -198,7 +205,7 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 		if in, ok := stdin.(*os.File); !ok || !term.IsTerminal(int(in.Fd())) {
 			return fail(fmt.Errorf("trusting %s needs you at a terminal, to answer %s's question there; setup did not open %s. Run `asmai setup` in a terminal", dir, plan.Title, plan.Title))
 		}
-		explainTrust(w, plan, dir)
+		explainTrust(w, plan, dir, slices.Contains(clones, dir))
 		if !agreeToTrust(w, stdin, dir) {
 			report(step, stepStopped, fmt.Sprintf("You stopped setup before %s opened, so %s is still untrusted", plan.Title, dir))
 			return fail(fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai setup` again when you are ready to answer its question", plan.Title, dir))
@@ -229,17 +236,23 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 }
 
 // explainTrust tells the user, before setup opens the pinned Claude Code in
-// dir, why dir is to be trusted, what Claude Code will ask, which answer to
-// choose, and what the other answer does.
-func explainTrust(w io.Writer, plan providers.Plan, dir string) {
-	why := "every leader's directory is made in it"
-	if filepath.Base(dir) == "workspaces" {
-		why = "every assignment's workspace is made in it"
+// dir, a registered repository's clone when clone is set, why dir is to be
+// trusted, what Claude Code will ask, which answer to choose, and what the
+// other answer does.
+func explainTrust(w io.Writer, plan providers.Plan, dir string, clone bool) {
+	why := []string{"Agents start in this folder: every leader's directory is made in it."}
+	switch {
+	case clone:
+		why = []string{
+			"Workers start in git worktrees of this clone, one per assignment, and",
+			fmt.Sprintf("%s trusts a worktree only when it trusts the clone itself.", plan.Title),
+		}
+	case filepath.Base(dir) == "workspaces":
+		why = []string{"Agents start in this folder: every assignment's workspace is made in it."}
 	}
 	rule := "  +" + strings.Repeat("-", 72)
-	lines := []string{
-		fmt.Sprintf("You are needed: trust %s", dir),
-		fmt.Sprintf("Agents start in this folder: %s.", why),
+	lines := append([]string{fmt.Sprintf("You are needed: trust %s", dir)}, why...)
+	lines = append(lines,
 		"",
 		fmt.Sprintf("Next, setup opens AsmAI's pinned %s %s there. It asks whether", plan.Title, plan.Version),
 		"you trust this folder, with two answers:",
@@ -254,12 +267,21 @@ func explainTrust(w io.Writer, plan providers.Plan, dir string) {
 		`If you choose "No, exit", setup stops with exit status 1, naming this folder`,
 		"as untrusted. Running `asmai setup` again asks only about the folders still",
 		"untrusted.",
-	}
+	)
 	fmt.Fprintf(w, "\n%s\n", rule)
 	for _, line := range lines {
 		fmt.Fprintf(w, "  | %s\n", line)
 	}
 	fmt.Fprintf(w, "%s\n", rule)
+}
+
+// trustStep names the folder dir, in the state directory, for setup's step
+// that trusts it: agents/, workspaces/, or repositories/<name>/ for a clone.
+func trustStep(paths statedir.Paths, dir string) string {
+	if rel, err := filepath.Rel(paths.Dir, dir); err == nil {
+		return rel + "/"
+	}
+	return dir
 }
 
 // agreeToTrust asks on w whether to open Claude Code in dir, and reports

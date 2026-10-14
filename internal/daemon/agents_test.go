@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/providers"
+	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/store"
 	"github.com/talvor/asmai/internal/vt"
 )
@@ -255,6 +257,61 @@ func TestTheDaemonRefusesToLaunchAnAgentWhoseFolderIsNotTrusted(t *testing.T) {
 	d.cfg.ClaudeRecord = ""
 	if err := d.startSession(&leader{}, store.ProviderInstall{Path: "/bin/false"}, launch{dir: filepath.Join(p.Agents, "leader@engineering")}); err == nil {
 		t.Error("a daemon that reads no record of Claude Code's started an agent")
+	}
+}
+
+// A worker's workspace is a worktree of AsmAI's clone, which Claude Code
+// trusts only through the clone's own trust, not the workspaces folder's:
+// with the clone untrusted, the checks fail and the worker is refused, each
+// naming the clone and `asmai setup`.
+func TestTheDaemonRefusesAWorkerWhoseClonesTrustIsMissing(t *testing.T) {
+	p := stateDir(t)
+	clone := filepath.Join(p.Repositories, "fixture")
+	if err := os.MkdirAll(p.Repositories, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git(t, p.Repositories, "clone", "--quiet", remote(t), clone)
+	workspace := filepath.Join(p.Workspaces, "job-1", "assignment-1", "repo")
+	if err := repos.AddWorkspace(context.Background(), clone, workspace, "asmai/job-1", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: "/origin", DefaultBranch: "trunk", Clone: clone, AddedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(t.TempDir(), ".claude.json")
+	untrusted := []byte(`{"projects": {"` + p.Agents + `": {"hasTrustDialogAccepted": true}, "` + p.Workspaces + `": {"hasTrustDialogAccepted": true}, "` + p.Repositories + `": {"hasTrustDialogAccepted": true}}}`)
+	if err := os.WriteFile(record, untrusted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{cfg: Config{Paths: p, ClaudeRecord: record}, store: s}
+
+	if c := d.trustCheck(); c.OK || !strings.Contains(c.Problem, "does not trust "+clone) || !strings.Contains(c.Fix, "asmai setup") {
+		t.Errorf("with the clone untrusted, the trust check is %+v, want it failed naming %s and `asmai setup`", c, clone)
+	}
+	// git names the clone by its resolved path in the worktree's files.
+	resolved, err := filepath.EvalSymlinks(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = d.startSession(&leader{}, store.ProviderInstall{Path: "/bin/false"}, launch{dir: workspace})
+	if err == nil || !strings.Contains(err.Error(), "does not trust "+resolved+", the repository "+workspace+" is checked out from") || !strings.Contains(err.Error(), "asmai setup") {
+		t.Errorf("starting a worker in a worktree of the untrusted clone returned %v, want a refusal naming the clone and `asmai setup`", err)
+	}
+
+	trusted := []byte(`{"projects": {"` + p.Agents + `": {"hasTrustDialogAccepted": true}, "` + p.Workspaces + `": {"hasTrustDialogAccepted": true}, "` + clone + `": {"hasTrustDialogAccepted": true}}}`)
+	if err := os.WriteFile(record, trusted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c := d.trustCheck(); !c.OK {
+		t.Errorf("with the clone trusted, the trust check is %+v", c)
+	}
+	if err := d.trusted(workspace); err != nil {
+		t.Errorf("with the clone trusted, its worktree is %v", err)
 	}
 }
 

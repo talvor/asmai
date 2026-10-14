@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/providers"
+	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/session"
+	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 	"github.com/talvor/asmai/internal/vt"
 )
@@ -53,8 +55,12 @@ func (h *Harness) setup(ctx context.Context, f *Factory) error {
 	defer s.Stop(5 * time.Second)
 	const maxKeys, keyGap = 8, time.Second
 	// Setup opens Claude Code in each folder not yet trusted, in order.
+	folders, err := trustedAtSetup(f.paths)
+	if err != nil {
+		return err
+	}
 	var asking []string
-	for _, d := range []string{f.paths.Agents, f.paths.Workspaces} {
+	for _, d := range folders {
 		if ok, err := providers.Trusted(record, d); err != nil {
 			return err
 		} else if !ok {
@@ -155,8 +161,19 @@ func (h *Harness) setup(ctx context.Context, f *Factory) error {
 	}
 }
 
+// trustedAtSetup returns the folders `asmai setup` has the user trust, in
+// the order it asks: the agents and workspaces folders, then each registered
+// repository's clone, whose worktrees workers start in.
+func trustedAtSetup(paths statedir.Paths) ([]string, error) {
+	clones, err := paths.Clones()
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{paths.Agents, paths.Workspaces}, clones...), nil
+}
+
 // setupEnded checks how `asmai setup` ended: it exited 0, and Claude Code's
-// record trusts both folders agents start in.
+// record trusts every folder agents start in.
 func (h *Harness) setupEnded(s *session.Session, record string, lines []string) error {
 	if screen, err := vt.FromState(s.Screen()); err == nil {
 		lines = screen.Lines()
@@ -172,7 +189,11 @@ func (h *Harness) setupEnded(s *session.Session, record string, lines []string) 
 		}
 		return fmt.Errorf("asmai setup failed (%v)%s", err, h.screenNote(lines))
 	}
-	for _, dir := range []string{h.QualificationPaths.Agents, h.QualificationPaths.Workspaces} {
+	folders, err := trustedAtSetup(h.QualificationPaths)
+	if err != nil {
+		return err
+	}
+	for _, dir := range folders {
 		if ok, err := providers.Trusted(record, dir); err != nil {
 			return err
 		} else if !ok {
@@ -221,8 +242,9 @@ func envLookup(env []string, name string) string {
 // a directory new to it, with an agent's command line, whose hooks only
 // note the session's start, and requires the session to start with no
 // question about trusting dir: Claude Code reports SessionStart only once it
-// is past that question.
-func (h *Harness) startsWithoutTrustQuestion(ctx context.Context, f *Factory, path, dir string) error {
+// is past that question. covered says which trust asmai setup had the user
+// give was to cover dir, and why it did not when the question appears.
+func (h *Harness) startsWithoutTrustQuestion(ctx context.Context, f *Factory, path, dir, covered string) error {
 	marks, err := os.MkdirTemp("", "asmai-qualify-start-")
 	if err != nil {
 		return err
@@ -245,7 +267,7 @@ func (h *Harness) startsWithoutTrustQuestion(ctx context.Context, f *Factory, pa
 			lines = screen.Lines()
 		}
 		if _, found := screenHas(lines, trustPromptMarker); found {
-			return fmt.Errorf("Claude Code asked whether to trust %s, though asmai setup had the user trust the folder above it: on this pin, trusting a folder does not cover the folders below it", dir)
+			return fmt.Errorf("Claude Code asked whether to trust %s, though asmai setup had the user trust %s", dir, covered)
 		}
 		if marker, found := screenHas(lines, loginPromptMarkers...); found {
 			return fmt.Errorf("Claude Code asked for a login (its screen shows %q) in %s", marker, dir)
@@ -276,33 +298,20 @@ func promptSurface(lines []string) bool {
 }
 
 // c48 qualifies, for the pin, the behaviour of Claude Code's directory trust
-// the factory relies on (ADR 0011): with the agents and workspaces folders
-// trusted, as `asmai setup` has the user trust them, a new leader directory
-// under agents/ and a new assignment workspace under workspaces/ start with
-// no question about trusting them. Claude Code does not document that trust
-// covers the folders below a trusted one, and its changelog shows the
-// behaviour has changed before.
+// the factory relies on (ADR 0011): with the agents folder trusted, as `asmai
+// setup` has the user trust it, a new leader directory under agents/ starts
+// with no question about trusting it; and with a registered repository's
+// clone trusted, as `asmai setup` has the user trust it after `asmai repo
+// add`, a worker's new workspace, a git worktree of the clone made as the
+// daemon makes it, starts with no question either. Claude Code does not
+// document that trust covers the folders below a trusted one, nor that it
+// covers a repository's worktrees, and its changelog shows the behaviour has
+// changed before.
 func (h *Harness) c48(ctx context.Context, f *Factory, r *Result) error {
 	path, err := h.ready(ctx, f)
 	if err != nil {
 		return err
 	}
-	record := providers.ClaudeCodeRecord(envLookup(f.env, "HOME"), func(name string) string { return envLookup(f.env, name) })
-	for _, dir := range []string{f.paths.Agents, f.paths.Workspaces} {
-		if ok, err := providers.Trusted(record, dir); err != nil {
-			return err
-		} else if !ok {
-			return fmt.Errorf("Claude Code's record does not trust %s after asmai setup", dir)
-		}
-	}
-	for _, dir := range []string{f.paths.Agents, f.paths.Workspaces} {
-		if h.answered[dir] {
-			r.observe("asmai setup for the disposable state directory had Claude Code record the user's trust of %s, answered in the session setup opened there: the only place the harness answers that question", dir)
-		} else {
-			r.observe("asmai setup for the disposable state directory found %s trusted already in Claude Code's record (from an earlier run or a trusted folder above it), and opened no session there", dir)
-		}
-	}
-
 	leader, ok, err := f.Leader()
 	if err != nil {
 		return err
@@ -315,21 +324,59 @@ func (h *Harness) c48(ctx context.Context, f *Factory, r *Result) error {
 	}
 	r.observe("%s (generation %d) started in %s with no trust question, and reported SessionStart through its hook", leader.Agent, leader.Generation, filepath.Join(f.paths.Agents, leader.Agent))
 
-	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
-	for _, dir := range []struct{ top, dir, what string }{
-		{filepath.Join(f.paths.Agents, "qualification-c48-"+suffix), "", "a new leader directory"},
-		{filepath.Join(f.paths.Workspaces, "qualification-c48-"+suffix), filepath.Join("assignment-1", "repo"), "a new assignment workspace"},
-	} {
-		start := filepath.Join(dir.top, dir.dir)
-		if err := os.MkdirAll(start, 0o700); err != nil {
-			return err
-		}
-		err := h.startsWithoutTrustQuestion(ctx, f, path, start)
-		os.RemoveAll(dir.top)
-		if err != nil {
-			return err
-		}
-		r.observe("the pinned Claude Code started in %s, %s, with an agent's command line and no trust question, and reported SessionStart", start, dir.what)
+	// Registering the repository has asmai setup run again, for its clone.
+	if err := h.prepareHandoffRepository(ctx, f); err != nil {
+		return err
 	}
+	clone := filepath.Join(f.paths.Repositories, qualificationRepository)
+	record := providers.ClaudeCodeRecord(envLookup(f.env, "HOME"), func(name string) string { return envLookup(f.env, name) })
+	folders, err := trustedAtSetup(f.paths)
+	if err != nil {
+		return err
+	}
+	for _, dir := range folders {
+		if ok, err := providers.Trusted(record, dir); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("Claude Code's record does not trust %s after asmai setup", dir)
+		}
+		if h.answered[dir] {
+			r.observe("asmai setup for the disposable state directory had Claude Code record the user's trust of %s, answered in the session setup opened there: the only place the harness answers that question", dir)
+		} else {
+			r.observe("asmai setup for the disposable state directory found %s trusted already in Claude Code's record (from an earlier run or a trusted folder above it), and opened no session there", dir)
+		}
+	}
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	agent := filepath.Join(f.paths.Agents, "qualification-c48-"+suffix)
+	if err := os.MkdirAll(agent, 0o700); err != nil {
+		return err
+	}
+	err = h.startsWithoutTrustQuestion(ctx, f, path, agent, "the agents folder above it: on this pin, trusting a folder does not cover the folders below it")
+	os.RemoveAll(agent)
+	if err != nil {
+		return err
+	}
+	r.observe("the pinned Claude Code started in %s, a new leader directory, with an agent's command line and no trust question, and reported SessionStart", agent)
+
+	commit, err := repos.OriginTip(ctx, clone, "main")
+	if err != nil {
+		return err
+	}
+	top := filepath.Join(f.paths.Workspaces, "qualification-c48-"+suffix)
+	workspace := filepath.Join(top, "assignment-1", "repo")
+	branch := "qualification-c48-" + suffix
+	if err := repos.AddWorkspace(ctx, clone, workspace, branch, commit); err != nil {
+		return err
+	}
+	err = h.startsWithoutTrustQuestion(ctx, f, path, workspace, "the clone "+clone+" it is a worktree of: on this pin, trusting a repository does not cover its worktrees")
+	if removeErr := repos.RemoveWorkspace(ctx, clone, workspace, branch); removeErr != nil && err == nil {
+		err = removeErr
+	}
+	os.RemoveAll(top)
+	if err != nil {
+		return err
+	}
+	r.observe("the pinned Claude Code started in %s, a new worker's workspace made as the daemon makes it, a git worktree of the clone %s, with an agent's command line and no trust question, and reported SessionStart", workspace, clone)
 	return nil
 }

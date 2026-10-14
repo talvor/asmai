@@ -51,7 +51,7 @@ make qualify
 
 It never runs in hosted CI.
 
-Before the first run, and again whenever the account's state directory is new, run `asmai setup` as `phillip` in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/` and `workspaces/`: C3, C4, C36 and C37 start Coordination's leader in the account's own state directory, and the harness never answers that question there ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). For C7, C11, C19 and C48, the harness runs `asmai setup` for its own disposable state directory and answers it there on the user's behalf.
+Before the first run, and again whenever the account's state directory is new, run `asmai setup` as `phillip` in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/` and `workspaces/`, and for each registered repository's clone, which a worker's worktree is checked out from; run it again after each `asmai repo add`: C3, C4, C36 and C37 start Coordination's leader in the account's own state directory, and the harness never answers that question there ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). For C7, C11, C19 and C48, the harness runs `asmai setup` for its own disposable state directory, before and again after it registers its fixture repository, and answers it there on the user's behalf.
 
 ### Verified
 
@@ -136,7 +136,7 @@ GOTOOLCHAIN=go1.26.7 make qualify
 
 It never runs in hosted CI.
 
-Before the first run, and again whenever the account's state directory is new, run `asmai setup` as `phillip` in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/` and `workspaces/`: C3, C4, C36 and C37 start Coordination's leader in the account's own state directory, and the harness never answers that question there ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). For C7, C11, C19 and C48, the harness runs `asmai setup` for its own disposable state directory and answers it there on the user's behalf.
+Before the first run, and again whenever the account's state directory is new, run `asmai setup` as `phillip` in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/` and `workspaces/`, and for each registered repository's clone, which a worker's worktree is checked out from; run it again after each `asmai repo add`: C3, C4, C36 and C37 start Coordination's leader in the account's own state directory, and the harness never answers that question there ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). For C7, C11, C19 and C48, the harness runs `asmai setup` for its own disposable state directory, before and again after it registers its fixture repository, and answers it there on the user's behalf.
 
 ### Verified
 

@@ -65,7 +65,7 @@ func (h *Harness) c41(ctx context.Context, f *Factory, r *Result) (err error) {
 		if err != nil {
 			return "", err
 		}
-		next, err := git(ctx, clone, "-c", "user.name=AsmAI Qualification", "-c", "user.email=qualification@example.invalid", "-c", "commit.gpgsign=false", "commit-tree", tip+"^{tree}", "-p", tip, "-m", message)
+		next, err := gitAs(ctx, clone, harnessAuthor, "commit-tree", tip+"^{tree}", "-p", tip, "-m", message)
 		if err != nil {
 			return "", err
 		}
@@ -103,7 +103,7 @@ func (h *Harness) c41(ctx context.Context, f *Factory, r *Result) (err error) {
 	if _, err := git(ctx, scratch, "clone", "--quiet", "--branch", branch, pushFixture, other); err != nil {
 		return err
 	}
-	if _, err := git(ctx, other, "-c", "user.name=Someone Else", "-c", "user.email=someone@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "C41: a commit AsmAI did not make"); err != nil {
+	if _, err := gitAs(ctx, other, author{"Someone Else", "someone@example.invalid"}, "commit", "--quiet", "--allow-empty", "-m", "C41: a commit AsmAI did not make"); err != nil {
 		return err
 	}
 	if _, err := git(ctx, other, "push", "--quiet", "origin", branch); err != nil {
@@ -134,7 +134,7 @@ func (h *Harness) c41(ctx context.Context, f *Factory, r *Result) (err error) {
 	if _, err := git(ctx, clone, "worktree", "add", "--quiet", "--detach", merge, mine); err != nil {
 		return err
 	}
-	if _, err := git(ctx, merge, "-c", "user.name=AsmAI Qualification", "-c", "user.email=qualification@example.invalid", "-c", "commit.gpgsign=false", "merge", "--quiet", "--no-edit", "origin/"+branch); err != nil {
+	if _, err := gitAs(ctx, merge, harnessAuthor, "merge", "--quiet", "--no-edit", "origin/"+branch); err != nil {
 		return err
 	}
 	merged, err := repos.Commit(ctx, merge, "HEAD")

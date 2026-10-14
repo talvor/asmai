@@ -162,7 +162,7 @@ func TestTheCleanupRemovesAJobsReadOnlyView(t *testing.T) {
 	if _, err := git(ctx, "/", "init", "-b", "main", clone); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := git(ctx, clone, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Initial"); err != nil {
+	if _, err := gitAs(ctx, clone, author{"Test", "test@example.invalid"}, "commit", "--allow-empty", "-m", "Initial"); err != nil {
 		t.Fatal(err)
 	}
 	head, err := repos.Commit(ctx, clone, "HEAD")
@@ -217,7 +217,7 @@ func TestACommitIsBuiltFromExactlyItsOwnFiles(t *testing.T) {
 	repo := t.TempDir()
 	gitIn := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd := exec.Command("git", append(author{"t", "t@example.com"}.config(), args...)...)
 		cmd.Dir = repo
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -290,7 +290,7 @@ func TestBuildRefusesACommitWithoutAValidPinsFile(t *testing.T) {
 	repo := t.TempDir()
 	gitIn := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd := exec.Command("git", append(author{"t", "t@example.com"}.config(), args...)...)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)

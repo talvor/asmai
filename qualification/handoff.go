@@ -41,7 +41,7 @@ func (h *Harness) prepareHandoffRepository(ctx context.Context, f *Factory) erro
 			return err
 		}
 		checkout := filepath.Join(work, "fixture")
-		if _, err = git(ctx, checkout, "-c", "user.name=AsmAI Qualification", "-c", "user.email=qualification@example.invalid", "commit", "--allow-empty", "-m", "Initial fixture"); err != nil {
+		if _, err = gitAs(ctx, checkout, harnessAuthor, "commit", "--allow-empty", "-m", "Initial fixture"); err != nil {
 			return err
 		}
 		if _, err = git(ctx, checkout, "push", "origin", "HEAD:main"); err != nil {

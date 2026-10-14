@@ -54,7 +54,7 @@ func newScratchPullRequests(ctx context.Context, scratch, prefix string) (*scrat
 	if s.start, err = repos.OriginTip(ctx, s.clone, s.base); err != nil {
 		return nil, err
 	}
-	work, err := git(ctx, s.clone, "-c", "user.name=AsmAI Qualification", "-c", "user.email=qualification@example.invalid", "-c", "commit.gpgsign=false", "commit-tree", s.start+"^{tree}", "-p", s.start, "-m", strings.ToUpper(prefix)+": the job branch's work")
+	work, err := gitAs(ctx, s.clone, harnessAuthor, "commit-tree", s.start+"^{tree}", "-p", s.start, "-m", strings.ToUpper(prefix)+": the job branch's work")
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (s *scratchPullRequests) pushNewer(ctx context.Context, scratch, mode, mess
 		}
 		tree = strings.TrimSpace(written)
 	}
-	next, err := git(ctx, s.clone, "-c", "user.name=AsmAI Qualification", "-c", "user.email=qualification@example.invalid", "-c", "commit.gpgsign=false", "commit-tree", tree, "-p", s.head, "-m", message)
+	next, err := gitAs(ctx, s.clone, harnessAuthor, "commit-tree", tree, "-p", s.head, "-m", message)
 	if err != nil {
 		return err
 	}

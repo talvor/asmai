@@ -22,7 +22,7 @@ func localPushFixture(t *testing.T) string {
 	}{
 		{dir, []string{"init", "-q", "--bare", "-b", "main", origin}},
 		{dir, []string{"init", "-q", "-b", "main", seed}},
-		{seed, []string{"-c", "user.name=T", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first"}},
+		{seed, append(author{"T", "t@example.test"}.config(), "commit", "-q", "--allow-empty", "-m", "first")},
 		{seed, []string{"push", "-q", origin, "main"}},
 	} {
 		cmd := exec.Command("git", step.args...)

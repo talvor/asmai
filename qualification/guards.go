@@ -155,7 +155,7 @@ func newGuardFixture() (guardFixture, error) {
 // runGit runs git in dir as the harness would, with its own identity and no
 // signing, whatever the user's configuration says.
 func runGit(dir string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"-c", "user.name=Qualification", "-c", "user.email=qualification@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+	cmd := exec.Command("git", append(author{"Qualification", "qualification@example.invalid"}.config(), args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {

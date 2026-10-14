@@ -47,9 +47,53 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	if err := signEverything(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// signEverything gives the tests, and the harness and asmai they run, a
+// global git configuration that signs every commit and tag with a gpg program
+// that does not exist, as a user who signs their own commits but has no gpg
+// here has, and no configuration from the environment or the system that could
+// turn signing off. A harness fixture or test commit that does not turn signing
+// off itself fails.
+func signEverything(dir string) error {
+	config := filepath.Join(dir, "gitconfig")
+	signing := "[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n[gpg]\n\tprogram = " + filepath.Join(dir, "no-such-gpg") + "\n"
+	if err := os.WriteFile(config, []byte(signing), 0o600); err != nil {
+		return err
+	}
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); name == "GIT_CONFIG_PARAMETERS" || name == "GIT_CONFIG_COUNT" || strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_") {
+			os.Unsetenv(name)
+		}
+	}
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	return os.Setenv("GIT_CONFIG_GLOBAL", config)
+}
+
+// The tests run as a user whose commits are signed with a gpg they do not
+// have, and a harness commit still succeeds: it never signs.
+func TestTheHarnessCommitsWhateverTheUsersSigningConfigurationSays(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	if _, err := git(ctx, repo, "init", "-q", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(ctx, repo, "-c", "user.name=T", "-c", "user.email=t@example.test", "commit", "-q", "--allow-empty", "-m", "signed"); err == nil || !strings.Contains(err.Error(), "no-such-gpg") {
+		t.Fatalf("a commit that leaves signing to the user's configuration = %v, want a failure running the missing gpg: the tests do not sign as such a user", err)
+	}
+	if _, err := gitAs(ctx, repo, harnessAuthor, "commit", "-q", "--allow-empty", "-m", "unsigned"); err != nil {
+		t.Fatalf("the harness's commit: %v", err)
+	}
+	if _, err := gitAs(ctx, repo, harnessAuthor, "tag", "-a", "-m", "unsigned", "v1"); err != nil {
+		t.Fatalf("the harness's annotated tag: %v", err)
+	}
 }
 
 // staffing staffs every role M1 runs on Claude.

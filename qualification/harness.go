@@ -101,7 +101,7 @@ var Cases = []Case{
 	{ID: "C42", Title: "A draft pull request, and the \"[not ready]\" fallback when GitHub refuses a draft", Env: signedInOnly, Run: (*Harness).c42},
 	{ID: "C43", Title: "The daemon watches CI through gh: green; red with one judged re-run; a newer push replacing the wait", Env: signedInOnly, Run: (*Harness).c43},
 	{ID: "C45", Title: "The daemon marks the pull request ready when CI is green", Env: signedInOnly, Run: (*Harness).c45},
-	{ID: "C48", Title: "With the agents and workspaces folders trusted at setup, a new agent directory and a new workspace start with no trust question", Env: signedInOnly, Run: (*Harness).c48},
+	{ID: "C48", Title: "With the agents folder and a registered repository's clone trusted at setup, a new agent directory and a new worker's worktree of the clone start with no trust question", Env: signedInOnly, Run: (*Harness).c48},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in

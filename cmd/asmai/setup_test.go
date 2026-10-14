@@ -101,8 +101,9 @@ func opened(testDir string) []string {
 	return strings.Fields(string(data))
 }
 
-// setupTerminal is `asmai setup`, run in this process, with a terminal of its
-// own as its stdin, stdout and stderr, as a user runs it.
+// setupTerminal is `asmai setup`, or another asmai command, run in this
+// process, with a terminal of its own as its stdin, stdout and stderr, as a
+// user runs it.
 type setupTerminal struct {
 	ptmx *os.File
 	mu   sync.Mutex
@@ -117,6 +118,13 @@ type setupTerminal struct {
 const setupReturned = "(asmai setup returned)"
 
 func setupInTerminal(t *testing.T, args ...string) *setupTerminal {
+	t.Helper()
+	return inProcessTerminal(t, append([]string{"setup"}, args...)...)
+}
+
+// inProcessTerminal runs asmai with args as setupInTerminal runs `asmai
+// setup`.
+func inProcessTerminal(t *testing.T, args ...string) *setupTerminal {
 	t.Helper()
 	ptmx, tty, err := pty.Open()
 	if err != nil {
@@ -150,7 +158,7 @@ func setupInTerminal(t *testing.T, args ...string) *setupTerminal {
 	// unread on a terminal whose last other end is closed. The mark, written
 	// after everything setup wrote, tells the reader it has it all.
 	go func() {
-		code := run(append([]string{"setup"}, args...), tty, tty, tty)
+		code := run(args, tty, tty, tty)
 		tty.WriteString(setupReturned)
 		s.code <- code
 	}()
@@ -178,12 +186,12 @@ func (s *setupTerminal) typeKeys(t *testing.T, keys string) {
 	}
 }
 
-// exited waits for setup to exit, and for what it printed, and returns its
+// exited waits for the command to exit, and for what it printed, and returns its
 // exit code.
 func (s *setupTerminal) exited(t *testing.T) int {
 	t.Helper()
 	var code int
-	waitFor(t, "asmai setup to exit", func() bool {
+	waitFor(t, "asmai to exit", func() bool {
 		select {
 		case code = <-s.code:
 			return true
@@ -372,6 +380,209 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	}
 	if len(result.Steps) != 5 || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
 		t.Errorf("asmai setup --json reported %+v, want five steps already done", result.Steps)
+	}
+}
+
+// fixtureOrigin returns a repository with one commit on main, a bare one
+// standing in for an origin.
+func fixtureOrigin(t *testing.T) string {
+	t.Helper()
+	origin := filepath.Join(t.TempDir(), "fixture.git")
+	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
+	work := t.TempDir()
+	gitIn(t, work, "clone", "--quiet", origin, "fixture")
+	gitIn(t, filepath.Join(work, "fixture"), "commit", "--allow-empty", "-m", "initial")
+	gitIn(t, filepath.Join(work, "fixture"), "push", "--quiet", "origin", "HEAD:main")
+	return origin
+}
+
+// A registered repository's clone is trusted at setup too: a worker starts
+// in a git worktree of it, which on the pinned Claude Code only the clone's
+// own trust covers. `asmai repo add` with no terminal registers the
+// repository, exiting 0, and says to trust the clone with `asmai setup` in a
+// terminal; with --json, stdout holds only the result. Setup then asks only
+// about the new clone, explaining why, and run again finds every folder
+// trusted.
+func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
+	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting, "fixture": trusting})
+	startUnready(t)
+	s := setupInTerminal(t)
+	s.confirmInstall(t)
+	s.trust(t, filepath.Join(stateDir, "agents"))
+	s.trust(t, filepath.Join(stateDir, "workspaces"))
+	if code := s.exited(t); code != 0 {
+		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+	}
+
+	clone := filepath.Join(stateDir, "repositories", "fixture")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"repo", "add", fixtureOrigin(t), "--json"}, strings.NewReader("\n"), &stdout, &stderr); code != 0 {
+		t.Fatalf("asmai repo add with no terminal exited %d: %s%s", code, stdout.String(), stderr.String())
+	}
+	var added struct {
+		Registered bool           `json:"registered"`
+		Repository repositoryJSON `json:"repository"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &added); err != nil || !added.Registered || added.Repository.Clone != clone {
+		t.Errorf("asmai repo add --json printed %q (%v), want only fixture registered", stdout.String(), err)
+	}
+	if want := "Claude Code does not trust the clone yet, so no worker can start in a workspace of fixture, and trusting it needs you at a terminal: run `asmai setup` in a terminal, which opens Claude Code in " + clone; !strings.Contains(stderr.String(), want) {
+		t.Errorf("asmai repo add with no terminal printed %q, want it to say %q", stderr.String(), want)
+	}
+	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces"}) {
+		t.Errorf("with no terminal, repo add opened Claude Code: it was opened in %q", got)
+	}
+
+	again := setupInTerminal(t)
+	again.trust(t, clone)
+	if code := again.exited(t); code != 0 {
+		t.Fatalf("asmai setup after repo add exited %d, printing\n%s", code, again.printed())
+	}
+	out := again.printed()
+	for prefix, want := range map[string]string{
+		"trust agents/:":               "trust agents/: already done.",
+		"trust workspaces/:":           "trust workspaces/: already done.",
+		"trust repositories/fixture/:": "trust repositories/fixture/: done. Claude Code trusts " + clone,
+	} {
+		if got := lineSaying(out, prefix); !strings.HasPrefix(got, want) {
+			t.Errorf("setup after repo add reported %q, want %q", got, want)
+		}
+	}
+	for _, want := range []string{
+		"You are needed: trust " + clone,
+		"Workers start in git worktrees of this clone, one per assignment, and",
+		"Claude Code trusts a worktree only when it trusts the clone itself.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("setup after repo add printed\n%s\nwant it to say %q", out, want)
+		}
+	}
+	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces", "fixture"}) {
+		t.Errorf("Claude Code was opened in %q, want agents and workspaces, then only the new clone", got)
+	}
+
+	stdout.Reset()
+	if code := run([]string{"setup", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("asmai setup --json exited %d: %s%s", code, stdout.String(), stderr.String())
+	}
+	var result struct {
+		Steps []setupStep `json:"steps"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
+	}
+	if len(result.Steps) != 6 || result.Steps[5].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+		t.Errorf("asmai setup --json reported %+v, want six steps already done, the clone's last", result.Steps)
+	}
+}
+
+// After setup, `asmai repo add` in a terminal has the user trust the new
+// clone as setup does: it says why, opens Claude Code there once the user
+// agrees, and reports the clone trusted. A clone trusted already, as one
+// registered again is, opens no Claude Code. Then `asmai start` starts the
+// factory.
+func TestRepoAddHasTheUserTrustTheNewClone(t *testing.T) {
+	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting, "fixture": trusting})
+	startUnready(t)
+	s := setupInTerminal(t)
+	s.confirmInstall(t)
+	s.trust(t, filepath.Join(stateDir, "agents"))
+	s.trust(t, filepath.Join(stateDir, "workspaces"))
+	if code := s.exited(t); code != 0 {
+		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+	}
+
+	origin := fixtureOrigin(t)
+	clone := filepath.Join(stateDir, "repositories", "fixture")
+	a := inProcessTerminal(t, "repo", "add", origin)
+	a.trust(t, clone)
+	if code := a.exited(t); code != 0 {
+		t.Fatalf("asmai repo add exited %d, printing\n%s", code, a.printed())
+	}
+	out := a.printed()
+	if got := lineSaying(out, "trust repositories/fixture/:"); !strings.HasPrefix(got, "trust repositories/fixture/: done. Claude Code trusts "+clone) {
+		t.Errorf("repo add reported %q, want the clone trusted", got)
+	}
+	for _, want := range []string{
+		"Registered fixture",
+		"You are needed: trust " + clone,
+		"Workers start in git worktrees of this clone, one per assignment, and",
+		"Claude Code trusts a worktree only when it trusts the clone itself.",
+		`"Yes, I trust this folder"   <- choose this one`,
+		`If you choose "No, exit", repo add stops with exit status 1, naming this folder`,
+		"Running `asmai setup` again asks only about the folders still",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("repo add printed\n%s\nwant it to say %q", out, want)
+		}
+	}
+	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces", "fixture"}) {
+		t.Errorf("Claude Code was opened in %q, want agents and workspaces, then the new clone", got)
+	}
+
+	if _, stderr, code := runAsmai(t, "repo", "remove", "fixture"); code != 0 {
+		t.Fatalf("asmai repo remove exited %d: %s", code, stderr)
+	}
+	again := inProcessTerminal(t, "repo", "add", origin)
+	if code := again.exited(t); code != 0 {
+		t.Fatalf("asmai repo add again exited %d, printing\n%s", code, again.printed())
+	}
+	if got := lineSaying(again.printed(), "trust repositories/fixture/:"); !strings.HasPrefix(got, "trust repositories/fixture/: already done. Claude Code trusts "+clone) {
+		t.Errorf("repo add of a trusted clone reported %q, want it already done", got)
+	}
+	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces", "fixture"}) {
+		t.Errorf("Claude Code was opened in %q, want none opened for a trusted clone", got)
+	}
+
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Errorf("after repo add, asmai start exited %d: %s", code, stderr)
+	}
+}
+
+// Declining at repo add's question, or answering "No, exit" in Claude Code,
+// leaves the repository registered and its clone untrusted: repo add exits
+// 1 naming the clone and `asmai setup`, and `asmai start` refuses.
+func TestRepoAddStopsNamingTheCloneTheUserDidNotTrust(t *testing.T) {
+	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting, "fixture": refusing})
+	startUnready(t)
+	s := setupInTerminal(t)
+	s.confirmInstall(t)
+	s.trust(t, filepath.Join(stateDir, "agents"))
+	s.trust(t, filepath.Join(stateDir, "workspaces"))
+	if code := s.exited(t); code != 0 {
+		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+	}
+
+	origin := fixtureOrigin(t)
+	clone := filepath.Join(stateDir, "repositories", "fixture")
+	a := inProcessTerminal(t, "repo", "add", origin)
+	a.refuse(t, clone)
+	if code := a.exited(t); code != 1 {
+		t.Fatalf("asmai repo add exited %d after No, want 1; it printed\n%s", code, a.printed())
+	}
+	if out := a.printed(); !strings.Contains(out, "Claude Code does not trust "+clone) || !strings.Contains(out, "run `asmai setup` again") {
+		t.Errorf("after No, repo add printed\n%s\nwant it to name %s and `asmai setup`", out, clone)
+	}
+
+	other := filepath.Join(stateDir, "repositories", "other")
+	n := inProcessTerminal(t, "repo", "add", origin, "--name", "other")
+	waitFor(t, "repo add to ask to open Claude Code in "+other, n.shows(trustPrompt+other))
+	n.typeKeys(t, "n\r")
+	if code := n.exited(t); code != 1 {
+		t.Fatalf("asmai repo add exited %d after the user declined, want 1; it printed\n%s", code, n.printed())
+	}
+	if got := lineSaying(n.printed(), "trust repositories/other/:"); !strings.HasPrefix(got, "trust repositories/other/: stopped. You stopped repo add before Claude Code opened, so "+other+" is still untrusted") {
+		t.Errorf("after the user declined, repo add reported %q", got)
+	}
+	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces", "fixture"}) {
+		t.Errorf("Claude Code was opened in %q, want none opened once the user declined", got)
+	}
+
+	if got := repositoriesListed(t); len(got) != 2 {
+		t.Errorf("after the clones went untrusted, asmai repo list shows %+v, want both registered", got)
+	}
+	if _, stderr, code := runAsmai(t, "start"); code != 1 || !strings.Contains(stderr, "Claude Code does not trust "+clone) || !strings.Contains(stderr, "asmai setup") {
+		t.Errorf("asmai start with the clone untrusted exited %d printing %q, want it refused naming the clone and `asmai setup`", code, stderr)
 	}
 }
 
@@ -581,7 +792,7 @@ func TestSetupAsksAgainUntilTheUserPressesEnterOrTypesN(t *testing.T) {
 		{"y\n", false, 2},
 	} {
 		var out bytes.Buffer
-		if got := agreeToTrust(&out, strings.NewReader(c.input), dir); got != c.agreed {
+		if got := agreeToTrust(&out, strings.NewReader(c.input), dir, "setup"); got != c.agreed {
 			t.Errorf("answering %q, the user agreed: %v, want %v", c.input, got, c.agreed)
 		}
 		if got := strings.Count(out.String(), prompt); got != c.asked {

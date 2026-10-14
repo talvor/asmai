@@ -50,6 +50,11 @@ func (h *Harness) prepareHandoffRepository(ctx context.Context, f *Factory) erro
 	} else if err != nil {
 		return err
 	}
+	// In the disposable state directory, repo add has the user trust the
+	// new clone, which a worker starts in a worktree of.
+	if _, err := os.Stat(filepath.Join(f.paths.Repositories, qualificationRepository)); errors.Is(err, os.ErrNotExist) && f.paths.Dir == h.QualificationPaths.Dir {
+		return h.repoAdd(ctx, f, origin)
+	}
 	out, stderr, code, err := f.Run(ctx, "", "repo", "add", origin, "--name", qualificationRepository)
 	if err != nil {
 		return err

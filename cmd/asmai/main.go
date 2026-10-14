@@ -47,7 +47,8 @@ commands:
   asmai setup                 the first run: write a configuration file staffing every role if there
                               is none, make the state directory's folders, install the pinned Claude
                               Code once you confirm, and open it in the agents and workspaces folders
-                              for you to trust them. A step already done is skipped
+                              and each registered repository's clone for you to trust them. A step
+                              already done is skipped
   asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
                               the daemon runs in the background unless --foreground
   asmai stop                  persist the factory's state and stop its daemon and agents; queued
@@ -107,8 +108,9 @@ commands:
   asmai repo add <path-or-url> [--name <name>]
                               register a repository: record its location, origin and default
                               branch in the store and the configuration file, and make AsmAI's
-                              own clone of it, fetched from origin. Your own checkout is never
-                              used for work
+                              own clone of it, fetched from origin, then open the pinned Claude
+                              Code in the clone for you to trust it, as setup does. Your own
+                              checkout is never used for work
   asmai repo list             list the registered repositories
   asmai repo show <name>      show what is recorded for a registered repository
   asmai repo remove <name>    remove a repository's record, its configuration entry and its
@@ -374,7 +376,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "providers list":
 		return providersList(o, paths)
 	case "repo add":
-		return repoAdd(o, paths, arg, *repoName)
+		return repoAdd(o, paths, arg, *repoName, stdin)
 	case "repo list":
 		return repoList(o, paths)
 	case "repo show":

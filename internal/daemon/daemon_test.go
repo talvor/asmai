@@ -37,11 +37,12 @@ func runDaemon(t *testing.T, p statedir.Paths) (stopped func() error, cancel fun
 }
 
 // trustingRecord writes a record of Claude Code's in which the user trusts
-// the folders agents start in, in the state directory p, and returns its path.
+// the folders agents start in, in the state directory p, the tests' fixture
+// clone among them, and returns its path.
 func trustingRecord(t *testing.T, p statedir.Paths) string {
 	t.Helper()
 	record := filepath.Join(t.TempDir(), ".claude.json")
-	data := fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, p.Agents, p.Workspaces)
+	data := fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, p.Agents, p.Workspaces, filepath.Join(p.Repositories, "fixture"))
 	if err := os.WriteFile(record, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}

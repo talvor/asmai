@@ -240,8 +240,8 @@ func TestCoordinationIsBusyWhileADispatchForItIsOnItsWayOrBeingWorkedOn(t *testi
 // plays the scripted fake with the script of the leader's nth session: it
 // counts the sessions each kind of agent has started, so that a leader
 // restored by a start plays a different script than the one before the stop.
-// The sessions `asmai setup` opens in the agents and workspaces folders play
-// setup's.
+// The sessions `asmai setup` opens in the agents and workspaces folders and
+// in the fixture's clone play setup's.
 type bySessionClaude struct {
 	fakeClaude
 	dir string
@@ -259,7 +259,7 @@ case "$*" in
 *"You are Coordination's leader in AsmAI"*) role=coordination ;;
 *"You are Engineering's leader in AsmAI"*) role=engineering ;;
 *) case "$(basename "$PWD")" in
-	agents|workspaces) role=setup ;;
+	agents|workspaces|qualification-handoff) role=setup ;;
 	*) role=idle ;;
 	esac ;;
 esac

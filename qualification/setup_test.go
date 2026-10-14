@@ -47,12 +47,13 @@ func perFolder(t *testing.T, h *Harness, scripts map[string][]string) {
 	}
 }
 
-// With the agents and workspaces folders trusted through `asmai setup`,
-// whose questions the harness answers in the disposable state directory, a
-// new leader directory and a new workspace start with no trust question.
+// With the agents and workspaces folders trusted through `asmai setup`, and
+// then the clone of the repository the case registers through `asmai repo
+// add`, whose questions the harness answers in the disposable state directory, a new leader directory
+// and a new worker's worktree of the clone start with no trust question.
 func TestC48PassesWhenTheFoldersTrustedAtSetupCoverNewDirectories(t *testing.T) {
 	h := harness(t, signedIn, startsDirectly)
-	perFolder(t, h, map[string][]string{"agents": setupTrusting, "workspaces": setupTrusting})
+	perFolder(t, h, map[string][]string{"agents": setupTrusting, "workspaces": setupTrusting, qualificationRepository: setupTrusting})
 
 	r := result(t, h, "C48")
 
@@ -60,13 +61,13 @@ func TestC48PassesWhenTheFoldersTrustedAtSetupCoverNewDirectories(t *testing.T) 
 		t.Fatalf("C48 %s: %s", r.Outcome, r.Failure)
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"asmai setup", "leader@coordination (generation 1) started", "a new leader directory", "a new assignment workspace", "no trust question"} {
+	for _, want := range []string{"asmai setup", "leader@coordination (generation 1) started", "a new leader directory", "a new worker's workspace", "a git worktree of the clone", "no trust question"} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C48's evidence\n%s\ndoes not say %q", evidence, want)
 		}
 	}
 	record := filepath.Join(envLookup(h.Env, "HOME"), ".claude.json")
-	for _, dir := range []string{h.QualificationPaths.Agents, h.QualificationPaths.Workspaces, h.Paths.Agents} {
+	for _, dir := range []string{h.QualificationPaths.Agents, h.QualificationPaths.Workspaces, filepath.Join(h.QualificationPaths.Repositories, qualificationRepository), h.Paths.Agents} {
 		if ok, err := providers.Trusted(record, dir); err != nil || !ok {
 			t.Errorf("after C48, Claude Code's record trusts %s: %t, %v", dir, ok, err)
 		}
@@ -89,7 +90,7 @@ func TestTheHarnessAnswersClaudeCodeNotSetupsExplanation(t *testing.T) {
 		}
 		inline = append(inline, strings.Replace(step, `\u001b[2J\u001b[H`, from, 1))
 	}
-	perFolder(t, h, map[string][]string{"agents": inline, "workspaces": inline})
+	perFolder(t, h, map[string][]string{"agents": inline, "workspaces": inline, qualificationRepository: inline})
 
 	r := result(t, h, "C48")
 
@@ -98,14 +99,66 @@ func TestTheHarnessAnswersClaudeCodeNotSetupsExplanation(t *testing.T) {
 	}
 }
 
-func TestC48FailsWhenANewDirectoryBelowATrustedFolderAsksToBeTrusted(t *testing.T) {
+// With the folder holding the disposable state directory trusted already,
+// setup asks about nothing, but the fixture's new clone, a repository, is
+// not covered by it: the harness still answers repo add's question there.
+func TestC48PassesWhenAFolderAboveTheStateIsTrustedButTheNewCloneIsNot(t *testing.T) {
 	h := harness(t, signedIn, startsDirectly)
-	perFolder(t, h, map[string][]string{"agents": setupTrusting, "workspaces": setupTrusting, "repo": startsAfterTrust})
+	perFolder(t, h, map[string][]string{qualificationRepository: setupTrusting})
+	trusted := filepath.Join(envLookup(h.Env, "ASMAI_TEST_DIR"), "trusted")
+	before, err := os.ReadFile(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folders := append(strings.Fields(string(before)), filepath.Dir(h.QualificationPaths.Dir))
+	projects := map[string]map[string]bool{}
+	for _, d := range folders {
+		projects[d] = map[string]bool{"hasTrustDialogAccepted": true}
+	}
+	record, _ := json.Marshal(map[string]any{"projects": projects})
+	if err := os.WriteFile(trusted, []byte(strings.Join(folders, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envLookup(h.Env, "HOME"), ".claude.json"), record, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	r := result(t, h, "C48")
 
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "Claude Code asked whether to trust") || !strings.Contains(r.Failure, filepath.Join("assignment-1", "repo")) || !strings.Contains(r.Failure, "does not cover") {
-		t.Errorf("C48 %s: %q, want a failure at the new workspace's trust question", r.Outcome, r.Failure)
+	if r.Outcome != Passed {
+		t.Fatalf("C48 %s: %s", r.Outcome, r.Failure)
+	}
+	clone := filepath.Join(h.QualificationPaths.Repositories, qualificationRepository)
+	if !h.answered[clone] {
+		t.Errorf("the harness answered for %v, want the new clone %s", h.answered, clone)
+	}
+}
+
+// A worker's worktree that asks to be trusted, though its clone is, fails
+// C48: the trust the factory relies on no longer covers the worktree.
+func TestC48FailsWhenANewWorktreeOfATrustedCloneAsksToBeTrusted(t *testing.T) {
+	h := harness(t, signedIn, startsDirectly)
+	perFolder(t, h, map[string][]string{"agents": setupTrusting, "workspaces": setupTrusting, qualificationRepository: setupTrusting, "repo": startsAfterTrust})
+
+	r := result(t, h, "C48")
+
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "Claude Code asked whether to trust") || !strings.Contains(r.Failure, filepath.Join("assignment-1", "repo")) || !strings.Contains(r.Failure, "trusting a repository does not cover its worktrees") {
+		t.Errorf("C48 %s: %q, want a failure at the new worktree's trust question", r.Outcome, r.Failure)
+	}
+}
+
+// A repo add that never trusts the clone it registers fails C48 before any
+// worker's worktree is tried.
+func TestC48FailsWhenRepoAddLeavesTheRegisteredCloneUntrusted(t *testing.T) {
+	h := harness(t, signedIn, startsDirectly)
+	notRecorded := append(append([]string(nil), setupTrusting[:4]...), setupTrusting[5:]...)
+	perFolder(t, h, map[string][]string{"agents": setupTrusting, "workspaces": setupTrusting, qualificationRepository: notRecorded})
+
+	r := result(t, h, "C48")
+
+	clone := filepath.Join(h.QualificationPaths.Repositories, qualificationRepository)
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "asmai repo add failed") || !strings.Contains(r.Failure, "does not trust "+clone) {
+		t.Errorf("C48 %s: %q, want repo add's failure naming the untrusted clone", r.Outcome, r.Failure)
 	}
 }
 

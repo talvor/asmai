@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -34,8 +35,9 @@ const (
 // Claude Code and trust.
 const setupStages = 4
 
-// trustPrompt starts the line on which setup asks the user to go on to
-// Claude Code's question about trusting a folder; the folder follows it.
+// trustPrompt starts the line on which setup or repo add asks the user to go
+// on to Claude Code's question about trusting a folder; the folder follows
+// it.
 const trustPrompt = "Press Enter to open Claude Code in "
 
 // setupStep is one step of `asmai setup`, as it reported it.
@@ -48,10 +50,11 @@ type setupStep struct {
 // setup is the first run: it writes a configuration file staffing every role
 // when there is none, makes the state directory's folders, installs the
 // pinned Claude Code once the user confirms, and opens it in the agents and
-// workspaces folders in the user's own terminal, for the user to trust each
-// (ADR 0011). Each of its stages is headed and says what it is about to do;
-// each step is skipped when it is already done, and reports one line, done,
-// already done, or failed before the error. Before opening Claude Code in a
+// workspaces folders and in each registered repository's clone, in the
+// user's own terminal, for the user to trust each (ADR 0011). Each of its
+// stages is headed and says what it is about to do; each step is skipped
+// when it is already done, and reports one line, done, already done, or
+// failed before the error. Before opening Claude Code in a
 // folder, setup says how to answer its question and waits for the user to
 // agree, on a terminal: it opens none without one. An existing
 // configuration file is never changed: its problems are only reported.
@@ -182,39 +185,23 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 		report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 	}
 
-	stage(4, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, and the trust covers every folder below them.", plan.Title))
+	stage(4, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
 	record := providers.ClaudeCodeRecord(home, os.Getenv)
-	for _, dir := range []string{paths.Agents, paths.Workspaces} {
-		step := "trust " + filepath.Base(dir) + "/"
+	current = "trust"
+	clones, err := paths.Clones()
+	if err != nil {
+		return fail(err)
+	}
+	for _, dir := range append([]string{paths.Agents, paths.Workspaces}, clones...) {
+		step := "trust " + trustStep(paths, dir)
 		current = step
-		trusted, err := providers.Trusted(record, dir)
+		state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, dir, slices.Contains(clones, dir), "setup")
+		if state != "" {
+			report(step, state, detail)
+		}
 		if err != nil {
 			return fail(err)
 		}
-		if trusted {
-			report(step, stepAlreadyDone, fmt.Sprintf("%s trusts %s", plan.Title, dir))
-			continue
-		}
-		if in, ok := stdin.(*os.File); !ok || !term.IsTerminal(int(in.Fd())) {
-			return fail(fmt.Errorf("trusting %s needs you at a terminal, to answer %s's question there; setup did not open %s. Run `asmai setup` in a terminal", dir, plan.Title, plan.Title))
-		}
-		explainTrust(w, plan, dir)
-		if !agreeToTrust(w, stdin, dir) {
-			report(step, stepStopped, fmt.Sprintf("You stopped setup before %s opened, so %s is still untrusted", plan.Title, dir))
-			return fail(fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai setup` again when you are ready to answer its question", plan.Title, dir))
-		}
-		if err := openForTrust(plan.Path, dir, stdin, w, o.stderr); err != nil {
-			return fail(err)
-		}
-		// What setup says next starts below what Claude Code left.
-		fmt.Fprintln(w)
-		if trusted, err = providers.Trusted(record, dir); err != nil {
-			return fail(err)
-		}
-		if !trusted {
-			return fail(fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai setup` again to answer its question", plan.Title, dir))
-		}
-		report(step, stepDone, fmt.Sprintf("%s trusts %s", plan.Title, dir))
 	}
 
 	fmt.Fprintln(w)
@@ -228,20 +215,69 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 	return 0
 }
 
-// explainTrust tells the user, before setup opens the pinned Claude Code in
-// dir, why dir is to be trusted, what Claude Code will ask, which answer to
+// errNoTerminal is why trustFolder could not have the user trust a folder:
+// stdin is not a terminal.
+var errNoTerminal = errors.New("needs you at a terminal")
+
+// trustFolder has the user trust dir, a registered repository's clone when
+// clone is set, for the pinned Claude Code of plan, whose record is at
+// record, as command, setup or repo add, asks it. A folder trusted already
+// is left as it is. Otherwise, on a terminal, it says why dir is to be
+// trusted and how to answer Claude Code's question, waits for the user to
+// agree, and opens Claude Code there for them to answer it; with no
+// terminal it opens none, and its error wraps errNoTerminal. It returns the
+// state the step reached and its detail: done or already done, or stopped
+// when the user declined, which comes with an error.
+func trustFolder(w, stderr io.Writer, stdin io.Reader, plan providers.Plan, record, dir string, clone bool, command string) (state, detail string, err error) {
+	trusted, err := providers.Trusted(record, dir)
+	if err != nil {
+		return "", "", err
+	}
+	if trusted {
+		return stepAlreadyDone, fmt.Sprintf("%s trusts %s", plan.Title, dir), nil
+	}
+	if in, ok := stdin.(*os.File); !ok || !term.IsTerminal(int(in.Fd())) {
+		return "", "", fmt.Errorf("trusting %s %w, to answer %s's question there; %s did not open %s. Run `asmai setup` in a terminal", dir, errNoTerminal, plan.Title, command, plan.Title)
+	}
+	explainTrust(w, plan, dir, clone, command)
+	if !agreeToTrust(w, stdin, dir, command) {
+		return stepStopped, fmt.Sprintf("You stopped %s before %s opened, so %s is still untrusted", command, plan.Title, dir),
+			fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai setup` again when you are ready to answer its question", plan.Title, dir)
+	}
+	if err := openForTrust(plan.Path, dir, stdin, w, stderr); err != nil {
+		return "", "", err
+	}
+	// What follows starts below what Claude Code left.
+	fmt.Fprintln(w)
+	if trusted, err = providers.Trusted(record, dir); err != nil {
+		return "", "", err
+	}
+	if !trusted {
+		return "", "", fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai setup` again to answer its question", plan.Title, dir)
+	}
+	return stepDone, fmt.Sprintf("%s trusts %s", plan.Title, dir), nil
+}
+
+// explainTrust tells the user, before command, setup or repo add, opens the
+// pinned Claude Code in dir, a registered repository's clone when clone is
+// set, why dir is to be trusted, what Claude Code will ask, which answer to
 // choose, and what the other answer does.
-func explainTrust(w io.Writer, plan providers.Plan, dir string) {
-	why := "every leader's directory is made in it"
-	if filepath.Base(dir) == "workspaces" {
-		why = "every assignment's workspace is made in it"
+func explainTrust(w io.Writer, plan providers.Plan, dir string, clone bool, command string) {
+	why := []string{"Agents start in this folder: every leader's directory is made in it."}
+	switch {
+	case clone:
+		why = []string{
+			"Workers start in git worktrees of this clone, one per assignment, and",
+			fmt.Sprintf("%s trusts a worktree only when it trusts the clone itself.", plan.Title),
+		}
+	case filepath.Base(dir) == "workspaces":
+		why = []string{"Agents start in this folder: every assignment's workspace is made in it."}
 	}
 	rule := "  +" + strings.Repeat("-", 72)
-	lines := []string{
-		fmt.Sprintf("You are needed: trust %s", dir),
-		fmt.Sprintf("Agents start in this folder: %s.", why),
+	lines := append([]string{fmt.Sprintf("You are needed: trust %s", dir)}, why...)
+	lines = append(lines,
 		"",
-		fmt.Sprintf("Next, setup opens AsmAI's pinned %s %s there. It asks whether", plan.Title, plan.Version),
+		fmt.Sprintf("Next, %s opens AsmAI's pinned %s %s there. It asks whether", command, plan.Title, plan.Version),
 		"you trust this folder, with two answers:",
 		"",
 		`    "Yes, I trust this folder"   <- choose this one:`,
@@ -249,12 +285,12 @@ func explainTrust(w io.Writer, plan providers.Plan, dir string) {
 		`    "No, exit"`,
 		"",
 		fmt.Sprintf("Once %s is ready for a prompt, leave it: type /exit and press Enter.", plan.Title),
-		"Setup then goes on.",
+		fmt.Sprintf("%s%s then goes on.", strings.ToUpper(command[:1]), command[1:]),
 		"",
-		`If you choose "No, exit", setup stops with exit status 1, naming this folder`,
+		fmt.Sprintf(`If you choose "No, exit", %s stops with exit status 1, naming this folder`, command),
 		"as untrusted. Running `asmai setup` again asks only about the folders still",
 		"untrusted.",
-	}
+	)
 	fmt.Fprintf(w, "\n%s\n", rule)
 	for _, line := range lines {
 		fmt.Fprintf(w, "  | %s\n", line)
@@ -262,12 +298,21 @@ func explainTrust(w io.Writer, plan providers.Plan, dir string) {
 	fmt.Fprintf(w, "%s\n", rule)
 }
 
-// agreeToTrust asks on w whether to open Claude Code in dir, and reports
-// whether the user agreed on stdin: Enter agrees, and n or the end of stdin
-// declines. Anything else asks again.
-func agreeToTrust(w io.Writer, stdin io.Reader, dir string) bool {
+// trustStep names the folder dir, in the state directory, for setup's step
+// that trusts it: agents/, workspaces/, or repositories/<name>/ for a clone.
+func trustStep(paths statedir.Paths, dir string) string {
+	if rel, err := filepath.Rel(paths.Dir, dir); err == nil {
+		return rel + "/"
+	}
+	return dir
+}
+
+// agreeToTrust asks on w whether command, setup or repo add, is to open
+// Claude Code in dir, and reports whether the user agreed on stdin: Enter
+// agrees, and n or the end of stdin declines. Anything else asks again.
+func agreeToTrust(w io.Writer, stdin io.Reader, dir, command string) bool {
 	for {
-		fmt.Fprintf(w, "%s%s, or type n and press Enter to stop setup: ", trustPrompt, dir)
+		fmt.Fprintf(w, "%s%s, or type n and press Enter to stop %s: ", trustPrompt, dir, command)
 		answer := readLine(stdin)
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "":

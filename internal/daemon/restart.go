@@ -185,7 +185,7 @@ func restorationBody(leader string, jobs []int64) string {
 		which = fmt.Sprintf("Load the brief of each of your jobs with open work, %s", strings.Join(briefs, ", "))
 	}
 	return fmt.Sprintf("The factory was stopped and started again, so you are a new session of %s and start without what you knew.\n"+
-		"%s, and run `asmai inbox` for everything waiting for you, then continue the open work you have in each. Nothing you did before the stop is lost: the briefs and the journal hold it.",
+		"%s, and run `asmai inbox` for everything waiting for you, each as its own command in its own Bash call, then continue the open work you have in each. Nothing you did before the stop is lost: the briefs and the journal hold it.",
 		leader, which)
 }
 

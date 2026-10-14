@@ -162,6 +162,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cleanup = nil
 	}
 	if ctx.Err() != nil {
+		if report.Cleanup != "" {
+			return fail(fmt.Errorf("interrupted; %s", report.Cleanup))
+		}
 		return fail(errors.New("interrupted"))
 	}
 	if *jsonOutput {

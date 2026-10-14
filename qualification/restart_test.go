@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/store"
@@ -458,6 +459,49 @@ func TestEachHandoffCaseStartsWithNothingAnEarlierCaseLeft(t *testing.T) {
 	}
 	if len(report.Results) != 2 {
 		t.Fatalf("ran %+v, want C7 and C11", report.Results)
+	}
+	after, err := os.ReadFile(h.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("the configuration file changed in the run:\n%s\nwant\n%s", after, before)
+	}
+}
+
+// A configuration file that a run before the harness copied it left with the
+// handoff fixture's entry still registers the fixture: the entry is dropped
+// from the disposable copy, and the file itself is not written.
+func TestAHandoffCaseRegistersPastAFixtureEntryAnEarlierRunLeft(t *testing.T) {
+	scripts := t.TempDir()
+	h := harness(t, bySessionClaude{fakeClaude: signedIn, dir: scripts}, startsDirectly)
+	if len(h.QualificationPaths.Socket) > 103 {
+		t.Skipf("the disposable state's socket path, %s, is longer than a Unix socket's path may be on macOS", h.QualificationPaths.Socket)
+	}
+	t.Cleanup(func() {
+		if t.Failed() {
+			log, _ := os.ReadFile(h.QualificationPaths.Log)
+			t.Logf("the daemon's log:\n%s", log)
+		}
+	})
+	stale := filepath.Join(t.TempDir(), "qualification-handoff.git")
+	if err := config.AddRepository(h.ConfigFile, qualificationRepository, config.Repository{Origin: stale, DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(h.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var number int64
+	h.Number = func() int64 { number++; return number }
+	prompt := h.exercisePrompt()
+	number = 0
+	writeSessionScript(t, scripts, "idle-1", `{"screen":"\u001b[?2004h> "}`, `{"expect":"only typed by a test that means to"}`)
+	writeSessionScript(t, scripts, "setup-1", setupTrusting...)
+	handoffScripts(t, scripts, 1, prompt)
+
+	if r := result(t, h, "C7"); r.Outcome != Passed {
+		t.Errorf("C7 %s: %s", r.Outcome, r.Failure)
 	}
 	after, err := os.ReadFile(h.ConfigFile)
 	if err != nil {

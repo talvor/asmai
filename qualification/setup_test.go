@@ -99,6 +99,41 @@ func TestTheHarnessAnswersClaudeCodeNotSetupsExplanation(t *testing.T) {
 	}
 }
 
+// With the folder holding the disposable state directory trusted already,
+// setup asks about nothing, but the fixture's new clone, a repository, is
+// not covered by it: the harness still answers repo add's question there.
+func TestC48PassesWhenAFolderAboveTheStateIsTrustedButTheNewCloneIsNot(t *testing.T) {
+	h := harness(t, signedIn, startsDirectly)
+	perFolder(t, h, map[string][]string{qualificationRepository: setupTrusting})
+	trusted := filepath.Join(envLookup(h.Env, "ASMAI_TEST_DIR"), "trusted")
+	before, err := os.ReadFile(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folders := append(strings.Fields(string(before)), filepath.Dir(h.QualificationPaths.Dir))
+	projects := map[string]map[string]bool{}
+	for _, d := range folders {
+		projects[d] = map[string]bool{"hasTrustDialogAccepted": true}
+	}
+	record, _ := json.Marshal(map[string]any{"projects": projects})
+	if err := os.WriteFile(trusted, []byte(strings.Join(folders, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envLookup(h.Env, "HOME"), ".claude.json"), record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := result(t, h, "C48")
+
+	if r.Outcome != Passed {
+		t.Fatalf("C48 %s: %s", r.Outcome, r.Failure)
+	}
+	clone := filepath.Join(h.QualificationPaths.Repositories, qualificationRepository)
+	if !h.answered[clone] {
+		t.Errorf("the harness answered for %v, want the new clone %s", h.answered, clone)
+	}
+}
+
 // A worker's worktree that asks to be trusted, though its clone is, fails
 // C48: the trust the factory relies on no longer covers the worktree.
 func TestC48FailsWhenANewWorktreeOfATrustedCloneAsksToBeTrusted(t *testing.T) {

@@ -35,17 +35,28 @@ const setupColumns = 400
 // setup runs `asmai setup` for the factory's disposable state directory, in
 // a terminal of its own, as its user would, and answers its questions as
 // answerTrust does. It confirms installing the pinned Claude Code too.
+// Setup opens Claude Code in each folder not yet trusted, in order.
 func (h *Harness) setup(ctx context.Context, f *Factory) error {
 	folders, err := trustedAtSetup(f.paths)
 	if err != nil {
 		return err
 	}
-	return h.answerTrust(ctx, f, "asmai setup", []string{"setup"}, folders)
+	record := providers.ClaudeCodeRecord(envLookup(f.env, "HOME"), func(name string) string { return envLookup(f.env, name) })
+	var asking []string
+	for _, d := range folders {
+		if ok, err := providers.Trusted(record, d); err != nil {
+			return err
+		} else if !ok {
+			asking = append(asking, d)
+		}
+	}
+	return h.answerTrust(ctx, f, "asmai setup", []string{"setup"}, asking)
 }
 
 // repoAdd runs `asmai repo add` of origin, as the qualification repository,
 // for the factory's disposable state directory, as setup runs `asmai setup`:
-// repo add has the user trust the new clone.
+// repo add has the user trust the new clone, a repository no trust given to
+// a folder above it covers.
 func (h *Harness) repoAdd(ctx context.Context, f *Factory, origin string) error {
 	clone := filepath.Join(f.paths.Repositories, qualificationRepository)
 	return h.answerTrust(ctx, f, "asmai repo add", []string{"repo", "add", origin, "--name", qualificationRepository}, []string{clone})
@@ -54,7 +65,7 @@ func (h *Harness) repoAdd(ctx context.Context, f *Factory, origin string) error 
 // answerTrust runs command, asmai with args, for the factory's disposable
 // state directory, in a terminal of its own, as its user would. It agrees
 // with Enter when the command asks to open the pinned Claude Code in one of
-// folders, those it may ask about, in order, and in each Claude Code session
+// asking, the folders it may ask about, in order, and in each Claude Code session
 // the command opens it answers "Yes, I trust this folder" on the user's
 // behalf, then leaves the session with /exit. The sessions `asmai setup` and
 // `asmai repo add` open are the only place the harness answers Claude Code's
@@ -62,7 +73,7 @@ func (h *Harness) repoAdd(ctx context.Context, f *Factory, origin string) error 
 // state directory: everywhere else, the question fails the case. It moves to
 // "Yes, I trust this folder" when the question starts elsewhere, and confirms
 // only while that option is selected, so it never chooses to exit.
-func (h *Harness) answerTrust(ctx context.Context, f *Factory, command string, args, folders []string) error {
+func (h *Harness) answerTrust(ctx context.Context, f *Factory, command string, args, asking []string) error {
 	if f.paths.Dir != h.QualificationPaths.Dir {
 		return fmt.Errorf("the harness runs %s only for its disposable state directory, not %s", command, f.paths.Dir)
 	}
@@ -74,15 +85,6 @@ func (h *Harness) answerTrust(ctx context.Context, f *Factory, command string, a
 	}
 	defer s.Stop(5 * time.Second)
 	const maxKeys, keyGap = 8, time.Second
-	// The command opens Claude Code in each folder not yet trusted, in order.
-	var asking []string
-	for _, d := range folders {
-		if ok, err := providers.Trusted(record, d); err != nil {
-			return err
-		} else if !ok {
-			asking = append(asking, d)
-		}
-	}
 	confirmed := false
 	agreed := map[string]bool{}
 	keys := map[string]int{}

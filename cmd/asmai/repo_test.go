@@ -117,13 +117,12 @@ func TestRepositoriesAreRegisteredListedShownAndRemovedEndToEnd(t *testing.T) {
 	var added struct {
 		Registered bool           `json:"registered"`
 		Repository repositoryJSON `json:"repository"`
-		Trusted    bool           `json:"trusted"`
 	}
 	asmaiJSON(t, &added, "repo", "add", "fixture")
 	clone := filepath.Join(stateDir, "repositories", "fixture")
 	want := repositoryJSON{Name: "fixture", Location: checkout, Origin: origin, DefaultBranch: "trunk", Clone: clone}
-	if !added.Registered || added.Repository != want || !added.Trusted {
-		t.Fatalf("asmai repo add printed %+v, want fixture registered as %+v, its clone trusted", added, want)
+	if !added.Registered || added.Repository != want {
+		t.Fatalf("asmai repo add printed %+v, want fixture registered as %+v", added, want)
 	}
 
 	// It is recorded in the configuration file, beside what was there, and
@@ -163,11 +162,11 @@ func TestRepositoriesAreRegisteredListedShownAndRemovedEndToEnd(t *testing.T) {
 	}
 
 	// The same repository, by URL and under another name, has no checkout.
-	// Claude Code does not trust its new clone yet, which the user is told
-	// to have `asmai setup` trust.
+	// Claude Code does not trust its new clone yet, and with no terminal the
+	// user is told to have `asmai setup` trust it.
 	second := repositoryJSON{Name: "second", Origin: "file://" + origin, DefaultBranch: "trunk", Clone: filepath.Join(stateDir, "repositories", "second")}
 	stdout, stderr, code := runAsmai(t, "repo", "add", "file://"+origin, "--name", "second")
-	if code != 0 || !strings.Contains(stdout, "Claude Code does not trust the clone yet") || !strings.Contains(stdout, "run `asmai setup`, which opens Claude Code in "+second.Clone) {
+	if code != 0 || !strings.Contains(stdout, "Claude Code does not trust the clone yet") || !strings.Contains(stdout, "run `asmai setup` in a terminal") || !strings.Contains(stdout, second.Clone+" for you to trust it") {
 		t.Errorf("registering by URL exited %d printing %q, %q, want it to say to trust the new clone with `asmai setup`", code, stdout, stderr)
 	}
 	var byURL struct {

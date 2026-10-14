@@ -3,7 +3,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,11 +18,14 @@ import (
 
 // repoAdd registers the repository source names, as name when the user chose
 // one. The daemon makes AsmAI's clone, writes the configuration entry and
-// records it. It says when Claude Code does not trust the clone yet, which
-// `asmai setup` has the user trust. A source that is a path on this host is
-// given to the daemon absolute, because the daemon does not run where this
-// command does.
-func repoAdd(o *output, paths statedir.Paths, source, name string) int {
+// records it. Then, as `asmai setup` does, repo add has the user trust the
+// clone, in which the pinned Claude Code asks first (ADR 0011): workers
+// start in worktrees of it. With no terminal, or no pinned Claude Code yet,
+// it opens none, and says to run `asmai setup` in a terminal; the
+// repository is registered all the same. A source that is a path on this
+// host is given to the daemon absolute, because the daemon does not run
+// where this command does.
+func repoAdd(o *output, paths statedir.Paths, source, name string, stdin io.Reader) int {
 	if _, err := os.Stat(source); err == nil {
 		if source, err = filepath.Abs(source); err != nil {
 			return o.fail(err)
@@ -34,22 +39,53 @@ func repoAdd(o *output, paths statedir.Paths, source, name string) int {
 		return o.fail(fmt.Errorf("the daemon did not answer with the repository it registered"))
 	}
 	r := *resp.Repository
-	// Workers start in worktrees of the clone, which Claude Code trusts only
-	// once the user trusts the clone itself, with `asmai setup` (ADR 0011).
-	trusted := false
-	if home, err := os.UserHomeDir(); err == nil {
-		trusted, _ = providers.Trusted(providers.ClaudeCodeRecord(home, os.Getenv), r.Clone)
-	}
+	// With --json, stdout carries only the result, and Claude Code draws on
+	// stderr.
+	w := o.stdout
 	if o.json {
-		return o.printJSON(map[string]any{"registered": true, "repository": r, "trusted": trusted})
+		w = o.stderr
+	} else {
+		fmt.Fprintf(w, "Registered %s, and made AsmAI's clone of it from its origin.\n", r.Name)
+		o.table(repositoryRows(r))
+		if r.Location != "" {
+			fmt.Fprintf(w, "Your own checkout is recorded but never used for work.\n")
+		}
 	}
-	fmt.Fprintf(o.stdout, "Registered %s, and made AsmAI's clone of it from its origin.\n", r.Name)
-	o.table(repositoryRows(r))
-	if r.Location != "" {
-		fmt.Fprintf(o.stdout, "Your own checkout is recorded but never used for work.\n")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return o.fail(err)
 	}
-	if !trusted {
-		fmt.Fprintf(o.stdout, "Claude Code does not trust the clone yet, so no worker can start in a workspace of %s: run `asmai setup`, which opens Claude Code in %s for you to trust it.\n", r.Name, r.Clone)
+	record := providers.ClaudeCodeRecord(home, os.Getenv)
+	plan, err := pinnedPlan(paths)
+	if err != nil {
+		return o.fail(err)
+	}
+	untrusted := fmt.Sprintf("%s does not trust the clone yet, so no worker can start in a workspace of %s", plan.Title, r.Name)
+	if trusted, err := providers.Trusted(record, r.Clone); err != nil {
+		return o.fail(err)
+	} else if !trusted && !exists(plan.Path) {
+		fmt.Fprintf(w, "%s, and the pinned %s is not installed yet: run `asmai setup` in a terminal, which installs it and opens it in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
+		return repoAdded(o, r)
+	}
+	step := "trust " + trustStep(paths, r.Clone)
+	state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, r.Clone, true, "repo add")
+	switch {
+	case errors.Is(err, errNoTerminal):
+		fmt.Fprintf(w, "%s, and trusting it needs you at a terminal: run `asmai setup` in a terminal, which opens %s in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
+		return repoAdded(o, r)
+	case state != "":
+		fmt.Fprintf(w, "%s: %s. %s\n", step, state, detail)
+	}
+	if err != nil {
+		return o.fail(err)
+	}
+	return repoAdded(o, r)
+}
+
+// repoAdded reports, with --json, that r is registered.
+func repoAdded(o *output, r store.Repository) int {
+	if o.json {
+		return o.printJSON(map[string]any{"registered": true, "repository": r})
 	}
 	return 0
 }

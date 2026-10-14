@@ -374,7 +374,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "providers list":
 		return providersList(o, paths)
 	case "repo add":
-		return repoAdd(o, paths, arg, *repoName)
+		return repoAdd(o, paths, arg, *repoName, stdin)
 	case "repo list":
 		return repoList(o, paths)
 	case "repo show":

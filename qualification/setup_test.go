@@ -48,8 +48,8 @@ func perFolder(t *testing.T, h *Harness, scripts map[string][]string) {
 }
 
 // With the agents and workspaces folders trusted through `asmai setup`, and
-// then the clone of the repository the case registers, whose questions the
-// harness answers in the disposable state directory, a new leader directory
+// then the clone of the repository the case registers through `asmai repo
+// add`, whose questions the harness answers in the disposable state directory, a new leader directory
 // and a new worker's worktree of the clone start with no trust question.
 func TestC48PassesWhenTheFoldersTrustedAtSetupCoverNewDirectories(t *testing.T) {
 	h := harness(t, signedIn, startsDirectly)
@@ -112,9 +112,9 @@ func TestC48FailsWhenANewWorktreeOfATrustedCloneAsksToBeTrusted(t *testing.T) {
 	}
 }
 
-// A setup that never trusts the registered clone fails C48 before any
+// A repo add that never trusts the clone it registers fails C48 before any
 // worker's worktree is tried.
-func TestC48FailsWhenSetupLeavesTheRegisteredCloneUntrusted(t *testing.T) {
+func TestC48FailsWhenRepoAddLeavesTheRegisteredCloneUntrusted(t *testing.T) {
 	h := harness(t, signedIn, startsDirectly)
 	notRecorded := append(append([]string(nil), setupTrusting[:4]...), setupTrusting[5:]...)
 	perFolder(t, h, map[string][]string{"agents": setupTrusting, "workspaces": setupTrusting, qualificationRepository: notRecorded})
@@ -122,8 +122,8 @@ func TestC48FailsWhenSetupLeavesTheRegisteredCloneUntrusted(t *testing.T) {
 	r := result(t, h, "C48")
 
 	clone := filepath.Join(h.QualificationPaths.Repositories, qualificationRepository)
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "asmai setup failed") || !strings.Contains(r.Failure, "does not trust "+clone) {
-		t.Errorf("C48 %s: %q, want setup's failure naming the untrusted clone", r.Outcome, r.Failure)
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "asmai repo add failed") || !strings.Contains(r.Failure, "does not trust "+clone) {
+		t.Errorf("C48 %s: %q, want repo add's failure naming the untrusted clone", r.Outcome, r.Failure)
 	}
 }
 

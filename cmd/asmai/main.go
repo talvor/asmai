@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -123,27 +122,6 @@ Every command accepts --json to print JSON instead of tables; asmai attach --jso
 agent's screen as it is now, and asmai chat --json Coordination's.
 `
 
-// groups are the commands that are grouped by noun, with their subcommands.
-var groups = map[string][]string{
-	"providers": {"install", "list"},
-	"repo":      {"add", "list", "show", "remove"},
-	"handoff":   {"send", "accept", "clarify", "decline"},
-	"decision":  {"record"},
-}
-
-// positional are the commands that take arguments, with what to say when
-// each is missing.
-var positional = map[string][]string{
-	"attach":      {"name the agent, such as leader@coordination or coordination"},
-	"repo add":    {"name a local checkout or a URL"},
-	"repo show":   {"name the repository, as `asmai repo list` shows it"},
-	"repo remove": {"name the repository, as `asmai repo list` shows it"},
-	"job show":    {"name the job number, as `asmai jobs` shows it"},
-	"brief":       {"name the job number, as `asmai jobs` shows it"},
-	"push":        {"name the job number, as `asmai jobs` shows it"},
-	"effect":      {"name the kind of effect, one word such as commit or push", "name what the effect is of, such as the commit or the branch pushed"},
-}
-
 // logPoll is how often `asmai log --follow` looks for new lines.
 const logPoll = 200 * time.Millisecond
 
@@ -169,223 +147,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		args = append([]string{"chat"}, args...)
 	}
-	name, args := args[0], args[1:]
-	if name == "job" {
-		if len(args) > 0 && args[0] == "open" {
-			name, args = "job open", args[1:]
-		} else {
-			name = "job show"
-		}
-	}
-	if subcommands, ok := groups[name]; ok {
-		if len(args) == 0 || !slices.Contains(subcommands, args[0]) {
-			want := subcommands[len(subcommands)-1]
-			if len(subcommands) > 1 {
-				want = strings.Join(subcommands[:len(subcommands)-1], ", ") + " or " + want
-			}
-			fmt.Fprintf(stderr, "asmai %s: want %s\n\n%s", name, want, usage)
-			return 2
-		}
-		name, args = name+" "+args[0], args[1:]
-	}
-	if name == "git-hook" {
-		return gitHook(args, stdin, stdout, stderr)
-	}
-	flags := flag.NewFlagSet("asmai "+name, flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")
-	foreground, follow, repoName := new(bool), new(bool), new(string)
-	var message string
-	var reading, mandate, repository string
-	var handoffJob, handoffID, dispatchID int64
-	var recipient, outcome, decisions, evidence, constraints, permissions, answer string
-	var criteria criteriaFlags
-	var assignJob int64
-	var assignReadOnly bool
-	var assignCommit string
-	var assignOutcome, blockedReason, blockedNeeds string
-	var decidedAssignment int64
-	var reasons listFlags
-	var decisionJob int64
-	var choice, rationale string
-	var resultArgs resultFlags
-	switch name {
-	case "start":
-		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
-	case "log":
-		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
-	case "repo add":
-		repoName = flags.String("name", "", "register the repository under this name, not one made from its origin")
-	case "job open":
-		flags.StringVar(&message, "message", "", "latest or the witnessed message's journal ID")
-		flags.StringVar(&repository, "repository", "", "registered repository name")
-		flags.StringVar(&reading, "reading", "", "Coordination's reading of the user's words")
-		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate")
-		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
-	case "handoff send":
-		flags.Int64Var(&handoffJob, "job", 0, "job number")
-		flags.StringVar(&recipient, "to", "", "receiving leader")
-		flags.StringVar(&outcome, "outcome", "", "requested outcome")
-		flags.StringVar(&decisions, "decisions", "", "relevant decisions")
-		flags.StringVar(&evidence, "evidence", "", "relevant evidence")
-		flags.StringVar(&constraints, "constraints", "", "constraints")
-		flags.StringVar(&permissions, "permissions", "", "permissions granted")
-		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
-	case "handoff accept", "handoff clarify", "handoff decline":
-		flags.Int64Var(&handoffID, "handoff", 0, "handoff ID")
-		flags.StringVar(&answer, "answer", "", "answer, question or reason")
-	case "inbox":
-		flags.Int64Var(&dispatchID, "dispatch", 0, "fetch one dispatch")
-	case "assign":
-		flags.Int64Var(&assignJob, "job", 0, "job number")
-		flags.StringVar(&assignOutcome, "outcome", "", "the outcome the worker is to deliver")
-		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
-		flags.BoolVar(&assignReadOnly, "read-only", false, "give a validation, which changes nothing, instead of a writing assignment")
-		flags.StringVar(&assignCommit, "commit", "", "with --read-only, the job branch's exact head commit the validation is fixed at")
-	case "effect":
-	case "result":
-		flags.Var(&resultArgs.evidence, "evidence", "what shows the work does; may be repeated")
-		flags.Var(&resultArgs.artifacts, "artifact", "a link to something the work produced; may be repeated")
-		flags.Var(&resultArgs.tests, "test", "a test added, or none; may be repeated")
-		flags.Var(&resultArgs.checks, "check", "a check run and its outcome at the commit, '<command> -> <outcome>', or none; may be repeated")
-		flags.Var(&resultArgs.gaps, "gap", "an unresolved gap, or none; may be repeated")
-		flags.StringVar(&resultArgs.prSection, "pr-section", "", "the worker's part of the pull request: what changed, with before-and-after evidence")
-		flags.Var(&resultArgs.findings, "finding", "a validation's finding, '<blocking|advisory|needs-you>: <text>', or none; may be repeated")
-		flags.Var(&resultArgs.resolved, "resolved", "an earlier blocking finding's ID that is resolved at this commit; may be repeated")
-		flags.Var(&resultArgs.unresolved, "unresolved", "an earlier blocking finding's ID that is still open at this commit; may be repeated")
-	case "blocked":
-		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
-		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker")
-	case "accept", "reject", "cancel":
-		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
-		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
-	case "decision record":
-		flags.Int64Var(&decisionJob, "job", 0, "job number")
-		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
-		flags.StringVar(&rationale, "rationale", "", "why")
-		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
-	default:
-		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
+	in := &invocation{original: original, stdin: stdin, stdout: stdout, stderr: stderr}
+	root := in.newRoot()
+	root.SetArgs(args)
+	err := root.Execute()
+	var usageErr *usageError
+	switch {
+	case errors.As(err, &usageErr) && usageErr.command == "":
+		fmt.Fprintf(stderr, "asmai: %s\n\n%s", usageErr.message, usage)
+		return 2
+	case errors.As(err, &usageErr):
+		fmt.Fprintf(stderr, "asmai %s: %s\n\n%s", usageErr.command, usageErr.message, usage)
+		return 2
+	case err != nil:
+		fmt.Fprintf(stderr, "asmai: %v\n", err)
 		return 2
 	}
-	if err := flags.Parse(args); err != nil {
-		return 2
-	}
-	var operands []string
-	for _, want := range positional[name] {
-		if flags.NArg() == 0 {
-			fmt.Fprintf(stderr, "asmai %s: %s\n\n%s", name, want, usage)
-			return 2
-		}
-		operands = append(operands, flags.Arg(0))
-		// Flags may come after an argument too.
-		if err := flags.Parse(flags.Args()[1:]); err != nil {
-			return 2
-		}
-	}
-	var arg string
-	if len(operands) > 0 {
-		arg = operands[0]
-	}
-	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "asmai %s: unexpected argument %q\n\n%s", name, flags.Arg(0), usage)
-		return 2
-	}
-	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
-		if slices.Contains([]string{"setup", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
-			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
-		}
-		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
-	}
-
-	switch name {
-	case "version":
-		if o.json {
-			return o.printJSON(map[string]string{"version": version})
-		}
-		fmt.Fprintf(stdout, "asmai %s\n", version)
-		return 0
-	case "notices":
-		if o.json {
-			return o.printJSON(map[string]string{"license": string(asmai.License), "third_party_notices": string(asmai.ThirdPartyNotices)})
-		}
-		stdout.Write(asmai.License)
-		fmt.Fprintln(stdout)
-		stdout.Write(asmai.ThirdPartyNotices)
-		return 0
-	}
-
-	paths, err := statedir.Default()
-	if err != nil {
-		return o.fail(err)
-	}
-	switch name {
-	case "setup":
-		return setup(o, paths, stdin)
-	case "start":
-		if *foreground {
-			return startForeground(o, paths)
-		}
-		return start(o, paths)
-	case "stop":
-		return stop(o, paths)
-	case "status":
-		return status(o, paths)
-	case "agents":
-		return agents(o, paths)
-	case "jobs":
-		return jobs(o, paths)
-	case "job show":
-		return jobShow(o, paths, arg)
-	case "job open":
-		return jobOpen(o, paths, message, repository, reading, mandate, criteria)
-	case "brief":
-		return jobBrief(o, paths, arg)
-	case "inbox":
-		return inbox(o, paths, dispatchID)
-	case "handoff send":
-		return handoffSend(o, paths, handoffJob, recipient, outcome, decisions, evidence, constraints, permissions, criteria)
-	case "handoff accept", "handoff clarify", "handoff decline":
-		return handoffAnswer(o, paths, name, handoffID, answer)
-	case "assign":
-		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit)
-	case "effect":
-		return effect(o, paths, operands[0], operands[1])
-	case "result":
-		return result(o, paths, resultArgs)
-	case "blocked":
-		return blocked(o, paths, blockedReason, blockedNeeds)
-	case "accept", "reject", "cancel":
-		return decide(o, paths, name, decidedAssignment, reasons)
-	case "push":
-		return push(o, paths, arg)
-	case "decision record":
-		return decisionRecord(o, paths, decisionJob, choice, rationale, evidence)
-	case "chat":
-		return chat(o, paths, stdin)
-	case "attach":
-		return attach(o, paths, arg, stdin)
-	case "hook":
-		return hook(o, paths, stdin)
-	case "log":
-		return printLog(o, paths, *follow)
-	case "providers install":
-		return providersInstall(o, paths, stdin)
-	case "providers list":
-		return providersList(o, paths)
-	case "repo add":
-		return repoAdd(o, paths, arg, *repoName, stdin)
-	case "repo list":
-		return repoList(o, paths)
-	case "repo show":
-		return repoShow(o, paths, arg)
-	case "repo remove":
-		return repoRemove(o, paths, arg)
-	default: // export
-		return export(o, paths)
-	}
+	return in.code
 }
 
 // start starts the daemon in the background and returns once it answers.

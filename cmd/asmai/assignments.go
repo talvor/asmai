@@ -20,6 +20,7 @@ type listFlags []string
 
 func (l *listFlags) String() string         { return strings.Join(*l, "; ") }
 func (l *listFlags) Set(value string) error { *l = append(*l, value); return nil }
+func (l *listFlags) Type() string           { return "string" }
 
 // none is what an agent says to report that a list it must give is empty, so
 // that leaving it out is never taken for it.

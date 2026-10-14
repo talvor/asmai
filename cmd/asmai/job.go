@@ -16,6 +16,7 @@ type criteriaFlags []string
 
 func (c *criteriaFlags) String() string         { return strings.Join(*c, "; ") }
 func (c *criteriaFlags) Set(value string) error { *c = append(*c, value); return nil }
+func (c *criteriaFlags) Type() string           { return "string" }
 
 func jobNumber(value string) (int64, error) {
 	n, err := strconv.ParseInt(value, 10, 64)

@@ -104,24 +104,20 @@ func (h *Harness) skillsAreDelivered(ctx context.Context, f *Factory, path strin
 			if c.Text != called && c.Text != skills.Namespaced(called) {
 				continue
 			}
-			state := "ran"
 			switch {
 			case c.ResultEvent == 0:
-				state = "had no tool result"
+				return fmt.Errorf("the skill %s, which %s's text names by bare name, did not resolve (attempt %d): %q had no tool result", called, named, attempt, c.Text)
 			case c.Failed || c.Denied:
-				state = "was not found: " + strings.TrimSpace(c.Output)
+				return fmt.Errorf("the skill %s, which %s's text names by bare name, did not resolve (attempt %d): %q was not found: %s", called, named, attempt, c.Text, strings.TrimSpace(c.Output))
 			case ran == nil:
 				ran = &turn.SkillCalls[i]
 			}
-			tries = append(tries, fmt.Sprintf("%q %s", c.Text, state))
+			tries = append(tries, fmt.Sprintf("%q ran", c.Text))
 		}
 		if len(tries) == 0 {
 			quiet++
 			r.observe("attempt %d of %d: the session did not run %s with the Skill tool", attempt, skillAttempts, called)
 			continue
-		}
-		if ran == nil {
-			return fmt.Errorf("the skill %s, which %s's text names by bare name, did not resolve (attempt %d): %s", called, named, attempt, strings.Join(tries, "; "))
 		}
 		r.observe("the session was given the narrowed list as the plugin %s: %s", skills.PluginName, strings.Join(list, ", "))
 		r.observe("%s was started by /%s from the session's list", named, skills.Namespaced(named))

@@ -71,6 +71,16 @@ func (s *skillsSession) ask(spec AskSpec) (Turn, error) {
 		turn.SkillCalls = []Command{{Text: "tdd", CallEvent: 1, ResultEvent: 2, Failed: true, Output: "Unknown skill: tdd"}}
 	case "unresolved":
 		turn.SkillCalls = []Command{{Text: "asmai:tdd", CallEvent: 1}}
+	case "failed then successful":
+		turn.SkillCalls = []Command{
+			{Text: "tdd", CallEvent: 1, ResultEvent: 2, Failed: true, Output: "Unknown skill: tdd"},
+			{Text: "asmai:tdd", CallEvent: 3, ResultEvent: 4},
+		}
+	case "successful then unresolved":
+		turn.SkillCalls = []Command{
+			{Text: "tdd", CallEvent: 1, ResultEvent: 2},
+			{Text: "asmai:tdd", CallEvent: 3},
+		}
 	}
 	return turn, nil
 }
@@ -124,7 +134,7 @@ func TestC34IsInconclusiveWhenNoSessionMakesTheCall(t *testing.T) {
 }
 
 func TestC34FailsAtOnceWhenTheCallDoesNotResolve(t *testing.T) {
-	for _, behaviour := range []string{"missing", "unresolved"} {
+	for _, behaviour := range []string{"missing", "unresolved", "failed then successful", "successful then unresolved"} {
 		s := &skillsSession{attempts: []string{behaviour, "bare"}}
 		r := result(t, skillsHarness(t, s), "C34")
 		if r.Outcome != Failed || !strings.Contains(r.Failure, "did not resolve") || s.asked != 1 {

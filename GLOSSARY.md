@@ -217,3 +217,11 @@ A skill a registered repository carries, used only where the user has switched i
 
 **Intervention**:
 An explicit period of direct human interaction with an agent outside the normal Coordination conversation, with automated input paused and resulting decisions or changes recorded for its owner.
+
+**Dashboard**:
+The read-only terminal view of the factory's agents, jobs and log, opened with `asmai dashboard`. It shows what is happening and hands the terminal to an agent's attach; it never acts on the factory.
+_Avoid_: Console, monitor
+
+**Waiting on you**:
+The things the factory cannot continue without the user: a native prompt waiting in a leader's session, an agent whose input the user still holds, a pending decision request, and a needs-you finding. An assignment needing reconciliation is the owning leader's to resolve and is not waiting on you.
+_Avoid_: Attention, notification

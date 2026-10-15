@@ -25,6 +25,10 @@ import (
 // standInClaude stands in for Claude Code: it hands the test its session's
 // credential, draws a line and waits to be stopped.
 const standInClaude = `#!/bin/sh
+if [ "$1" = --version ]; then
+	echo "2.1.292 (Claude Code)"
+	exit 0
+fi
 if [ "$1" = -p ]; then
 	# The permission rules probe: answer with what the test wrote.
 	cat > /dev/null
@@ -78,6 +82,19 @@ func answersTheRulesProbe(t *testing.T) string {
 	return "if [ \"$1\" = -p ]; then cat > /dev/null; printf '%s\\n' '" + rulesAnswer(t, false) + "'; exit 0; fi\n"
 }
 
+// testPins pins version of Claude Code for this platform, which the daemon's
+// checks certify, with no download: the tests install their own stand-ins.
+func testPins(version string) providers.Pins {
+	platform, _ := providers.Platform(runtime.GOOS, runtime.GOARCH)
+	return providers.Pins{ClaudeCode: providers.Pin{Version: version, Platforms: map[string]providers.Download{platform: {}}}}
+}
+
+// reportsVersion is a Config.ClaudeVersion for tests whose stand-in Claude
+// Code is not a program that answers --version.
+func reportsVersion(version string) func(context.Context, string) (string, error) {
+	return func(context.Context, string) (string, error) { return version, nil }
+}
+
 func readFrame(t *testing.T, r *bufio.Reader) Frame {
 	t.Helper()
 	line, err := r.ReadBytes('\n')
@@ -97,7 +114,7 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	writeRulesAnswer(t, false)
 	p := stateDir(t)
 	configFile := filepath.Join(testDir, "config.toml")
-	pins := providers.Pins{ClaudeCode: providers.Pin{Version: "2.1.292"}}
+	pins := testPins("2.1.292")
 	stopped, cancel := runDaemonWith(t, Config{Paths: p, Version: "v1.2.3", ConfigFile: configFile, Pins: pins})
 
 	// Without staffing or the pinned Claude Code, the checks fail and no
@@ -106,7 +123,7 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Checks) != 3 || resp.Checks[0].OK || resp.Checks[1].OK || !resp.Checks[2].OK || resp.Leaders[0].State != store.AgentStopped {
+	if len(resp.Checks) != 4 || !resp.Checks[0].OK || resp.Checks[1].OK || resp.Checks[2].OK || !resp.Checks[3].OK || resp.Leaders[0].State != store.AgentStopped {
 		t.Fatalf("starting an unready factory answered %+v, %+v, want the staffing and Claude Code checks failed and the leaders stopped", resp.Checks, resp.Leaders)
 	}
 
@@ -278,7 +295,7 @@ func TestTheDaemonStartsNoAgentUntilTheUserTrustsTheFoldersAgentsStartIn(t *test
 	if err := os.WriteFile(record, untrusted, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pins := providers.Pins{ClaudeCode: providers.Pin{Version: "2.1.292"}}
+	pins := testPins("2.1.292")
 	runDaemonWith(t, Config{Paths: p, Version: "v1.2.3", ConfigFile: readyConfig(t, testDir), Pins: pins, ClaudeRecord: record})
 	claude := filepath.Join(p.Providers, "claude-code", "2.1.292", "claude")
 	os.MkdirAll(filepath.Dir(claude), 0o700)
@@ -455,7 +472,7 @@ func TestTheDaemonStartsNoAgentUnderAManagedPolicyThatIgnoresAsmaisPermissionRul
 	if err := os.WriteFile(record, []byte(`{"projects": {"`+p.Dir+`": {"hasTrustDialogAccepted": true}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pins := providers.Pins{ClaudeCode: providers.Pin{Version: "2.1.292"}}
+	pins := testPins("2.1.292")
 	runDaemonWith(t, Config{Paths: p, Version: "v1.2.3", ConfigFile: readyConfig(t, testDir), Pins: pins, ClaudeRecord: record})
 	claude := filepath.Join(p.Providers, "claude-code", "2.1.292", "claude")
 	os.MkdirAll(filepath.Dir(claude), 0o700)

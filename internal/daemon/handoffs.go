@@ -210,7 +210,7 @@ func (d *daemon) ensureRoleLeader(role string) error {
 	}
 	checks, cfg, install := d.checks()
 	if failed(checks) {
-		return fmt.Errorf("cannot start %s's leader: factory checks failed", role)
+		return d.held(roles.LeaderOf(role).String(), checks)
 	}
 	if l.restart != nil {
 		l.restart.Stop()

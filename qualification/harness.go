@@ -80,6 +80,8 @@ type Case struct {
 
 // Cases are the qualification cases implemented so far.
 var Cases = []Case{
+	{ID: "C1", Title: "Platform certification on Linux and on macOS; an uncertified platform refuses to start agents and says what to do", Env: signedInOnly, Run: (*Harness).c1},
+	{ID: "C2", Title: "An unqualified provider version is refused before any dispatch; a provider CLI that upgraded itself holds its agent at the next restart", Env: signedInOnly, Run: (*Harness).c2},
 	{
 		ID:    "C3",
 		Title: "The pinned provider copy reuses the user's existing sign-in without a new login",
@@ -215,7 +217,7 @@ func (h *Harness) resetDisposableState() error {
 // disposableState reports whether the case id runs in the disposable state
 // directory, which the harness has `asmai setup` prepare.
 func disposableState(id string) bool {
-	return slices.Contains([]string{"C7", "C11", "C19", "C48"}, id)
+	return slices.Contains([]string{"C2", "C7", "C11", "C19", "C48"}, id)
 }
 
 // withoutAPIKeys returns environ less any provider API-key variable, and the

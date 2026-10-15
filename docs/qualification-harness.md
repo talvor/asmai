@@ -2,10 +2,12 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has fourteen cases:
+So far it has sixteen cases:
 
 | Case | What it qualifies |
 |---|---|
+| C1 | Platform certification on Linux and on macOS; an uncertified platform refuses to start agents and says what to do |
+| C2 | An unqualified provider version is refused before any dispatch; a provider CLI that upgraded itself holds its agent at the next restart |
 | C3 | The pinned Claude Code reuses the user's existing sign-in without a new login |
 | C4 | Every agent session starts without provider API-key variables |
 | C7 | An automated nudge counts only after the receiving provider acknowledges its exact prompt |
@@ -37,7 +39,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
 
 1. Sign Claude Code in with its own login, as that user, and check it: `claude auth status` reports `claude.ai`. The harness never starts a sign-in.
 2. Staff the roles in `~/.config/asmai/config.toml` ([the configuration file](../README.md#the-configuration-file)). The harness refuses to run without it and never writes it.
-   For an isolated run, set `ASMAI_CONFIG_FILE` to an absolute path to a scratch config with Coordination and Engineering staffed. C7, C11, C19 and C48 use a dedicated disposable state directory and remove it after the factories stop; the harness refuses to reuse a leftover directory. They run with a copy of the configuration file in that directory, so the fixture repository they register is removed with it and the file itself stays as it was.
+   For an isolated run, set `ASMAI_CONFIG_FILE` to an absolute path to a scratch config with Coordination and Engineering staffed. C2, C7, C11, C19 and C48 use a dedicated disposable state directory and remove it after the factories stop; the harness refuses to reuse a leftover directory. They run with a copy of the configuration file in that directory, so the fixture repository they register is removed with it and the file itself stays as it was.
    Run `asmai setup` once, as the qualification user, in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/`, `workspaces/` and each registered repository's clone in the configured state directory (`asmai repo add`, run in a terminal, asks about the clone it makes), where C3, C4, C36, C37 and C49 start Coordination's leader ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). The harness never answers that question there: a leader that asks it fails the case.
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.
@@ -78,9 +80,24 @@ ssh phillip@192.168.1.184 'cd ~/asmai && git fetch origin && git checkout COMMIT
 
 1. It checks the account: not in CI, not root, and `HOME` a directory the running user owns. It checks that the default and environment-selected factories are not already running.
 2. It exports the commit under test with `git archive` into a scratch directory, reads that commit's pins file, and builds `asmai` from it as a development build. The scratch directory is removed when the run ends.
-3. C3 and C4 use the configured factory state. C7, C11, C19 and C48 use `~/.local/state/asmai/qualification`, with the user's `~/.claude` sign-in and no other user's. They drive the factory only through `asmai` commands and the daemon's socket, as a user's terminal does, and stop it afterwards. Before each of them, the harness clears what the case before left in this state, such as an open job, a handoff, the job's read-only view and the work a start would restore, keeping only the pinned provider copy, and gives the case a fresh copy of the configuration file there: each case's leaders start with nothing to do but the case's own request, whether or not another case ran first. After the cases stop, the harness removes this qualification state, including the fixture repository, provider copy, the configuration file's copy, and factory records, making the read-only views writable first. A removal that fails is reported, and the next run refuses to start until the directory is gone. If the pinned Claude Code is not installed yet, it runs `asmai providers install` and answers yes: the pinned copy is fetched from Claude Code's official channel and checked against the pins file, about 250 MB the first time.
+3. C1, C3 and C4 use the configured factory state. C2, C7, C11, C19 and C48 use `~/.local/state/asmai/qualification`, with the user's `~/.claude` sign-in and no other user's. They drive the factory only through `asmai` commands and the daemon's socket, as a user's terminal does, and stop it afterwards. Before each of them, the harness clears what the case before left in this state, such as an open job, a handoff, the job's read-only view and the work a start would restore, keeping only the pinned provider copy, and gives the case a fresh copy of the configuration file there: each case's leaders start with nothing to do but the case's own request, whether or not another case ran first. After the cases stop, the harness removes this qualification state, including the fixture repository, provider copy, the configuration file's copy, and factory records, making the read-only views writable first. A removal that fails is reported, and the next run refuses to start until the directory is gone. If the pinned Claude Code is not installed yet, it runs `asmai providers install` and answers yes: the pinned copy is fetched from Claude Code's official channel and checked against the pins file, about 250 MB the first time.
    The disposable state directory gets the trust of its `agents/` and `workspaces/` folders, and of the fixture repository's clone in `repositories/`, only through `asmai setup`, and for the clone `asmai repo add`, which the harness runs for it each in a terminal of its own, as its user would: it answers yes to the install, presses Enter when the command asks to open Claude Code in a folder, and in each Claude Code session `asmai setup` or `asmai repo add` opens it answers "Yes, I trust this folder" on the user's behalf, then leaves with `/exit`. It reads Claude Code's question only from the screen below the command's own question, since the explanation above it names the answers too. It moves to "Yes, I trust this folder" if the question starts elsewhere and confirms only while it is selected, so it never chooses to exit. Those sessions are the only place anything other than the user answers the question; Claude Code records the answer in the user's `~/.claude.json`, and AsmAI writes nothing there. Anywhere else, the harness never answers it: a session that asks whether to trust its directory fails the case.
 4. It prints the report.
+
+### C1: platform certification
+
+C1 runs in the user's configured factory state, as C3 does. It starts the factory with the commit under test and requires `asmai start` to report the `platform` check passed and Coordination's leader running: this host is a certified platform. It then requires the check every start runs, and that `asmai init` and `asmai doctor` will reuse (`certify.Platform`), to certify Linux on x86_64 and macOS on arm64, the platforms the commit's pins file qualifies, and to refuse platforms it does not (Linux on arm64, macOS on x86_64, Windows, FreeBSD), each time naming the platform and what to do. No host of an uncertified platform is available to the harness, so that refusal is shown at the check's boundary, and the report says so; the daemon's refusal to start any agent there is exercised by the development tests, with the fake provider.
+
+### C2: an unqualified provider version
+
+C2 runs in the disposable state directory, whose pinned copy it is free to move aside, and puts it back afterwards. It requires:
+
+- with an executable at the pinned copy's path that reports a version other than the pin, `asmai start` to exit 1 with the `Claude Code version` check failed, naming both versions and `asmai providers install`; no session to start, and the executable to be run for nothing but its version;
+- with the pinned copy back and Coordination's leader running, an executable that reports another version put at its path, as a provider that updated itself replaces itself, not to disturb the running session;
+- after that session ends, as it does for a restart, the daemon not to start the leader on the other version: the leader stays stopped, `asmai status` shows the failed check, and the executable is never run as a session;
+- with the pinned copy back, `asmai start` to run the leader again.
+
+It uses the real pinned Claude Code, so the executable that updated itself is a stand-in that reports a version: whether the real Claude Code replaces itself in its own directory is not what AsmAI relies on, only that its executable at the path says which version it is.
 
 ### C3: the sign-in is reused
 

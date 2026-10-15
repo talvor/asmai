@@ -192,3 +192,27 @@ func files(t *testing.T, dir string) []string {
 	}
 	return names
 }
+
+func TestClaudeCodeVersionIsWhatTheExecutableReports(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, out string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+out+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	got, err := ClaudeCodeVersion(context.Background(), write("claude", `echo "2.1.292 (Claude Code)"`))
+	if err != nil || got != "2.1.292" {
+		t.Errorf("version = %q, %v; want 2.1.292", got, err)
+	}
+	if _, err := ClaudeCodeVersion(context.Background(), write("other", `echo "bash 5.2"`)); err == nil {
+		t.Error("a program that prints no version was read as one")
+	}
+	if _, err := ClaudeCodeVersion(context.Background(), write("broken", `exit 3`)); err == nil {
+		t.Error("a program that fails was read as a version")
+	}
+	if _, err := ClaudeCodeVersion(context.Background(), filepath.Join(dir, "missing")); err == nil {
+		t.Error("a missing program was read as a version")
+	}
+}

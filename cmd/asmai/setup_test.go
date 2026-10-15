@@ -74,8 +74,8 @@ func setupFactory(t *testing.T, scripts map[string][]string) (stateDir, testDir 
 	t.Setenv("ASMAI_FAKE_PROVIDER_SCRIPT", leader)
 	claude := []byte(`#!/bin/sh
 folder=$(basename "$PWD")
-# The permission rules probe is not a folder the user opens Claude Code in.
-if [ "$1" = -p ]; then exec ` + providers.ShellQuote(fakeProvider) + ` "$@"; fi
+# The permission rules probe and the version check are not a folder the user opens Claude Code in.
+if [ "$1" = -p ] || [ "$1" = --version ]; then exec ` + providers.ShellQuote(fakeProvider) + ` "$@"; fi
 echo "$folder" >> "$ASMAI_TEST_DIR/opened"
 echo "$folder DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER-}" >> "$ASMAI_TEST_DIR/environments"
 if [ -e "$ASMAI_TEST_DIR/script-$folder.jsonl" ]; then

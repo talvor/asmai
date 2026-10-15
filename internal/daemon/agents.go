@@ -469,13 +469,7 @@ func (d *daemon) staffing() (config.Config, []Check) {
 			problems = cfg.MissingStaffing(roles.Staffed)
 		}
 		if len(problems) == 0 {
-			d.configMu.Lock()
-			if len(d.applied.Roles) == 0 {
-				d.applied = cfg
-			} else {
-				cfg = d.applied
-			}
-			d.configMu.Unlock()
+			return config.Config{}, []Check{failed(fmt.Sprintf("%s has staffing that has not been applied", path), "run `asmai config apply` and confirm it before starting agents")}
 		}
 	} else {
 		problems = cfg.MissingStaffing(roles.Staffed)

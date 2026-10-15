@@ -135,6 +135,12 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if resp, err := Call(p.Socket, Request{Command: CommandStart}); err != nil || !slices.ContainsFunc(resp.Checks, func(c Check) bool { return c.Name == "staffing" && strings.Contains(c.Fix, "asmai config apply") }) {
+		t.Fatalf("starting before applying staffing returned %+v, %v", resp.Checks, err)
+	}
+	if resp, err := Call(p.Socket, Request{Command: CommandConfigApply, Configuration: config.String(), Confirm: true}); err != nil || !resp.ConfigApply.Applied {
+		t.Fatalf("applying staffing returned %+v, %v", resp.ConfigApply, err)
+	}
 	claude := filepath.Join(p.Providers, "claude-code", "2.1.292", "claude")
 	os.MkdirAll(filepath.Dir(claude), 0o700)
 	if err := os.WriteFile(claude, []byte(standInClaude), 0o700); err != nil {
@@ -232,20 +238,20 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	for _, e := range got {
 		kinds = append(kinds, strings.Fields(e)[0])
 	}
-	want := "daemon.started provider.installed session.started observation observation session.ended daemon.stopped"
+	want := "daemon.started configuration.applied provider.installed session.started observation observation session.ended daemon.stopped"
 	if strings.Join(kinds, " ") != want {
 		t.Errorf("the journal holds\n%s\nwant %s", strings.Join(got, "\n"), want)
 	}
-	if !strings.Contains(got[5], `"by":"signal"`) {
-		t.Errorf("the session's end is journaled as %s, want it ended by the signal that stopped the daemon", got[5])
+	if !strings.Contains(got[6], `"by":"signal"`) {
+		t.Errorf("the session's end is journaled as %s, want it ended by the signal that stopped the daemon", got[6])
 	}
 	// The session's guard lets it reach this daemon's socket, in this state
 	// directory, and no other.
 	var started struct {
 		Args []string `json:"args"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(got[2], store.KindSessionStarted+" ")), &started); err != nil || len(started.Args) < 2 || started.Args[0] != "--settings" {
-		t.Fatalf("the session's start is journaled as %s (%v), want its command line, --settings first", got[2], err)
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(got[3], store.KindSessionStarted+" ")), &started); err != nil || len(started.Args) < 2 || started.Args[0] != "--settings" {
+		t.Fatalf("the session's start is journaled as %s (%v), want its command line, --settings first", got[3], err)
 	}
 	var settings struct {
 		Sandbox struct {

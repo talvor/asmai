@@ -271,7 +271,7 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 		t.Errorf("applying again exited %d printing %q, want no change", code, stdout)
 	}
 
-	// A file with a problem is refused, and --json without --yes only shows.
+	// A file with a problem is refused, and --json only shows.
 	writeConfig(t, text+"\n[logs]\ndaemon_files = 0\n")
 	if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 1 || !strings.Contains(stderr, "daemon_files in [logs]") || !strings.Contains(stderr, "nothing was applied") {
 		t.Errorf("applying a file with a problem exited %d printing %q", code, stderr)
@@ -285,16 +285,19 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 	}
 	asmaiJSON(t, &shown, "config", "apply")
 	if shown.Applied || len(shown.Changes) != 1 || shown.Changes[0].Setting != "limits.silence_timeout" {
-		t.Errorf("config apply --json without --yes printed %+v, want the one change, not applied", shown)
+		t.Errorf("config apply --json printed %+v, want the one change, not applied", shown)
 	}
 	if got := journaled(t, "configuration.applied"); len(got) != 1 {
 		t.Errorf("showing the change journaled it: %d entries", len(got))
 	}
-	if _, stderr, code := runAsmai(t, "config", "apply", "--yes"); code != 0 {
-		t.Errorf("config apply --yes exited %d: %s", code, stderr)
+	if _, stderr, code := runIn(t, "", "config", "apply", "--yes"); code != 2 || !strings.Contains(stderr, "flag provided but not defined: -yes") {
+		t.Errorf("config apply --yes exited %d printing %q", code, stderr)
+	}
+	if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 {
+		t.Errorf("config apply exited %d: %s", code, stderr)
 	}
 	if got := journaled(t, "configuration.applied"); len(got) != 2 {
-		t.Errorf("after --yes the journal holds %d applied configurations, want 2", len(got))
+		t.Errorf("after confirmation the journal holds %d applied configurations, want 2", len(got))
 	}
 }
 
@@ -381,7 +384,7 @@ func TestAnAgentCannotChangeTheConfiguration(t *testing.T) {
 	t.Setenv(daemon.SessionCredential, "an-agent-session")
 	before := readConfig(t)
 	for _, args := range [][]string{
-		{"config", "show"}, {"config", "edit"}, {"config", "apply", "--yes"},
+		{"config", "show"}, {"config", "edit"}, {"config", "apply"},
 		{"role", "list"}, {"role", "set", "engineering", "--model", "sonnet"},
 	} {
 		_, stderr, code := runIn(t, "", args...)

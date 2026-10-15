@@ -125,15 +125,7 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 	clone := filepath.Join(d.cfg.Paths.Repositories, name)
 	partial := filepath.Join(d.cfg.Paths.Repositories, "."+name+".partial")
 	os.RemoveAll(partial)
-	chosen := branch
-	branch, err = repos.Clone(ctx, src.Origin, partial)
-	if err == nil && chosen != "" {
-		if err = repos.CheckBranch(ctx, partial, chosen); err != nil {
-			os.RemoveAll(partial)
-			return store.Repository{}, refuse("%v; choose a branch it has with --default-branch", err)
-		}
-		branch = chosen
-	}
+	branch, err = repos.Clone(ctx, src.Origin, partial, branch)
 	if err != nil {
 		if ctx.Err() != nil {
 			return store.Repository{}, refuse("registering %s was interrupted: %v", name, ctx.Err())

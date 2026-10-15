@@ -44,7 +44,7 @@ func newScratchPullRequests(ctx context.Context, scratch, prefix string) (*scrat
 		return nil, fmt.Errorf("gh is not on the PATH: %s opens pull requests with it", strings.ToUpper(prefix))
 	}
 	s := &scratchPullRequests{gh: gh, clone: filepath.Join(scratch, "clone")}
-	if s.base, err = repos.Clone(ctx, pushFixture, s.clone); err != nil {
+	if s.base, err = repos.Clone(ctx, pushFixture, s.clone, ""); err != nil {
 		return nil, err
 	}
 	if s.token, err = randomToken(prefix); err != nil {

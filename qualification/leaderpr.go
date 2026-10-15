@@ -86,7 +86,7 @@ func (h *Harness) c50(ctx context.Context, f *Factory, r *Result) (err error) {
 			return err
 		}
 	}
-	base, err := repos.Clone(ctx, pushFixture, clone)
+	base, err := repos.Clone(ctx, pushFixture, clone, "")
 	if err != nil {
 		return err
 	}

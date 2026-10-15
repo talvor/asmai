@@ -125,7 +125,7 @@ commands:
   asmai config edit           open the configuration file in $VISUAL or $EDITOR and accept what you save
                               only when it has no problem; a file with problems is shown them and
                               edited again, or left as it was
-  asmai config apply [--yes]  hand the configuration file to the running factory: validate it, show what
+  asmai config apply          hand the configuration file to the running factory: validate it, show what
                               it changes and which running agents pick that up at their next start,
                               including added skills, and ask to confirm; the applied configuration is
                               journaled. A repository the file no longer has is removed, which an open
@@ -233,7 +233,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var decidedAssignment int64
 	var reasons listFlags
 	var decisionJob int64
-	var configYes bool
 	var repoOptions repoSettings
 	var role roleChoices
 	var choice, rationale string
@@ -252,8 +251,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		repoOptions.commitTrailers = true
 		flags.BoolVar(&repoOptions.commitTrailers, "commit-trailers", true, "commits carry the AsmAI trailers; --commit-trailers=false switches them off")
 		flags.Var(&repoOptions.skills, "repository-skills", "a role for which the repository's own skills are switched on; may be repeated")
-	case "config apply":
-		flags.BoolVar(&configYes, "yes", false, "apply without asking to confirm")
 	case "role set":
 		flags.StringVar(&role.provider, "provider", "", "the provider of the role's leader and workers")
 		flags.StringVar(&role.model, "model", "", "the model of the role's leader and workers")
@@ -309,7 +306,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "role list":
+	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -435,7 +432,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "repo add":
 		return repoAdd(o, paths, arg, *repoName, repoOptions, stdin)
 	case "config apply":
-		return configApply(o, paths, stdin, configYes)
+		return configApply(o, paths, stdin)
 	case "repo list":
 		return repoList(o, paths)
 	case "repo show":

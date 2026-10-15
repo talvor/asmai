@@ -207,9 +207,9 @@ func firstSet(names ...string) string {
 
 // configApply is `asmai config apply`: it hands the configuration file to
 // the running daemon, which validates it and answers with what it changes
-// and which running agents pick that up. Once the user confirms, or with
-// --yes, the daemon applies it and journals it.
-func configApply(o *output, paths statedir.Paths, stdin io.Reader, yes bool) int {
+// and which running agents pick that up. Once the user confirms, the daemon
+// applies it and journals it.
+func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	path, data, err := configFile()
 	if err != nil {
 		return o.fail(err)
@@ -241,23 +241,17 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader, yes bool) int
 		fmt.Fprintf(o.stdout, "%s is as applied; there is no change.\n", path)
 		return 0
 	}
-	if o.json && !yes {
+	if o.json {
 		return o.printJSON(preview)
 	}
-	w := o.stdout
-	if o.json {
-		w = o.stderr
-	}
-	showChanges(w, path, preview.Changes)
-	if !yes {
-		fmt.Fprint(w, "Apply it? [y/N] ")
-		answer := readLine(stdin)
-		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-			if !strings.HasSuffix(answer, "\n") {
-				fmt.Fprintln(w)
-			}
-			return o.fail(errors.New("not confirmed; nothing was applied"))
+	showChanges(o.stdout, path, preview.Changes)
+	fmt.Fprint(o.stdout, "Apply it? [y/N] ")
+	answer := readLine(stdin)
+	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+		if !strings.HasSuffix(answer, "\n") {
+			fmt.Fprintln(o.stdout)
 		}
+		return o.fail(errors.New("not confirmed; nothing was applied"))
 	}
 	resp, err = daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data), Confirm: true})
 	if err != nil {
@@ -268,12 +262,9 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader, yes bool) int
 		return o.fail(errors.New("the daemon did not apply the configuration"))
 	}
 	for _, name := range applied.Removed {
-		fmt.Fprintf(w, "Removed %s: its record and AsmAI's clone. Your own checkout was not touched.\n", name)
+		fmt.Fprintf(o.stdout, "Removed %s: its record and AsmAI's clone. Your own checkout was not touched.\n", name)
 	}
-	fmt.Fprintf(w, "Applied, and journaled as configuration.applied (SHA-256 %s).\n", applied.SHA256)
-	if o.json {
-		return o.printJSON(applied)
-	}
+	fmt.Fprintf(o.stdout, "Applied, and journaled as configuration.applied (SHA-256 %s).\n", applied.SHA256)
 	return 0
 }
 

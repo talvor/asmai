@@ -342,6 +342,10 @@ func TestAgentStaffingUsesTheAppliedConfiguration(t *testing.T) {
 	if cfg, checks := d.staffing(); len(checks) != 0 || cfg.Roles["coordination"].LeaderModel != "sonnet" {
 		t.Errorf("after apply, staffing returned %q and %v", cfg.Roles["coordination"].LeaderModel, checks)
 	}
+	d.applied, _ = config.Parse(nil)
+	if _, checks := d.staffing(); !slices.ContainsFunc(checks, func(c Check) bool { return strings.Contains(c.Fix, "asmai config apply") }) || len(d.applied.Roles) != 0 {
+		t.Errorf("an unapplied first file gave checks %v and applied roles %v", checks, d.applied.Roles)
+	}
 }
 
 func TestCommitTrailersUseTheAppliedRepositorySetting(t *testing.T) {

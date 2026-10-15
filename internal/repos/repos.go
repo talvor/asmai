@@ -126,9 +126,9 @@ func DeriveName(origin string) string {
 }
 
 // Clone makes AsmAI's clone of origin at dest, which must not exist, and
-// returns the repository's default branch, as origin names it. A failed
-// clone leaves nothing at dest.
-func Clone(ctx context.Context, origin, dest string) (defaultBranch string, err error) {
+// returns selectedBranch when given, or the default branch origin names.
+// A failed clone leaves nothing at dest.
+func Clone(ctx context.Context, origin, dest, selectedBranch string) (defaultBranch string, err error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return "", err
 	}
@@ -139,6 +139,12 @@ func Clone(ctx context.Context, origin, dest string) (defaultBranch string, err 
 	}()
 	if _, err := git(ctx, "", "clone", "--quiet", "--", origin, dest); err != nil {
 		return "", fmt.Errorf("cloning %s: %w", origin, err)
+	}
+	if selectedBranch != "" {
+		if err := CheckBranch(ctx, dest, selectedBranch); err != nil {
+			return "", err
+		}
+		return selectedBranch, nil
 	}
 	head, err := git(ctx, dest, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
 	if err != nil {
@@ -198,9 +204,12 @@ func gitStatus(ctx context.Context, dir string, args ...string) (stdout string, 
 }
 
 // CheckBranch returns an error unless origin, as the clone at dir fetched
-// it, has the branch.
+// it, has an exact branch of that name.
 func CheckBranch(ctx context.Context, dir, branch string) error {
-	if _, err := git(ctx, dir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch); err != nil {
+	if branch == "HEAD" {
+		return fmt.Errorf("origin has no branch %q", branch)
+	}
+	if _, err := git(ctx, dir, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch); err != nil {
 		return fmt.Errorf("origin has no branch %q", branch)
 	}
 	return nil

@@ -167,7 +167,7 @@ func TestRoleListShowsEachRoleAndRoleSetEditsTheFileForClaudeAndRefusesCodex(t *
 	if got, want := readConfig(t), "# mine\n"+strings.Replace(staffing, "[roles.engineering]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"opus\"", "[roles.engineering]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"", 1); got != want {
 		t.Errorf("the file is\n%s\nwant\n%s", got, want)
 	}
-	if _, stderr, code := runAsmai(t, "role", "set", "quality", "--provider", "claude", "--model", "haiku"); code != 0 {
+	if _, stderr, code := runAsmai(t, "role", "set", "quality", "--leader-provider", "claude", "--worker-provider", "claude", "--leader-model", "haiku", "--worker-model", "haiku"); code != 0 {
 		t.Errorf("setting both sides exited %d: %s", code, stderr)
 	}
 	cfg, problems, err := config.Load(configPath())
@@ -181,12 +181,17 @@ func TestRoleListShowsEachRoleAndRoleSetEditsTheFileForClaudeAndRefusesCodex(t *
 		want string
 	}{
 		{[]string{"role", "set", "engineering", "--worker-provider", "codex"}, "Codex arrives in a later asmai"},
-		{[]string{"role", "set", "engineering", "--provider", "codex", "--model", "gpt"}, "Codex arrives in a later asmai"},
+		{[]string{"role", "set", "engineering", "--leader-provider", "codex", "--leader-model", "gpt"}, "Codex arrives in a later asmai"},
 		{[]string{"role", "set", "engineering"}, "say what to set"},
-		{[]string{"role", "set", "nobody", "--model", "x"}, `"nobody" is no role`},
+		{[]string{"role", "set", "nobody", "--leader-model", "x"}, `"nobody" is no role`},
 	} {
 		if _, stderr, code := runAsmai(t, tc.args...); code != 1 || !strings.Contains(stderr, tc.want) {
 			t.Errorf("asmai %s exited %d printing %q, want %q", strings.Join(tc.args, " "), code, stderr, tc.want)
+		}
+	}
+	for _, flag := range []string{"--provider", "--model"} {
+		if _, stderr, code := runAsmai(t, "role", "set", "quality", flag, "claude"); code != 2 || !strings.Contains(stderr, "flag provided but not defined") {
+			t.Errorf("role set %s exited %d printing %q", flag, code, stderr)
 		}
 	}
 	if got := readConfig(t); got != before {
@@ -271,7 +276,7 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 		t.Errorf("applying again exited %d printing %q, want no change", code, stdout)
 	}
 
-	// A file with a problem is refused, and --json only shows.
+	// A file with a problem is refused.
 	writeConfig(t, text+"\n[logs]\ndaemon_files = 0\n")
 	if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 1 || !strings.Contains(stderr, "daemon_files in [logs]") || !strings.Contains(stderr, "nothing was applied") {
 		t.Errorf("applying a file with a problem exited %d printing %q", code, stderr)
@@ -283,21 +288,25 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 			Setting string `json:"setting"`
 		} `json:"changes"`
 	}
-	asmaiJSON(t, &shown, "config", "apply")
-	if shown.Applied || len(shown.Changes) != 1 || shown.Changes[0].Setting != "limits.silence_timeout" {
-		t.Errorf("config apply --json printed %+v, want the one change, not applied", shown)
+	stdout, stderr, code = runIn(t, "y\n", "config", "apply", "--json")
+	if code != 0 || !strings.Contains(stderr, "Apply it? [y/N]") || json.Unmarshal([]byte(stdout), &shown) != nil {
+		t.Fatalf("config apply --json exited %d printing %q, %q", code, stdout, stderr)
 	}
-	if got := journaled(t, "configuration.applied"); len(got) != 1 {
-		t.Errorf("showing the change journaled it: %d entries", len(got))
+	if !shown.Applied || len(shown.Changes) != 1 || shown.Changes[0].Setting != "limits.silence_timeout" {
+		t.Errorf("config apply --json printed %+v, want the applied change", shown)
+	}
+	if got := journaled(t, "configuration.applied"); len(got) != 2 {
+		t.Errorf("confirming JSON apply journaled %d entries, want 2", len(got))
 	}
 	if _, stderr, code := runIn(t, "", "config", "apply", "--yes"); code != 2 || !strings.Contains(stderr, "flag provided but not defined: -yes") {
 		t.Errorf("config apply --yes exited %d printing %q", code, stderr)
 	}
+	writeConfig(t, strings.Replace(text, `"45m"`, `"55m"`, 1))
 	if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 {
 		t.Errorf("config apply exited %d: %s", code, stderr)
 	}
-	if got := journaled(t, "configuration.applied"); len(got) != 2 {
-		t.Errorf("after confirmation the journal holds %d applied configurations, want 2", len(got))
+	if got := journaled(t, "configuration.applied"); len(got) != 3 {
+		t.Errorf("after confirmation the journal holds %d applied configurations, want 3", len(got))
 	}
 }
 
@@ -378,6 +387,64 @@ func TestRepoAddAcceptsEveryNonCodexFieldOfTheEntry(t *testing.T) {
 	}
 }
 
+func TestRestartReportsRepositoryRecordMismatchesWithoutChangingTheRecord(t *testing.T) {
+	readyFactory(t, idleLeader)
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Fatalf("starting factory: %s", stderr)
+	}
+	work, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := filepath.Join(work, "fixture.git")
+	gitIn(t, work, "init", "--bare", "-b", "trunk", origin)
+	gitIn(t, work, "clone", "--quiet", origin, "seed")
+	seed := filepath.Join(work, "seed")
+	gitIn(t, seed, "checkout", "-b", "trunk")
+	gitIn(t, seed, "commit", "--allow-empty", "-m", "first")
+	gitIn(t, seed, "push", "--quiet", "origin", "trunk")
+	asmaiJSON(t, &struct{}{}, "repo", "add", origin, "--name", "fixture")
+	registered := readConfig(t)
+	for _, tc := range []struct {
+		remove bool
+		want   string
+	}{
+		{false, "[repositories.fixture].default_branch"},
+		{true, "[repositories.fixture] is missing"},
+	} {
+		stopFactory(t)
+		cfg, problems := config.Parse([]byte(registered))
+		if len(problems) > 0 {
+			t.Fatalf("registered configuration has problems: %v", problems)
+		}
+		if _, ok := cfg.Repositories["fixture"]; !ok {
+			t.Fatal("repo add did not write [repositories.fixture]")
+		}
+		if tc.remove {
+			delete(cfg.Repositories, "fixture")
+			delete(cfg.Options, "fixture")
+		} else {
+			r := cfg.Repositories["fixture"]
+			r.DefaultBranch = "develop"
+			cfg.Repositories["fixture"] = r
+		}
+		writeConfig(t, string(config.Render(cfg)))
+		if _, stderr, code := runAsmai(t, "config", "check"); code != 1 || !strings.Contains(stderr, tc.want) {
+			t.Errorf("config check exited %d printing %q, want %q", code, stderr, tc.want)
+		}
+		runAsmai(t, "start")
+		if stdout, stderr, code := runAsmai(t, "status"); code != 0 || !strings.Contains(stdout, tc.want) {
+			t.Errorf("status exited %d printing %q, %q, want %q", code, stdout, stderr, tc.want)
+		}
+		if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 1 || !strings.Contains(stderr, tc.want) {
+			t.Errorf("apply exited %d printing %q, want %q", code, stderr, tc.want)
+		}
+		if got := repositoriesListed(t); len(got) != 1 || got[0].DefaultBranch != "trunk" {
+			t.Errorf("the registered repository changed: %+v", got)
+		}
+	}
+}
+
 func TestAnAgentCannotChangeTheConfiguration(t *testing.T) {
 	factoryHome(t)
 	writeConfig(t, staffing)
@@ -385,7 +452,7 @@ func TestAnAgentCannotChangeTheConfiguration(t *testing.T) {
 	before := readConfig(t)
 	for _, args := range [][]string{
 		{"config", "show"}, {"config", "edit"}, {"config", "apply"},
-		{"role", "list"}, {"role", "set", "engineering", "--model", "sonnet"},
+		{"role", "list"}, {"role", "set", "engineering", "--worker-model", "sonnet"},
 	} {
 		_, stderr, code := runIn(t, "", args...)
 		if code != 1 || !strings.Contains(stderr, "an agent cannot run this command; ask the user to run `asmai "+strings.Join(args, " ")+"`") {

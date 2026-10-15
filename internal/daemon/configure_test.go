@@ -148,7 +148,7 @@ func TestAnInvalidOrMismatchedConfigurationIsRefusedAndNothingIsApplied(t *testi
 	}
 }
 
-func TestRemovingARepositoryFromTheFileIsRefusedWhileItHasAnOpenJob(t *testing.T) {
+func TestApplyRefusesRemovingARegisteredRepositoryFromTheFile(t *testing.T) {
 	p, configFile := repoDaemon(t)
 	if err := os.MkdirAll(filepath.Dir(configFile), 0o755); err != nil {
 		t.Fatal(err)
@@ -183,8 +183,8 @@ func TestRemovingARepositoryFromTheFileIsRefusedWhileItHasAnOpenJob(t *testing.T
 	if err := os.WriteFile(configFile, []byte(appliedStaffing), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyConfig(t, p.Socket, appliedStaffing, true); err == nil || !strings.Contains(err.Error(), "[repositories.fixture]") || !strings.Contains(err.Error(), "open job 1") {
-		t.Errorf("removing a repository with an open job returned %v", err)
+	if _, err := applyConfig(t, p.Socket, appliedStaffing, true); err == nil || !strings.Contains(err.Error(), "[repositories.fixture]") || !strings.Contains(err.Error(), "asmai repo remove fixture") {
+		t.Errorf("applying a missing registered repository returned %v", err)
 	}
 	if _, err := os.Stat(clone); err != nil {
 		t.Errorf("the refused apply left the clone %v", err)
@@ -193,19 +193,18 @@ func TestRemovingARepositoryFromTheFileIsRefusedWhileItHasAnOpenJob(t *testing.T
 	if _, err := db.Exec(`UPDATE jobs SET state = 'ended'`); err != nil {
 		t.Fatal(err)
 	}
-	r, err := applyConfig(t, p.Socket, appliedStaffing, true)
-	if err != nil || !r.ConfigApply.Applied || !slices.Equal(r.ConfigApply.Removed, []string{"fixture"}) {
-		t.Fatalf("applying once the job ended returned %+v, %v", r.ConfigApply, err)
+	if _, err := applyConfig(t, p.Socket, appliedStaffing, true); err == nil || !strings.Contains(err.Error(), "asmai repo remove fixture") {
+		t.Errorf("applying a missing repository after its job ended returned %v", err)
 	}
-	if _, err := os.Stat(clone); !os.IsNotExist(err) {
-		t.Errorf("the clone is still there (%v)", err)
+	if _, err := os.Stat(clone); err != nil {
+		t.Errorf("the refused apply left the clone %v", err)
 	}
-	if listed, _ := Call(p.Socket, Request{Command: CommandRepoList}); len(listed.Repositories) != 0 {
-		t.Errorf("the repository is still registered: %+v", listed.Repositories)
+	if listed, _ := Call(p.Socket, Request{Command: CommandRepoList}); len(listed.Repositories) != 1 {
+		t.Errorf("the repository registration changed: %+v", listed.Repositories)
 	}
 
 	// A table the file has that nothing registered has no clone.
-	withTable := appliedStaffing + "\n[repositories.ghost]\norigin = \"o\"\ndefault_branch = \"main\"\n"
+	withTable := string(with) + "\n[repositories.ghost]\norigin = \"o\"\ndefault_branch = \"main\"\n"
 	if err := os.WriteFile(configFile, []byte(withTable), 0o600); err != nil {
 		t.Fatal(err)
 	}

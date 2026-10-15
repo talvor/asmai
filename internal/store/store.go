@@ -458,6 +458,15 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
+func OpenReadOnly(path string) (*Store, error) {
+	db, err := sql.Open("sqlite3", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return &Store{db: db}, nil
+}
+
 func (s *Store) migrate() error {
 	var version int
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {

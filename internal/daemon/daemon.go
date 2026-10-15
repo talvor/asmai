@@ -346,6 +346,11 @@ func Run(ctx context.Context, cfg Config) error {
 		lookNow: make(chan struct{}, 1),
 	}
 	d.applied = readApplied(cfg.ConfigFile)
+	registered, err := st.Repositories()
+	if err != nil {
+		return fmt.Errorf("reading the registered repositories: %w", err)
+	}
+	d.applied = withRegisteredRepositories(d.applied, registered)
 	previous, err := st.Started(d.status.Version, d.status.PID, d.status.StartedAt)
 	if err != nil {
 		return fmt.Errorf("journaling the start: %w", err)

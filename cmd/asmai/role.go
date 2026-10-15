@@ -99,27 +99,22 @@ func skillText(shipped, added []string) string {
 
 // roleChoices are the staffing a user gave `asmai role set`.
 type roleChoices struct {
-	provider, model             string
 	leaderProvider, leaderModel string
 	workerProvider, workerModel string
 }
 
-// fields returns the staffing fields to set: --provider and --model set the
-// leader and the workers, and the more specific flags win.
 func (c roleChoices) fields() map[string]string {
 	fields := map[string]string{}
-	set := func(name, general, specific string) {
-		switch {
-		case specific != "":
-			fields[name] = specific
-		case general != "":
-			fields[name] = general
+	for _, choice := range []struct{ name, value string }{
+		{"leader_provider", c.leaderProvider},
+		{"leader_model", c.leaderModel},
+		{"worker_provider", c.workerProvider},
+		{"worker_model", c.workerModel},
+	} {
+		if choice.value != "" {
+			fields[choice.name] = choice.value
 		}
 	}
-	set("leader_provider", c.provider, c.leaderProvider)
-	set("worker_provider", c.provider, c.workerProvider)
-	set("leader_model", c.model, c.leaderModel)
-	set("worker_model", c.model, c.workerModel)
 	return fields
 }
 
@@ -133,7 +128,7 @@ func roleSet(o *output, role string, c roleChoices) int {
 	}
 	fields := c.fields()
 	if len(fields) == 0 {
-		return o.fail(errors.New("say what to set: --provider and --model for the leader and the workers, or --leader-provider, --leader-model, --worker-provider and --worker-model"))
+		return o.fail(errors.New("say what to set: --leader-provider, --leader-model, --worker-provider or --worker-model"))
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

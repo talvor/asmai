@@ -33,9 +33,6 @@ type ConfigApply struct {
 	Changes []ConfigChange `json:"changes"`
 	// Applied says the change was applied and journaled.
 	Applied bool `json:"applied"`
-	// Removed are the repositories the file no longer has, whose records
-	// and clones the apply removed.
-	Removed []string `json:"removed,omitempty"`
 }
 
 // ConfigChange is one change, with the running agents that pick it up.
@@ -56,6 +53,22 @@ func readApplied(path string) config.Config {
 		}
 	}
 	cfg, _ := config.Parse(nil)
+	return cfg
+}
+
+func withRegisteredRepositories(cfg config.Config, registered []store.Repository) config.Config {
+	repositories := make(map[string]config.Repository, len(registered))
+	options := make(map[string]config.RepositoryOptions, len(registered))
+	for _, r := range registered {
+		repositories[r.Name] = config.Repository{Location: r.Location, Origin: r.Origin, DefaultBranch: r.DefaultBranch}
+		if value, ok := cfg.Options[r.Name]; ok {
+			options[r.Name] = value
+		} else {
+			options[r.Name] = config.DefaultRepositoryOptions()
+		}
+	}
+	cfg.Repositories = repositories
+	cfg.Options = options
 	return cfg
 }
 
@@ -104,8 +117,7 @@ func (d *daemon) configApplyCommand(conn *net.UnixConn, req Request) {
 
 // configApply validates the file the request carries, works out what it
 // changes and which running agents pick that up, and with Confirm applies
-// it: the repositories it no longer has are removed, and the applied
-// configuration is journaled. Nothing is applied when anything is wrong.
+// it and journals the applied configuration. Nothing is applied when anything is wrong.
 func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 	d.repoMu.Lock()
 	defer d.repoMu.Unlock()
@@ -131,49 +143,12 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 		return nil, refuse("the file this daemon reads, %s, is not the file you applied: it has changed since, or the daemon reads another; run `asmai config apply` again", d.cfg.ConfigFile)
 	}
 
-	// A repository the file has that is not registered has no clone, and
-	// only `asmai repo add` makes one; one the file no longer has is
-	// removed, which an open job refuses.
 	registered, err := d.store.Repositories()
 	if err != nil {
 		return nil, fmt.Errorf("reading the registered repositories: %w", err)
 	}
-	var removed []string
-	isRegistered := map[string]bool{}
-	for _, r := range registered {
-		isRegistered[r.Name] = true
-		entry, ok := cfg.Repositories[r.Name]
-		if !ok {
-			removed = append(removed, r.Name)
-			continue
-		}
-		for _, field := range []struct{ name, file, record string }{
-			{"location", entry.Location, r.Location},
-			{"origin", entry.Origin, r.Origin},
-			{"default_branch", entry.DefaultBranch, r.DefaultBranch},
-		} {
-			if field.file != field.record {
-				return nil, refuse("[repositories.%s].%s differs from the registered repository; config apply does not change the repository record", r.Name, field.name)
-			}
-		}
-	}
-	for _, name := range slices.Sorted(maps.Keys(cfg.Repositories)) {
-		if !isRegistered[name] {
-			return nil, refuse("[repositories.%s] is in the file but is not registered, so AsmAI has no clone of it; remove the table and register it with `asmai repo add <path-or-url> --name %s`, which writes it", name, name)
-		}
-	}
-	for _, name := range removed {
-		open, err := d.store.OpenJobs(name)
-		if err != nil {
-			return nil, fmt.Errorf("reading the jobs of %s: %w", name, err)
-		}
-		if len(open) > 0 {
-			jobs := make([]string, len(open))
-			for i, n := range open {
-				jobs[i] = strconv.FormatInt(n, 10)
-			}
-			return nil, refuse("the file no longer has [repositories.%s], which has open %s %s; nothing is applied. Put the table back, or apply once %s ended", name, plural(len(open), "job", "jobs"), strings.Join(jobs, ", "), plural(len(open), "it has", "they have"))
-		}
+	if mismatches := RepositoryProblems(cfg, registered); len(mismatches) > 0 {
+		return nil, refuse("%s; %s", mismatches[0].Problem, mismatches[0].Fix)
 	}
 
 	d.configMu.Lock()
@@ -194,12 +169,6 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 		return result, nil
 	}
 
-	for _, name := range removed {
-		if _, err := d.removeRepository(name); err != nil {
-			return result, err
-		}
-		result.Removed = append(result.Removed, name)
-	}
 	applied := store.AppliedConfiguration{File: d.cfg.ConfigFile, SHA256: result.SHA256, Configuration: string(content)}
 	for _, c := range result.Changes {
 		applied.Changes = append(applied.Changes, store.AppliedChange{Setting: c.Setting, Before: c.Before, After: c.After, Agents: c.Agents})
@@ -213,6 +182,34 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 	result.Applied = true
 	d.log.Info("configuration applied", "file", d.cfg.ConfigFile, "sha256", result.SHA256, "changes", len(result.Changes))
 	return result, nil
+}
+
+func RepositoryProblems(cfg config.Config, registered []store.Repository) []config.Problem {
+	var problems []config.Problem
+	known := make(map[string]bool, len(registered))
+	for _, r := range registered {
+		known[r.Name] = true
+		entry, ok := cfg.Repositories[r.Name]
+		if !ok {
+			problems = append(problems, config.Problem{Problem: fmt.Sprintf("[repositories.%s] is missing from the file but is registered", r.Name), Fix: fmt.Sprintf("restore its table, or run `asmai repo remove %s` to remove the registered repository", r.Name)})
+			continue
+		}
+		for _, field := range []struct{ name, file, record string }{
+			{"location", entry.Location, r.Location},
+			{"origin", entry.Origin, r.Origin},
+			{"default_branch", entry.DefaultBranch, r.DefaultBranch},
+		} {
+			if field.file != field.record {
+				problems = append(problems, config.Problem{Problem: fmt.Sprintf("[repositories.%s].%s differs from the registered repository", r.Name, field.name), Fix: "restore the registered value in the file; config apply does not change the repository record"})
+			}
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Repositories)) {
+		if !known[name] {
+			problems = append(problems, config.Problem{Problem: fmt.Sprintf("[repositories.%s] is in the file but is not registered", name), Fix: fmt.Sprintf("remove the table and register it with `asmai repo add <path-or-url> --name %s`, which writes it", name)})
+		}
+	}
+	return problems
 }
 
 // pickedUpBy returns the running agents that get change c at their next

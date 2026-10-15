@@ -254,6 +254,14 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 		checks = append(checks, Check{Name: "staffing", OK: true})
 	}
 	checks = append(checks, staffing...)
+	registered, err := d.store.Repositories()
+	if err != nil {
+		checks = append(checks, Check{Name: "repositories", Problem: err.Error(), Fix: "inspect the registered repositories"})
+	} else if fileCfg, problems, err := config.Load(d.cfg.ConfigFile); err == nil && len(problems) == 0 {
+		for _, p := range RepositoryProblems(fileCfg, registered) {
+			checks = append(checks, Check{Name: "repositories", Problem: p.Problem, Fix: p.Fix})
+		}
+	}
 
 	pinned := d.cfg.Pins.ClaudeCode.Version
 	name := "Claude Code " + pinned

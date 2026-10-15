@@ -128,11 +128,10 @@ commands:
   asmai config apply          hand the configuration file to the running factory: validate it, show what
                               it changes and which running agents pick that up at their next start,
                               including added skills, and ask to confirm; the applied configuration is
-                              journaled. A repository the file no longer has is removed, which an open
-                              job refuses
+                              journaled. Repository records change through repo add and repo remove
   asmai role list             list each role's provider and model for its leader and its workers, and its
                               skill lists
-  asmai role set <role> [--provider <p>] [--model <m>] [--leader-provider <p>] [--leader-model <m>]
+  asmai role set <role> [--leader-provider <p>] [--leader-model <m>]
                           [--worker-provider <p>] [--worker-model <m>]
                               set a role's provider and model in the configuration file; claude is the
                               only provider, and codex is refused
@@ -252,8 +251,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.BoolVar(&repoOptions.commitTrailers, "commit-trailers", true, "commits carry the AsmAI trailers; --commit-trailers=false switches them off")
 		flags.Var(&repoOptions.skills, "repository-skills", "a role for which the repository's own skills are switched on; may be repeated")
 	case "role set":
-		flags.StringVar(&role.provider, "provider", "", "the provider of the role's leader and workers")
-		flags.StringVar(&role.model, "model", "", "the model of the role's leader and workers")
 		flags.StringVar(&role.leaderProvider, "leader-provider", "", "the provider of the role's leader")
 		flags.StringVar(&role.leaderModel, "leader-model", "", "the model of the role's leader")
 		flags.StringVar(&role.workerProvider, "worker-provider", "", "the provider of the role's workers")

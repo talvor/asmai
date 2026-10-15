@@ -381,15 +381,24 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 			t.Errorf("the %s hook is %+v, want the daemon's copy of asmai at %s", event, h, fixedPath)
 		}
 	}
-	if !slices.Equal(settings.Permissions.Allow, []string{
+	wantAllow := []string{
 		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
 		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
 		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
-		// The files of the plugin its skills are delivered in.
-		"Read(/" + flags["--plugin-dir"] + "/**)",
-	}) || settings.Permissions.DefaultMode != "default" {
+	}
+	// The plugin is readable by both its command-line path and the path it
+	// resolves to, which differ when the temp directory is a symlink.
+	plugin := flags["--plugin-dir"]
+	resolvedPlugin, err := filepath.EvalSymlinks(plugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range slices.Compact([]string{plugin, resolvedPlugin}) {
+		wantAllow = append(wantAllow, "Read(/"+path+"/**)")
+	}
+	if !slices.Equal(settings.Permissions.Allow, wantAllow) || settings.Permissions.DefaultMode != "default" {
 		t.Errorf("the session's permissions are %+v, want asmai, git and gh allowed and the default mode", settings.Permissions)
 	}
 	if !settings.Sandbox.Enabled || !settings.Sandbox.FailIfUnavailable {

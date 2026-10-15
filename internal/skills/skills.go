@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package skills holds the skill bundle AsmAI embeds: upstream's promoted
-// skills at the pinned release, unchanged, with their MIT notice; the
+// skills at the pinned release, with listed patches and their MIT notice; the
 // operating guide that maps their single-agent phrasing onto the factory;
 // each role's default skill lists; and the index each leader gets of its
 // workers' skills.
@@ -57,6 +57,7 @@ type Entry struct {
 	Group string `json:"group"`
 	// Fingerprint is the skill's fingerprint in upstream's release.
 	Fingerprint string `json:"fingerprint"`
+	UserInvoked bool   `json:"user_invoked,omitempty"`
 }
 
 // Patch is a change made to an upstream skill, with its reason.
@@ -119,7 +120,7 @@ var byName = func() map[string]Skill {
 		skills[name] = Skill{
 			Name:        name,
 			Description: fields["description"],
-			UserInvoked: fields["disable-model-invocation"] == "true",
+			UserInvoked: e.UserInvoked,
 			Group:       e.Group,
 			Fingerprint: fp,
 		}
@@ -192,7 +193,7 @@ func Get(name string) (Skill, bool) {
 }
 
 // Files returns the files of the shipped skill called name, rooted at its
-// directory, as upstream has them.
+// directory.
 func Files(name string) (fs.FS, error) {
 	if _, ok := byName[name]; !ok {
 		return nil, fmt.Errorf("%q is not a skill in the bundle", name)
@@ -232,7 +233,6 @@ func Fingerprints() map[string]string {
 }
 
 // Patches are the changes made to upstream's skills, each with its reason.
-// There are none while the operating guide covers every skill.
 func Patches() []Patch {
 	return slices.Clone(manifest.Patches)
 }

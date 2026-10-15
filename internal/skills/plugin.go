@@ -25,7 +25,7 @@ func Namespaced(name string) string {
 }
 
 // WritePlugin makes dir a Claude Code plugin that holds exactly the skills
-// called names, as upstream has them, whatever dir held before. A session is
+// called names, as shipped in the bundle, whatever dir held before. A session is
 // started with --plugin-dir dir, so the skills it has are the ones written
 // here and nothing it is later edited to hold: dir is made again at each
 // start.

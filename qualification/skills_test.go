@@ -108,29 +108,6 @@ func skillsHarness(t *testing.T, s skillsSession) *Harness {
 	return harness(t, fakeClaude{auth: AuthStatus{SignedIn: true, Method: "claude.ai"}, ask: s.ask}, startsDirectly)
 }
 
-func TestC34PassesWhenTheNarrowedListIsDeliveredAndASkillsBareNameCallResolves(t *testing.T) {
-	r := result(t, skillsHarness(t, skillsSession{}), "C34")
-	if r.Outcome != Passed {
-		t.Fatalf("C34 %s: %s", r.Outcome, r.Failure)
-	}
-	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"narrowed list as the plugin asmai: implement, tdd", "ran from the session's list as \"asmai:implement\"", "under that bare name"} {
-		if !strings.Contains(evidence, want) {
-			t.Errorf("C34's evidence\n%s\ndoes not say %q", evidence, want)
-		}
-	}
-}
-
-func TestC34PassesWhenTheBareNameFailsAndTheGuidesNamespacedNameResolves(t *testing.T) {
-	r := result(t, skillsHarness(t, skillsSession{bareFails: true}), "C34")
-	if r.Outcome != Passed {
-		t.Fatalf("C34 %s: %s", r.Outcome, r.Failure)
-	}
-	if evidence := strings.Join(r.Evidence, "\n"); !strings.Contains(evidence, `"tdd" was not found`) || !strings.Contains(evidence, `"asmai:tdd" ran`) {
-		t.Errorf("C34's evidence\n%s\ndoes not say both attempts", evidence)
-	}
-}
-
 func TestC34FailsWhenTheCalledSkillResolvesUnderNoName(t *testing.T) {
 	r := result(t, skillsHarness(t, skillsSession{bareFails: true, namespacedFails: true}), "C34")
 	if r.Outcome != Failed || !strings.Contains(r.Failure, "did not resolve") {

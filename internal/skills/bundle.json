@@ -6,7 +6,8 @@
   "skills": {
     "ask-matt": {
       "group": "engineering",
-      "fingerprint": "ae4f261c7569ebc59d27706ab5a55b66f2da8c6689ccf4f593392f8d216e639c"
+      "fingerprint": "ae4f261c7569ebc59d27706ab5a55b66f2da8c6689ccf4f593392f8d216e639c",
+      "user_invoked": true
     },
     "code-review": {
       "group": "engineering",
@@ -26,11 +27,13 @@
     },
     "grill-me": {
       "group": "productivity",
-      "fingerprint": "8d501635f6935280c1e493a7551658038fef32a346fb3a4acd21a727ceee3b64"
+      "fingerprint": "8d501635f6935280c1e493a7551658038fef32a346fb3a4acd21a727ceee3b64",
+      "user_invoked": true
     },
     "grill-with-docs": {
       "group": "engineering",
-      "fingerprint": "d6882d18cf3c2ebcd5f7175ac732b3a0685122ea934b463272949d25657332bc"
+      "fingerprint": "d6882d18cf3c2ebcd5f7175ac732b3a0685122ea934b463272949d25657332bc",
+      "user_invoked": true
     },
     "grilling": {
       "group": "productivity",
@@ -38,19 +41,23 @@
     },
     "handoff": {
       "group": "productivity",
-      "fingerprint": "05b0154cd8832fbc2edc805548cf7198594a81d01c7c6b5282b077f941196d9a"
+      "fingerprint": "05b0154cd8832fbc2edc805548cf7198594a81d01c7c6b5282b077f941196d9a",
+      "user_invoked": true
     },
     "implement": {
       "group": "engineering",
-      "fingerprint": "379dc7f7c6a3aca41f7743ba8b564500d3c847cd2e8b4957e9156c5eea0fefb6"
+      "fingerprint": "379dc7f7c6a3aca41f7743ba8b564500d3c847cd2e8b4957e9156c5eea0fefb6",
+      "user_invoked": true
     },
     "implement-spec": {
       "group": "engineering",
-      "fingerprint": "a104be9b1919f13fffd1b68792076d2f33fd8ed1370cc2c9338cb228e17babcc"
+      "fingerprint": "a104be9b1919f13fffd1b68792076d2f33fd8ed1370cc2c9338cb228e17babcc",
+      "user_invoked": true
     },
     "improve-codebase-architecture": {
       "group": "engineering",
-      "fingerprint": "d15e658a232ad79fa58891ef3e418071b28e942e5e95fa17969053e9db1601ce"
+      "fingerprint": "d15e658a232ad79fa58891ef3e418071b28e942e5e95fa17969053e9db1601ce",
+      "user_invoked": true
     },
     "pr": {
       "group": "engineering",
@@ -66,11 +73,13 @@
     },
     "retro": {
       "group": "engineering",
-      "fingerprint": "38a906d27ea2af642d0e15ba3a3a68228da1509e1c8dbd9011088fa75b96627d"
+      "fingerprint": "38a906d27ea2af642d0e15ba3a3a68228da1509e1c8dbd9011088fa75b96627d",
+      "user_invoked": true
     },
     "setup-matt-pocock-skills": {
       "group": "engineering",
-      "fingerprint": "7e82b311fa53df59fc9583104a62671cf1cd706691f575f65a939ef22538ca9b"
+      "fingerprint": "7e82b311fa53df59fc9583104a62671cf1cd706691f575f65a939ef22538ca9b",
+      "user_invoked": true
     },
     "tdd": {
       "group": "engineering",
@@ -78,31 +87,38 @@
     },
     "teach": {
       "group": "productivity",
-      "fingerprint": "709c091dc273eddc504fa631bbb8172f32b2a03620ddf5fccfce3fb758ba205b"
+      "fingerprint": "709c091dc273eddc504fa631bbb8172f32b2a03620ddf5fccfce3fb758ba205b",
+      "user_invoked": true
     },
     "to-questionnaire": {
       "group": "productivity",
-      "fingerprint": "bea06bbc77c5a926ad61ae63eb6bca55d485ee9546cf41e8d0b7911843bd09b6"
+      "fingerprint": "bea06bbc77c5a926ad61ae63eb6bca55d485ee9546cf41e8d0b7911843bd09b6",
+      "user_invoked": true
     },
     "to-spec": {
       "group": "engineering",
-      "fingerprint": "96cbcd0ab4c97bcb858703fc85cf15147f5cdb618b3924d26366f32fbc079ee2"
+      "fingerprint": "96cbcd0ab4c97bcb858703fc85cf15147f5cdb618b3924d26366f32fbc079ee2",
+      "user_invoked": true
     },
     "to-tickets": {
       "group": "engineering",
-      "fingerprint": "425bd28cab65edbe49b4247725d9f9d172a125d71d19e930d6e01c7d374b5d6a"
+      "fingerprint": "425bd28cab65edbe49b4247725d9f9d172a125d71d19e930d6e01c7d374b5d6a",
+      "user_invoked": true
     },
     "triage": {
       "group": "engineering",
-      "fingerprint": "b26fcea03379789ace2e8292b66f366487973879c1f60775eb628c51d90fefb7"
+      "fingerprint": "b26fcea03379789ace2e8292b66f366487973879c1f60775eb628c51d90fefb7",
+      "user_invoked": true
     },
     "wait-what": {
       "group": "productivity",
-      "fingerprint": "b36c091368ac4a212fc22f1684f38278a44d0aa9eedc94e23f316170682ea5d6"
+      "fingerprint": "b36c091368ac4a212fc22f1684f38278a44d0aa9eedc94e23f316170682ea5d6",
+      "user_invoked": true
     },
     "wayfinder": {
       "group": "engineering",
-      "fingerprint": "3e557aeb71c0b15d281a2464a7f64fb1ccd26b85dcede264915fa998a09bab57"
+      "fingerprint": "3e557aeb71c0b15d281a2464a7f64fb1ccd26b85dcede264915fa998a09bab57",
+      "user_invoked": true
     },
     "wizard": {
       "group": "engineering",
@@ -113,5 +129,86 @@
       "fingerprint": "78c41feba8e14079c320faa34e76395bcd0a74739580999e7cbad8988fefe533"
     }
   },
-  "patches": []
+  "patches": [
+    {
+      "skill": "ask-matt",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "grill-me",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "grill-with-docs",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "handoff",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "implement",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "implement-spec",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "improve-codebase-architecture",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "retro",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "setup-matt-pocock-skills",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "teach",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "to-questionnaire",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "to-spec",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "to-tickets",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "triage",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "wait-what",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    },
+    {
+      "skill": "wayfinder",
+      "file": "SKILL.md",
+      "reason": "AsmAI agents must invoke assigned skills by name; upstream manual-only invocation blocks this."
+    }
+  ]
 }

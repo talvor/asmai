@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/talvor/asmai/internal/skills"
 )
@@ -72,7 +73,13 @@ func sync(upstream, release, commit string) error {
 			if err != nil {
 				return err
 			}
-			m.Skills[e.Name()] = skills.Entry{Group: group, Fingerprint: fp}
+			data, err := os.ReadFile(filepath.Join(to, "SKILL.md"))
+			if err != nil {
+				return err
+			}
+			front, _ := strings.CutPrefix(string(data), "---\n")
+			front, _, _ = strings.Cut(front, "\n---\n")
+			m.Skills[e.Name()] = skills.Entry{Group: group, Fingerprint: fp, UserInvoked: strings.Contains("\n"+front+"\n", "\ndisable-model-invocation: true\n")}
 		}
 	}
 	data, err := json.MarshalIndent(m, "", "  ")

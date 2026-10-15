@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestAPluginHoldsExactlyTheSkillsGivenAsUpstreamHasThemUnderAManifestNamedAsmai(t *testing.T) {
+func TestAPluginHoldsExactlyTheShippedSkillsUnderAManifestNamedAsmai(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "plugin")
 	// What an earlier start left is not carried into the next.
 	if err := os.MkdirAll(filepath.Join(dir, Dir, "stale"), 0o700); err != nil {
@@ -47,6 +47,43 @@ func TestAPluginHoldsExactlyTheSkillsGivenAsUpstreamHasThemUnderAManifestNamedAs
 	}
 	if err := WritePlugin(dir, []string{"no-such-skill"}); err == nil {
 		t.Error("a plugin was written for a skill the bundle does not ship")
+	}
+}
+
+func TestDeliveredRequestOnlySkillsCanBeInvokedAndKeepTheirOriginalStatus(t *testing.T) {
+	names := []string{
+		"ask-matt", "grill-me", "grill-with-docs", "handoff", "implement", "implement-spec",
+		"improve-codebase-architecture", "retro", "setup-matt-pocock-skills", "teach",
+		"to-questionnaire", "to-spec", "to-tickets", "triage", "wait-what", "wayfinder",
+	}
+	dir := filepath.Join(t.TempDir(), "plugin")
+	if err := WritePlugin(dir, names); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := DeliveryOf(names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := Upstream()
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join(dir, Dir, name, "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := frontMatter(string(data))["disable-model-invocation"]; got != "" {
+			t.Errorf("delivered %s disables model invocation: %q", name, got)
+		}
+		skill, ok := Get(name)
+		if !ok || !skill.UserInvoked {
+			t.Errorf("%s lost its upstream request-only status", name)
+		}
+		fingerprint, err := FingerprintFS(os.DirFS(filepath.Join(dir, Dir, name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fingerprint != delivery.Skills[name] || fingerprint == upstream[name] {
+			t.Errorf("%s has delivery fingerprint %s, plugin fingerprint %s, upstream fingerprint %s", name, delivery.Skills[name], fingerprint, upstream[name])
+		}
 	}
 }
 

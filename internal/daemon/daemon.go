@@ -237,6 +237,13 @@ type Config struct {
 	// trust in, ~/.claude.json, which the daemon reads and never writes; with
 	// none, no agent starts.
 	ClaudeRecord string
+	// ClaudeVersion reads the version the Claude Code at path reports, which
+	// the checks require to be the pinned one; with none, it is
+	// providers.ClaudeCodeVersion, which runs it with --version.
+	ClaudeVersion func(ctx context.Context, path string) (string, error)
+	// GOOS and GOARCH name the platform the checks certify; with none, the
+	// platform this daemon runs on.
+	GOOS, GOARCH string
 }
 
 // Run runs the daemon until `asmai stop` asks it to stop or ctx is done. It
@@ -422,6 +429,10 @@ type daemon struct {
 	conversation *conversation
 	sessions     map[string]sessionRef
 	lastChecks   []Check
+	// versionSeen holds, by path, the executable the version check last read
+	// the version of, so that a start looks again only at a file that
+	// changed, as one that updated itself does.
+	versionSeen map[string]versionRead
 	// rulesMu guards rulesOK.
 	rulesMu sync.Mutex
 	// rulesOK is the install path whose permission rules check passed, so

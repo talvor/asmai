@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/talvor/asmai/internal/certify"
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/githooks"
 	"github.com/talvor/asmai/internal/providers"
@@ -247,6 +248,7 @@ func (d *daemon) agent(address roles.Address) *leader {
 // install to start agents with.
 func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 	var checks []Check
+	checks = append(checks, d.platformCheck())
 	cfg, staffing := d.staffing()
 	if len(staffing) == 0 {
 		checks = append(checks, Check{Name: "staffing", OK: true})
@@ -263,10 +265,62 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 		checks = append(checks, Check{Name: name, Problem: err.Error(), Fix: "run `asmai providers install`"})
 	default:
 		checks = append(checks, Check{Name: name, OK: true})
-		checks = append(checks, d.permissionRulesCheck(install.Path))
+		// A copy that is not the pinned version is refused before it runs
+		// for anything, the permission rules probe included.
+		version := d.versionCheck(install.Path, pinned)
+		checks = append(checks, version)
+		if version.OK {
+			checks = append(checks, d.permissionRulesCheck(install.Path))
+		}
 	}
 	checks = append(checks, d.trustCheck())
 	return checks, cfg, install
+}
+
+// platformCheck checks that this platform is certified, so that an
+// uncertified one starts no agent (02 rule 6).
+func (d *daemon) platformCheck() Check {
+	goos, goarch := d.cfg.GOOS, d.cfg.GOARCH
+	if goos == "" || goarch == "" {
+		goos, goarch = runtime.GOOS, runtime.GOARCH
+	}
+	return Check(certify.Platform(goos, goarch, d.cfg.Pins))
+}
+
+// versionRead is the version read from an executable, with the file it was
+// read from.
+type versionRead struct {
+	size    int64
+	modTime time.Time
+	version string
+}
+
+// versionCheck checks that the Claude Code at path reports the pinned
+// version. A provider CLI that updated itself fails it at the agent's next
+// start, which holds the agent until the combination is qualified (03 rule 5).
+// The version is read again only when the file changed.
+func (d *daemon) versionCheck(path, pinned string) Check {
+	report := d.cfg.ClaudeVersion
+	if report == nil {
+		report = providers.ClaudeCodeVersion
+	}
+	info, statErr := os.Stat(path)
+	read := func(ctx context.Context, path string) (string, error) {
+		if statErr == nil {
+			if seen, ok := d.versionSeen[path]; ok && seen.size == info.Size() && seen.modTime.Equal(info.ModTime()) {
+				return seen.version, nil
+			}
+		}
+		version, err := report(ctx, path)
+		if err == nil && statErr == nil {
+			if d.versionSeen == nil {
+				d.versionSeen = map[string]versionRead{}
+			}
+			d.versionSeen[path] = versionRead{size: info.Size(), modTime: info.ModTime(), version: version}
+		}
+		return version, err
+	}
+	return Check(certify.Version(context.Background(), path, pinned, read))
 }
 
 // permissionRulesCheck runs PermissionRulesCheck once per daemon run for the
@@ -474,6 +528,23 @@ func (d *daemon) pinnedCopy() (store.ProviderInstall, bool) {
 	}
 	d.log.Info("provider installed", "name", plan.Name, "version", plan.Version, "path", plan.Path, "found", "at its path")
 	return install, true
+}
+
+// held is the error of an agent that is not started because a check failed,
+// such as a provider CLI that updated itself since the agent last ran: the
+// agent is held where it is, not started on a combination outside the
+// qualification record (03 rule 5). It names each failed check, with its fix,
+// and keeps them for `asmai status`. d.mu is held.
+func (d *daemon) held(agent string, checks []Check) error {
+	d.lastChecks = checks
+	var why []string
+	for _, c := range checks {
+		if !c.OK {
+			d.log.Warn("an agent is held: a check failed", "agent", agent, "check", c.Name, "problem", c.Problem, "fix", c.Fix)
+			why = append(why, fmt.Sprintf("%s: %s (fix: %s)", c.Name, c.Problem, c.Fix))
+		}
+	}
+	return fmt.Errorf("%s is held, not started: %s", agent, strings.Join(why, "; "))
 }
 
 func failed(checks []Check) bool {

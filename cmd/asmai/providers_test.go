@@ -170,6 +170,34 @@ func TestProvidersInstallFetchesThePinnedClaudeCodeOnceConfirmed(t *testing.T) {
 	checkHomeUntouched(t)
 }
 
+// A copy at the pinned path that no longer matches the pin, as one that
+// updated itself does not, is not an install: asmai providers install puts
+// the pinned download back, once the user confirms.
+func TestProvidersInstallPutsThePinnedCopyBackWhereItWasReplaced(t *testing.T) {
+	stateDir := factoryHome(t)
+	fetches := standInChannel(t, standInClaude)
+	startUnready(t)
+	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
+	if _, stderr, code := install(t, "y\n"); code != 0 {
+		t.Fatalf("the install exited %d printing %s", code, stderr)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '2.1.300 (Claude Code)'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := install(t, "y\n")
+
+	if code != 0 || strings.Contains(stdout, "already installed") {
+		t.Errorf("a repeat install over a replaced copy exited %d printing\n%s%s\nwant it fetched again", code, stdout, stderr)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, standInClaude) {
+		t.Errorf("%s holds %q (%v), want the pinned download back", path, got, err)
+	}
+	if n := fetches.Load(); n != 2 {
+		t.Errorf("the channel served %d downloads, want 2", n)
+	}
+}
+
 func TestProvidersInstallFetchesNothingWithoutConfirmation(t *testing.T) {
 	stateDir := factoryHome(t)
 	fetches := standInChannel(t, standInClaude)

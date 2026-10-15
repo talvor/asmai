@@ -19,8 +19,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"time"
 )
 
 // ClaudeCode is Claude Code's name in the pins file and the store.
@@ -211,4 +214,35 @@ func Fetch(ctx context.Context, client *http.Client, plan Plan) (err error) {
 		return err
 	}
 	return os.Rename(part.Name(), plan.Path)
+}
+
+// versionTimeout is how long a provider has to answer --version.
+const versionTimeout = 30 * time.Second
+
+// versionOutput is what Claude Code prints for --version: its version first,
+// then its name, as in "2.1.292 (Claude Code)".
+var versionOutput = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)(\s|$)`)
+
+// ClaudeCodeVersion runs the Claude Code at path with --version, and returns
+// the version it reports. It is what the executable says it is, not what the
+// store or the pins file recorded for the path: a provider that updated
+// itself reports its new version.
+func ClaudeCodeVersion(ctx context.Context, path string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	// A version check must not start an update.
+	cmd.Env = append(os.Environ(), "DISABLE_AUTOUPDATER=1")
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%s did not report its version within %s", path, versionTimeout)
+	}
+	if err != nil {
+		return "", fmt.Errorf("running %s --version: %w", path, err)
+	}
+	m := versionOutput.FindStringSubmatch(strings.TrimSpace(string(out)))
+	if m == nil {
+		return "", fmt.Errorf("%s --version printed %q, which does not start with a version", path, strings.TrimSpace(string(out)))
+	}
+	return m[1], nil
 }

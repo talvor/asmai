@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	"golang.org/x/term"
+
+	"github.com/talvor/asmai"
 )
 
 // ScriptEnv is the environment variable that names the script to play when
@@ -48,7 +50,28 @@ const (
 	ManagedRulesAllowEnv = "ASMAI_FAKE_PROVIDER_MANAGED_ALLOW"
 )
 
+// VersionEnv names the version the fake reports for --version, as Claude Code
+// does; with none, it reports the version this asmai pins, so that the fake
+// stands in for the pinned copy. A test sets it to stand in for a copy that
+// updated itself.
+const VersionEnv = "ASMAI_FAKE_PROVIDER_VERSION"
+
 const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--strict-mcp-config] [--model MODEL] [--append-system-prompt TEXT] [--resume SESSION]"
+
+// reportedVersion is the version the fake reports: $VersionEnv, else the
+// version the pins file pins.
+func reportedVersion() string {
+	if v := os.Getenv(VersionEnv); v != "" {
+		return v
+	}
+	var pins struct {
+		ClaudeCode struct {
+			Version string `json:"version"`
+		} `json:"claude-code"`
+	}
+	json.Unmarshal(asmai.Pins, &pins)
+	return pins.ClaudeCode.Version
+}
 
 // settingSources are the sources Claude Code's --setting-sources takes.
 var settingSources = []string{"user", "project", "local"}
@@ -56,6 +79,10 @@ var settingSources = []string{"user", "project", "local"}
 // Main runs the fake provider CLI with args, the command line without the
 // program name, and returns its exit code.
 func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v") {
+		fmt.Fprintf(stdout, "%s (Claude Code)\n", reportedVersion())
+		return 0
+	}
 	flags := flag.NewFlagSet("fake-provider", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	scriptPath := flags.String("script", "", "the script to play (default $"+ScriptEnv+")")

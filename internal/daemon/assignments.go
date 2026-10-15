@@ -546,7 +546,7 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	}
 	checks, cfg, install := d.checks()
 	if failed(checks) {
-		return fmt.Errorf("cannot start %s: factory checks failed", address)
+		return d.held(address.String(), checks)
 	}
 	// A worker whose assignment continues after a restart resumes the
 	// provider's session it was in, where the start recorded it.

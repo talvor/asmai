@@ -736,8 +736,14 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if err != nil {
 		return o.fail(err)
 	}
+	// A copy at its path that no longer matches the pin, as one that updated
+	// itself does not, is fetched again.
+	present, err := providers.Present(plan)
+	if err != nil {
+		return o.fail(err)
+	}
 	for _, installed := range resp.Providers {
-		if installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && exists(plan.Path) {
+		if installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && present {
 			if o.json {
 				return o.printJSON(map[string]any{"installed": false, "provider": installed})
 			}

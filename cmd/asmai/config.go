@@ -9,7 +9,10 @@ import (
 	"strings"
 
 	"github.com/talvor/asmai/internal/config"
+	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/store"
 )
 
 // configProblem is a problem of the configuration file as `asmai config
@@ -43,8 +46,15 @@ func configCheck(o *output) int {
 	// A role the factory runs that is not staffed keeps it from starting, as
 	// a problem in the file does.
 	problems := found
-	if len(problems) == 0 {
+	if len(found) == 0 {
 		problems = cfg.MissingStaffing(roles.Staffed)
+	}
+	if len(found) == 0 {
+		repositoryProblems, err := registeredRepositoryProblems(cfg)
+		if err != nil {
+			return o.fail(err)
+		}
+		problems = append(problems, repositoryProblems...)
 	}
 	if o.json {
 		list := make([]configProblem, 0, len(problems))
@@ -75,6 +85,28 @@ func configCheck(o *output) int {
 		fmt.Fprintf(o.stderr, "      fix: %s\n", strings.ReplaceAll(p.Fix, "\n", "\n           "))
 	}
 	return 1
+}
+
+func registeredRepositoryProblems(cfg config.Config) ([]config.Problem, error) {
+	paths, err := statedir.Default()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(paths.Store); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("reading the registered repositories: %w", err)
+	}
+	st, err := store.OpenReadOnly(paths.Store)
+	if err != nil {
+		return nil, fmt.Errorf("reading the registered repositories: %w", err)
+	}
+	defer st.Close()
+	registered, err := st.Repositories()
+	if err != nil {
+		return nil, fmt.Errorf("reading the registered repositories: %w", err)
+	}
+	return daemon.RepositoryProblems(cfg, registered), nil
 }
 
 // configExample is `asmai config example`: it prints the example

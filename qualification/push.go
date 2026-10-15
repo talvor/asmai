@@ -37,7 +37,7 @@ func (h *Harness) c41(ctx context.Context, f *Factory, r *Result) (err error) {
 	}
 	defer os.RemoveAll(scratch)
 	clone := filepath.Join(scratch, "clone")
-	base, err := repos.Clone(ctx, pushFixture, clone)
+	base, err := repos.Clone(ctx, pushFixture, clone, "")
 	if err != nil {
 		return err
 	}

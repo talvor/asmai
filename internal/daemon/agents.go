@@ -254,6 +254,14 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 		checks = append(checks, Check{Name: "staffing", OK: true})
 	}
 	checks = append(checks, staffing...)
+	registered, err := d.store.Repositories()
+	if err != nil {
+		checks = append(checks, Check{Name: "repositories", Problem: err.Error(), Fix: "inspect the registered repositories"})
+	} else if fileCfg, problems, err := config.Load(d.cfg.ConfigFile); err == nil && len(problems) == 0 {
+		for _, p := range RepositoryProblems(fileCfg, registered) {
+			checks = append(checks, Check{Name: "repositories", Problem: p.Problem, Fix: p.Fix})
+		}
+	}
 
 	pinned := d.cfg.Pins.ClaudeCode.Version
 	name := "Claude Code " + pinned
@@ -443,8 +451,7 @@ func (d *daemon) trusted(dir string) error {
 	return nil
 }
 
-// staffing reads the configuration file and checks that the roles M1 runs
-// are staffed, returning a failed check for each problem.
+// staffing checks that the applied configuration staffs the roles M1 runs.
 func (d *daemon) staffing() (config.Config, []Check) {
 	path := d.cfg.ConfigFile
 	failed := func(problem, fix string) Check {
@@ -453,15 +460,26 @@ func (d *daemon) staffing() (config.Config, []Check) {
 	if path == "" {
 		return config.Config{}, []Check{failed("this daemon reads no configuration file", "start the factory with `asmai start`")}
 	}
-	cfg, problems, err := config.Load(path)
-	if errors.Is(err, config.ErrMissing) {
-		return cfg, []Check{failed(fmt.Sprintf("%s does not exist, so no role is staffed", path),
-			fmt.Sprintf("run `asmai setup`, which writes it with every role staffed, or create it with a table for each of %s, such as:\n%s", tables(), config.Example(roles.Coordination)))}
-	}
-	if err != nil {
-		return cfg, []Check{failed(fmt.Sprintf("reading %s: %v", path, err), "make the file readable")}
-	}
-	if len(problems) == 0 {
+	d.configMu.Lock()
+	cfg := d.applied
+	d.configMu.Unlock()
+	var problems []config.Problem
+	if len(cfg.Roles) == 0 {
+		var err error
+		cfg, problems, err = config.Load(path)
+		if errors.Is(err, config.ErrMissing) {
+			return cfg, []Check{failed(fmt.Sprintf("%s does not exist, so no role is staffed", path), "run `asmai setup` to write the configuration file")}
+		}
+		if err != nil {
+			return cfg, []Check{failed(fmt.Sprintf("reading %s: %v", path, err), "make the file readable")}
+		}
+		if len(problems) == 0 {
+			problems = cfg.MissingStaffing(roles.Staffed)
+		}
+		if len(problems) == 0 {
+			return config.Config{}, []Check{failed(fmt.Sprintf("%s has staffing that has not been applied", path), "run `asmai config apply` and confirm it before starting agents")}
+		}
+	} else {
 		problems = cfg.MissingStaffing(roles.Staffed)
 	}
 	var checks []Check
@@ -473,14 +491,6 @@ func (d *daemon) staffing() (config.Config, []Check) {
 		checks = append(checks, failed(where+": "+p.Problem, p.Fix))
 	}
 	return cfg, checks
-}
-
-func tables() string {
-	var t []string
-	for _, role := range roles.Staffed {
-		t = append(t, "[roles."+role+"]")
-	}
-	return t[0] + ", " + t[1] + " and " + t[2]
 }
 
 // claudeCode returns the install of the pinned Claude Code, or why there is

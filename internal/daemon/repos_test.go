@@ -108,6 +108,19 @@ func TestARepositoryIsRegisteredWithItsCloneItsEntryAndItsRecord(t *testing.T) {
 	}
 }
 
+func TestARepositoryCanUseAnExplicitBranchWithoutOriginHEAD(t *testing.T) {
+	p, _ := repoDaemon(t)
+	origin := remote(t)
+	git(t, origin, "symbolic-ref", "HEAD", "refs/heads/missing")
+	resp, err := Call(p.Socket, Request{Command: CommandRepoAdd, Source: origin, Repository: "fixture", DefaultBranch: "trunk"})
+	if err != nil || resp.Repository == nil || resp.Repository.DefaultBranch != "trunk" {
+		t.Fatalf("registering with an explicit branch returned %+v, %v", resp.Repository, err)
+	}
+	if got, want := git(t, resp.Repository.Clone, "rev-parse", "refs/remotes/origin/trunk"), git(t, origin, "rev-parse", "refs/heads/trunk"); got != want {
+		t.Errorf("the clone fetched %s, want %s", got, want)
+	}
+}
+
 func TestARegistrationThatCannotBeCompletedLeavesNothingBehind(t *testing.T) {
 	p, configFile := repoDaemon(t)
 	origin := remote(t)

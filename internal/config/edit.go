@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,8 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
+
+	"github.com/talvor/asmai/internal/roles"
 )
 
 // ErrRepositoryEntryExists is returned by AddRepository for a name the file
@@ -40,11 +43,32 @@ func (e *ProblemsError) Error() string {
 	return b.String()
 }
 
+// repositoryEntry is a [repositories.<name>] table as AddRepository writes
+// it: the fields `asmai repo add` records, and each setting that is not at
+// its default.
+type repositoryEntry struct {
+	Location         string   `toml:"location"`
+	Origin           string   `toml:"origin"`
+	DefaultBranch    string   `toml:"default_branch"`
+	Notes            string   `toml:"notes,omitempty"`
+	ChecksOneAtATime bool     `toml:"checks_one_at_a_time,omitempty"`
+	NoCI             bool     `toml:"no_ci,omitempty"`
+	CommitTrailers   *bool    `toml:"commit_trailers,omitempty"`
+	RepositorySkills []string `toml:"repository_skills,omitempty"`
+}
+
 // AddRepository writes the entry [repositories.<name>] for r at the end of
 // the configuration file at path, creating the file if it is missing. The
 // rest of the file, comments and all, stays as it is. It refuses a file with
 // problems, and a name the file already has an entry for.
 func AddRepository(path, name string, r Repository) error {
+	return AddRepositoryWithOptions(path, name, r, DefaultRepositoryOptions())
+}
+
+// AddRepositoryWithOptions is AddRepository for an entry that also sets o:
+// each setting that is not at its default is written beside the fields the
+// entry records. It refuses options the file would not honour.
+func AddRepositoryWithOptions(path, name string, r Repository, o RepositoryOptions) error {
 	if err := CheckRepositoryName(name); err != nil {
 		return err
 	}
@@ -59,7 +83,14 @@ func AddRepository(path, name string, r Repository) error {
 	if _, ok := cfg.Repositories[name]; ok {
 		return ErrRepositoryEntryExists
 	}
-	entry, err := toml.Marshal(r)
+	entry := repositoryEntry{
+		Location: r.Location, Origin: r.Origin, DefaultBranch: r.DefaultBranch,
+		Notes: o.Notes, ChecksOneAtATime: o.ChecksOneAtATime, NoCI: o.NoCI, RepositorySkills: o.RepositorySkills,
+	}
+	if !o.CommitTrailers {
+		entry.CommitTrailers = &o.CommitTrailers
+	}
+	encoded, err := toml.Marshal(entry)
 	if err != nil {
 		return err
 	}
@@ -74,12 +105,206 @@ func AddRepository(path, name string, r Repository) error {
 		}
 	}
 	fmt.Fprintf(&b, "[repositories.%s]\n", name)
-	b.Write(entry)
+	b.Write(encoded)
 	// What is written is what was meant.
-	if written, problems := Parse(b.Bytes()); len(problems) > 0 || written.Repositories[name] != r {
-		return fmt.Errorf("writing the entry for %s would not read back as it was given (%+v, %v)", name, written.Repositories[name], problems)
+	written, problems := Parse(b.Bytes())
+	if len(problems) > 0 {
+		return &EntryProblemsError{Problems: problems}
+	}
+	if written.Repositories[name] != r || !sameOptions(written.Options[name], o) {
+		return fmt.Errorf("writing the entry for %s would not read back as it was given (%+v %+v)", name, written.Repositories[name], written.Options[name])
 	}
 	return write(path, b.Bytes(), mode)
+}
+
+// EntryProblemsError is returned by AddRepositoryWithOptions for an entry
+// the file would not honour, such as a repository skill that names no role.
+type EntryProblemsError struct {
+	Problems []Problem
+}
+
+func (e *EntryProblemsError) Error() string {
+	var b strings.Builder
+	b.WriteString("the repository's settings are not ones this asmai honours:")
+	for _, p := range e.Problems {
+		fmt.Fprintf(&b, "\n  %s; fix: %s", p.Problem, p.Fix)
+	}
+	return b.String()
+}
+
+func sameOptions(a, b RepositoryOptions) bool {
+	return a.Notes == b.Notes && a.ChecksOneAtATime == b.ChecksOneAtATime && a.NoCI == b.NoCI &&
+		a.CommitTrailers == b.CommitTrailers && slices.Equal(a.RepositorySkills, b.RepositorySkills)
+}
+
+// CheckRepositoryOptions returns why the file would not honour o as a
+// repository's settings, or nil.
+func CheckRepositoryOptions(o RepositoryOptions) error {
+	var problems []Problem
+	for _, s := range optionSettings(&RepositoryOptions{}) {
+		if s.name != "repository_skills" {
+			continue
+		}
+		if why, fix := s.check("", o.RepositorySkills); why != "" {
+			problems = append(problems, Problem{Problem: "repository_skills " + why, Fix: fix})
+		}
+	}
+	if len(problems) > 0 {
+		return &EntryProblemsError{Problems: problems}
+	}
+	return nil
+}
+
+// ErrRoleNotATable is returned by SetStaffing for a role that is not
+// written as a plain [roles.<role>] table, which only the user can change
+// without disturbing the rest of the file.
+var ErrRoleNotATable = errors.New("the configuration file has the role, but not as a [roles.<role>] table")
+
+// SetStaffing sets the staffing fields of role in the configuration file at
+// path, each by its name (leader_provider, leader_model, worker_provider or
+// worker_model): a field the role's table has is changed in place, a field
+// it lacks is added right under the table's header, and a role with no table
+// gets one at the end of the file. The rest of the file, comments and all,
+// stays as it is. It refuses a file with problems, a provider this asmai
+// does not run and an empty model, and a role not written as a table.
+func SetStaffing(path, role string, fields map[string]string) error {
+	if !roles.Known(role) {
+		return fmt.Errorf("%q is no role; the roles are %s", role, strings.Join(roles.All, ", "))
+	}
+	var probe Staffing
+	for _, name := range slices.Sorted(maps.Keys(fields)) {
+		if probe.field(name) == nil {
+			return fmt.Errorf("%q is not a staffing field", name)
+		}
+		value := fields[name]
+		if strings.HasSuffix(name, "_provider") && value != Claude {
+			if value == "codex" {
+				return fmt.Errorf("%s cannot be %q: Codex arrives in a later asmai; this asmai runs only %q", name, value, Claude)
+			}
+			return fmt.Errorf("%s cannot be %q: this asmai runs only %q", name, value, Claude)
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s cannot be empty", name)
+		}
+	}
+	data, mode, err := read(path)
+	if err != nil {
+		return err
+	}
+	cfg, problems := Parse(data)
+	if len(problems) > 0 {
+		return &ProblemsError{Path: path, Problems: problems}
+	}
+	var out []byte
+	if _, ok := cfg.Roles[role]; !ok {
+		var b bytes.Buffer
+		b.Write(data)
+		if len(data) > 0 {
+			if !bytes.HasSuffix(data, []byte("\n")) {
+				b.WriteByte('\n')
+			}
+			if !bytes.HasSuffix(data, []byte("\n\n")) {
+				b.WriteByte('\n')
+			}
+		}
+		fmt.Fprintf(&b, "[roles.%s]\n", role)
+		for _, name := range staffingFields {
+			if value, ok := fields[name]; ok {
+				fmt.Fprintf(&b, "%s = %s\n", name, quote(value))
+			}
+		}
+		out = b.Bytes()
+	} else if out, err = setInTable(data, role, fields); err != nil {
+		return err
+	}
+	written, problems := Parse(out)
+	if len(problems) > 0 {
+		return fmt.Errorf("the change would leave the file with problems (%v); nothing was written", problems[0])
+	}
+	got := written.Roles[role]
+	for name, value := range fields {
+		if *got.field(name) != value {
+			return fmt.Errorf("writing %s for %s would not read back as it was given", name, role)
+		}
+	}
+	return write(path, out, mode)
+}
+
+// setInTable returns data with fields set in the [roles.<role>] table.
+func setInTable(data []byte, role string, fields map[string]string) ([]byte, error) {
+	type change struct {
+		offset, length int
+		text           string
+	}
+	var changes []change
+	replaced := map[string]bool{}
+	header := 0
+	inTable := false
+	p := &unstable.Parser{}
+	p.Reset(data)
+	for p.NextExpression() {
+		e := p.Expression()
+		switch e.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			inTable = e.Kind == unstable.Table && slices.Equal(keyPath(e.Key()), []string{"roles", role})
+			if inTable {
+				header = keyLine(p, e.Key())
+			}
+		case unstable.KeyValue:
+			if !inTable {
+				continue
+			}
+			path := keyPath(e.Key())
+			if len(path) != 1 {
+				return nil, ErrRoleNotATable
+			}
+			value, ok := fields[path[0]]
+			if !ok {
+				continue
+			}
+			node := e.Value()
+			if node.Kind != unstable.String || node.Raw.Length == 0 {
+				return nil, ErrRoleNotATable
+			}
+			changes = append(changes, change{int(node.Raw.Offset), int(node.Raw.Length), quote(value)})
+			replaced[path[0]] = true
+		}
+	}
+	if header == 0 {
+		return nil, ErrRoleNotATable
+	}
+	// The fields the table lacks go right under its header.
+	var added strings.Builder
+	for _, name := range staffingFields {
+		if value, ok := fields[name]; ok && !replaced[name] {
+			fmt.Fprintf(&added, "%s = %s\n", name, quote(value))
+		}
+	}
+	if added.Len() > 0 {
+		at := len(data)
+		for line, off := 1, 0; off < len(data); off++ {
+			if data[off] != '\n' {
+				continue
+			}
+			if line == header {
+				at = off + 1
+				break
+			}
+			line++
+		}
+		text := added.String()
+		if at == len(data) && !bytes.HasSuffix(data, []byte("\n")) {
+			text = "\n" + text
+		}
+		changes = append(changes, change{at, 0, text})
+	}
+	// Edit from the end, so that earlier offsets stay right.
+	slices.SortFunc(changes, func(a, b change) int { return b.offset - a.offset })
+	out := slices.Clone(data)
+	for _, c := range changes {
+		out = slices.Concat(out[:c.offset], []byte(c.text), out[c.offset+c.length:])
+	}
+	return out, nil
 }
 
 // RemoveRepository removes the entry [repositories.<name>] from the
@@ -148,6 +373,22 @@ func RemoveRepository(path, name string) (removed bool, err error) {
 		}
 	}
 	return true, write(path, []byte(strings.Join(kept, "")), mode)
+}
+
+// Replace replaces the configuration file at path with data, as a file
+// renamed over it, keeping its mode, so that a crash leaves the old file or
+// the new. It checks nothing: callers check data first.
+func Replace(path string, data []byte) error {
+	_, mode, err := read(path)
+	if err != nil {
+		return err
+	}
+	if mode == 0o644 {
+		if _, statErr := os.Stat(path); statErr != nil {
+			mode = 0o600
+		}
+	}
+	return write(path, data, mode)
 }
 
 func isBlank(line string) bool { return strings.TrimSpace(line) == "" }

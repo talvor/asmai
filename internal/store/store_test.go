@@ -78,6 +78,33 @@ func TestANewStoreIsReadableOnlyByTheUserAndHasAnEmptyJournal(t *testing.T) {
 	}
 }
 
+func TestStorePathWithURICharactersOpensForWritingAndReading(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state ?#%")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "store.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Started("v1", 1, time.Now()); err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if factory, err := reader.Factory(); err != nil || factory.State != StateRunning || factory.Version != "v1" {
+		t.Errorf("read-only store returned %+v, %v", factory, err)
+	}
+}
+
 func TestStartsAndStopsAreJournaledAndTheNextOpenFindsTheStoreAsItWasLeft(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "store.db")
 	start := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)

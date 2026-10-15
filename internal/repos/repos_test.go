@@ -154,7 +154,7 @@ func TestACloneIsFetchedFromOriginAndNamesOriginsDefaultBranch(t *testing.T) {
 	remote := origin(t, "trunk")
 	dest := filepath.Join(realPath(t, t.TempDir()), "repositories", "fixture")
 
-	branch, err := Clone(context.Background(), remote, dest)
+	branch, err := Clone(context.Background(), remote, dest, "")
 	if err != nil || branch != "trunk" {
 		t.Fatalf("Clone = %q, %v; want trunk", branch, err)
 	}
@@ -175,7 +175,7 @@ func TestAFailedCloneLeavesNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dest := filepath.Join(realPath(t, t.TempDir()), "clone")
-			_, err := Clone(context.Background(), tc.origin, dest)
+			_, err := Clone(context.Background(), tc.origin, dest, "")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("Clone returned %v, want an error saying %q", err, tc.want)
 			}
@@ -186,13 +186,39 @@ func TestAFailedCloneLeavesNothing(t *testing.T) {
 	}
 }
 
+func TestAnExplicitDefaultBranchMustBeAnExactOriginBranch(t *testing.T) {
+	remote := origin(t, "trunk")
+	seed := filepath.Join(filepath.Dir(remote), "seed")
+	run(t, seed, "commit", "--allow-empty", "-m", "second")
+	run(t, seed, "push", remote, "trunk")
+	bad := filepath.Join(realPath(t, t.TempDir()), "bad")
+	if _, err := Clone(context.Background(), remote, bad, "trunk~1"); err == nil || !strings.Contains(err.Error(), `origin has no branch "trunk~1"`) {
+		t.Errorf("a revision expression returned %v", err)
+	}
+	if _, err := os.Stat(bad); !os.IsNotExist(err) {
+		t.Errorf("the refused clone remains: %v", err)
+	}
+	if _, err := Clone(context.Background(), remote, bad, "HEAD"); err == nil || !strings.Contains(err.Error(), `origin has no branch "HEAD"`) {
+		t.Errorf("origin's symbolic HEAD returned %v", err)
+	}
+	run(t, remote, "symbolic-ref", "HEAD", "refs/heads/missing")
+	good := filepath.Join(realPath(t, t.TempDir()), "good")
+	branch, err := Clone(context.Background(), remote, good, "trunk")
+	if err != nil || branch != "trunk" {
+		t.Fatalf("an exact branch with no origin HEAD returned %q, %v", branch, err)
+	}
+	if got, want := run(t, good, "rev-parse", "refs/remotes/origin/trunk"), run(t, remote, "rev-parse", "refs/heads/trunk"); got != want {
+		t.Errorf("the clone fetched %s, want %s", got, want)
+	}
+}
+
 // cloned makes AsmAI's clone of a new origin with one commit on main, and
 // returns the clone, the origin and that commit.
 func cloned(t *testing.T) (clone, remote, first string) {
 	t.Helper()
 	remote = origin(t, "main")
 	clone = filepath.Join(realPath(t, t.TempDir()), "clone")
-	if _, err := Clone(context.Background(), remote, clone); err != nil {
+	if _, err := Clone(context.Background(), remote, clone, ""); err != nil {
 		t.Fatal(err)
 	}
 	return clone, remote, run(t, clone, "rev-parse", "HEAD")

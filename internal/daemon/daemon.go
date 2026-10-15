@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/githooks"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
@@ -61,10 +62,14 @@ const (
 	// CommandRepoAdd registers the repository the request names, with
 	// AsmAI's clone of it; CommandRepoList, CommandRepoShow and
 	// CommandRepoRemove list, show and remove registered repositories.
-	CommandRepoAdd        = "repo.add"
-	CommandRepoList       = "repo.list"
-	CommandRepoShow       = "repo.show"
-	CommandRepoRemove     = "repo.remove"
+	CommandRepoAdd    = "repo.add"
+	CommandRepoList   = "repo.list"
+	CommandRepoShow   = "repo.show"
+	CommandRepoRemove = "repo.remove"
+	// CommandConfigApply validates the configuration file the request
+	// carries and shows what it changes and which running agents pick that
+	// up; with Confirm it also applies it, which journals it.
+	CommandConfigApply    = "config.apply"
 	CommandJobOpen        = "job.open"
 	CommandJobs           = "jobs"
 	CommandJob            = "job"
@@ -128,8 +133,19 @@ type Request struct {
 	// or a URL. Repository names the registered repository for the other
 	// repo commands, and for repo.add the name to register it as, when the
 	// user chose one.
-	Source        string   `json:"source,omitempty"`
-	Repository    string   `json:"repository,omitempty"`
+	Source     string `json:"source,omitempty"`
+	Repository string `json:"repository,omitempty"`
+	// DefaultBranch and Options are the user's choices for repo.add beyond
+	// what the clone says: the branch jobs start from, and the repository's
+	// other settings.
+	DefaultBranch string                    `json:"default_branch,omitempty"`
+	Options       *config.RepositoryOptions `json:"options,omitempty"`
+	// Configuration is the configuration file's content that config.apply
+	// shows the change of, and Confirm has it applied.
+	Configuration string       `json:"configuration,omitempty"`
+	Confirm       bool         `json:"confirm,omitempty"`
+	Preview       *ConfigApply `json:"preview,omitempty"`
+
 	Job           int64    `json:"job,omitempty"`
 	Witness       int64    `json:"witness,omitempty"`
 	LatestWitness bool     `json:"latest_witness,omitempty"`
@@ -203,6 +219,8 @@ type Response struct {
 	// daemon's re-run of a head's failed jobs on it.
 	DecisionRecord *store.DecisionRecord `json:"decision_record,omitempty"`
 	Rerun          *store.Rerun          `json:"rerun,omitempty"`
+	// ConfigApply is what config.apply shows, or applied.
+	ConfigApply *ConfigApply `json:"config_apply,omitempty"`
 	// Trailers are the trailers a worker's commit carries, each as
 	// "Key: value".
 	Trailers []string `json:"trailers,omitempty"`
@@ -329,6 +347,12 @@ func Run(ctx context.Context, cfg Config) error {
 		stop:    make(chan *net.UnixConn, 1),
 		lookNow: make(chan struct{}, 1),
 	}
+	d.applied = readApplied(cfg.ConfigFile)
+	registered, err := st.Repositories()
+	if err != nil {
+		return fmt.Errorf("reading the registered repositories: %w", err)
+	}
+	d.applied = withRegisteredRepositories(d.applied, registered)
 	previous, err := st.Started(d.status.Version, d.status.PID, d.status.StartedAt)
 	if err != nil {
 		return fmt.Errorf("journaling the start: %w", err)
@@ -416,6 +440,13 @@ type daemon struct {
 	// branch and a workspace of AsmAI's clone, and takes the next worker
 	// number and slot.
 	assignMu sync.Mutex
+
+	// configMu guards applied.
+	configMu sync.Mutex
+	// applied is the configuration the running agents were started on, as
+	// of the daemon's start or the user's last apply: what `asmai config
+	// apply` compares the file with.
+	applied config.Config
 
 	// repoMu makes registering and removing repositories one at a time: each
 	// changes the configuration file, the store and the state directory.
@@ -555,6 +586,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		reply(conn, Response{Providers: installs})
 	case CommandRepoAdd, CommandRepoList, CommandRepoShow, CommandRepoRemove:
 		d.repoCommand(conn, req)
+	case CommandConfigApply:
+		d.configApplyCommand(conn, req)
 	case CommandJobOpen, CommandJobs, CommandJob, CommandBrief:
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:

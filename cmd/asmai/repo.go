@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/statedir"
@@ -25,13 +26,14 @@ import (
 // repository is registered all the same. A source that is a path on this
 // host is given to the daemon absolute, because the daemon does not run
 // where this command does.
-func repoAdd(o *output, paths statedir.Paths, source, name string, stdin io.Reader) int {
+func repoAdd(o *output, paths statedir.Paths, source, name string, settings repoSettings, stdin io.Reader) int {
 	if _, err := os.Stat(source); err == nil {
 		if source, err = filepath.Abs(source); err != nil {
 			return o.fail(err)
 		}
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandRepoAdd, Source: source, Repository: name})
+	options := settings.options()
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandRepoAdd, Source: source, Repository: name, DefaultBranch: settings.defaultBranch, Options: &options})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -80,6 +82,22 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, stdin io.Read
 		return o.fail(err)
 	}
 	return repoAdded(o, r)
+}
+
+type repoSettings struct {
+	defaultBranch    string
+	notes            string
+	checksOneAtATime bool
+	noCI             bool
+	commitTrailers   bool
+	skills           listFlags
+}
+
+func (s repoSettings) options() config.RepositoryOptions {
+	return config.RepositoryOptions{
+		Notes: s.notes, ChecksOneAtATime: s.checksOneAtATime, NoCI: s.noCI,
+		CommitTrailers: s.commitTrailers, RepositorySkills: []string(s.skills),
+	}
 }
 
 // repoAdded reports, with --json, that r is registered.

@@ -349,6 +349,9 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	var started struct {
 		Leaders []leaderJSON `json:"leaders"`
 	}
+	if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 {
+		t.Fatalf("applying setup's configuration exited %d: %s", code, stderr)
+	}
 	asmaiJSON(t, &started, "start")
 	if len(started.Leaders) == 0 || started.Leaders[0].Agent != "leader@coordination" || started.Leaders[0].State != "running" {
 		t.Errorf("after setup, asmai start shows the leaders %+v, want Coordination's running", started.Leaders)
@@ -493,6 +496,9 @@ func TestRepoAddHasTheUserTrustTheNewClone(t *testing.T) {
 	s.trust(t, filepath.Join(stateDir, "workspaces"))
 	if code := s.exited(t); code != 0 {
 		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+	}
+	if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 {
+		t.Fatalf("applying setup's configuration exited %d: %s", code, stderr)
 	}
 
 	origin := fixtureOrigin(t)

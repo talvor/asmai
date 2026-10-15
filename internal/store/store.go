@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -258,6 +259,12 @@ const (
 	KindMessageCreated    = "message.created"
 	KindMessageFetched    = "message.fetched"
 	KindDispatchChanged   = "dispatch.changed"
+
+	// KindConfigurationApplied records the user applying the configuration
+	// file with `asmai config apply`: the file, what changed and which
+	// agents pick the change up.
+	KindConfigurationApplied = "configuration.applied"
+
 	// KindJobBranchMade records the daemon making a job's branch from the
 	// default branch as fetched from origin, with the commit it started from.
 	KindJobBranchMade = "job.branch"
@@ -439,7 +446,7 @@ func Open(path string) (*Store, error) {
 	f.Close()
 	// One connection makes the daemon's writes one at a time; FULL
 	// synchronous mode makes each committed transaction durable.
-	db, err := sql.Open("sqlite3", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)")
+	db, err := sql.Open("sqlite3", "file:"+(&url.URL{Path: path}).EscapedPath()+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)")
 	if err != nil {
 		return nil, fmt.Errorf("the store %s cannot be used: %w", path, err)
 	}
@@ -450,6 +457,15 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("the store %s cannot be used: %w", path, err)
 	}
 	return s, nil
+}
+
+func OpenReadOnly(path string) (*Store, error) {
+	db, err := sql.Open("sqlite3", "file:"+(&url.URL{Path: path}).EscapedPath()+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return &Store{db: db}, nil
 }
 
 func (s *Store) migrate() error {

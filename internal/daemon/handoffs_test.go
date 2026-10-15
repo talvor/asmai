@@ -124,6 +124,7 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 	}
 	const agent = "leader@engineering"
 	d := &daemon{cfg: Config{Paths: paths, ConfigFile: configFile, Pins: testPins("v"), ClaudeVersion: reportsVersion("v"), ClaudeRecord: trustingRecord(t, paths)}, leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	d.applied = readApplied(configFile)
 	l := d.leader(roles.Engineering)
 	t.Cleanup(func() {
 		d.mu.Lock()
@@ -142,6 +143,10 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 	}
 	d.mu.Unlock()
 	dispatchID := addPendingDispatch(t, s, agent, store.DispatchUnknown, 1)
+	config.WriteString("[repositories.fixture]\norigin = \"https://example.test/fixture\"\ndefault_branch = \"main\"\n")
+	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.ObservedAutomated(store.Dispatch{ID: dispatchID, Agent: agent, Generation: 1}, roles.Engineering, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", time.Now()); err != nil {
 		t.Fatal(err)
 	}

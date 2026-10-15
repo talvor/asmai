@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClaudeCodesRecordIsInTheHomeUnlessItsConfigDirectoryIsSet(t *testing.T) {
@@ -199,5 +200,99 @@ func TestOnlyTheClonesOwnTrustCoversItsWorktrees(t *testing.T) {
 	// A worktree's own entry is not where Claude Code records its trust.
 	if got, err := Trusted(writeRecord(t, worktree), worktree); err != nil || got {
 		t.Errorf("with only the worktree's own path trusted, Trusted(%s) = %t, %v, want untrusted", worktree, got, err)
+	}
+}
+
+// withRereads has Trusted reread a record that does not parse tries times in
+// all, pause apart, for the rest of the test.
+func withRereads(t *testing.T, tries int, pause time.Duration) {
+	t.Helper()
+	oldTries, oldPause := recordTries, recordPause
+	recordTries, recordPause = tries, pause
+	t.Cleanup(func() { recordTries, recordPause = oldTries, oldPause })
+}
+
+// A record read while Claude Code, or anything else, writes it in place can
+// be empty: Trusted reads it again before it counts it as broken.
+func TestARecordReadWhileItIsWrittenIsReadAgain(t *testing.T) {
+	root := t.TempDir()
+	record := filepath.Join(root, ".claude.json")
+	if err := os.WriteFile(record, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	written := make(chan error, 1)
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		written <- os.WriteFile(record, []byte(`{"projects": {"`+root+`": {"hasTrustDialogAccepted": true}}}`), 0o600)
+	}()
+	if ok, err := Trusted(record, root); err != nil || !ok {
+		t.Errorf("with the record written 30 ms after an empty read, Trusted = %t, %v, want trusted", ok, err)
+	}
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A record that is still cut short after Trusted has read it again is broken.
+func TestARecordThatStaysCutShortIsAnError(t *testing.T) {
+	withRereads(t, 5, time.Millisecond)
+	root := t.TempDir()
+	record := filepath.Join(root, ".claude.json")
+	if err := os.WriteFile(record, []byte(`{"projects": {"`+root+`": {"hasTr`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Trusted(record, root); err == nil || !strings.Contains(err.Error(), "is not Claude Code's JSON record") {
+		t.Errorf("with the record cut short, Trusted's error is %v, want that it is not Claude Code's JSON record", err)
+	}
+}
+
+// While the record is truncated and written again in pieces, over and over,
+// every read of it still finds the folder trusted.
+func TestARecordRewrittenInPlaceIsNeverReadBroken(t *testing.T) {
+	withRereads(t, 5, 5*time.Millisecond)
+	root := t.TempDir()
+	record := filepath.Join(root, ".claude.json")
+	data := []byte(`{"projects": {"` + root + `": {"hasTrustDialogAccepted": true}}}`)
+	if err := os.WriteFile(record, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stop, stopped := make(chan struct{}), make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				stopped <- nil
+				return
+			default:
+			}
+			f, err := os.OpenFile(record, os.O_WRONLY|os.O_TRUNC, 0o600)
+			if err != nil {
+				stopped <- err
+				return
+			}
+			_, err = f.Write(data[:len(data)/2])
+			time.Sleep(100 * time.Microsecond)
+			if err == nil {
+				_, err = f.Write(data[len(data)/2:])
+			}
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				stopped <- err
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		if ok, err := Trusted(record, root); err != nil || !ok {
+			t.Errorf("read %d: Trusted = %t, %v, want trusted", i, ok, err)
+			break
+		}
+	}
+	close(stop)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
 	}
 }

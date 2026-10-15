@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en" data-theme="luxury">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE: asmai dashboard layout</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { background: var(--color-base-100); color: var(--color-base-content); }
+  #term { background:#0c0e12; color:#c9d1d9; font: 13px/1.25 ui-monospace, Menlo, Consolas, monospace; padding:10px; border-radius:8px; overflow-x:auto; white-space:pre; outline:none; border:2px solid #222; width: max-content; max-width:100%; }
+  #term:focus { border-color: var(--color-primary); }
+  .f{color:#7aa2f7} .d{color:#4b5563} .dim{color:#6b7280} .blue{color:#7dcfff} .warn{color:#ffb454;font-weight:700}
+  .mag{color:#d58bff} .ok{color:#8bd48b} .hd{color:#e5e7eb;font-weight:700} .sel{background:#2a3350;color:#fff} .bar{background:#1f2937;color:#e5e7eb}
+  .ban{background:#4a3410;color:#ffd48a;font-weight:700} .att{background:#14301f;color:#9be39b}
+</style>
+</head>
+<body>
+<main class="max-w-5xl mx-auto p-4 space-y-4">
+<header class="space-y-1">
+  <span class="badge badge-warning badge-soft">PROTOTYPE · throwaway · fake data · nothing here talks to a daemon</span>
+  <h1 class="text-2xl font-bold">asmai dashboard: layout, navigation and log view</h1>
+  <p class="opacity-80 text-sm">Three structurally different layouts of the same fake factory. Click the terminal below to focus it, then drive it with the keys shown on its bottom line. <kbd class="kbd kbd-sm">[</kbd> / <kbd class="kbd kbd-sm">]</kbd> cycle the layout (or use the buttons). Try: Enter on an agent (hand-over to attach), <kbd class="kbd kbd-sm">t</kbd> traffic vs full journal, <kbd class="kbd kbd-sm">f</kbd> filter the log to the selected job or agent, Enter on a log line, <kbd class="kbd kbd-sm">x</kbd> stop the factory.</p>
+</header>
+
+<div class="join" id="variants"></div>
+<div id="term" tabindex="0" aria-label="dashboard prototype terminal"></div>
+
+<form id="verdict" data-lavish-question="verdict" class="card card-border bg-base-200"><div class="card-body gap-3">
+  <h2 class="card-title">Your verdict</h2>
+  <div class="flex flex-wrap gap-4">
+    <label class="flex gap-2 items-center"><input type="radio" name="pick" value="A" class="radio radio-primary"> A · Panes</label>
+    <label class="flex gap-2 items-center"><input type="radio" name="pick" value="B" class="radio radio-primary"> B · Waiting first</label>
+    <label class="flex gap-2 items-center"><input type="radio" name="pick" value="C" class="radio radio-primary"> C · Tabs</label>
+    <label class="flex gap-2 items-center"><input type="radio" name="pick" value="mix" class="radio radio-primary"> A mix (say which in the note)</label>
+  </div>
+  <textarea name="note" class="textarea w-full" rows="4" placeholder="What works, what doesn't: e.g. the waiting banner from B with the panes of A; log handling; keys; anything missing"></textarea>
+  <div class="flex items-center gap-3"><button class="btn btn-primary" type="submit">Queue verdict</button><span id="vstatus" role="status" class="text-sm opacity-70"></span></div>
+</div></form>
+</main>
+
+<script>
+// PROTOTYPE: throwaway. A character grid stands in for the terminal.
+var W = 100, H = 30;
+
+var AGENTS = [
+  {n:'coordination',        role:'leader', st:'waiting', job:null, what:'conversation open; you hold its input', input:'you', since:'12m'},
+  {n:'planning',            role:'leader', st:'idle',    job:null, what:'', input:'automation', since:'3h'},
+  {n:'research',            role:'leader', st:'idle',    job:null, what:'', input:'automation', since:'41m'},
+  {n:'engineering',         role:'leader', st:'working', job:12,   what:'accepting result of assignment 31', input:'automation', since:'2m'},
+  {n:'quality',             role:'leader', st:'working', job:12,   what:'validating head 4f1c9a2', input:'automation', since:'6m'},
+  {n:'engineering/worker-3',role:'worker', st:'working', job:12,   what:'asg 32: add --after to the journal read', input:'automation', since:'9m'},
+  {n:'engineering/worker-4',role:'worker', st:'recon',   job:14,   what:'asg 27: turn cut off, needs reconciliation', input:'automation', since:'1h'},
+  {n:'quality/worker-2',    role:'worker', st:'waiting', job:12,   what:'asg 33: native prompt: Bash(gh pr diff 98)', input:'automation', since:'4m'},
+  {n:'research/worker-1',   role:'worker', st:'stopped', job:15,   what:'asg 30 accepted', input:'automation', since:'27m'}
+];
+var JOBS = [
+  {id:12, stage:'Validating', a:'2 active  1 submitted', repo:'talvor/asmai', pr:'#101 not ready', title:'Add a cursor read to the journal'},
+  {id:14, stage:'Working',    a:'0 active  1 held',      repo:'talvor/asmai', pr:'-',               title:'Fix flaky certification test'},
+  {id:15, stage:'Needs you',  a:'0 active  0 submitted', repo:'(none)',       pr:'-',               title:'Draft the dashboard spec'},
+  {id:9,  stage:'Delivering', a:'0 active  0 submitted', repo:'talvor/asmai', pr:'#97 CI pending',  title:'Bump pinned providers'}
+];
+var WAITING = [
+  {kind:'prompt',   who:'quality/worker-2', job:12, text:'native prompt: Bash(gh pr diff 98)'},
+  {kind:'input',    who:'coordination',     job:null, text:'you hold its input (detach did not release)'},
+  {kind:'decision', who:'planning',         job:15, text:'decision request: which skill bundle pin to take?'},
+  {kind:'finding',  who:'quality',          job:12, text:'needs-you finding: change widens ADR 0012'}
+];
+var LOG = [
+  {id:411,t:'10:02:11',k:'handoff.sent',      tr:1,a:'coordination',b:'planning',     job:15,s:'Draft the dashboard spec',body:'Handoff for job 15. Outcome: a buildable spec for asmai dashboard. Acceptance: PRD-style issue plus ADRs.'},
+  {id:412,t:'10:02:40',k:'handoff.accepted',  tr:1,a:'planning',b:'coordination',     job:15,s:'accepted',body:'Accepted with no clarification.'},
+  {id:418,t:'10:11:03',k:'assignment.created',tr:1,a:'engineering',b:'engineering/worker-3',job:12,s:'asg 32: add --after to journal read',body:'Assignment 32. Outcome: journal read returns entries after an id, filtered by job, agent and kind. Acceptance: tests pass, no CLI exposure.'},
+  {id:419,t:'10:11:04',k:'dispatch.changed',  tr:0,a:'daemon',b:'engineering/worker-3',job:12,s:'created -> delivered',body:'Dispatch 88 changed from created to delivered.'},
+  {id:427,t:'10:19:50',k:'result.submitted',  tr:1,a:'engineering/worker-3',b:'engineering',job:12,s:'asg 31 result submitted',body:'Result for assignment 31: cursor read added behind the TUI command set. 14 files, 2 new tests.'},
+  {id:428,t:'10:20:15',k:'assignment.accepted',tr:1,a:'engineering',b:'engineering/worker-3',job:12,s:'asg 31 accepted',body:'Accepted.'},
+  {id:431,t:'10:24:02',k:'push.recorded',     tr:0,a:'daemon',b:'origin',          job:12,s:'job branch pushed 4f1c9a2',body:'Daemon pushed the job branch at 4f1c9a2.'},
+  {id:433,t:'10:24:30',k:'handoff.sent',      tr:1,a:'engineering',b:'quality',      job:12,s:'validate 4f1c9a2',body:'Validate the job branch at 4f1c9a2 against the mandate and repository instructions.'},
+  {id:437,t:'10:31:12',k:'assignment.blocked',tr:1,a:'engineering/worker-4',b:'engineering',job:14,s:'asg 27 turn cut off',body:'Worker turn was cut off at a restart; assignment held for reconciliation.'},
+  {id:438,t:'10:31:12',k:'dispatch.changed',  tr:0,a:'daemon',b:'engineering/worker-4',job:14,s:'working -> unknown',body:'Dispatch 91 changed from working to unknown.'},
+  {id:442,t:'10:38:44',k:'decision.requested',tr:0,a:'planning',b:'you',             job:15,s:'which skill bundle pin to take?',body:'Decision request from planning: two upstream skill releases are viable. Option 1: stay on the current pin. Option 2: take the newer release and re-qualify.'},
+  {id:445,t:'10:41:09',k:'finding.recorded',  tr:0,a:'quality',b:'engineering',      job:12,s:'needs-you: widens ADR 0012',body:'The change lets the TUI command set answer agent calls without a credential, which ADR 0012 forbids.'}
+];
+var STLAB = {working:'Working', idle:'Idle', waiting:'Waiting on you', recon:'Needs reconciliation', stopped:'Stopped'};
+var STGLY = {working:'●', idle:'○', waiting:'▲', recon:'◆', stopped:'■'};
+var STCLS = {working:'blue', idle:'dim', waiting:'warn', recon:'mag', stopped:'dim'};
+
+var S = {v:0, pane:0, tab:0, idx:{agents:0,jobs:0,log:0,wait:0,tree:0}, mode:'traffic', filter:null, stopped:false, att:null, detail:null, logFull:false};
+var NAMES = ['A · Panes','B · Waiting first','C · Tabs'];
+
+function pad(s,w){ s=String(s); return s.length>w ? s.slice(0,Math.max(0,w-1))+'…' : s+' '.repeat(w-s.length); }
+function grid(){ var g=[]; for(var y=0;y<H;y++){ var r=[]; for(var x=0;x<W;x++) r.push({c:' ',k:''}); g.push(r);} return g; }
+function put(g,x,y,t,k){ t=String(t); for(var i=0;i<t.length;i++){ if(y>=0&&y<H&&x+i>=0&&x+i<W) g[y][x+i]={c:t[i],k:k||''}; } }
+function fill(g,x,y,w,k){ for(var i=0;i<w;i++) if(x+i<W&&y<H) g[y][x+i]={c:' ',k:k}; }
+function box(g,x,y,w,h,title,focus){
+  var k=focus?'f':'d';
+  put(g,x,y,'┌'+'─'.repeat(w-2)+'┐',k);
+  for(var i=1;i<h-1;i++){ put(g,x,y+i,'│',k); put(g,x+w-1,y+i,'│',k); }
+  put(g,x,y+h-1,'└'+'─'.repeat(w-2)+'┘',k);
+  if(title) put(g,x+2,y,' '+title+' ',focus?'hd':'dim');
+}
+function html(g){
+  return g.map(function(r){
+    var out='', cur=null, buf='';
+    r.forEach(function(c){ if(c.k!==cur){ if(buf) out+=span(cur,buf); cur=c.k; buf=''; } buf+=c.c; });
+    if(buf) out+=span(cur,buf);
+    return out;
+  }).join('\n');
+}
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function span(k,t){ return k?'<span class="'+k+'">'+esc(t)+'</span>':esc(t); }
+
+function counts(){
+  var w=AGENTS.filter(function(a){return a.st==='working'}).length;
+  return {wait:WAITING.length, working:w, jobs:JOBS.length, agents:AGENTS.length};
+}
+function header(g, title){
+  var c=counts(); fill(g,0,0,W,'bar');
+  put(g,1,0,'asmai dashboard','bar');
+  put(g,18,0,'factory running','ok bar');
+  put(g,36,0,c.wait+' waiting on you',c.wait?'warn bar':'bar');
+  put(g,56,0,c.working+' working · '+c.jobs+' jobs · '+c.agents+' agents','bar');
+  put(g,W-9-NAMES[S.v].length,0,'layout '+NAMES[S.v],'bar');
+}
+function footer(g, keys){ fill(g,0,H-1,W,'bar'); put(g,1,H-1,keys,'bar'); }
+
+function logRows(){
+  var rows=LOG.filter(function(e){ return S.mode==='journal' || e.tr; });
+  if(S.filter){
+    rows=rows.filter(function(e){ return S.filter.type==='job' ? e.job===S.filter.v : (e.a===S.filter.v||e.b===S.filter.v); });
+  }
+  return rows.slice().reverse();
+}
+function logTitle(){
+  return 'Log · '+(S.mode==='traffic'?'agent traffic':'full journal')+(S.filter?' · '+S.filter.type+' '+S.filter.v:'')+' · '+logRows().length+' entries';
+}
+function drawLog(g,x,y,w,h,focus,selIdx){
+  var rows=logRows(), n=h-2, start=Math.max(0,Math.min(selIdx-Math.floor(n/2),rows.length-n)); if(start<0)start=0;
+  for(var i=0;i<n;i++){
+    var e=rows[start+i]; if(!e) continue;
+    var line=pad(e.id,4)+' '+e.t.slice(0,5)+' '+pad(e.k,19)+' '+pad(e.a+' -> '+e.b,38)+' '+e.s;
+    put(g,x+1,y+1+i,pad(line,w-2), (start+i===selIdx&&focus)?'sel':(e.tr?'':'dim'));
+  }
+  if(!rows.length) put(g,x+2,y+1,'no entries for this filter','dim');
+}
+function agentLine(a,w){ return STGLY[a.st]+' '+pad(a.n,22)+pad(STLAB[a.st],21)+(a.job?'job '+a.job:''); }
+function drawAgents(g,x,y,w,h,focus,sel){
+  var n=h-2;
+  AGENTS.slice(0,n).forEach(function(a,i){ put(g,x+1,y+1+i,pad(agentLine(a),w-2),(i===sel&&focus)?'sel':STCLS[a.st]); });
+}
+function drawJobs(g,x,y,w,h,focus,sel){
+  JOBS.slice(0,h-2).forEach(function(j,i){
+    var line=pad('#'+j.id,4)+pad(j.stage,11)+pad(j.title,w-2-4-11);
+    put(g,x+1,y+1+i,pad(line,w-2),(i===sel&&focus)?'sel':(j.stage==='Needs you'?'warn':''));
+  });
+}
+function waitingBanner(g,y){
+  fill(g,0,y,W,'ban');
+  var t='▲ WAITING ON YOU  '+WAITING.map(function(w){return '['+w.kind+'] '+w.who+(w.job?' · job '+w.job:'')}).join('   ');
+  put(g,1,y,pad(t,W-2),'ban');
+}
+
+// ---- Variant A: three panes and a banner
+function viewA(){
+  var g=grid(); header(g); waitingBanner(g,1);
+  box(g,0,2,52,13,'Agents',S.pane===0); drawAgents(g,0,2,52,13,S.pane===0,S.idx.agents);
+  box(g,52,2,48,13,'Jobs',S.pane===1); drawJobs(g,52,2,48,13,S.pane===1,S.idx.jobs);
+  box(g,0,15,100,14,logTitle(),S.pane===2); drawLog(g,0,15,100,14,S.pane===2,S.idx.log);
+  footer(g,'Tab pane · j/k move · Enter attach/filter/open · t traffic|journal · f filter selection · x stop · [ ] layout');
+  return g;
+}
+// ---- Variant B: waiting first, tree, log strip
+function flatB(){
+  var items=[];
+  WAITING.forEach(function(w){ items.push({t:'wait',w:w}); });
+  JOBS.forEach(function(j){ items.push({t:'job',j:j}); AGENTS.filter(function(a){return a.job===j.id}).forEach(function(a){ items.push({t:'agent',a:a,j:j}); }); });
+  AGENTS.filter(function(a){return !a.job}).forEach(function(a){ items.push({t:'agent',a:a,free:1}); });
+  return items;
+}
+function viewB(){
+  var g=grid(); header(g);
+  if(S.logFull){
+    box(g,0,1,100,28,logTitle(),true); drawLog(g,0,1,100,28,true,S.idx.log);
+    footer(g,'j/k move · Enter open · t traffic|journal · f filter · l back · x stop · [ ] layout'); return g;
+  }
+  var items=flatB(), y=2, sel=S.idx.tree;
+  put(g,1,y++,'WAITING ON YOU','warn');
+  var lastSection='';
+  items.forEach(function(it,i){
+    var cur=(i===sel);
+    if(it.t==='job' && lastSection!=='job'){ y++; put(g,1,y++,'JOBS AND THEIR AGENTS','hd'); lastSection='job'; }
+    if(it.t==='agent' && it.free && lastSection!=='free'){ y++; put(g,1,y++,'LEADERS WITH NO JOB','hd'); lastSection='free'; }
+    var line,k='';
+    if(it.t==='wait'){ line='▲ '+pad('['+it.w.kind+']',11)+pad(it.w.who,20)+it.w.text; k='warn'; }
+    else if(it.t==='job'){ line='#'+pad(it.j.id,3)+pad(it.j.stage,12)+pad(it.j.title,38)+it.j.a+'   '+it.j.pr; k=it.j.stage==='Needs you'?'warn':'hd'; }
+    else { line='    '+STGLY[it.a.st]+' '+pad(it.a.n,22)+pad(STLAB[it.a.st],21)+it.a.what; k=STCLS[it.a.st]; }
+    if(y<H-6) put(g,1,y,pad(line,W-2),cur?'sel':k);
+    y++;
+  });
+  box(g,0,H-5,100,5,logTitle()+' (l: expand)',false);
+  var rows=logRows();
+  for(var i=0;i<3;i++){ var e=rows[i]; if(e) put(g,1,H-4+i,pad(pad(e.id,4)+' '+e.t.slice(0,5)+' '+pad(e.k,19)+' '+e.a+' -> '+e.b+'  '+e.s,98),e.tr?'':'dim'); }
+  footer(g,'j/k move · Enter attach/filter · l expand log · t traffic|journal · f filter selection · x stop · [ ] layout');
+  return g;
+}
+// ---- Variant C: tabs with full-width tables
+function viewC(){
+  var g=grid(); header(g);
+  var tabs=['1 Agents ('+AGENTS.length+')','2 Jobs ('+JOBS.length+')','3 Log ('+logRows().length+')'], x=1;
+  tabs.forEach(function(t,i){ put(g,x,1,' '+t+' ',i===S.tab?'sel':'dim'); x+=t.length+4; });
+  waitingBanner(g,2);
+  box(g,0,3,100,26,['Agents','Jobs',logTitle()][S.tab],true);
+  if(S.tab===0){
+    put(g,2,4,pad('',2)+pad('AGENT',22)+pad('STATUS',21)+pad('JOB',6)+pad('INPUT',12)+pad('SINCE',7)+'DOING','hd');
+    AGENTS.forEach(function(a,i){ put(g,2,5+i,pad(STGLY[a.st]+' '+pad(a.n,22)+pad(STLAB[a.st],21)+pad(a.job||'-',6)+pad(a.input,12)+pad(a.since,7)+a.what,96),i===S.idx.agents?'sel':STCLS[a.st]); });
+  } else if(S.tab===1){
+    put(g,2,4,pad('#',5)+pad('STAGE',12)+pad('ASSIGNMENTS',24)+pad('PULL REQUEST',17)+'TITLE','hd');
+    JOBS.forEach(function(j,i){ put(g,2,5+i,pad(pad('#'+j.id,5)+pad(j.stage,12)+pad(j.a,24)+pad(j.pr,17)+j.title,96),i===S.idx.jobs?'sel':(j.stage==='Needs you'?'warn':'')); });
+  } else {
+    drawLog(g,0,3,100,26,true,S.idx.log);
+  }
+  footer(g,'1/2/3 or Tab: tab · j/k move · Enter attach/filter/open · t traffic|journal · f filter · x stop · [ ] layout');
+  return g;
+}
+function overlay(g,lines,k){ lines.forEach(function(l,i){ put(g,0,i,pad(l,W),k||''); }); }
+
+function viewAttach(){
+  var g=grid(), a=S.att;
+  for(var y=0;y<H-1;y++) fill(g,0,y,W,'att');
+  var body=['$ asmai attach '+a.n+'   (observing: no key you type reaches the agent)','',
+   '╭──────────────────────────────────────────────╮','│ Claude Code · '+a.n+'  '+pad(a.job?'job '+a.job:'',12)+'      │','╰──────────────────────────────────────────────╯','',
+   '> '+(a.what||'(idle)'),'',' (the provider screen draws here, one row shorter than the terminal)'];
+  body.forEach(function(l,i){ put(g,2,1+i,l,'att'); });
+  fill(g,0,H-1,W,'bar');
+  put(g,1,H-1,'waiting on you: '+WAITING.length+' · job '+(a.job||'-')+' · running: '+counts().working+' working · you hold: coordination      Ctrl-] detach (press ] here)','bar');
+  return g;
+}
+function viewDetail(){
+  var g=grid(), e=S.detail;
+  box(g,6,5,88,18,'Log entry '+e.id+' · '+e.k,true);
+  var lines=[e.t+'   job '+(e.job||'-'),'from '+e.a+'  ->  '+e.b,'',e.s,'',];
+  var b=e.body, w=82; while(b.length){ lines.push(b.slice(0,w)); b=b.slice(w); }
+  lines.forEach(function(l,i){ put(g,9,7+i,l,i>=5?'':'hd'); });
+  put(g,9,21,'Esc close · f filter log to job '+(e.job||'-'),'dim');
+  return g;
+}
+function viewStopped(){
+  var g=grid(); header(g);
+  put(g,1,0,'asmai dashboard','bar'); fill(g,18,0,60,'bar'); put(g,18,0,'factory stopped','warn bar');
+  box(g,24,10,52,8,'',true);
+  put(g,28,12,'The factory is not running.','hd');
+  put(g,28,14,'Nothing is shown: no stale data.','dim');
+  put(g,28,15,'Retrying every 3 s...','dim');
+  put(g,28,16,'(x: simulate it coming back)','dim');
+  footer(g,'x simulate restart · [ ] layout · q quit');
+  return g;
+}
+
+function curList(){
+  if(S.v===0) return ['agents','jobs','log'][S.pane];
+  if(S.v===1) return S.logFull?'log':'tree';
+  return ['agents','jobs','log'][S.tab];
+}
+function listLen(n){
+  if(n==='agents') return AGENTS.length; if(n==='jobs') return JOBS.length; if(n==='log') return logRows().length; return flatB().length;
+}
+function render(){
+  var g;
+  if(S.stopped) g=viewStopped();
+  else if(S.att) g=viewAttach();
+  else if(S.detail) { g=[viewA,viewB,viewC][S.v](); var d=viewDetail(); for(var y=0;y<H;y++)for(var x=0;x<W;x++) if(d[y][x].c!==' '||d[y][x].k) g[y][x]=d[y][x]; }
+  else g=[viewA,viewB,viewC][S.v]();
+  document.getElementById('term').innerHTML=html(g);
+  Array.prototype.forEach.call(document.querySelectorAll('#variants button'),function(b,i){ b.className='btn btn-sm join-item'+(i===S.v?' btn-primary':''); });
+}
+function act(){
+  var l=curList(), i=S.idx[l];
+  if(l==='agents') { S.att=AGENTS[i]; return; }
+  if(l==='jobs')   { var j=JOBS[i]; S.filter=(S.filter&&S.filter.v===j.id)?null:{type:'job',v:j.id}; return; }
+  if(l==='log')    { S.detail=logRows()[i]||null; return; }
+  var it=flatB()[i]; if(!it) return;
+  if(it.t==='agent'||it.t==='wait') { var nm=it.t==='wait'?it.w.who:it.a.n; var ag=AGENTS.filter(function(a){return a.n===nm})[0]; if(ag) S.att=ag; }
+  else if(it.t==='job') S.filter=(S.filter&&S.filter.v===it.j.id)?null:{type:'job',v:it.j.id};
+}
+function filterSel(){
+  if(S.detail){ S.filter=S.detail.job?{type:'job',v:S.detail.job}:null; S.detail=null; return; }
+  var l=curList(), i=S.idx[l];
+  if(S.filter){ S.filter=null; return; }
+  if(l==='jobs') S.filter={type:'job',v:JOBS[i].id};
+  else if(l==='agents') S.filter={type:'agent',v:AGENTS[i].n};
+  else if(l==='tree'){ var it=flatB()[i]; if(it.t==='job') S.filter={type:'job',v:it.j.id}; else if(it.a) S.filter={type:'agent',v:it.a.n}; else if(it.w) S.filter={type:'agent',v:it.w.who}; }
+  else if(l==='log'){ var e=logRows()[i]; if(e) S.filter={type:'job',v:e.job}; }
+  S.idx.log=0;
+}
+document.getElementById('term').addEventListener('keydown',function(ev){
+  var k=ev.key; ev.preventDefault();
+  if(k==='['){ S.v=(S.v+2)%3; }
+  else if(k===']'){ if(S.att){ S.att=null; } else S.v=(S.v+1)%3; }
+  else if(k==='x'){ S.stopped=!S.stopped; S.att=null; S.detail=null; }
+  else if(S.stopped){ }
+  else if(S.att){ if(k==='Escape') S.att=null; }
+  else if(k==='Escape'){ S.detail=null; }
+  else if(k==='j'||k==='ArrowDown'){ var l=curList(); S.idx[l]=Math.min(listLen(l)-1,S.idx[l]+1); }
+  else if(k==='k'||k==='ArrowUp'){ var l2=curList(); S.idx[l2]=Math.max(0,S.idx[l2]-1); }
+  else if(k==='Tab'){ if(S.v===0) S.pane=(S.pane+1)%3; else if(S.v===2) S.tab=(S.tab+1)%3; }
+  else if(k==='1'||k==='2'||k==='3'){ if(S.v===2) S.tab=+k-1; }
+  else if(k==='Enter'){ act(); }
+  else if(k==='t'){ S.mode=S.mode==='traffic'?'journal':'traffic'; S.idx.log=0; }
+  else if(k==='f'){ filterSel(); }
+  else if(k==='l'){ if(S.v===1) S.logFull=!S.logFull; }
+  render();
+});
+var vb=document.getElementById('variants');
+NAMES.forEach(function(n,i){ var b=document.createElement('button'); b.type='button'; b.textContent=n; b.onclick=function(){ S.v=i; render(); document.getElementById('term').focus(); }; vb.appendChild(b); });
+document.getElementById('verdict').addEventListener('submit',function(e){
+  e.preventDefault();
+  var fd=new FormData(e.currentTarget), pick=fd.get('pick'), note=(fd.get('note')||'').trim();
+  if(!pick) { document.getElementById('vstatus').textContent='Pick one first.'; return; }
+  window.lavish.queuePrompt('Prototype verdict for the dashboard layout: '+pick+'. '+note,{tag:'verdict',text:'Layout verdict '+pick,element:e.currentTarget,data:{pick:pick,note:note}});
+  document.getElementById('vstatus').textContent='Queued. Press Send to Agent to deliver.';
+});
+render();
+</script>
+</body>
+</html>

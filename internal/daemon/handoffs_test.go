@@ -110,7 +110,7 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := filepath.Join(paths.Providers, "claude-code", "v", "claude")
-	if err := os.WriteFile(provider, []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+	if err := os.WriteFile(provider, []byte("#!/bin/sh\n"+answersTheRulesProbe(t)+"exec sleep 60\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	s, err := store.Open(paths.Store)

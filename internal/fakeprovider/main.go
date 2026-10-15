@@ -3,6 +3,7 @@
 package fakeprovider
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"flag"
@@ -37,6 +38,16 @@ const ResumedScriptEnv = ScriptEnv + "_RESUMED"
 // without playing anything.
 const ResumeFailsEnv = "ASMAI_FAKE_PROVIDER_RESUME_FAILS"
 
+// ManagedRulesOnlyEnv, when set, makes the fake answer a permission rules
+// request as Claude Code does under a managed policy that sets
+// allowManagedPermissionRulesOnly: the rules it was given with --settings are
+// listed as not in effect. ManagedRulesAllowEnv names rules, separated by
+// commas, that the managed settings allow, and which are in effect.
+const (
+	ManagedRulesOnlyEnv  = "ASMAI_FAKE_PROVIDER_MANAGED_RULES_ONLY"
+	ManagedRulesAllowEnv = "ASMAI_FAKE_PROVIDER_MANAGED_ALLOW"
+)
+
 const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--strict-mcp-config] [--model MODEL] [--append-system-prompt TEXT] [--resume SESSION]"
 
 // settingSources are the sources Claude Code's --setting-sources takes.
@@ -56,6 +67,11 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	flags.String("model", "", "the model Claude Code uses")
 	instructions := flags.String("append-system-prompt", "", "text Claude Code appends to its system prompt")
 	resume := flags.String("resume", "", "the session to resume")
+	printMode := flags.Bool("p", false, "answer the control requests on stdin and exit, as claude -p does with --input-format stream-json")
+	flags.BoolVar(printMode, "print", false, "the same as -p")
+	flags.String("input-format", "", "the format of stdin, with -p")
+	flags.String("output-format", "", "the format of stdout, with -p")
+	flags.Bool("verbose", false, "report more, with -p")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -75,6 +91,9 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if *resume != "" && os.Getenv(ResumeFailsEnv) != "" {
 		fmt.Fprintf(stderr, "No conversation found with session ID: %s\n", *resume)
 		return 1
+	}
+	if *printMode {
+		return answerControlRequests(*settingsArg, stdin, stdout, stderr)
 	}
 	if *scriptPath == "" {
 		*scriptPath = os.Getenv(ScriptEnv)
@@ -253,4 +272,71 @@ func (h hookCommands) deliver(stderr io.Writer) func(string, []byte) {
 			}
 		}
 	}
+}
+
+// answerControlRequests plays Claude Code's print mode with stream-json
+// input, for the one request AsmAI sends: it answers each list_permission_rules
+// request with the allow rules of settings, in the --settings form, and ends
+// with stdin. Under ManagedRulesOnlyEnv the rules are not in effect.
+func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.Writer) int {
+	var rules []string
+	if settings != "" {
+		data := []byte(settings)
+		if !strings.HasPrefix(strings.TrimSpace(settings), "{") {
+			var err error
+			if data, err = os.ReadFile(settings); err != nil {
+				fmt.Fprintf(stderr, "fake-provider: --settings: %v\n", err)
+				return 2
+			}
+		}
+		var parsed struct {
+			Permissions struct {
+				Allow []string `json:"allow"`
+			} `json:"permissions"`
+		}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			fmt.Fprintf(stderr, "fake-provider: --settings: %v\n", err)
+			return 2
+		}
+		rules = parsed.Permissions.Allow
+	}
+	managedOnly := os.Getenv(ManagedRulesOnlyEnv) != ""
+	type rule struct {
+		Behavior    string `json:"behavior"`
+		Source      string `json:"source"`
+		Rule        string `json:"rule"`
+		Editability string `json:"editability"`
+		NotInEffect bool   `json:"notInEffect,omitempty"`
+	}
+	var listed []rule
+	for _, r := range rules {
+		listed = append(listed, rule{Behavior: "allow", Source: "flagSettings", Rule: r, Editability: "readonly", NotInEffect: managedOnly})
+	}
+	for _, r := range strings.Split(os.Getenv(ManagedRulesAllowEnv), ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			listed = append(listed, rule{Behavior: "allow", Source: "policySettings", Rule: r, Editability: "readonly"})
+		}
+	}
+	sc := bufio.NewScanner(stdin)
+	for sc.Scan() {
+		var req struct {
+			Type      string `json:"type"`
+			RequestID string `json:"request_id"`
+			Request   struct {
+				Subtype string `json:"subtype"`
+			} `json:"request"`
+		}
+		if json.Unmarshal(sc.Bytes(), &req) != nil || req.Type != "control_request" {
+			continue
+		}
+		response := map[string]any{"subtype": "success", "request_id": req.RequestID}
+		if req.Request.Subtype == "list_permission_rules" {
+			response["response"] = map[string]any{"state": map[string]any{"rules": listed, "workspaceDirectories": []string{}, "originalCwd": ".", "managedOnly": managedOnly}}
+		} else {
+			response = map[string]any{"subtype": "error", "request_id": req.RequestID, "error": "Unsupported control request subtype: " + req.Request.Subtype}
+		}
+		out, _ := json.Marshal(map[string]any{"type": "control_response", "response": response})
+		fmt.Fprintf(stdout, "%s\n", out)
+	}
+	return 0
 }

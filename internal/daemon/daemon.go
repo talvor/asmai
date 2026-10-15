@@ -419,8 +419,13 @@ type daemon struct {
 	conversation *conversation
 	sessions     map[string]sessionRef
 	lastChecks   []Check
-	stopping     bool
-	stoppedBy    string
+	// rulesMu guards rulesOK.
+	rulesMu sync.Mutex
+	// rulesOK is the install path whose permission rules check passed, so
+	// the probe runs once per daemon run rather than at every agent start.
+	rulesOK   string
+	stopping  bool
+	stoppedBy string
 	// agents counts the agent sessions whose end is not yet journaled.
 	agents sync.WaitGroup
 }

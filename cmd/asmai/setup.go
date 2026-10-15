@@ -150,7 +150,7 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 		return fail(err)
 	}
 	current = plan.Title
-	stage(3, plan.Title, fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already.", plan.Title, plan.Version))
+	stage(3, plan.Title, fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already, then asks it whether this account lets AsmAI's own permission rules take effect.", plan.Title, plan.Version))
 	// A running daemon records the install now, and a pin it records is
 	// installed, as `asmai providers install` takes it; a stopped one finds
 	// the pinned copy at its path when it next starts.
@@ -185,6 +185,19 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 		report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 	}
 
+	// The pinned Claude Code is there now: ask it whether this account lets
+	// AsmAI's own permission rules take effect. A policy that does not is
+	// reported with the fix, and fails setup once the trust stage is done.
+	current = "permission rules"
+	var policyProblem error
+	if check := daemon.PermissionRulesCheck(plan.Path, paths.Dir); check.OK {
+		report(check.Name, stepAlreadyDone, fmt.Sprintf("%s applies the permission rules AsmAI gives its agents", plan.Title))
+	} else {
+		report(check.Name, stepFailed, check.Problem)
+		fmt.Fprintf(w, "      fix  %s\n", check.Fix)
+		policyProblem = fmt.Errorf("%s: %s; fix: %s", check.Name, check.Problem, check.Fix)
+	}
+
 	stage(4, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
 	record := providers.ClaudeCodeRecord(home, os.Getenv)
 	current = "trust"
@@ -205,6 +218,9 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 	}
 
 	fmt.Fprintln(w)
+	if policyProblem != nil {
+		return fail(policyProblem)
+	}
 	if len(problems) > 0 {
 		return fail(fmt.Errorf("%s has %s; fix %s, then run `asmai start`", configFile, plural(len(problems), "a problem", "problems"), plural(len(problems), "it", "them")))
 	}

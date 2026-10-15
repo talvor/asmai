@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -135,6 +136,7 @@ func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 	for _, role := range []string{roles.Coordination, roles.Engineering, roles.Quality} {
 		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
 	}
+	fmt.Fprintf(&config, "[repositories.fixture]\norigin = %q\ndefault_branch = \"trunk\"\n", origin)
 	configFile := filepath.Join(paths.Dir, "config.toml")
 	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
 		t.Fatal(err)
@@ -184,6 +186,7 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 	for _, role := range []string{roles.Coordination, roles.Engineering, roles.Quality} {
 		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
 	}
+	config.WriteString("[repositories.fixture]\norigin = \"/origin\"\ndefault_branch = \"main\"\n")
 	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}

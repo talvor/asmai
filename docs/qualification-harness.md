@@ -124,6 +124,8 @@ C34 runs the pinned Claude Code non-interactively (`claude -p`, reading its JSON
 
 If the session never runs a skill, the case fails as inconclusive. It uses the model alias `sonnet`, needs on Linux what C37 needs, and depends on the model running the skills it is asked to run. It does not qualify hiding, which is C33's.
 
+The prompt permits the session to stop after the second skill starts; C34 checks skill delivery and invocation, not whether it writes the function or tests.
+
 ### C36 and C37: instruction files and the write guard
 
 Both cases run the pinned Claude Code non-interactively (`claude -p`, reading its JSON events) in a workspace they make: a linked checkout of a clone on an assignment branch, as a worker has, in a repository with `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md` instruction files, each with a code word nobody could guess, and a `.claude` configuration that would be visible if it loaded. That configuration has a hook that leaves a mark, an environment variable, permission rules allowing `curl`, a setting that switches the sandbox off, a `.mcp.json` server, and a setting to enable it. They give the session the command line the code under test builds for a worker (`providers.ClaudeCodeArgs`, with `roles.RepositoryInstructions`), so the arguments qualified are the arguments run. They use no provider hooks of the daemon's and never write `~/.claude`.

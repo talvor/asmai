@@ -229,7 +229,10 @@ func TestEngineeringsInstructionsOpenADraftPullRequestOrANotReadyOneRecordItAndC
 	}
 	for _, want := range []string{
 		"Open the pull request",
-		"gh pr create --draft --base <default branch> --head <job branch>",
+		"gh pr create --draft --repo <owner/name> --base <default branch> --head <job branch>",
+		"gh pr edit <number> --repo <owner/name> --body-file <file>",
+		"as its own single command in its own Bash call",
+		"never after a `cd`",
 		"If GitHub refuses a draft",
 		"`[not ready]` at the start of its title",
 		"never open a second one",

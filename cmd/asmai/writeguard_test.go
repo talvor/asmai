@@ -237,17 +237,17 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 			t.Errorf("%s runs in the %q permission mode, want %q", agent, settings.Permissions.DefaultMode, wantMode)
 		}
 		allow := settings.Permissions.Allow
-		if !slices.Equal(allow[min(len(allow), 19):], wantFiles) {
-			t.Errorf("%s is allowed the files %q, want %q", agent, allow[min(len(allow), 19):], wantFiles)
+		if !slices.Equal(allow[min(len(allow), 20):], wantFiles) {
+			t.Errorf("%s is allowed the files %q, want %q", agent, allow[min(len(allow), 20):], wantFiles)
 		}
 		sb := settings.Sandbox
 		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed || !slices.Equal(sb.ExcludedCommands, []string{
-			"asmai *", "echo *", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"asmai *", "echo *", "cd *", "gh pr create *", "gh pr edit *", "gh pr view *", "gh pr list *", "gh pr checks *",
 			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
 			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
 			"git status *", "git rev-parse *", "git merge *", "git var *",
-		}) || !slices.Equal(allow[:min(len(allow), 19)], []string{
-			"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		}) || !slices.Equal(allow[:min(len(allow), 20)], []string{
+			"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 			"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
 			"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 			"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",

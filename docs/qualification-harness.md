@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has thirteen cases from M1:
+So far it has fourteen cases:
 
 | Case | What it qualifies |
 |---|---|
@@ -19,6 +19,7 @@ So far it has thirteen cases from M1:
 | C45 | The daemon marks the pull request ready when CI is green |
 | C48 | With the agents folder and a registered repository's clone trusted at setup and repo add, a new agent directory and a new worker's worktree of the clone start with no trust question |
 | C49 | An agent with no user terminal never waits at a native prompt: a worker's Write tool writes in its workspace, and a shell write it cannot be prompted for is denied, with the agent told |
+| C50 | Engineering's leader opens and updates the job's pull request with `gh pr create` and `gh pr edit` in its real session and sandbox, with no denial and no native prompt |
 
 Later milestones add the other cases to the same harness.
 
@@ -111,6 +112,10 @@ They use the model alias `sonnet`, and depend on the model running the commands 
 ### C49: no native prompt without the user's terminal
 
 C49 runs the pinned Claude Code non-interactively in the same kind of workspace as C36 and C37, with the command line the code under test builds for a worker, whose hooks log every payload beside the workspace. Its first turn has the session write `test/index.test.js`, a JavaScript test whose braces sit next to quotes (`import { test } from 'node:test';`), with the Write tool, and requires the write to happen, not denied, with the exact content. Its second turn removes that file and has the session write the same content through the shell heredoc compound the #36 demo's worker stalled at, `mkdir -p test && cat > test/index.test.js <<'EOF'` … `EOF` followed by `npm test 2>&1 | tail -12`, which Claude Code's shell analyser marks too complex to judge (a brace next to a quote character) whether or not rules allow `cat`, and to reply `blocked` if it is refused. A plain heredoc on its own may run in the sandbox, so the case does not use one. It requires the file not to be written, the command to be denied in `dontAsk` mode with the session told so, and the session's reply to say it is blocked, and records the command it ran in the report. Across both turns the hooks must have reported something, and no `PermissionRequest`. If the session never uses the Write tool or never runs the heredoc, the case fails as inconclusive. It uses the model alias `sonnet`, and needs on Linux what C37 needs.
+
+### C50: Engineering's leader opens and updates the pull request
+
+C50 runs the pinned Claude Code non-interactively with the command line the code under test builds for Engineering's leader (`providers.ClaudeCodeArgs` with its instructions, in `dontAsk` mode, whose hooks log every payload), in a directory that is not the clone, as a leader's working directory is not the read-only view. It pushes a scratch job branch `asmai/qualification-c50-<random>` of the fixture with the daemon's push and, in two turns, has the session run the commands its instructions give, each as its own Bash call: `gh pr create --draft --repo talvor/asmai-fixture --base <default branch> --head <branch> --title <title> --body-file <file>`, then `gh pr edit <number> --repo talvor/asmai-fixture --body-file <file>`. It requires neither to be denied, to fail or to be retried outside the sandbox (`dangerouslyDisableSandbox`), the pull request to be found a draft from the branch by the daemon's lookup (`github.ViewPullRequest`), its body to hold the update, and the hooks to have reported something and no `PermissionRequest`. If the session never runs a command as given, the case fails as inconclusive. It does not run `asmai effect pull-request`, which needs a job: the development tests drive that through the daemon. It uses the model alias `sonnet`, needs on Linux what C37 needs, and closes the pull request and deletes the scratch branch afterwards.
 
 ### C41: the daemon's push
 

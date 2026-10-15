@@ -34,11 +34,14 @@ var unguardedCommands = []string{"asmai"}
 // which on Linux cannot let it reach the daemon's socket, and its retry
 // outside the guard raises the native permission prompt. They need no
 // permission rule, as Claude Code allows read-only commands, and a redirect
-// to a file keeps a call that has one in the guard.
-var separatorCommands = []string{"echo"}
+// to a file keeps a call that has one in the guard. `cd` is one of them: a
+// leader's working directory is not the read-only view it reads the job's code
+// in, so it runs `cd <view> && gh pr create ...`, which would otherwise stay in
+// the guard, where gh reaches no network host.
+var separatorCommands = []string{"echo", "cd"}
 
 var unguardedGHCommands = []string{
-	"pr create", "pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
+	"pr create", "pr edit", "pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
 }
 
 var unguardedGitSubcommands = []string{

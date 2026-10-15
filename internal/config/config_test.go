@@ -6,8 +6,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/talvor/asmai/internal/roles"
 )
@@ -64,8 +66,8 @@ func TestAFileThisAsmaiCannotHonourNamesTheLineAndTheFix(t *testing.T) {
 			"leader_providr in [roles.engineering] is not a setting this asmai reads", "correct its name"},
 		"an unknown role": {"\n[roles.testing]\nleader_model = \"opus\"\n", 2,
 			"[roles.testing] names no role", "such as [roles.coordination]"},
-		"a later table": {"[limits]\nleader_restarts = 3\n", 1,
-			"[limits] is not a table this asmai reads", "remove [limits]"},
+		"an unknown table": {"[telemetry]\nenabled = true\n", 1,
+			"[telemetry] is not a table this asmai reads", "remove [telemetry]"},
 		"not a string": {"[roles.coordination]\nleader_model = 4\n", 2,
 			"leader_model in [roles.coordination] is a number, not a string", `such as leader_model = "opus"`},
 		"an empty model": {"[roles.coordination]\nleader_model = \" \"\n", 2,
@@ -164,8 +166,8 @@ func TestARepositoryEntryThisAsmaiCannotHonourNamesTheLineAndTheFix(t *testing.T
 		problem string
 		fix     string
 	}{
-		"a later field": {"[repositories.otman]\norigin = \"o\"\nnotes = \"x\"\n", 3,
-			"notes in [repositories.otman] is not a setting this asmai reads; the fields are location, origin and default_branch", "remove notes"},
+		"a misspelt field": {"[repositories.otman]\norigin = \"o\"\nnote = \"x\"\n", 3,
+			"note in [repositories.otman] is not a setting this asmai reads; the fields are location, origin, default_branch, notes,", "remove note"},
 		"not a string": {"[repositories.otman]\ndefault_branch = 4\n", 2,
 			"default_branch in [repositories.otman] is a number, not a string", "in double quotes"},
 		"an empty origin": {"[repositories.otman]\norigin = \"\"\n", 2,
@@ -260,5 +262,201 @@ func TestCreateDefaultWritesOnlyWhenThereIsNoFile(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(path); string(got) != string(mine) {
 		t.Errorf("an existing file became\n%s\nwant it unchanged", got)
+	}
+}
+
+func TestEveryFieldOfTheSchemaIsReadWithItsDefault(t *testing.T) {
+	cfg, problems := Parse([]byte("[roles.engineering]\nleader_model = \"opus\"\n[repositories.otman]\norigin = \"o\"\n"))
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	if cfg.Limits != DefaultLimits() || cfg.Logs != DefaultLogs() {
+		t.Errorf("defaults are %+v and %+v", cfg.Limits, cfg.Logs)
+	}
+	if got := cfg.Providers[Claude]; got != (Provider{WorkerCap: 3}) {
+		t.Errorf("[providers.claude] defaults to %+v", got)
+	}
+	if got := cfg.Options["otman"]; !got.CommitTrailers || got.Notes != "" || got.NoCI || got.ChecksOneAtATime || got.RepositorySkills != nil {
+		t.Errorf("[repositories.otman] defaults to %+v", got)
+	}
+	d := DefaultLimits()
+	if d.LeaderIdleGrace != 10*time.Minute || d.FreeSpaceFloor != 5_000_000_000 || DefaultLogs().RecordingRetention != 14*24*time.Hour || DefaultLogs().DaemonFileSize != 20_000_000 {
+		t.Errorf("defaults differ from rule 33: %+v %+v", d, DefaultLogs())
+	}
+}
+
+func TestEveryFieldIsRead(t *testing.T) {
+	cfg, problems := Parse([]byte(`[limits]
+leader_idle_grace = "1h"
+leader_restarts = 0
+leader_restart_window = "30m"
+silence_timeout = "45s"
+drain_timeout = "2d"
+side_effect_free_retries = 4
+provider_error_resumes = 6
+provider_error_wait = "1m"
+provider_error_wait_max = "20m"
+recheck_interval = "10m"
+dispatch_limit = 7
+failed_validations = 2
+first_check_wait = "5m"
+free_space_floor = "10GB"
+
+[logs]
+daemon_files = 9
+daemon_file_size = "1MB"
+recording_retention = "7d"
+
+[providers.claude]
+worker_cap = 8
+default_model = "sonnet"
+
+[roles.engineering]
+leader_skills = ["pr"]
+worker_skills = []
+leader_added_skills = ["/opt/skills/a", "~/skills/b"]
+worker_added_skills = ["/opt/skills/c"]
+
+[repositories.otman]
+notes = "Run make test."
+checks_one_at_a_time = true
+no_ci = true
+commit_trailers = false
+repository_skills = ["engineering", "quality"]
+`))
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	wantLimits := Limits{time.Hour, 0, 30 * time.Minute, 45 * time.Second, 48 * time.Hour, 4, 6, time.Minute, 20 * time.Minute, 10 * time.Minute, 7, 2, 5 * time.Minute, 10_000_000_000}
+	if cfg.Limits != wantLimits {
+		t.Errorf("limits are %+v, want %+v", cfg.Limits, wantLimits)
+	}
+	if cfg.Logs != (Logs{9, 1_000_000, 7 * 24 * time.Hour}) {
+		t.Errorf("logs are %+v", cfg.Logs)
+	}
+	if cfg.Providers[Claude] != (Provider{8, "sonnet"}) {
+		t.Errorf("claude is %+v", cfg.Providers[Claude])
+	}
+	skills := cfg.Skills["engineering"]
+	if !slices.Equal(skills.LeaderSkills, []string{"pr"}) || skills.WorkerSkills == nil || len(skills.WorkerSkills) != 0 ||
+		!slices.Equal(skills.LeaderAdded, []string{"/opt/skills/a", "~/skills/b"}) || !slices.Equal(skills.WorkerAdded, []string{"/opt/skills/c"}) {
+		t.Errorf("skills are %+v", skills)
+	}
+	o := cfg.Options["otman"]
+	if o.Notes != "Run make test." || !o.ChecksOneAtATime || !o.NoCI || o.CommitTrailers || !slices.Equal(o.RepositorySkills, []string{"engineering", "quality"}) {
+		t.Errorf("options are %+v", o)
+	}
+}
+
+func TestEveryProblemIsReportedWithItsLine(t *testing.T) {
+	file := `[limits]
+leader_idle_grace = "ten minutes"
+leader_restarts = "3"
+dispatch_limit = 0
+free_space_floor = "5 GB"
+provider_error_wait = "10m"
+provider_error_wait_max = "1m"
+unknown = 1
+
+[logs]
+daemon_files = true
+recording_retention = "0d"
+
+[providers.codex]
+worker_cap = 3
+
+[providers.gpt]
+worker_cap = 1
+
+[providers.claude]
+default_model = ""
+
+[roles.engineering]
+worker_provider = "codex"
+leader_skills = "pr"
+worker_skills = ["a b", "tdd", "tdd"]
+leader_added_skills = ["relative/dir"]
+
+[repositories.otman]
+notes = 4
+no_ci = "yes"
+repository_skills = ["testing"]
+`
+	_, problems := Parse([]byte(file))
+	want := []struct {
+		line int
+		text string
+	}{
+		{2, "leader_idle_grace in [limits] is \"ten minutes\", which is not a duration"},
+		{3, "leader_restarts in [limits] is a string, not an integer"},
+		{4, "dispatch_limit in [limits] is 0, which is below the least, 1"},
+		{5, "free_space_floor in [limits] is \"5 GB\", which is not a size"},
+		{8, "unknown in [limits] is not a setting"},
+		{11, "daemon_files in [logs] is a boolean, not an integer"},
+		{12, "recording_retention in [logs] is \"0d\", which is not a duration"},
+		{14, "[providers.codex] names Codex, which arrives in a later asmai"},
+		{17, "[providers.gpt] names no provider"},
+		{21, "default_model in [providers.claude] is empty"},
+		{24, "worker_provider in [roles.engineering] is \"codex\", but this asmai runs only \"claude\" (Codex arrives in a later asmai)"},
+		{25, "leader_skills in [roles.engineering] is a string, not a list of strings"},
+		{26, "worker_skills in [roles.engineering] names \"a b\", which is not a skill name"},
+		{27, "leader_added_skills in [roles.engineering] has \"relative/dir\", which is not an absolute path"},
+		{30, "notes in [repositories.otman] is a number, not a string"},
+		{31, "no_ci in [repositories.otman] is a string, not a boolean"},
+		{32, "repository_skills in [repositories.otman] names \"testing\", which is no role"},
+		{7, "provider_error_wait_max in [limits] (1m0s) is shorter than provider_error_wait (10m0s)"},
+	}
+	if len(problems) != len(want) {
+		t.Fatalf("Parse found %d problems, want %d:\n%v", len(problems), len(want), problems)
+	}
+	for i, w := range want {
+		if problems[i].Line != w.line || !strings.Contains(problems[i].Problem, w.text) || problems[i].Fix == "" {
+			t.Errorf("problem %d is line %d: %q (fix %q); want line %d: %q", i, problems[i].Line, problems[i].Problem, problems[i].Fix, w.line, w.text)
+		}
+	}
+}
+
+func TestTheExampleConfigurationPassesItsOwnCheck(t *testing.T) {
+	data := ExampleConfiguration()
+	cfg, problems := Parse(data)
+	if len(problems) != 0 {
+		t.Fatalf("the example has problems: %v", problems)
+	}
+	if missing := cfg.MissingStaffing(roles.Staffed); len(missing) != 0 {
+		t.Errorf("the example leaves staffing out: %v", missing)
+	}
+	if cfg.Limits != DefaultLimits() || cfg.Logs != DefaultLogs() {
+		t.Errorf("the example's limits and logs are not the defaults")
+	}
+	for _, field := range []string{"[limits]", "[logs]", "[providers.claude]", "[roles.engineering]", "[repositories.otman]", "commit_trailers = true", "repository_skills = []"} {
+		if !strings.Contains(string(data), field) {
+			t.Errorf("the example lacks %s", field)
+		}
+	}
+	if strings.Contains(strings.ToLower(string(data)), "codex") {
+		t.Error("the example names Codex, which this asmai refuses")
+	}
+}
+
+func TestDurationsAndSizesAreReadAsTheFileWritesThem(t *testing.T) {
+	for text, want := range map[string]time.Duration{"30s": 30 * time.Second, "10m": 10 * time.Minute, "14d": 14 * 24 * time.Hour, "2h": 2 * time.Hour} {
+		if got, err := parseDuration(text); err != nil || got != want {
+			t.Errorf("parseDuration(%q) = %v, %v; want %v", text, got, err, want)
+		}
+	}
+	for _, text := range []string{"", "10", "m", "1.5h", "-1m", "0s", "10 m", "10M", "99999999999999999999d"} {
+		if _, err := parseDuration(text); err == nil {
+			t.Errorf("parseDuration(%q) was accepted", text)
+		}
+	}
+	for text, want := range map[string]int64{"5GB": 5_000_000_000, "20MB": 20_000_000, "1TB": 1_000_000_000_000, "512B": 512, "3KB": 3000} {
+		if got, err := parseSize(text); err != nil || got != want {
+			t.Errorf("parseSize(%q) = %d, %v; want %d", text, got, err, want)
+		}
+	}
+	for _, text := range []string{"", "5", "GB", "5gb", "0GB", "1.5GB"} {
+		if _, err := parseSize(text); err == nil {
+			t.Errorf("parseSize(%q) was accepted", text)
+		}
 	}
 }

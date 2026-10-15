@@ -555,9 +555,11 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 
 // startWorker starts the session of the worker l on the installed Claude
 // Code in the workspace of the assignment it carries, with that workspace's
-// slot and temporary directory, and journals it. A worker that resumes the
+// slot and temporary directory, and journals it. options are the settings of
+// the job's repository in the configuration file, whose notes the worker is
+// given with the repository's instruction files. A worker that resumes the
 // provider's session resume starts in it. d.mu is held.
-func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.ProviderInstall, a store.Assignment, resume string) error {
+func (d *daemon) startWorker(l *leader, staffing config.Staffing, options config.RepositoryOptions, install store.ProviderInstall, a store.Assignment, resume string) error {
 	instructions, err := roles.WorkerInstructions(l.address.Role)
 	if err != nil {
 		return err
@@ -568,7 +570,7 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, install store.
 	if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
 		return fmt.Errorf("creating the workspace's temporary directory: %w", err)
 	}
-	repository, err := roles.RepositoryInstructions(a.Workspace.Path)
+	repository, err := roles.RepositoryInstructions(a.Workspace.Path, options.Notes)
 	if err != nil {
 		return fmt.Errorf("reading the repository's instruction files in the workspace of assignment %d: %w", a.ID, err)
 	}

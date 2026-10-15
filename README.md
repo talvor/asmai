@@ -74,12 +74,16 @@ Every start then runs the checks that exist: the roles are staffed in the config
 | `asmai repo list` | The registered repositories: each one's origin, default branch, location and clone |
 | `asmai repo show <name>` | What is recorded for a registered repository, and its clone's path |
 | `asmai repo remove <name>` | Remove a repository's record, its entry in the configuration file and its clone; refused while it has an open job |
+| `asmai config check` | Read the configuration file and report every problem in it, each with its line and the fix; exits 1 if there is any |
+| `asmai config example` | Print an example configuration file, with every default written out, which passes `asmai config check` |
 
 Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now, and `asmai chat --json` Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
 
 ### The configuration file
 
-The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and you edit it by hand. `asmai setup` writes it when it is missing, staffed as below, and never changes it after. So far it holds the staffing of the roles M1 runs: a table for each of Coordination, Engineering and Quality, with the provider and model of the role's leader and of its workers. Claude is the only provider so far. It also holds a `[repositories.<name>]` table for each registered repository, which `asmai repo add` writes (see [Repositories](#repositories)).
+The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and only you change it: agents never do. `asmai setup` writes it when it is missing, staffed as below, and never changes it after. It has one table for each of `[limits]`, `[logs]`, `[providers.claude]`, `[roles.<role>]` and `[repositories.<name>]`; every field not written has a default. Claude is the only provider so far: `[providers.codex]` and `"codex"` as a role's provider are refused, with a message that Codex arrives in a later asmai. Durations are written like `"30s"`, `"10m"` or `"14d"`, and sizes like `"5GB"` (decimal units).
+
+The staffing of a role, which `asmai setup` writes:
 
 ```toml
 [roles.coordination]
@@ -101,7 +105,17 @@ worker_provider = "claude"
 worker_model = "opus"
 ```
 
-`asmai start` refuses a file it cannot honour, naming the line and the fix: TOML that does not parse, a table or field it does not read, a provider other than `"claude"`, or a role or field left out.
+| Table | Fields |
+| --- | --- |
+| `[limits]` | `leader_idle_grace`, `leader_restarts`, `leader_restart_window`, `silence_timeout`, `drain_timeout`, `side_effect_free_retries`, `provider_error_resumes`, `provider_error_wait`, `provider_error_wait_max`, `recheck_interval`, `dispatch_limit`, `failed_validations`, `first_check_wait`, `free_space_floor` |
+| `[logs]` | `daemon_files`, `daemon_file_size`, `recording_retention` |
+| `[providers.claude]` | `worker_cap`, `default_model` |
+| `[roles.<role>]` | `leader_provider`, `leader_model`, `worker_provider`, `worker_model`, `leader_skills`, `worker_skills`, `leader_added_skills`, `worker_added_skills` |
+| `[repositories.<name>]` | `location`, `origin`, `default_branch`, `notes`, `checks_one_at_a_time`, `no_ci`, `commit_trailers`, `repository_skills` |
+
+Two repository fields take effect in this asmai already. `notes` is your notes for the repository: they reach the repository's workers after its instruction files (`AGENTS.md`, `CLAUDE.md`), as instructions. `commit_trailers = false` switches off the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers on that repository's commits, for a repository whose conventions forbid them; it is read at each commit.
+
+`asmai config check` reads the file and reports every problem in it, each with its line and the fix, and exits 1 if there is any. `asmai config example` prints an example with every default written out, for one role and one repository, which passes `asmai config check`. `asmai start` refuses a file it cannot honour in the same way, naming the line and the fix: TOML that does not parse, a table or field it does not read, a value of the wrong type or out of range, a provider other than `"claude"`, or a role or field left out.
 
 ### Repositories
 
@@ -153,7 +167,7 @@ Agents are addressed `name@role`, and a role alone means its leader: `asmai atta
 
 Every agent session runs inside Claude Code's write guard, its sandbox for the commands it runs, which the session's settings switch on with `failIfUnavailable`: a session whose guard cannot start does not start. On Linux the guard needs `bubblewrap` and `socat`. Commands in the guard write only in the agent's working directory, a worker's own temporary directory and the system's, and reach a network host only once you approve it, at Coordination's prompt: every other agent is denied. The commands that need your credentials, your network and the daemon run outside it, and are allowed without a prompt: `asmai`, the Git subcommands workers need, and selected `gh pr`, `gh issue view` and `gh run` operations. Other commands, including `git config`, `git diff` and `gh config`, stay inside the guard. `echo` is left alone too, so that a compound command of `asmai` commands and `echo`, such as `asmai brief 1; echo ----; asmai inbox`, runs outside the guard and reaches the daemon without a prompt. On macOS the guard also lets a command connect to the daemon's own socket, `daemon.sock` in the state directory, and to no other Unix socket, so that an `asmai` command the guard runs in a compound command with other commands still reaches the daemon. On Linux Claude Code's guard cannot allow one socket alone, so such a command reaches no daemon there, and its retry outside the guard raises the native prompt in Coordination's terminal and is denied in any other agent's. So every agent's instructions tell it to run each `asmai` command as its own single command in its own Bash call, never chained or compounded with others. Anything else the guard does not allow raises Claude Code's native prompt in Coordination's terminal, which waits for you, and is denied in any other agent's. The guard is a guard against mistakes, not a security boundary, and workers are told to stay inside their workspace and to record any write outside it as an effect.
 
-Workers commit as you. Git runs with your own configuration, so commits carry your name and email, and `git push` and `gh` use your existing credentials: AsmAI sets no identity, stores no token and writes nothing to the clone's configuration. Every commit a worker makes carries three trailers, which the worker's git adds through a hooks directory AsmAI gives it, `githooks/` in the state directory, whose hooks run `asmai git-hook`:
+Workers commit as you. Git runs with your own configuration, so commits carry your name and email, and `git push` and `gh` use your existing credentials: AsmAI sets no identity, stores no token and writes nothing to the clone's configuration. Every commit a worker makes carries three trailers (unless the repository sets `commit_trailers = false`, see [The configuration file](#the-configuration-file)), which the worker's git adds through a hooks directory AsmAI gives it, `githooks/` in the state directory, whose hooks run `asmai git-hook`:
 
 ```
 AsmAI-Job: 1

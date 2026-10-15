@@ -206,6 +206,9 @@ type Response struct {
 	// Trailers are the trailers a worker's commit carries, each as
 	// "Key: value".
 	Trailers []string `json:"trailers,omitempty"`
+	// NoTrailers says the worker's repository has the trailers switched off
+	// in the configuration file, so its commits carry none.
+	NoTrailers bool `json:"no_trailers,omitempty"`
 }
 
 // Status describes the running daemon.
@@ -557,7 +560,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			reply(conn, Response{Error: err.Error()})
 			return false
 		}
-		reply(conn, Response{Trailers: trailers})
+		reply(conn, Response{Trailers: trailers, NoTrailers: len(trailers) == 0})
 	case CommandStop:
 		select {
 		case d.stop <- conn:

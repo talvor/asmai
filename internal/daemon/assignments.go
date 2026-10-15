@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
@@ -318,6 +319,17 @@ func (d *daemon) effect(req Request) (store.Effect, error) {
 	return e, nil
 }
 
+// repositoryOptions returns the settings in cfg of the repository job
+// targets, or the defaults of a repository whose entry cfg lacks.
+func (d *daemon) repositoryOptions(cfg config.Config, job int64) config.RepositoryOptions {
+	if j, err := d.store.Job(job); err == nil {
+		if options, ok := cfg.Options[j.Repository]; ok {
+			return options
+		}
+	}
+	return config.RepositoryOptions{CommitTrailers: true}
+}
+
 // The trailers every commit of a worker carries.
 const (
 	TrailerJob      = "AsmAI-Job"
@@ -327,7 +339,8 @@ const (
 
 // trailers returns the trailers a commit of req's worker carries: the job of
 // the assignment in its current dispatch, the worker and the dispatch. Only a
-// worker commits, and only while it works on a dispatch it fetched.
+// worker commits, and only while it works on a dispatch it fetched. It returns
+// none for a worker of a repository that has the trailers switched off.
 func (d *daemon) trailers(req Request) ([]string, error) {
 	d.mu.Lock()
 	ref, l, err := d.caller(req)
@@ -351,6 +364,14 @@ func (d *daemon) trailers(req Request) ([]string, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	// A repository whose conventions forbid trailers has them switched off in
+	// the configuration file, which is read now so that the switch applies to
+	// the next commit. A file that cannot be read leaves them on.
+	if d.cfg.ConfigFile != "" {
+		if cfg, problems, err := config.Load(d.cfg.ConfigFile); err == nil && len(problems) == 0 && !d.repositoryOptions(cfg, a.Job).CommitTrailers {
+			return nil, nil
+		}
 	}
 	return []string{
 		fmt.Sprintf("%s: %d", TrailerJob, a.Job),
@@ -533,5 +554,5 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if w, err := d.store.WorkerDispatch(a.ID); err == nil && w.Kind == store.MessageResumption && !w.Fetched {
 		resume = w.Dispatch.NativeSession
 	}
-	return d.startWorker(l, cfg.Roles[address.Role], install, a, resume)
+	return d.startWorker(l, cfg.Roles[address.Role], d.repositoryOptions(cfg, a.Job), install, a, resume)
 }

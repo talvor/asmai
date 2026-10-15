@@ -115,6 +115,10 @@ commands:
   asmai repo show <name>      show what is recorded for a registered repository
   asmai repo remove <name>    remove a repository's record, its configuration entry and its
                               clone; refused while it has an open job
+  asmai config check          read the configuration file and report every problem in it, each with
+                              its line and the fix; exits 1 if there is any. Only you change the file
+  asmai config example        print an example configuration file, with every default written out,
+                              which passes asmai config check
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
   asmai version               print the version of this executable
   asmai notices               print AsmAI's license and the third-party notices
@@ -129,6 +133,7 @@ var groups = map[string][]string{
 	"repo":      {"add", "list", "show", "remove"},
 	"handoff":   {"send", "accept", "clarify", "decline"},
 	"decision":  {"record"},
+	"config":    {"check", "example"},
 }
 
 // positional are the commands that take arguments, with what to say when
@@ -264,7 +269,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove":
+	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -294,7 +299,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
-		if slices.Contains([]string{"setup", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove"}, name) {
+		if slices.Contains([]string{"setup", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove", "config check", "config example"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -315,6 +320,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout)
 		stdout.Write(asmai.ThirdPartyNotices)
 		return 0
+	case "config check":
+		return configCheck(o)
+	case "config example":
+		return configExample(o)
 	}
 
 	paths, err := statedir.Default()

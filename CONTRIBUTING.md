@@ -24,7 +24,7 @@ The skill bundle in `internal/skills/bundle` is not a Go module, so it is covere
 
 ## The skill bundle
 
-`internal/skills/bundle` is upstream's engineering and productivity skills at the release `internal/skills/bundle.json` pins, unchanged, with upstream's LICENSE. Do not edit it by hand: move the pin with `go run ./internal/cmd/sync-skills <upstream checkout> <release> <commit>`, then run `make notices` and recheck every patch listed in `bundle.json` (there are none). A skill is patched only where the operating guide, `internal/skills/guide.md`, cannot do the work, and each patch is listed there with its reason; a test fails when a skill differs from upstream without one. The default skill lists per role are in `internal/skills/lists.go`.
+`internal/skills/bundle` holds upstream's engineering and productivity skills at the release `internal/skills/bundle.json` pins, with the patches listed in that manifest and upstream's LICENSE. Move the pin with `go run ./internal/cmd/sync-skills <upstream checkout> <release> <commit>`. Sync replaces the bundle and manifest, so reapply and relist each patch with its reason, then run `make notices`. A skill is patched only where the operating guide, `internal/skills/guide.md`, cannot do the work; a test fails when a skill differs from upstream without a listed patch. The default skill lists per role are in `internal/skills/lists.go`.
 
 ## Copying from Firstmate or OpenRig
 

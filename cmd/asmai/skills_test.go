@@ -53,6 +53,7 @@ func TestAWorkerIsGivenTheListItsAssignmentNarrowedToAsAPerSessionPluginAndTheDi
 	if want := []string{"diagnosing-bugs", "tdd"}; !slices.Equal(delivered, want) {
 		t.Errorf("the worker's plugin holds %v, want the narrowed list %v", delivered, want)
 	}
+	t.Logf("worker plugin delivered skills: %v", delivered)
 	if _, err := os.Stat(filepath.Join(plugin, ".claude-plugin", "plugin.json")); err != nil {
 		t.Errorf("the worker's plugin has no manifest: %v", err)
 	}
@@ -73,6 +74,7 @@ func TestAWorkerIsGivenTheListItsAssignmentNarrowedToAsAPerSessionPluginAndTheDi
 	for _, e := range journaled(t, "dispatch.changed") {
 		d := decode[struct {
 			ID     int64             `json:"id"`
+			State  string            `json:"state"`
 			Bundle string            `json:"bundle"`
 			Skills map[string]string `json:"skills"`
 		}](t, e)
@@ -80,6 +82,9 @@ func TestAWorkerIsGivenTheListItsAssignmentNarrowedToAsAPerSessionPluginAndTheDi
 			continue
 		}
 		recorded = true
+		if d.State == "delivered" {
+			t.Logf("asmai export assignment dispatch: %s", e.Data)
+		}
 		want, _ := skills.DeliveryOf([]string{"tdd", "diagnosing-bugs"})
 		if d.Bundle != skills.Version() || len(d.Skills) != 2 || d.Skills["tdd"] != want.Skills["tdd"] || d.Skills["diagnosing-bugs"] != want.Skills["diagnosing-bugs"] {
 			t.Errorf("dispatch 3 records bundle %q and %v, want %q and %v", d.Bundle, d.Skills, skills.Version(), want.Skills)

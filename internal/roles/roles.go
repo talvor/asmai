@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/talvor/asmai/internal/skills"
 )
 
 // The roles.
@@ -103,23 +105,41 @@ func ParseAddress(s string) (Address, error) {
 //go:embed instructions/*.md instructions/workers/*.md
 var instructions embed.FS
 
-// LeaderInstructions returns the instructions for role's leader.
+// LeaderInstructions returns the instructions for role's leader: its own, the
+// operating guide, its default skills and the index of its workers' skills.
 func LeaderInstructions(role string) (string, error) {
 	data, err := instructions.ReadFile("instructions/" + role + ".md")
 	if err != nil {
 		return "", fmt.Errorf("there are no instructions for %s's leader", Title(role))
 	}
-	return string(data), nil
+	text := strings.TrimRight(string(data), "\n") + "\n\n" + skills.Guide()
+	if list := skills.LeaderList(role); len(list) > 0 {
+		text += "\n" + skillList(list)
+	}
+	if index := skills.Index(role); index != "" {
+		text += "\n" + index
+	}
+	return text, nil
 }
 
-// WorkerInstructions returns the instructions for role's workers. M1 has
-// workers only in Engineering.
+// WorkerInstructions returns the instructions for role's workers: their own,
+// the operating guide and their default skills. M1 has workers only in
+// Engineering.
 func WorkerInstructions(role string) (string, error) {
 	data, err := instructions.ReadFile("instructions/workers/" + role + ".md")
 	if err != nil {
 		return "", fmt.Errorf("there are no instructions for %s's workers", Title(role))
 	}
-	return string(data), nil
+	text := strings.TrimRight(string(data), "\n") + "\n\n" + skills.Guide()
+	if list := skills.WorkerList(role); len(list) > 0 {
+		text += "\n" + skillList(list)
+	}
+	return text, nil
+}
+
+// skillList says which skills a role's agents have by default.
+func skillList(names []string) string {
+	return "## Your skill list\n\nThe skills on your list are " + strings.Join(names, ", ") + ". An assignment may narrow the list.\n"
 }
 
 // instructionFiles are the repository's instruction files that every agent

@@ -24,10 +24,12 @@ var commentMarkers = map[string]string{
 }
 
 // skippedDirs are never searched: git's own files and local build output at
-// the root of fsys.
+// the root of fsys, and third-party text embedded as it is, by path.
 var skippedDirs = map[string]bool{
 	".git": true,
 	"dist": true,
+	// Upstream's skills, embedded unchanged under their own license.
+	"internal/skills/bundle": true,
 }
 
 // Missing returns, in lexical order, the source files in fsys that do not

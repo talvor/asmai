@@ -186,6 +186,48 @@ func goCommand(dir string, args ...string) ([]byte, error) {
 // by path, each followed by the text of its license files. The same toolchain
 // and module set always give the same bytes.
 func Notices(dir, pkg string, platforms []Platform, goDist Toolchain) ([]byte, error) {
+	return NoticesWithEmbedded(dir, pkg, platforms, goDist, nil)
+}
+
+// Embedded is licensed material compiled into asmai that is not a Go module,
+// such as the skill bundle, with its license text.
+type Embedded struct {
+	// Name says what it is, such as "Matt Pocock's skills v1.3.1 (the skill
+	// bundle)".
+	Name    string
+	License []byte
+}
+
+// Module returns e as a module, so that its license is detected and held to
+// the allow-list like a Go module's.
+func (e Embedded) Module() Module {
+	files := []LicenseFile{{Name: "LICENSE", Text: e.License}}
+	return Module{Path: e.Name, Licenses: detect(files), LicenseFiles: files}
+}
+
+// CheckEmbedded lists to w each of embedded with its license, then names each
+// whose license is not acceptable. It reports whether there were none.
+func CheckEmbedded(w io.Writer, embedded []Embedded) bool {
+	ok := true
+	fmt.Fprintln(w, "Embedded material that is not a Go module:")
+	for _, e := range embedded {
+		m := e.Module()
+		ids := "unknown"
+		if len(m.Licenses) > 0 {
+			ids = strings.Join(m.Licenses, ", ")
+		}
+		fmt.Fprintf(w, "  %s  %s\n", e.Name, ids)
+		if problem := m.Problem(); problem != "" {
+			fmt.Fprintf(w, "FAIL %s: %s\n", e.Name, problem)
+			ok = false
+		}
+	}
+	return ok
+}
+
+// NoticesWithEmbedded is Notices with embedded material's licenses after the
+// Go modules' own.
+func NoticesWithEmbedded(dir, pkg string, platforms []Platform, goDist Toolchain, embedded []Embedded) ([]byte, error) {
 	byPath := map[string]Module{}
 	for _, p := range platforms {
 		mods, err := CompiledIn(dir, pkg, p)
@@ -203,7 +245,11 @@ func Notices(dir, pkg string, platforms []Platform, goDist Toolchain) ([]byte, e
 	b.WriteString("Third-party notices\n\n")
 	b.WriteString("The Go distribution, whose standard library and runtime are compiled in,\n")
 	b.WriteString("followed by its license, then the Go modules compiled in, each followed by\n")
-	b.WriteString("its license files.\n")
+	b.WriteString("its license files.")
+	if len(embedded) > 0 {
+		b.WriteString(" Material embedded that is not a Go module comes last.")
+	}
+	b.WriteString("\n")
 	writeSection := func(title string, files []LicenseFile) {
 		fmt.Fprintf(&b, "\n%s%s\n%s", rule, title, rule)
 		for _, f := range files {
@@ -218,6 +264,9 @@ func Notices(dir, pkg string, platforms []Platform, goDist Toolchain) ([]byte, e
 	for _, path := range slices.Sorted(maps.Keys(byPath)) {
 		m := byPath[path]
 		writeSection(m.Path+" "+m.Version, m.LicenseFiles)
+	}
+	for _, e := range embedded {
+		writeSection(e.Name, e.Module().LicenseFiles)
 	}
 	return b.Bytes(), nil
 }

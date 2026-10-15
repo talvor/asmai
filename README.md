@@ -70,11 +70,16 @@ Every start then runs the checks that exist: this platform is certified (Linux o
 | `asmai export` | The journal, written out for inspection |
 | `asmai providers install` | Fetch the pinned provider CLIs, once you confirm (see [Pinned providers](#pinned-providers)) |
 | `asmai providers list` | The provider CLIs AsmAI has installed |
-| `asmai repo add <path-or-url> [--name <name>]` | Register a repository, make AsmAI's clone of it, and open the pinned Claude Code in the clone for you to trust it, as `asmai setup` does (see [Repositories](#repositories)) |
+| `asmai repo add <path-or-url> [--name <name>] [--default-branch <branch>] [--notes <text>] [--checks-one-at-a-time] [--no-ci] [--commit-trailers=false] [--repository-skills <role>]` | Register a repository, make AsmAI's clone of it, and open the pinned Claude Code in the clone for you to trust it, as `asmai setup` does; each flag sets the field of the entry it names (see [Repositories](#repositories)) |
 | `asmai repo list` | The registered repositories: each one's origin, default branch, location and clone |
 | `asmai repo show <name>` | What is recorded for a registered repository, and its clone's path |
 | `asmai repo remove <name>` | Remove a repository's record, its entry in the configuration file and its clone; refused while it has an open job |
 | `asmai config check` | Read the configuration file and report every problem in it, each with its line and the fix; exits 1 if there is any |
+| `asmai config show` | Print the effective configuration, with every default written out |
+| `asmai config edit` | Open the configuration file in `$VISUAL` or `$EDITOR`, and accept what you save only when it has no problem (see [Changing the configuration](#changing-the-configuration)) |
+| `asmai config apply [--yes]` | Hand the configuration file to the running factory: validate it, show what it changes and which running agents pick that up, and once you confirm, apply and journal it |
+| `asmai role list` | Each role's provider and model for its leader and its workers, and its skill lists |
+| `asmai role set <role> [--provider <p>] [--model <m>] [--leader-provider <p>] [--leader-model <m>] [--worker-provider <p>] [--worker-model <m>]` | Set a role's provider and model in the configuration file; `claude` is the only provider, and `codex` is refused |
 | `asmai config example` | Print an example configuration file, with every default written out, which passes `asmai config check` |
 
 Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now, and `asmai chat --json` Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
@@ -117,6 +122,15 @@ Two repository fields take effect in this asmai already. `notes` is your notes f
 
 `asmai config check` reads the file and reports every problem in it, each with its line and the fix, and exits 1 if there is any. `asmai config example` prints an example with every default written out, for one role and one repository, which passes `asmai config check`. `asmai start` refuses a file it cannot honour in the same way, naming the line and the fix: TOML that does not parse, a table or field it does not read, a value of the wrong type or out of range, a provider other than `"claude"`, or a role or field left out.
 
+### Changing the configuration
+
+You can edit the file by hand, or through the commands, which all change the same file and leave the rest of it, comments and all, as it is.
+
+- `asmai config show` prints the effective configuration: every setting, with the defaults of the ones the file does not set, such as each role's default skill lists. With `--json` it prints the same as nested objects.
+- `asmai config edit` opens a copy of the file in `$VISUAL` or `$EDITOR`. What you save replaces the file only when it has no problem, as `asmai config check` counts them, including a role the factory runs that is not staffed. A file with problems is shown them with their lines and fixes, and you edit it again, or the file stays as it was. It also refuses to replace a file that changed while you edited it.
+- `asmai config apply` hands the file to the running daemon, which validates it and shows what differs from the configuration the factory last started on or applied. For each change it names the running agents that pick it up at their next start (a running agent keeps what it started with), and for a change that adds or removes skills, which skills. A change that affects no running agent applies at once. Once you confirm, or with `--yes`, the daemon journals the applied configuration as `configuration.applied`, with the file, its SHA-256 and each change with its agents. A repository the file no longer has is removed, as `asmai repo remove` does, which is refused while it has an open job; a `[repositories.<name>]` table for a repository nothing registered is refused, because only `asmai repo add` makes the clone. With the factory stopped there is nothing to apply: it reads the file when it starts.
+- `asmai role list` shows each role's staffing and skill lists, and `asmai role set <role>` sets the provider and model of its leader and workers, with `--provider` and `--model` for both and `--leader-…` and `--worker-…` for one. It refuses `codex`, which arrives in a later asmai. Running agents keep what they run on until their next start, and `asmai config apply` shows which they are.
+
 ### Repositories
 
 Jobs can target only repositories you have registered, and only you register them. `asmai repo add <path-or-url>` takes a local checkout (from anywhere inside it), a URL, or a bare repository on this host standing in for one. It records the repository's name, its location on the host, its origin remote and its default branch, in the store and as `location`, `origin` and `default_branch` in the repository's `[repositories.<name>]` table, which it appends to the configuration file without touching anything else in it:
@@ -129,6 +143,8 @@ default_branch = "main"
 ```
 
 The name is the last part of the origin without `.git`, or what `--name` says. The origin is the checkout's `origin` remote, or the URL itself; a checkout with no `origin` is refused, and so is a URL that carries a password, because AsmAI handles no tokens: git's own credential helpers and SSH keys do. The default branch is the one the origin names. `location` is empty for a repository registered by its URL.
+
+`asmai repo add` accepts every other field of the entry too, written only when it differs from its default: `--default-branch` (a branch origin has, for jobs to start from, not the one its HEAD names), `--notes`, `--checks-one-at-a-time`, `--no-ci`, `--commit-trailers=false` and `--repository-skills <role>` (repeated for each role). It refuses a branch origin lacks, or a role that does not exist, before it clones anything.
 
 `asmai repo add` also makes AsmAI's own clone of the repository in `repositories/<name>` in the state directory, cloned from the origin with your git and its configuration, never prompting for a password. Jobs work in that clone; your own checkout is recorded and never used, so it stays as it is. A registration that fails leaves no clone, entry or record. Each worker starts in a git worktree of the clone, which Claude Code trusts only once you trust the clone itself, so `asmai repo add` then has you trust the clone as setup's [trust step](#running-the-factory) does: the same framed block naming the clone and why, the same wait for Enter (or `n` to stop), and the same answer in Claude Code. If you stop, or choose "No, exit", it exits 1 naming the clone still untrusted, with the repository registered, and `asmai setup` takes it up again. A clone already trusted is reported already done, and no Claude Code is opened. With standard input not a terminal, or before `asmai setup` has installed the pinned Claude Code, `asmai repo add` registers the repository, opens nothing, says the clone still needs trusting and to run `asmai setup` in a terminal, and exits 0. With `--json`, standard output holds only the result, and the trust step draws on standard error. Until the clone is trusted, `asmai start` fails its directory trust check naming the clone, and the daemon starts no worker in a workspace of it.
 

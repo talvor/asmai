@@ -32,7 +32,11 @@ func (d *daemon) repoCommand(conn *net.UnixConn, req Request) {
 		ctx, cancel := context.WithTimeout(d.work, repoTimeout)
 		defer cancel()
 		var r store.Repository
-		if r, err = d.repoAdd(ctx, req.Source, req.Repository); err == nil {
+		options := config.DefaultRepositoryOptions()
+		if req.Options != nil {
+			options = *req.Options
+		}
+		if r, err = d.repoAdd(ctx, req.Source, req.Repository, req.DefaultBranch, options); err == nil {
 			resp.Repository = &r
 		}
 	case CommandRepoList:
@@ -78,7 +82,7 @@ func notRegistered(name string) error {
 // and records it in the store. It does the last step last, so a repository
 // the store records has its clone and its entry; a failure undoes the steps
 // before it.
-func (d *daemon) repoAdd(ctx context.Context, source, name string) (store.Repository, error) {
+func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, options config.RepositoryOptions) (store.Repository, error) {
 	d.repoMu.Lock()
 	defer d.repoMu.Unlock()
 	if d.cfg.ConfigFile == "" {
@@ -94,6 +98,9 @@ func (d *daemon) repoAdd(ctx context.Context, source, name string) (store.Reposi
 		}
 	}
 	if err := config.CheckRepositoryName(name); err != nil {
+		return store.Repository{}, refuse("%v", err)
+	}
+	if err := config.CheckRepositoryOptions(options); err != nil {
 		return store.Repository{}, refuse("%v", err)
 	}
 	if _, err := d.store.Repository(name); err == nil {
@@ -118,7 +125,15 @@ func (d *daemon) repoAdd(ctx context.Context, source, name string) (store.Reposi
 	clone := filepath.Join(d.cfg.Paths.Repositories, name)
 	partial := filepath.Join(d.cfg.Paths.Repositories, "."+name+".partial")
 	os.RemoveAll(partial)
-	branch, err := repos.Clone(ctx, src.Origin, partial)
+	chosen := branch
+	branch, err = repos.Clone(ctx, src.Origin, partial)
+	if err == nil && chosen != "" {
+		if err = repos.CheckBranch(ctx, partial, chosen); err != nil {
+			os.RemoveAll(partial)
+			return store.Repository{}, refuse("%v; choose a branch it has with --default-branch", err)
+		}
+		branch = chosen
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return store.Repository{}, refuse("registering %s was interrupted: %v", name, ctx.Err())
@@ -127,10 +142,11 @@ func (d *daemon) repoAdd(ctx context.Context, source, name string) (store.Reposi
 	}
 	undo := func() { os.RemoveAll(partial) }
 	entry := config.Repository{Location: src.Location, Origin: src.Origin, DefaultBranch: branch}
-	if err := config.AddRepository(d.cfg.ConfigFile, name, entry); err != nil {
+	if err := config.AddRepositoryWithOptions(d.cfg.ConfigFile, name, entry, options); err != nil {
 		undo()
 		var problems *config.ProblemsError
-		if errors.As(err, &problems) || errors.Is(err, config.ErrRepositoryEntryExists) {
+		var entryProblems *config.EntryProblemsError
+		if errors.As(err, &problems) || errors.As(err, &entryProblems) || errors.Is(err, config.ErrRepositoryEntryExists) {
 			return store.Repository{}, refuse("%v", err)
 		}
 		return store.Repository{}, fmt.Errorf("writing the entry to the configuration file: %w", err)
@@ -156,6 +172,7 @@ func (d *daemon) repoAdd(ctx context.Context, source, name string) (store.Reposi
 		undo()
 		return store.Repository{}, fmt.Errorf("recording the repository: %w", err)
 	}
+	d.noteRepository(name)
 	d.log.Info("repository registered", "repository", name, "origin", r.Origin, "default_branch", branch, "clone", clone)
 	return r, nil
 }
@@ -168,6 +185,11 @@ func (d *daemon) repoAdd(ctx context.Context, source, name string) (store.Reposi
 func (d *daemon) repoRemove(name string) (store.Repository, error) {
 	d.repoMu.Lock()
 	defer d.repoMu.Unlock()
+	return d.removeRepository(name)
+}
+
+// removeRepository is repoRemove for a caller that holds repoMu.
+func (d *daemon) removeRepository(name string) (store.Repository, error) {
 	if config.CheckRepositoryName(name) != nil {
 		return store.Repository{}, notRegistered(name)
 	}
@@ -208,6 +230,7 @@ func (d *daemon) repoRemove(name string) (store.Repository, error) {
 	if len(failures) > 0 {
 		return r, refuse("%s is removed from the registry, but %w", name, errors.Join(failures...))
 	}
+	d.noteRepository(name)
 	d.log.Info("repository removed", "repository", name)
 	return r, nil
 }

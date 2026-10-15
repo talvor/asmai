@@ -102,6 +102,8 @@ func commandName(command string) string {
 		return "chat"
 	case CommandRepoAdd, CommandRepoList, CommandRepoShow, CommandRepoRemove:
 		return "repo " + strings.TrimPrefix(command, "repo.")
+	case CommandConfigApply:
+		return "config apply"
 	case CommandProviders, CommandProviderInstalled:
 		return "providers install"
 	case CommandJobOpen:

@@ -29,6 +29,7 @@ import (
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
+	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 )
@@ -110,13 +111,31 @@ commands:
                               branch in the store and the configuration file, and make AsmAI's
                               own clone of it, fetched from origin, then open the pinned Claude
                               Code in the clone for you to trust it, as setup does. Your own
-                              checkout is never used for work
+                              checkout is never used for work. It also takes the entry's other
+                              settings: --default-branch <branch>, --notes <text>,
+                              --checks-one-at-a-time, --no-ci, --commit-trailers=false and
+                              --repository-skills <role> (repeat for each role)
   asmai repo list             list the registered repositories
   asmai repo show <name>      show what is recorded for a registered repository
   asmai repo remove <name>    remove a repository's record, its configuration entry and its
                               clone; refused while it has an open job
   asmai config check          read the configuration file and report every problem in it, each with
                               its line and the fix; exits 1 if there is any. Only you change the file
+  asmai config show           print the effective configuration, with every default written out
+  asmai config edit           open the configuration file in $VISUAL or $EDITOR and accept what you save
+                              only when it has no problem; a file with problems is shown them and
+                              edited again, or left as it was
+  asmai config apply [--yes]  hand the configuration file to the running factory: validate it, show what
+                              it changes and which running agents pick that up at their next start,
+                              including added skills, and ask to confirm; the applied configuration is
+                              journaled. A repository the file no longer has is removed, which an open
+                              job refuses
+  asmai role list             list each role's provider and model for its leader and its workers, and its
+                              skill lists
+  asmai role set <role> [--provider <p>] [--model <m>] [--leader-provider <p>] [--leader-model <m>]
+                          [--worker-provider <p>] [--worker-model <m>]
+                              set a role's provider and model in the configuration file; claude is the
+                              only provider, and codex is refused
   asmai config example        print an example configuration file, with every default written out,
                               which passes asmai config check
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
@@ -133,7 +152,8 @@ var groups = map[string][]string{
 	"repo":      {"add", "list", "show", "remove"},
 	"handoff":   {"send", "accept", "clarify", "decline"},
 	"decision":  {"record"},
-	"config":    {"check", "example"},
+	"config":    {"check", "show", "edit", "apply", "example"},
+	"role":      {"list", "set"},
 }
 
 // positional are the commands that take arguments, with what to say when
@@ -143,6 +163,7 @@ var positional = map[string][]string{
 	"repo add":    {"name a local checkout or a URL"},
 	"repo show":   {"name the repository, as `asmai repo list` shows it"},
 	"repo remove": {"name the repository, as `asmai repo list` shows it"},
+	"role set":    {"name the role, one of " + strings.Join(roles.All, ", ")},
 	"job show":    {"name the job number, as `asmai jobs` shows it"},
 	"brief":       {"name the job number, as `asmai jobs` shows it"},
 	"push":        {"name the job number, as `asmai jobs` shows it"},
@@ -212,6 +233,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var decidedAssignment int64
 	var reasons listFlags
 	var decisionJob int64
+	var configYes bool
+	var repoOptions repoSettings
+	var role roleChoices
 	var choice, rationale string
 	var resultArgs resultFlags
 	switch name {
@@ -221,6 +245,22 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
 	case "repo add":
 		repoName = flags.String("name", "", "register the repository under this name, not one made from its origin")
+		flags.StringVar(&repoOptions.defaultBranch, "default-branch", "", "the branch jobs start from, not the one origin's HEAD names")
+		flags.StringVar(&repoOptions.notes, "notes", "", "your notes, which count as repository instructions")
+		flags.BoolVar(&repoOptions.checksOneAtATime, "checks-one-at-a-time", false, "the repository's checks cannot run side by side")
+		flags.BoolVar(&repoOptions.noCI, "no-ci", false, "the repository has no CI; Quality's checks stand in")
+		repoOptions.commitTrailers = true
+		flags.BoolVar(&repoOptions.commitTrailers, "commit-trailers", true, "commits carry the AsmAI trailers; --commit-trailers=false switches them off")
+		flags.Var(&repoOptions.skills, "repository-skills", "a role for which the repository's own skills are switched on; may be repeated")
+	case "config apply":
+		flags.BoolVar(&configYes, "yes", false, "apply without asking to confirm")
+	case "role set":
+		flags.StringVar(&role.provider, "provider", "", "the provider of the role's leader and workers")
+		flags.StringVar(&role.model, "model", "", "the model of the role's leader and workers")
+		flags.StringVar(&role.leaderProvider, "leader-provider", "", "the provider of the role's leader")
+		flags.StringVar(&role.leaderModel, "leader-model", "", "the model of the role's leader")
+		flags.StringVar(&role.workerProvider, "worker-provider", "", "the provider of the role's workers")
+		flags.StringVar(&role.workerModel, "worker-model", "", "the model of the role's workers")
 	case "job open":
 		flags.StringVar(&message, "message", "", "latest or the witnessed message's journal ID")
 		flags.StringVar(&repository, "repository", "", "registered repository name")
@@ -269,7 +309,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example":
+	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -299,7 +339,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
-		if slices.Contains([]string{"setup", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove", "config check", "config example"}, name) {
+		if slices.Contains([]string{"setup", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -324,6 +364,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return configCheck(o)
 	case "config example":
 		return configExample(o)
+	case "config show":
+		return configShow(o)
+	case "config edit":
+		return configEdit(o, stdin)
+	case "role list":
+		return roleList(o)
+	case "role set":
+		return roleSet(o, arg, role)
 	}
 
 	paths, err := statedir.Default()
@@ -385,7 +433,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "providers list":
 		return providersList(o, paths)
 	case "repo add":
-		return repoAdd(o, paths, arg, *repoName, stdin)
+		return repoAdd(o, paths, arg, *repoName, repoOptions, stdin)
+	case "config apply":
+		return configApply(o, paths, stdin, configYes)
 	case "repo list":
 		return repoList(o, paths)
 	case "repo show":

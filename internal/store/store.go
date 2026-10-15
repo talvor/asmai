@@ -258,6 +258,12 @@ const (
 	KindMessageCreated    = "message.created"
 	KindMessageFetched    = "message.fetched"
 	KindDispatchChanged   = "dispatch.changed"
+
+	// KindConfigurationApplied records the user applying the configuration
+	// file with `asmai config apply`: the file, what changed and which
+	// agents pick the change up.
+	KindConfigurationApplied = "configuration.applied"
+
 	// KindJobBranchMade records the daemon making a job's branch from the
 	// default branch as fetched from origin, with the commit it started from.
 	KindJobBranchMade = "job.branch"

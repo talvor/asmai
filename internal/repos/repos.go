@@ -196,3 +196,12 @@ func gitStatus(ctx context.Context, dir string, args ...string) (stdout string, 
 	}
 	return strings.TrimSuffix(out.String(), "\n"), 0, nil
 }
+
+// CheckBranch returns an error unless origin, as the clone at dir fetched
+// it, has the branch.
+func CheckBranch(ctx context.Context, dir, branch string) error {
+	if _, err := git(ctx, dir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch); err != nil {
+		return fmt.Errorf("origin has no branch %q", branch)
+	}
+	return nil
+}

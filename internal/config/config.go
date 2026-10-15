@@ -128,17 +128,23 @@ type Skills struct {
 // other than its location, origin and default branch.
 type RepositoryOptions struct {
 	// Notes are the user's notes, which count as repository instructions.
-	Notes string
+	Notes string `json:"notes"`
 	// ChecksOneAtATime says the repository's checks cannot run side by side.
-	ChecksOneAtATime bool
+	ChecksOneAtATime bool `json:"checks_one_at_a_time"`
 	// NoCI says the repository has no CI.
-	NoCI bool
+	NoCI bool `json:"no_ci"`
 	// CommitTrailers says commits carry the AsmAI trailers; true unless the
 	// file says otherwise.
-	CommitTrailers bool
+	CommitTrailers bool `json:"commit_trailers"`
 	// RepositorySkills are the roles for which the repository's own skills
 	// are switched on in its jobs.
-	RepositorySkills []string
+	RepositorySkills []string `json:"repository_skills"`
+}
+
+// DefaultRepositoryOptions are the settings of a repository whose entry
+// sets none.
+func DefaultRepositoryOptions() RepositoryOptions {
+	return RepositoryOptions{CommitTrailers: true}
 }
 
 // Sizes, in bytes, as the file writes them.

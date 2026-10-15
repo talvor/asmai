@@ -263,10 +263,25 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 		checks = append(checks, Check{Name: name, Problem: err.Error(), Fix: "run `asmai providers install`"})
 	default:
 		checks = append(checks, Check{Name: name, OK: true})
-		checks = append(checks, PermissionRulesCheck(install.Path, d.cfg.Paths.Dir))
+		checks = append(checks, d.permissionRulesCheck(install.Path))
 	}
 	checks = append(checks, d.trustCheck())
 	return checks, cfg, install
+}
+
+// permissionRulesCheck runs PermissionRulesCheck once per daemon run for the
+// install at path; a failed check is run again at the next start.
+func (d *daemon) permissionRulesCheck(path string) Check {
+	d.rulesMu.Lock()
+	defer d.rulesMu.Unlock()
+	if d.rulesOK == path {
+		return Check{Name: PermissionRulesName, OK: true}
+	}
+	c := PermissionRulesCheck(path, d.cfg.Paths.Dir)
+	if c.OK {
+		d.rulesOK = path
+	}
+	return c
 }
 
 // PermissionRulesName is the name of the check that Claude Code applies the

@@ -22,7 +22,8 @@ import (
 // for an assignment that narrows the list (`skills.WritePlugin`), starts the
 // pinned Claude Code with the command line the code under test builds for the
 // worker (`providers.ClaudeCodeArgs`, with the plugin and no setting source),
-// and has the session run implement, whose text says "Use /tdd", and then
+// and gives the session an assignment, test-first work, that it is told to do
+// by implement's instructions exactly: implement, whose text says "Use /tdd", and then
 // the skill it names.
 func (h *Harness) c34(ctx context.Context, f *Factory, r *Result) error {
 	if err := checkGuardDependencies(); err != nil {
@@ -64,9 +65,17 @@ func (h *Harness) skillsAreDelivered(ctx context.Context, f *Factory, path strin
 	turn, err := h.Provider.Ask(ctx, f, path, AskSpec{
 		Dir:  g.workspace,
 		Args: args,
-		Prompt: "You are being qualified. Use the Skill tool to run the skill `" + named + "` from your skill list, once. " +
-			"Follow its instructions to invoke any skill it names, using the Skill tool and the name your skill list gives it. " +
-			"Do not carry out the rest of the work or run any other tool. Then reply with the single word done.",
+		// The assignment cannot be done as implement's instructions say
+		// without the skill it names: a task with behaviour to specify
+		// first, which implement does with tdd, so the call is the work's
+		// first step and not an option the session may leave out.
+		Prompt: "You are being qualified. This is your assignment: add a function `slugify(text)` to `slug.js` that lowercases text, " +
+			"replaces each run of non-alphanumeric characters with one hyphen and trims hyphens from both ends, " +
+			"with its tests in `slug.test.js`, built test-first. " +
+			"Use the Skill tool to run the skill `" + named + "` from your skill list and follow its instructions exactly, " +
+			"including running every skill it tells you to use, with the Skill tool and the name your skill list gives it, before you write any code or test. " +
+			"The skill it names is not optional here: do not start the work until it has started. " +
+			"Once that skill has started, you may stop: reply with the single word done.",
 	})
 	if err != nil {
 		return err

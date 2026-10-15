@@ -76,6 +76,20 @@ type Dispatch struct {
 	// NativeSession the provider's session it resumes it in.
 	Resumes       int64  `json:"resumes,omitempty"`
 	NativeSession string `json:"native_session,omitempty"`
+	// Bundle is the skill bundle's version the session the dispatch went to
+	// ran with, and Skills the fingerprint of each skill that session was
+	// given, by name. They are empty until the dispatch has a session.
+	Bundle string            `json:"bundle,omitempty"`
+	Skills map[string]string `json:"skills,omitempty"`
+}
+
+// scanDispatchSkills reads the skills column of a dispatch into d.
+func scanDispatchSkills(d *Dispatch, skills string) error {
+	d.Skills = nil
+	if skills == "" || skills == "{}" {
+		return nil
+	}
+	return json.Unmarshal([]byte(skills), &d.Skills)
 }
 
 func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) {
@@ -375,13 +389,17 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 // changed within one millisecond would tie and the lower id would always win.
 func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 	var d Dispatch
-	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND (
+	var skills string
+	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript,d.bundle,d.skills FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND (
 		(m.fetched_at IS NULL AND d.state IN (?,?)) OR
 		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
 			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
 		))
-	) ORDER BY m.fetched_at IS NOT NULL, d.state<>?, substr(d.updated_at,1,19), CAST(rtrim(substr(d.updated_at,20),'Z') AS REAL), d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending, DispatchCreated).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
-	return d, err
+	) ORDER BY m.fetched_at IS NOT NULL, d.state<>?, substr(d.updated_at,1,19), CAST(rtrim(substr(d.updated_at,20),'Z') AS REAL), d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending, DispatchCreated).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript, &d.Bundle, &skills)
+	if err != nil {
+		return d, err
+	}
+	return d, scanDispatchSkills(&d, skills)
 }
 
 // PendingLeaders returns the agents with a message waiting for them, which
@@ -414,7 +432,11 @@ func (s *Store) PendingLeaders() ([]string, error) {
 // session lock while using this method, so an old generation cannot win.
 func (s *Store) ChangeDispatch(id int64, generation int, from, to, transcript string, at time.Time) error {
 	return s.change(at, func(tx *sql.Tx) (string, any, error) {
-		result, err := tx.Exec(`UPDATE dispatches SET state=?,generation=?,transcript=CASE WHEN ?='' THEN transcript ELSE ? END,updated_at=? WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), id, from, generation)
+		// The dispatch records the skills of the session it went to.
+		result, err := tx.Exec(`UPDATE dispatches SET state=?,generation=?,transcript=CASE WHEN ?='' THEN transcript ELSE ? END,updated_at=?,
+			bundle=COALESCE((SELECT n.bundle FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), bundle),
+			skills=COALESCE((SELECT n.skills FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), skills)
+			WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), generation, generation, id, from, generation)
 		if err != nil {
 			return "", nil, err
 		}
@@ -425,7 +447,11 @@ func (s *Store) ChangeDispatch(id int64, generation int, from, to, transcript st
 		if n != 1 {
 			return "", nil, fmt.Errorf("dispatch %d is not %s in generation %d", id, from, generation)
 		}
-		return KindDispatchChanged, map[string]any{"id": id, "generation": generation, "from": from, "state": to, "transcript": transcript}, nil
+		var bundle, skills string
+		if err := tx.QueryRow(`SELECT bundle, skills FROM dispatches WHERE id=?`, id).Scan(&bundle, &skills); err != nil {
+			return "", nil, err
+		}
+		return KindDispatchChanged, map[string]any{"id": id, "generation": generation, "from": from, "state": to, "transcript": transcript, "bundle": bundle, "skills": json.RawMessage(skills)}, nil
 	})
 }
 

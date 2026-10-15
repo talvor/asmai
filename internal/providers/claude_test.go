@@ -19,8 +19,8 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 		t.Errorf("the hook command is %s, want %s", hook, want)
 	}
 	guard := WriteGuard{Writable: []string{"/state/workspaces/job-1/assignment-1/tmp"}}
-	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.", guard, Permissions{})
-	if want := []string{"--setting-sources", "user", "--strict-mcp-config", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
+	args := ClaudeCodeArgs(hook, "opus", "Be Coordination.", "", guard, Permissions{})
+	if want := []string{"--setting-sources", "", "--strict-mcp-config", "--model", "opus", "--append-system-prompt", "Be Coordination."}; !slices.Equal(args[2:], want) {
 		t.Errorf("the command line is %q, want --settings, then %q", args, want)
 	}
 	if args[0] != "--settings" {
@@ -206,8 +206,8 @@ func TestEveryListedAPIKeyVariableIsOneAndTheListIsACopy(t *testing.T) {
 func TestAResumedSessionIsStartedWithTheSameSettingsAndTheSessionToContinue(t *testing.T) {
 	hook := HookCommand("/state/bin/asmai")
 	worker := Permissions{Unattended: true, Editable: []string{"/state/workspaces/job-1/assignment-1/checkout"}}
-	fresh := ClaudeCodeArgs(hook, "opus", "Be a worker.", WriteGuard{}, worker)
-	resumed := ClaudeCodeResumeArgs(hook, "opus", "Be a worker.", WriteGuard{}, worker, "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3")
+	fresh := ClaudeCodeArgs(hook, "opus", "Be a worker.", "", WriteGuard{}, worker)
+	resumed := ClaudeCodeResumeArgs(hook, "opus", "Be a worker.", "", WriteGuard{}, worker, "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3")
 
 	if want := append(slices.Clone(fresh), "--resume", "6b8b4567-327b-4c23-9e0d-2ed1e8c0a8f3"); !slices.Equal(resumed, want) {
 		t.Errorf("the resumed command line is %q, want %q", resumed, want)
@@ -405,5 +405,30 @@ func TestEveryGHCommandTheInstructionsNameIsExcludedAndAllowedOrNeverRun(t *test
 	}
 	if found == 0 {
 		t.Error("the instructions name no gh command")
+	}
+}
+
+func TestASessionsSkillsAreItsPluginAndTheUserSettingSourceIsLeftOut(t *testing.T) {
+	args := ClaudeCodeArgs("hook", "opus", "Be a worker.", "/state/plugins/worker1@engineering", WriteGuard{}, Permissions{Readable: []string{"/state/plugins/worker1@engineering"}})
+	i := slices.Index(args, "--setting-sources")
+	if i < 0 || args[i+1] != "" {
+		t.Errorf("the session was started with %q, want an empty --setting-sources: no source, so no personal skills", args)
+	}
+	if i := slices.Index(args, "--plugin-dir"); i < 0 || args[i+1] != "/state/plugins/worker1@engineering" {
+		t.Errorf("the session was started with %q, want --plugin-dir with its plugin", args)
+	}
+	var settings struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(settings.Permissions.Allow, "Read(//state/plugins/worker1@engineering/**)") {
+		t.Errorf("the session's rules are %q, want its plugin's files readable", settings.Permissions.Allow)
+	}
+	if slices.Contains(ClaudeCodeArgs("hook", "opus", "x", "", WriteGuard{}, Permissions{}), "--plugin-dir") {
+		t.Error("a session with no skills was given a plugin")
 	}
 }

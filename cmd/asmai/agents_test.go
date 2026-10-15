@@ -344,8 +344,13 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		flags[args[i]] = args[i+1]
 		i++
 	}
-	if len(args) != 9 || flags["--setting-sources"] != "user" || flags["--strict-mcp-config"] != "true" || flags["--model"] != "opus" || !strings.Contains(flags["--append-system-prompt"], "You are Coordination's leader") {
-		t.Errorf("the session was started with %q, want --settings, --setting-sources user, --strict-mcp-config, --model opus and Coordination's instructions", args)
+	if _, ok := flags["--setting-sources"]; len(args) != 11 || !ok || flags["--setting-sources"] != "" || flags["--strict-mcp-config"] != "true" || flags["--plugin-dir"] == "" || flags["--model"] != "opus" || !strings.Contains(flags["--append-system-prompt"], "You are Coordination's leader") {
+		t.Errorf("the session was started with %q, want --settings, an empty --setting-sources, --strict-mcp-config, --plugin-dir, --model opus and Coordination's instructions", args)
+	}
+	for _, name := range []string{"ask-matt", "wait-what"} {
+		if _, err := os.Stat(filepath.Join(flags["--plugin-dir"], "skills", name, "SKILL.md")); err != nil {
+			t.Errorf("Coordination's leader's plugin lacks its skill %s: %v", name, err)
+		}
 	}
 	for _, arg := range args {
 		if strings.Contains(arg, "dangerously") || strings.Contains(arg, "--permission-mode") || strings.Contains(arg, "bypassPermissions\"") {
@@ -382,6 +387,8 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
 		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
+		// The files of the plugin its skills are delivered in.
+		"Read(/" + flags["--plugin-dir"] + "/**)",
 	}) || settings.Permissions.DefaultMode != "default" {
 		t.Errorf("the session's permissions are %+v, want asmai, git and gh allowed and the default mode", settings.Permissions)
 	}

@@ -4,7 +4,7 @@ The skills you are given were written for one person working with one agent in o
 
 ## Use only your skill list
 
-Use only the skills on your list, the skills delivered to your session. Skills of the user's own, the provider's built-in skills and a repository's own skills are not yours, even where your provider cannot hide them: do not use one. A skill's text may name another skill; use it only if it is on your list too, otherwise say that it is not on your list and carry on without it. Skills call each other by bare name, such as `tdd`, however your provider names them.
+Use only the skills on your list, the skills delivered to your session. Skills of the user's own, the provider's built-in skills and a repository's own skills are not yours, even where your provider cannot hide them: do not use one. A skill's text may name another skill; use it only if it is on your list too, otherwise say that it is not on your list and carry on without it. Skills call each other by bare name, such as `tdd`, however your provider names them. Your provider may put a prefix on a skill's name in its own list: on Claude Code your skills are delivered in a plugin named `asmai`, so the skill `tdd` is run as `asmai:tdd`. When a skill, an assignment or your skill list names a skill by its bare name, run the skill of that name from your list, under the name your provider gives it. Name skills you ran by their bare names.
 
 ## What a skill says, and what it means here
 

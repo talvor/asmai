@@ -157,6 +157,10 @@ type Request struct {
 	// commit, which is the job branch's tip.
 	ReadOnly bool   `json:"read_only,omitempty"`
 	Commit   string `json:"commit,omitempty"`
+	// Skill and Skills make an assign name the skill the worker is to run,
+	// and narrow its skill list to Skills.
+	Skill  string   `json:"skill,omitempty"`
+	Skills []string `json:"skills,omitempty"`
 	// Choice and Rationale are what a recorded decision chose and why, with
 	// Evidence what it rests on.
 	Choice    string `json:"choice,omitempty"`

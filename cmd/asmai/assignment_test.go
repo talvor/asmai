@@ -131,6 +131,10 @@ func assignmentFlow(t *testing.T, worker, leader []string) (fixture writingFixtu
 // assignmentFlowWith is assignmentFlow for a test that sets git up as it
 // likes, before the daemon starts, and registers a repository whose main also
 // holds files.
+// assignmentSkillFlags are the flags a test adds to the Engineering leader's
+// `asmai assign`, to name a skill or narrow the worker's list.
+var assignmentSkillFlags string
+
 func assignmentFlowWith(t *testing.T, setUpGit func(*testing.T), files map[string]string, worker, leader []string) (fixture writingFixture, testDir string) {
 	t.Helper()
 	return assignmentFlowConfigured(t, setUpGit, files, nil, worker, leader)
@@ -153,7 +157,7 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 		fakeRun(`asmai inbox --dispatch 1`, 0, "(?s)Add a greeting.*Greeting is printed"),
 		fakeRun(`asmai brief 1`, 0, "(?s)Job branch: asmai/job-1-add-a-greeting \\(started from [0-9a-f]{40}, tip [0-9a-f]{40}\\).*Read-only view of the job at the job branch's tip: \\S+/views/job-1"),
 		fakeRun(`asmai handoff accept --handoff 1`, 0, "reply dispatch 2"),
-		fakeRun(`asmai assign --job 1 --outcome 'Add greeting.txt, with a check that it says hello' --criterion 'greeting.txt says hello' --criterion 'the check passes'`, 0, "assignment 1 of job 1 given to worker1@engineering; dispatch 3"),
+		fakeRun(`asmai assign --job 1 --outcome 'Add greeting.txt, with a check that it says hello' --criterion 'greeting.txt says hello' --criterion 'the check passes'`+assignmentSkillFlags, 0, "assignment 1 of job 1 given to worker1@engineering; dispatch 3"),
 		hookStep("Stop", "handoff", ""),
 		`{"expect":"asmai inbox --dispatch 4\r"}`,
 		hookStep("UserPromptSubmit", "report", "asmai inbox --dispatch 4"),

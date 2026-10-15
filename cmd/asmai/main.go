@@ -209,7 +209,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var criteria criteriaFlags
 	var assignJob int64
 	var assignReadOnly bool
-	var assignCommit string
+	var assignCommit, assignSkill string
+	var assignNarrow listFlags
 	var assignOutcome, blockedReason, blockedNeeds string
 	var decidedAssignment int64
 	var reasons listFlags
@@ -249,6 +250,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
 		flags.BoolVar(&assignReadOnly, "read-only", false, "give a validation, which changes nothing, instead of a writing assignment")
 		flags.StringVar(&assignCommit, "commit", "", "with --read-only, the job branch's exact head commit the validation is fixed at")
+		flags.StringVar(&assignSkill, "skill", "", "the skill from the worker's list that it is to run")
+		flags.Var(&assignNarrow, "narrow", "a skill the worker's list is narrowed to, from the role's workers' list; may be repeated")
 	case "effect":
 	case "result":
 		flags.Var(&resultArgs.evidence, "evidence", "what shows the work does; may be repeated")
@@ -259,6 +262,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&resultArgs.prSection, "pr-section", "", "the worker's part of the pull request: what changed, with before-and-after evidence")
 		flags.Var(&resultArgs.findings, "finding", "a validation's finding, '<blocking|advisory|needs-you>: <text>', or none; may be repeated")
 		flags.Var(&resultArgs.resolved, "resolved", "an earlier blocking finding's ID that is resolved at this commit; may be repeated")
+		flags.Var(&resultArgs.skills, "skill", "a skill from your list that you ran, or none; may be repeated")
 		flags.Var(&resultArgs.unresolved, "unresolved", "an earlier blocking finding's ID that is still open at this commit; may be repeated")
 	case "blocked":
 		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
@@ -361,7 +365,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "handoff accept", "handoff clarify", "handoff decline":
 		return handoffAnswer(o, paths, name, handoffID, answer)
 	case "assign":
-		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit)
+		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit, assignSkill, assignNarrow)
 	case "effect":
 		return effect(o, paths, operands[0], operands[1])
 	case "result":

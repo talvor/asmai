@@ -177,11 +177,6 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 func (d *daemon) repoRemove(name string) (store.Repository, error) {
 	d.repoMu.Lock()
 	defer d.repoMu.Unlock()
-	return d.removeRepository(name)
-}
-
-// removeRepository is repoRemove for a caller that holds repoMu.
-func (d *daemon) removeRepository(name string) (store.Repository, error) {
 	if config.CheckRepositoryName(name) != nil {
 		return store.Repository{}, notRegistered(name)
 	}

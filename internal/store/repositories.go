@@ -137,22 +137,3 @@ func (s *Store) Repositories() ([]Repository, error) {
 	}
 	return repositories, rows.Err()
 }
-
-// OpenJobs returns the numbers of the jobs that target the repository name
-// and are not ended.
-func (s *Store) OpenJobs(name string) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT number FROM jobs WHERE repository = ? AND state <> ? ORDER BY number`, name, JobEnded)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var open []int64
-	for rows.Next() {
-		var n int64
-		if err := rows.Scan(&n); err != nil {
-			return nil, err
-		}
-		open = append(open, n)
-	}
-	return open, rows.Err()
-}

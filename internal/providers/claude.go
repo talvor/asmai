@@ -228,11 +228,10 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 // ClaudeCodeArgs returns the command line an agent session of Claude Code is
 // started with: everything the session is given is on it, so nothing is
 // written to ~/.claude. The settings come from ClaudeCodeSettings. Claude Code
-// loads only the user's own settings files besides them, never a
-// repository's, and no MCP server but those given on the command line, which
-// are none: so none of the repository's provider configuration loads. The
-// role's instructions are appended to its system prompt, with the
-// repository's instruction files when the session works in a repository.
+// loads no user or repository setting sources and no MCP servers, because none
+// are given on the command line. The role's instructions are appended to its
+// system prompt, with repository instruction files when the session works in
+// a repository.
 //
 // The session's skills are the plugin at pluginDir, which --plugin-dir gives
 // it for this session alone, and no setting source is loaded: the user's own

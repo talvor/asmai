@@ -164,6 +164,7 @@ func TestAProviderThatUpdatedItselfHoldsItsAgentAtTheNextRestart(t *testing.T) {
 
 	// The provider updates itself while the agent runs, then its session
 	// ends on its own.
+	waitForFile(t, filepath.Join(testDir, "credential"))
 	replaceClaude(t, claude, standInOtherClaude)
 	if err := os.Remove(filepath.Join(testDir, "credential")); err != nil {
 		t.Fatal(err)

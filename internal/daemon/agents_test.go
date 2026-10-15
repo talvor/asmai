@@ -25,10 +25,58 @@ import (
 // standInClaude stands in for Claude Code: it hands the test its session's
 // credential, draws a line and waits to be stopped.
 const standInClaude = `#!/bin/sh
+if [ "$1" = -p ]; then
+	# The permission rules probe: answer with what the test wrote.
+	cat > /dev/null
+	cat "$ASMAI_TEST_DIR/rules-answer"
+	exit 0
+fi
 printf '%s' "$ASMAI_SESSION" > "$ASMAI_TEST_DIR/credential.part" && mv "$ASMAI_TEST_DIR/credential.part" "$ASMAI_TEST_DIR/credential"
 printf 'leader up\r\n'
 exec sleep 60
 `
+
+// writeRulesAnswer makes the stand-in Claude Code answer the permission
+// rules probe as Claude Code does, listing the rules AsmAI gives it as in
+// effect, or, under a managed policy that allows managed rules only, as not
+// in effect.
+func writeRulesAnswer(t *testing.T, managedOnly bool) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(os.Getenv("ASMAI_TEST_DIR"), "rules-answer"), []byte(rulesAnswer(t, managedOnly)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rulesAnswer returns Claude Code's answer to the permission rules probe,
+// as writeRulesAnswer describes it.
+func rulesAnswer(t *testing.T, managedOnly bool) string {
+	t.Helper()
+	type rule struct {
+		Behavior    string `json:"behavior"`
+		Source      string `json:"source"`
+		Rule        string `json:"rule"`
+		NotInEffect bool   `json:"notInEffect,omitempty"`
+	}
+	var rules []rule
+	for _, r := range providers.CommandRules() {
+		rules = append(rules, rule{Behavior: "allow", Source: "flagSettings", Rule: r, NotInEffect: managedOnly})
+	}
+	answer, err := json.Marshal(map[string]any{"type": "control_response", "response": map[string]any{
+		"subtype": "success", "request_id": "asmai-permission-rules",
+		"response": map[string]any{"state": map[string]any{"rules": rules, "managedOnly": managedOnly}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(answer)
+}
+
+// answersTheRulesProbe is the start of a stand-in Claude Code's script that
+// answers the permission rules probe, as Claude Code does with no policy.
+func answersTheRulesProbe(t *testing.T) string {
+	t.Helper()
+	return "if [ \"$1\" = -p ]; then cat > /dev/null; printf '%s\\n' '" + rulesAnswer(t, false) + "'; exit 0; fi\n"
+}
 
 func readFrame(t *testing.T, r *bufio.Reader) Frame {
 	t.Helper()
@@ -46,6 +94,7 @@ func readFrame(t *testing.T, r *bufio.Reader) Frame {
 func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
+	writeRulesAnswer(t, false)
 	p := stateDir(t)
 	configFile := filepath.Join(testDir, "config.toml")
 	pins := providers.Pins{ClaudeCode: providers.Pin{Version: "2.1.292"}}
@@ -222,6 +271,7 @@ func readyConfig(t *testing.T, dir string) string {
 func TestTheDaemonStartsNoAgentUntilTheUserTrustsTheFoldersAgentsStartIn(t *testing.T) {
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
+	writeRulesAnswer(t, false)
 	p := stateDir(t)
 	record := filepath.Join(testDir, ".claude.json")
 	untrusted := []byte(`{"projects": {"` + p.Agents + `": {"hasTrustDialogAccepted": true}, "` + p.Workspaces + `": {"hasTrustDialogAccepted": false}}}`)
@@ -362,6 +412,7 @@ func TestTheDaemonRecordsThePinnedCopyItFindsAtItsPath(t *testing.T) {
 	}
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
+	writeRulesAnswer(t, false)
 	p := stateDir(t)
 	sum := sha256.Sum256([]byte(standInClaude))
 	pins := providers.Pins{ClaudeCode: providers.Pin{Version: "2.1.292", Channel: "https://example.com", Platforms: map[string]providers.Download{
@@ -387,5 +438,65 @@ func TestTheDaemonRecordsThePinnedCopyItFindsAtItsPath(t *testing.T) {
 	listed, err := Call(p.Socket, Request{Command: CommandProviders})
 	if err != nil || len(listed.Providers) != 1 || listed.Providers[0].Path != claude || listed.Providers[0].SHA256 != hex.EncodeToString(sum[:]) {
 		t.Errorf("the daemon lists installs %+v (%v), want the pinned copy found at its path", listed.Providers, err)
+	}
+}
+
+// Under a managed policy that allows managed permission rules only, Claude
+// Code ignores the rules AsmAI gives its agents, which would stop at their
+// first command that needs approval. The daemon asks Claude Code, and starts
+// no agent, naming the policy and the fix; once the account allows the rules,
+// the same factory starts.
+func TestTheDaemonStartsNoAgentUnderAManagedPolicyThatIgnoresAsmaisPermissionRules(t *testing.T) {
+	testDir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	writeRulesAnswer(t, true)
+	p := stateDir(t)
+	record := filepath.Join(testDir, ".claude.json")
+	if err := os.WriteFile(record, []byte(`{"projects": {"`+p.Dir+`": {"hasTrustDialogAccepted": true}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pins := providers.Pins{ClaudeCode: providers.Pin{Version: "2.1.292"}}
+	runDaemonWith(t, Config{Paths: p, Version: "v1.2.3", ConfigFile: readyConfig(t, testDir), Pins: pins, ClaudeRecord: record})
+	claude := filepath.Join(p.Providers, "claude-code", "2.1.292", "claude")
+	os.MkdirAll(filepath.Dir(claude), 0o700)
+	if err := os.WriteFile(claude, []byte(standInClaude), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	install := store.ProviderInstall{Name: "claude-code", Version: "2.1.292", Path: claude, SHA256: strings.Repeat("a", 64)}
+	if _, err := Call(p.Socket, Request{Command: CommandProviderInstalled, Provider: &install}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := Call(p.Socket, Request{Command: CommandStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rules Check
+	for _, c := range resp.Checks {
+		if c.Name == PermissionRulesName {
+			rules = c
+		}
+	}
+	for _, want := range []string{"allowManagedPermissionRulesOnly", "Bash(asmai:*)"} {
+		if rules.OK || !strings.Contains(rules.Problem+rules.Fix, want) {
+			t.Errorf("under the policy, the permission rules check is %+v, want it failed and naming %s", rules, want)
+		}
+	}
+	if !strings.Contains(rules.Fix, "administrator") || !strings.Contains(rules.Fix, "without that policy") {
+		t.Errorf("the fix is %q, want both: another account, or an administrator adding the rules", rules.Fix)
+	}
+	if resp.Leaders[0].State != store.AgentStopped {
+		t.Errorf("under the policy, Coordination's leader is %s, want stopped", resp.Leaders[0].State)
+	}
+	if _, err := os.Stat(filepath.Join(testDir, "credential")); err == nil {
+		t.Error("an agent started under a policy that ignores AsmAI's permission rules")
+	}
+
+	writeRulesAnswer(t, false)
+	if resp, err = Call(p.Socket, Request{Command: CommandStart}); err != nil {
+		t.Fatal(err)
+	}
+	if failed(resp.Checks) || resp.Leaders[0].State != store.AgentRunning {
+		t.Errorf("without the policy, start answered %+v, %+v, want Coordination's leader running", resp.Checks, resp.Leaders)
 	}
 }

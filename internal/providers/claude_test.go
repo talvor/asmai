@@ -317,3 +317,47 @@ func TestAWorkersFileRulesCoverItsWorkspaceByBothItsPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestTheProbeReportsTheRulesClaudeCodeIgnores(t *testing.T) {
+	answer := func(notInEffect bool, managedOnly bool, only ...string) string {
+		var rules []string
+		for _, r := range CommandRules() {
+			if len(only) == 0 || slices.Contains(only, r) {
+				rules = append(rules, `{"behavior":"allow","source":"flagSettings","rule":"`+r+`","notInEffect":`+map[bool]string{true: "true", false: "false"}[notInEffect]+`}`)
+			}
+		}
+		return `{"type":"control_response","response":{"subtype":"success","request_id":"asmai-permission-rules","response":{"state":{"rules":[` +
+			strings.Join(rules, ",") + `],"managedOnly":` + map[bool]string{true: "true", false: "false"}[managedOnly] + `}}}}`
+	}
+	probe := func(t *testing.T, output string) (PermissionVerdict, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "claude")
+		script := "#!/bin/sh\ncat > /dev/null\ncat <<'EOF'\n{\"type\":\"system\",\"subtype\":\"init\"}\n" + output + "\nEOF\n"
+		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return ProbePermissionRules(t.Context(), path, t.TempDir(), nil)
+	}
+
+	if v, err := probe(t, answer(false, false)); err != nil || !v.Honoured() || v.ManagedOnly {
+		t.Errorf("with every rule in effect, the verdict is %+v, %v, want honoured", v, err)
+	}
+	v, err := probe(t, answer(true, true))
+	if err != nil || v.Honoured() || !v.ManagedOnly || !slices.Equal(v.Ignored, CommandRules()) {
+		t.Errorf("with every rule not in effect, the verdict is %+v, %v, want all of AsmAI's rules ignored", v, err)
+	}
+	// An administrator who added a rule to the managed settings has it in
+	// effect, though the rule AsmAI passes is still ignored.
+	managed := `{"behavior":"allow","source":"policySettings","rule":"Bash(asmai:*)"}`
+	rest := answer(true, true)
+	rest = strings.Replace(rest, `"rules":[`, `"rules":[`+managed+`,`, 1)
+	if v, err := probe(t, rest); err != nil || slices.Contains(v.Ignored, "Bash(asmai:*)") || len(v.Ignored) != len(CommandRules())-1 {
+		t.Errorf("with one rule in the managed settings, the verdict is %+v, %v, want the others ignored", v, err)
+	}
+	if _, err := probe(t, `{"type":"control_response","response":{"subtype":"error","request_id":"asmai-permission-rules","error":"Unsupported"}}`); err == nil {
+		t.Error("an error response was taken for a verdict")
+	}
+	if _, err := probe(t, ""); err == nil {
+		t.Error("no answer was taken for a verdict")
+	}
+}

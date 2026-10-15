@@ -5,6 +5,7 @@ package daemon
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -262,9 +263,35 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 		checks = append(checks, Check{Name: name, Problem: err.Error(), Fix: "run `asmai providers install`"})
 	default:
 		checks = append(checks, Check{Name: name, OK: true})
+		checks = append(checks, PermissionRulesCheck(install.Path, d.cfg.Paths.Dir))
 	}
 	checks = append(checks, d.trustCheck())
 	return checks, cfg, install
+}
+
+// PermissionRulesName is the name of the check that Claude Code applies the
+// permission rules AsmAI gives its agents.
+const PermissionRulesName = "permission rules"
+
+// PermissionRulesCheck checks, with the Claude Code at path, started in dir,
+// that this account lets AsmAI's own permission rules take effect. Under a
+// managed policy that applies only the managed settings' permission rules,
+// an agent would stop at the first command that needs approval, which
+// nobody can give. The check asks Claude Code itself, and never reads or
+// writes any of its settings (ProbePermissionRules).
+func PermissionRulesCheck(path, dir string) Check {
+	verdict, err := providers.ProbePermissionRules(context.Background(), path, dir, os.Environ())
+	if err != nil {
+		return Check{Name: PermissionRulesName, Problem: err.Error(),
+			Fix: "run `asmai start` again; if it persists, run `asmai providers install` to reinstall the pinned Claude Code"}
+	}
+	if verdict.Honoured() {
+		return Check{Name: PermissionRulesName, OK: true}
+	}
+	return Check{Name: PermissionRulesName,
+		Problem: fmt.Sprintf("Claude Code ignores the permission rules AsmAI gives its agents: this account's managed settings set %s, so an agent would stop at its first command that needs approval, which nobody can give. Ignored: %s", providers.ManagedPolicySetting, strings.Join(verdict.Ignored, ", ")),
+		Fix: fmt.Sprintf("run AsmAI under an account without that policy, or ask an administrator to add AsmAI's permission rules to the managed settings' permissions.allow: %s, and the Read and Edit rules for each workspace (see Under a Claude Code managed policy in the README). AsmAI never changes managed settings",
+			strings.Join(providers.CommandRules(), ", "))}
 }
 
 // trustName is the name of the check that the user trusts the directories

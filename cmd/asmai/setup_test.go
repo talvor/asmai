@@ -74,6 +74,8 @@ func setupFactory(t *testing.T, scripts map[string][]string) (stateDir, testDir 
 	t.Setenv("ASMAI_FAKE_PROVIDER_SCRIPT", leader)
 	claude := []byte(`#!/bin/sh
 folder=$(basename "$PWD")
+# The permission rules probe is not a folder the user opens Claude Code in.
+if [ "$1" = -p ]; then exec ` + providers.ShellQuote(fakeProvider) + ` "$@"; fi
 echo "$folder" >> "$ASMAI_TEST_DIR/opened"
 echo "$folder DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER-}" >> "$ASMAI_TEST_DIR/environments"
 if [ -e "$ASMAI_TEST_DIR/script-$folder.jsonl" ]; then
@@ -379,8 +381,8 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
 	}
-	if len(result.Steps) != 5 || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
-		t.Errorf("asmai setup --json reported %+v, want five steps already done", result.Steps)
+	if len(result.Steps) != 6 || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+		t.Errorf("asmai setup --json reported %+v, want six steps already done", result.Steps)
 	}
 }
 
@@ -472,8 +474,8 @@ func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
 	}
-	if len(result.Steps) != 6 || result.Steps[5].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
-		t.Errorf("asmai setup --json reported %+v, want six steps already done, the clone's last", result.Steps)
+	if len(result.Steps) != 7 || result.Steps[6].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+		t.Errorf("asmai setup --json reported %+v, want seven steps already done, the clone's last", result.Steps)
 	}
 }
 

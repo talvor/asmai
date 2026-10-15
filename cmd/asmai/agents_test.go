@@ -287,7 +287,7 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		Leaders []leaderJSON `json:"leaders"`
 	}
 	asmaiJSON(t, &started, "start")
-	if started.Started || len(started.Checks) != 3 || !started.Checks[0].OK || !started.Checks[1].OK || !started.Checks[2].OK {
+	if started.Started || len(started.Checks) != 4 || slices.ContainsFunc(started.Checks, func(c checkJSON) bool { return !c.OK }) {
 		t.Errorf("asmai start printed %+v, want the running daemon with every check passed", started)
 	}
 	if len(started.Leaders) != 3 || started.Leaders[0].Agent != "leader@coordination" || started.Leaders[0].State != "running" || started.Leaders[0].Generation != 1 {

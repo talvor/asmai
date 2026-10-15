@@ -116,6 +116,37 @@ func fileRules(dirs []string) []string {
 	return rules
 }
 
+// commandRules returns the permission rules every session is given for the
+// commands it runs without a prompt, and the patterns the write guard leaves
+// alone.
+func commandRules() (allow, excluded []string) {
+	for _, command := range unguardedCommands {
+		allow = append(allow, "Bash("+command+":*)")
+		excluded = append(excluded, command+" *")
+	}
+	for _, command := range separatorCommands {
+		excluded = append(excluded, command+" *")
+	}
+	for _, command := range unguardedGHCommands {
+		allow = append(allow, "Bash(gh "+command+":*)")
+		excluded = append(excluded, "gh "+command+" *")
+	}
+	for _, subcommand := range unguardedGitSubcommands {
+		allow = append(allow, "Bash(git "+subcommand+":*)")
+		excluded = append(excluded, "git "+subcommand+" *")
+	}
+	return allow, excluded
+}
+
+// CommandRules returns the permission rules every agent session is given for
+// the commands it runs without a prompt: `asmai`, and selected git and gh
+// operations. Under a Claude Code managed policy that applies only managed
+// permission rules, an administrator adds them to the managed settings.
+func CommandRules() []string {
+	allow, _ := commandRules()
+	return allow
+}
+
 // ClaudeCodeSettings returns the settings an agent session of Claude Code is
 // given with --settings: a hook for each of HookEvents that runs
 // hookCommand, the permission rules for `asmai` and selected git and gh
@@ -140,22 +171,7 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 	for _, event := range HookEvents {
 		hooks[event] = []matcher{{Hooks: []hook{{Type: "command", Command: hookCommand}}}}
 	}
-	var allow, excluded []string
-	for _, command := range unguardedCommands {
-		allow = append(allow, "Bash("+command+":*)")
-		excluded = append(excluded, command+" *")
-	}
-	for _, command := range separatorCommands {
-		excluded = append(excluded, command+" *")
-	}
-	for _, command := range unguardedGHCommands {
-		allow = append(allow, "Bash(gh "+command+":*)")
-		excluded = append(excluded, "gh "+command+" *")
-	}
-	for _, subcommand := range unguardedGitSubcommands {
-		allow = append(allow, "Bash(git "+subcommand+":*)")
-		excluded = append(excluded, "git "+subcommand+" *")
-	}
+	allow, excluded := commandRules()
 	allow = append(allow, fileRules(perms.Editable)...)
 	sandbox := map[string]any{
 		"enabled":                  true,

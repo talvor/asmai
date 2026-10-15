@@ -62,7 +62,7 @@ func parseChecks(values []string) ([]store.Check, error) {
 	return checks, nil
 }
 
-func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit string) int {
+func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit, skill string, narrow []string) int {
 	if job <= 0 || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(errors.New("assign needs --job, --outcome and --criterion"))
 	}
@@ -72,7 +72,7 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if !readOnly && commit != "" {
 		return o.fail(errors.New("--commit belongs to --read-only: a writing assignment is made from the job branch's tip"))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit, Skill: skill, Skills: narrow})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -81,6 +81,12 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	}
 	a := resp.Assignment
 	fmt.Fprintf(o.stdout, "assignment %d of job %d given to %s; dispatch %d\n", a.ID, a.Job, a.Worker, resp.Dispatch.ID)
+	if a.Skill != "" {
+		fmt.Fprintf(o.stdout, "skill named: %s\n", a.Skill)
+	}
+	if list := a.EffectiveSkills(); len(list) > 0 {
+		fmt.Fprintf(o.stdout, "skill list: %s\n", strings.Join(list, ", "))
+	}
 	if a.ReadOnly {
 		fmt.Fprintf(o.stdout, "read-only workspace fixed at %s of %s, with no branch\nworkspace: %s (slot %d)\n", a.Commit, a.JobBranch, a.Workspace.Path, a.Workspace.Slot)
 		fmt.Fprintf(o.stdout, "next: %s is started in its workspace and nudged; its validation report comes back to you through `asmai inbox`\n", a.Worker)
@@ -118,6 +124,8 @@ type resultFlags struct {
 	// report: a Quality worker's findings, and the earlier blocking findings
 	// it says are resolved or still open.
 	findings, resolved, unresolved listFlags
+	// skills are the skills of the worker's list that it ran.
+	skills listFlags
 }
 
 // validationFinding reads the value of --finding, '<kind>: <text>'.
@@ -185,6 +193,11 @@ func validationResult(f resultFlags, input store.ReportInput) (store.ReportInput
 func result(o *output, paths statedir.Paths, f resultFlags) int {
 	var input store.ReportInput
 	var err error
+	for _, name := range f.skills {
+		if name = strings.TrimSpace(name); name != "" && name != none {
+			input.SkillsRun = append(input.SkillsRun, name)
+		}
+	}
 	if input.Evidence = f.evidence; len(input.Evidence) == 0 {
 		return o.fail(errors.New("result needs --evidence: what shows the work does"))
 	}
@@ -300,6 +313,12 @@ func printAssignment(w io.Writer, a store.Assignment) {
 	for _, c := range a.Criteria {
 		fmt.Fprintf(w, "- %s\n", c)
 	}
+	if a.Skill != "" {
+		fmt.Fprintf(w, "Skill to run: %s\n", a.Skill)
+	}
+	if list := a.EffectiveSkills(); len(list) > 0 {
+		fmt.Fprintf(w, "Your skill list for this assignment: %s\n", strings.Join(list, ", "))
+	}
 	if a.ReadOnly {
 		fmt.Fprintf(w, "Read-only workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nFixed at commit: %s, the head of the job branch %s; it has no branch, and you never change the work\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Commit, a.JobBranch)
 		if i := a.Intent; i != nil {
@@ -355,6 +374,7 @@ func printReport(w io.Writer, r store.Report) {
 		}
 		list("Checks run", checks)
 		list("Gaps", r.Gaps)
+		list("Skills run", r.SkillsRun)
 	}
 	if v := r.Validation; v != nil {
 		var found []string

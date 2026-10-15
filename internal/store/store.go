@@ -225,6 +225,14 @@ CREATE TABLE reruns (
  created_at TEXT NOT NULL, UNIQUE (job, head)
 );
 `,
+	`
+ALTER TABLE assignments ADD COLUMN skill TEXT NOT NULL DEFAULT '';
+ALTER TABLE assignments ADD COLUMN skills TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE native_sessions ADD COLUMN bundle TEXT NOT NULL DEFAULT '';
+ALTER TABLE native_sessions ADD COLUMN skills TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE dispatches ADD COLUMN bundle TEXT NOT NULL DEFAULT '';
+ALTER TABLE dispatches ADD COLUMN skills TEXT NOT NULL DEFAULT '{}';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -408,6 +416,11 @@ type SessionStart struct {
 	// it does.
 	Assignment int64  `json:"assignment,omitempty"`
 	Resumes    string `json:"resumes,omitempty"`
+	// Bundle is the skill bundle's version and Skills the fingerprint of
+	// each skill of the list the session was given, by name: what every
+	// dispatch delivered in the session records.
+	Bundle string            `json:"bundle,omitempty"`
+	Skills map[string]string `json:"skills,omitempty"`
 }
 
 // Agent is an agent's current state, as the store holds it.
@@ -662,19 +675,25 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 		if err != nil {
 			return "", nil, err
 		}
-		_, err = tx.Exec(`INSERT INTO native_sessions (agent, generation, provider, assignment) VALUES (?, ?, ?, NULLIF(?, 0))`,
-			start.Agent, generation, start.Provider, start.Assignment)
+		skills, err := json.Marshal(nonNilSkills(start.Skills))
 		if err != nil {
 			return "", nil, err
 		}
-		_, err = tx.Exec(`UPDATE dispatches SET generation=? WHERE agent=? AND (
+		_, err = tx.Exec(`INSERT INTO native_sessions (agent, generation, provider, assignment, bundle, skills) VALUES (?, ?, ?, NULLIF(?, 0), ?, ?)`,
+			start.Agent, generation, start.Provider, start.Assignment, start.Bundle, string(skills))
+		if err != nil {
+			return "", nil, err
+		}
+		_, err = tx.Exec(`UPDATE dispatches SET generation=?,
+			bundle=CASE WHEN state=? THEN ? ELSE bundle END,
+			skills=CASE WHEN state=? THEN ? ELSE skills END WHERE agent=? AND (
 			(state IN (?,?,?) AND EXISTS (
 				SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NULL
 			)) OR (state IN (?,?) AND EXISTS (
 				SELECT 1 FROM messages JOIN handoffs ON handoffs.id=messages.handoff
 				WHERE messages.id=dispatches.message AND messages.kind='handoff' AND messages.fetched_at IS NOT NULL AND handoffs.state=?
 			))
-		)`, generation, start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
+		)`, generation, DispatchCreated, start.Bundle, DispatchCreated, string(skills), start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
 		if err != nil {
 			return "", nil, err
 		}
@@ -685,6 +704,13 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 		return KindSessionStarted, data, err
 	})
 	return generation, err
+}
+
+func nonNilSkills(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // SessionEnded records that generation of agent's session ended at at: exit

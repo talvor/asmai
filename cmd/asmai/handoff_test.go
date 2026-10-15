@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/talvor/asmai/internal/fakeprovider"
+	"github.com/talvor/asmai/internal/skills"
 )
 
 func TestHandoffSendRequiresExplicitContextFields(t *testing.T) {
@@ -123,6 +124,71 @@ func TestHandoffInboxNudgeAndReplyWithCorrelatedEvidence(t *testing.T) {
 	}
 	if !found {
 		t.Error("Engineering leader did not start on its configured model")
+	}
+}
+
+func TestDirectInboxFetchRecordsTheReceivingSessionsSkills(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", dir)
+	engineering := []string{
+		hookStep("SessionStart", "", ""),
+		fakeRun(`touch "$ASMAI_TEST_DIR/ready"; while [ ! -f "$ASMAI_TEST_DIR/fetch" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`asmai inbox --dispatch 1`, 0, "handoff 1"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/done"`, 0, ""),
+		`{"expect":"only typed by a test that means to"}`,
+	}
+	t.Setenv(fakeprovider.ScriptEnv+"_ENGINEERING", writeScript(t, "engineering-direct", engineering))
+	coordination := []string{
+		hookStep("SessionStart", "", ""),
+		`{"screen":"> "}`,
+		`{"expect":"Send a handoff\r"}`,
+		hookStep("UserPromptSubmit", "", "Send a handoff"),
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Send a handoff' --criterion 'Done'`, 0, "Opened job 1"),
+		fakeRun(`asmai handoff send --job 1 --to engineering --outcome Done --decisions none --evidence none --constraints none --permissions none --criterion Done`, 0, "dispatch 1"),
+		hookStep("Stop", "", ""),
+		`{"expect":"only typed by a test that means to"}`,
+	}
+	readyFactory(t, coordination)
+	registerHandoffFixture(t)
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Fatal(stderr)
+	}
+	a := inTerminal(t, 100, 25)
+	waitFor(t, "Coordination prompt", a.shows(">"))
+	a.ptmx.WriteString("Send a handoff\r")
+	waitFor(t, "Engineering before its direct fetch", touched(dir, "ready"))
+	if changes := journaled(t, "dispatch.changed"); len(changes) != 1 || !strings.Contains(string(changes[0].Data), `"state": "created"`) {
+		t.Fatalf("dispatch before direct fetch: %+v", changes)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fetch"), []byte("go"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "Engineering direct fetch", touched(dir, "done"))
+	want, err := skills.DeliveryOf(skills.LeaderList("engineering"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered bool
+	for _, entry := range journaled(t, "dispatch.changed") {
+		var change struct {
+			State      string            `json:"state"`
+			Generation int               `json:"generation"`
+			Bundle     string            `json:"bundle"`
+			Skills     map[string]string `json:"skills"`
+		}
+		if err := json.Unmarshal(entry.Data, &change); err != nil {
+			t.Fatal(err)
+		}
+		if change.State == "delivered" {
+			delivered = true
+			t.Logf("asmai export delivered dispatch: %s", entry.Data)
+			if change.Generation != 1 || change.Bundle != want.Bundle || change.Skills["pr"] != want.Skills["pr"] {
+				t.Errorf("directly fetched dispatch records generation %d, bundle %q and skills %v; want generation 1, bundle %q and skills %v", change.Generation, change.Bundle, change.Skills, want.Bundle, want.Skills)
+			}
+		}
+	}
+	if !delivered {
+		t.Fatal("the direct inbox fetch did not deliver its dispatch")
 	}
 }
 

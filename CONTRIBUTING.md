@@ -8,7 +8,7 @@ AsmAI is licensed under [Apache-2.0](LICENSE), with the copyright held by Philli
 - There is no contributor agreement and no sign-off. Section 5 of the Apache License 2.0 already covers contributions: anything you submit for inclusion is under the same license, unless you state otherwise.
 - Only the maintainer merges.
 - Every pull request runs CI on a hosted Linux runner and a hosted macOS runner. Each builds `asmai` for Linux x86_64 and macOS on Apple silicon with CGo disabled, checks the license allow-list, checks the embedded third-party notices, and runs the development tests.
-- Every source file starts with an `SPDX-License-Identifier: Apache-2.0` line, as a comment (after the shebang in a script). The development tests fail when a source file lacks it. The one exception is `internal/skills/bundle`, which holds Matt Pocock's skills as upstream has them, under upstream's MIT license.
+- Every source file starts with an `SPDX-License-Identifier: Apache-2.0` line, as a comment (after the shebang in a script). The development tests fail when a source file lacks it. The one exception is `internal/skills/bundle`, which holds Matt Pocock's MIT-licensed skills with the [listed patches](#the-skill-bundle).
 
 ## The license allow-list
 
@@ -24,7 +24,7 @@ The skill bundle in `internal/skills/bundle` is not a Go module, so it is covere
 
 ## The skill bundle
 
-`internal/skills/bundle` is upstream's engineering and productivity skills at the release `internal/skills/bundle.json` pins, unchanged, with upstream's LICENSE. Do not edit it by hand: move the pin with `go run ./internal/cmd/sync-skills <upstream checkout> <release> <commit>`, then run `make notices` and recheck every patch listed in `bundle.json` (there are none). A skill is patched only where the operating guide, `internal/skills/guide.md`, cannot do the work, and each patch is listed there with its reason; a test fails when a skill differs from upstream without one. The default skill lists per role are in `internal/skills/lists.go`.
+`internal/skills/bundle` holds upstream's engineering and productivity skills at the release `internal/skills/bundle.json` pins, with the patches listed in that manifest and upstream's LICENSE. Move the pin with `go run ./internal/cmd/sync-skills <upstream checkout> <release> <commit>`. Sync replaces the bundle and manifest, so reapply and relist each patch with its reason, then run `make notices`. A skill is patched only where the operating guide, `internal/skills/guide.md`, cannot do the work; a test fails when a skill differs from upstream without a listed patch. The default skill lists per role are in `internal/skills/lists.go`.
 
 ## Copying from Firstmate or OpenRig
 

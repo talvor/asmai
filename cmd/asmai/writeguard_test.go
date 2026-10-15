@@ -158,8 +158,8 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 	// user's own settings, no repository MCP servers, and the repository's
 	// instruction files on its command line, not its provider configuration.
 	args := sessionArgs(t, "worker1@engineering")
-	if argValue(args, "--setting-sources") != "user" || !slices.Contains(args, "--strict-mcp-config") {
-		t.Errorf("the worker was started with %q, want only the user's settings and no MCP servers beside those given", args)
+	if i := slices.Index(args, "--setting-sources"); i < 0 || args[i+1] != "" || !slices.Contains(args, "--strict-mcp-config") {
+		t.Errorf("the worker was started with %q, want no setting source and no MCP servers beside those given", args)
 	}
 	instructions := argValue(args, "--append-system-prompt")
 	for _, want := range []string{
@@ -218,6 +218,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		// workspace and temporary directory, by both their paths, without a
 		// prompt.
 		wantMode, wantFiles := "dontAsk", []string(nil)
+		plugin := filepath.Join(stateDir, "plugins", agent)
 		switch agent {
 		case "leader@coordination":
 			wantMode = "default"
@@ -231,6 +232,12 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 				for _, p := range slices.Compact([]string{path, resolved}) {
 					wantFiles = append(wantFiles, "Read(/"+p+"/**)", "Edit(/"+p+"/**)")
 				}
+			}
+		}
+		// Each agent with skills may read the plugin they are delivered in.
+		if resolved, err := filepath.EvalSymlinks(plugin); err == nil {
+			for _, p := range slices.Compact([]string{plugin, resolved}) {
+				wantFiles = append(wantFiles, "Read(/"+p+"/**)")
 			}
 		}
 		if settings.Permissions.DefaultMode != wantMode {

@@ -187,5 +187,5 @@ func (g guardFixture) workerArgs(hook string) ([]string, error) {
 	if repository != "" {
 		instructions += "\n" + repository
 	}
-	return providers.ClaudeCodeArgs(hook, guardModel, instructions, providers.WriteGuard{Writable: []string{g.tmp}}, g.permissions()), nil
+	return providers.ClaudeCodeArgs(hook, guardModel, instructions, "", providers.WriteGuard{Writable: []string{g.tmp}}, g.permissions()), nil
 }

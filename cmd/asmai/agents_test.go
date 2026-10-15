@@ -344,8 +344,13 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		flags[args[i]] = args[i+1]
 		i++
 	}
-	if len(args) != 9 || flags["--setting-sources"] != "user" || flags["--strict-mcp-config"] != "true" || flags["--model"] != "opus" || !strings.Contains(flags["--append-system-prompt"], "You are Coordination's leader") {
-		t.Errorf("the session was started with %q, want --settings, --setting-sources user, --strict-mcp-config, --model opus and Coordination's instructions", args)
+	if _, ok := flags["--setting-sources"]; len(args) != 11 || !ok || flags["--setting-sources"] != "" || flags["--strict-mcp-config"] != "true" || flags["--plugin-dir"] == "" || flags["--model"] != "opus" || !strings.Contains(flags["--append-system-prompt"], "You are Coordination's leader") {
+		t.Errorf("the session was started with %q, want --settings, an empty --setting-sources, --strict-mcp-config, --plugin-dir, --model opus and Coordination's instructions", args)
+	}
+	for _, name := range []string{"ask-matt", "wait-what"} {
+		if _, err := os.Stat(filepath.Join(flags["--plugin-dir"], "skills", name, "SKILL.md")); err != nil {
+			t.Errorf("Coordination's leader's plugin lacks its skill %s: %v", name, err)
+		}
 	}
 	for _, arg := range args {
 		if strings.Contains(arg, "dangerously") || strings.Contains(arg, "--permission-mode") || strings.Contains(arg, "bypassPermissions\"") {
@@ -376,13 +381,24 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 			t.Errorf("the %s hook is %+v, want the daemon's copy of asmai at %s", event, h, fixedPath)
 		}
 	}
-	if !slices.Equal(settings.Permissions.Allow, []string{
+	wantAllow := []string{
 		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
 		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
 		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
-	}) || settings.Permissions.DefaultMode != "default" {
+	}
+	// The plugin is readable by both its command-line path and the path it
+	// resolves to, which differ when the temp directory is a symlink.
+	plugin := flags["--plugin-dir"]
+	resolvedPlugin, err := filepath.EvalSymlinks(plugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range slices.Compact([]string{plugin, resolvedPlugin}) {
+		wantAllow = append(wantAllow, "Read(/"+path+"/**)")
+	}
+	if !slices.Equal(settings.Permissions.Allow, wantAllow) || settings.Permissions.DefaultMode != "default" {
 		t.Errorf("the session's permissions are %+v, want asmai, git and gh allowed and the default mode", settings.Permissions)
 	}
 	if !settings.Sandbox.Enabled || !settings.Sandbox.FailIfUnavailable {

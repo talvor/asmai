@@ -20,6 +20,7 @@ import (
 // reply. Cases C36 and C37 read it to see what a session loaded and what its
 // write guard let through; neither reads the account or a credential.
 type Turn struct {
+	event int
 	// MCPServers are the names of the MCP servers the session started with.
 	MCPServers []string
 	// Commands are the shell commands the session tried, in order, and
@@ -27,6 +28,13 @@ type Turn struct {
 	// tools, each as a Command whose Text is the file's path.
 	Commands []Command
 	Files    []Command
+	// Skills are the names of the skills the session listed when it started,
+	// as Claude Code names them, and Plugins the names of the plugins it
+	// loaded. SkillCalls are the skills it ran with the Skill tool, each as a
+	// Command whose Text is the name it ran the skill by.
+	Skills     []string
+	Plugins    []string
+	SkillCalls []Command
 	// Reply is what the session answered last.
 	Reply string
 	// Said is everything it wrote to the user along the way, its reply
@@ -38,7 +46,9 @@ type Turn struct {
 type Command struct {
 	Text string
 	// Output is what the tool reported back to the session.
-	Output string
+	Output      string
+	CallEvent   int
+	ResultEvent int
 	// Failed reports that the tool returned an error: the command failed, or
 	// it was not allowed.
 	Failed bool
@@ -121,6 +131,7 @@ func parseTurn(r io.Reader) (Turn, error) {
 // Files, or else of its Commands.
 type toolUse struct {
 	file  bool
+	skill bool
 	index int
 }
 
@@ -128,6 +139,9 @@ type toolUse struct {
 func (t *Turn) use(u toolUse) *Command {
 	if u.file {
 		return &t.Files[u.index]
+	}
+	if u.skill {
+		return &t.SkillCalls[u.index]
 	}
 	return &t.Commands[u.index]
 }
@@ -140,7 +154,9 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 		Servers []struct {
 			Name string `json:"name"`
 		} `json:"mcp_servers"`
-		Message json.RawMessage `json:"message"`
+		Skills  []json.RawMessage `json:"skills"`
+		Plugins []json.RawMessage `json:"plugins"`
+		Message json.RawMessage   `json:"message"`
 		Denials []struct {
 			ID string `json:"tool_use_id"`
 		} `json:"permission_denials"`
@@ -148,6 +164,7 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 	if err := json.Unmarshal(line, &event); err != nil {
 		return fmt.Errorf("the provider printed %q, which is not JSON: %w", bytes.TrimSpace(line), err)
 	}
+	t.event++
 	var message struct {
 		Content json.RawMessage `json:"content"`
 	}
@@ -162,6 +179,12 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 		for _, s := range event.Servers {
 			t.MCPServers = append(t.MCPServers, s.Name)
 		}
+		for _, raw := range event.Skills {
+			t.Skills = append(t.Skills, nameOf(raw))
+		}
+		for _, raw := range event.Plugins {
+			t.Plugins = append(t.Plugins, nameOf(raw))
+		}
 	case event.Type == "assistant":
 		var blocks []struct {
 			Type  string `json:"type"`
@@ -172,6 +195,7 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 				Command     string `json:"command"`
 				FilePath    string `json:"file_path"`
 				Unsandboxed bool   `json:"dangerouslyDisableSandbox"`
+				Skill       string `json:"skill"`
 			} `json:"input"`
 		}
 		if json.Unmarshal(message.Content, &blocks) == nil {
@@ -182,10 +206,13 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 				switch {
 				case b.Type == "tool_use" && b.Name == "Bash":
 					byID[b.ID] = toolUse{index: len(t.Commands)}
-					t.Commands = append(t.Commands, Command{Text: b.Input.Command, Unsandboxed: b.Input.Unsandboxed})
+					t.Commands = append(t.Commands, Command{Text: b.Input.Command, CallEvent: t.event, Unsandboxed: b.Input.Unsandboxed})
+				case b.Type == "tool_use" && b.Name == "Skill":
+					byID[b.ID] = toolUse{skill: true, index: len(t.SkillCalls)}
+					t.SkillCalls = append(t.SkillCalls, Command{Text: b.Input.Skill, CallEvent: t.event})
 				case b.Type == "tool_use" && (b.Name == "Write" || b.Name == "Edit"):
 					byID[b.ID] = toolUse{file: true, index: len(t.Files)}
-					t.Files = append(t.Files, Command{Text: b.Input.FilePath})
+					t.Files = append(t.Files, Command{Text: b.Input.FilePath, CallEvent: t.event})
 				}
 			}
 		}
@@ -200,7 +227,7 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 			for _, b := range blocks {
 				if u, ok := byID[b.ID]; ok && b.Type == "tool_result" {
 					c := t.use(u)
-					c.Output, c.Failed = contentText(b.Content), b.Error
+					c.Output, c.Failed, c.ResultEvent = contentText(b.Content), b.Error, t.event
 				}
 			}
 		}
@@ -214,6 +241,20 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 		}
 	}
 	return nil
+}
+
+// nameOf reads the name of an entry of the init event's skills or plugins,
+// which is a string or an object with a name.
+func nameOf(raw json.RawMessage) string {
+	var name string
+	if json.Unmarshal(raw, &name) == nil {
+		return name
+	}
+	var object struct {
+		Name string `json:"name"`
+	}
+	json.Unmarshal(raw, &object)
+	return object.Name
 }
 
 // contentText reads a tool result's content, which is text or a list of text

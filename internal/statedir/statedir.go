@@ -42,6 +42,9 @@ type Paths struct {
 	GitHooks string
 	// Agents holds each agent's working directory, by its address.
 	Agents string
+	// Plugins holds each agent's per-session plugin, the skills its session
+	// is given, in a directory named for its address.
+	Plugins string
 	// Repositories holds AsmAI's own clone of each registered repository,
 	// in a directory named for it.
 	Repositories string
@@ -90,6 +93,7 @@ func At(dir string) Paths {
 		Executable:   filepath.Join(dir, "bin", "asmai"),
 		GitHooks:     filepath.Join(dir, "githooks"),
 		Agents:       filepath.Join(dir, "agents"),
+		Plugins:      filepath.Join(dir, "plugins"),
 		Repositories: filepath.Join(dir, "repositories"),
 		Workspaces:   filepath.Join(dir, "workspaces"),
 		Views:        filepath.Join(dir, "views"),

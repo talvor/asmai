@@ -88,6 +88,10 @@ type Permissions struct {
 	// tools may read, change and make files without a prompt, such as a
 	// worker's workspace and its own temporary directory.
 	Editable []string
+	// Readable are the directories whose files the session's Read tool may
+	// read without a prompt, such as the plugin its skills are delivered in:
+	// a skill points at the files beside it.
+	Readable []string
 }
 
 // Mode returns the permission mode of a session p describes.
@@ -114,6 +118,18 @@ func fileRules(dirs []string) []string {
 		for _, path := range paths {
 			pattern := "/" + strings.TrimSuffix(path, "/") + "/**"
 			rules = append(rules, "Read("+pattern+")", "Edit("+pattern+")")
+		}
+	}
+	return rules
+}
+
+// readRules returns the Read permission rules for the files under each of
+// dirs, which are absolute, written as fileRules writes them.
+func readRules(dirs []string) []string {
+	var rules []string
+	for _, rule := range fileRules(dirs) {
+		if strings.HasPrefix(rule, "Read(") {
+			rules = append(rules, rule)
 		}
 	}
 	return rules
@@ -176,6 +192,7 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 	}
 	allow, excluded := commandRules()
 	allow = append(allow, fileRules(perms.Editable)...)
+	allow = append(allow, readRules(perms.Readable)...)
 	sandbox := map[string]any{
 		"enabled":                  true,
 		"failIfUnavailable":        true,
@@ -211,27 +228,37 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 // ClaudeCodeArgs returns the command line an agent session of Claude Code is
 // started with: everything the session is given is on it, so nothing is
 // written to ~/.claude. The settings come from ClaudeCodeSettings. Claude Code
-// loads only the user's own settings files besides them, never a
-// repository's, and no MCP server but those given on the command line, which
-// are none: so none of the repository's provider configuration loads. The
-// role's instructions are appended to its system prompt, with the
-// repository's instruction files when the session works in a repository.
-func ClaudeCodeArgs(hookCommand, model, instructions string, guard WriteGuard, perms Permissions) []string {
-	return []string{
+// loads no user or repository setting sources and no MCP servers, because none
+// are given on the command line. The role's instructions are appended to its
+// system prompt, with repository instruction files when the session works in
+// a repository.
+//
+// The session's skills are the plugin at pluginDir, which --plugin-dir gives
+// it for this session alone, and no setting source is loaded: the user's own
+// skills live in the user setting source, so leaving it out keeps them from
+// the session, and the flag settings above are all it has. A session with no
+// skills has no pluginDir.
+func ClaudeCodeArgs(hookCommand, model, instructions, pluginDir string, guard WriteGuard, perms Permissions) []string {
+	args := []string{
 		"--settings", ClaudeCodeSettings(hookCommand, guard, perms),
-		"--setting-sources", "user",
+		"--setting-sources", "",
 		"--strict-mcp-config",
+	}
+	if pluginDir != "" {
+		args = append(args, "--plugin-dir", pluginDir)
+	}
+	return append(args,
 		"--model", model,
 		"--append-system-prompt", instructions,
-	}
+	)
 }
 
 // ClaudeCodeResumeArgs returns the command line a session of Claude Code is
 // started with to resume the native session sessionID: ClaudeCodeArgs, and
 // the session to continue. The settings, model and instructions are those of
 // the new session, as Claude Code takes them again on every start.
-func ClaudeCodeResumeArgs(hookCommand, model, instructions string, guard WriteGuard, perms Permissions, sessionID string) []string {
-	return append(ClaudeCodeArgs(hookCommand, model, instructions, guard, perms), "--resume", sessionID)
+func ClaudeCodeResumeArgs(hookCommand, model, instructions, pluginDir string, guard WriteGuard, perms Permissions, sessionID string) []string {
+	return append(ClaudeCodeArgs(hookCommand, model, instructions, pluginDir, guard, perms), "--resume", sessionID)
 }
 
 // HookCommand is the shell command a hook runs: the asmai executable at path

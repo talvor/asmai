@@ -28,7 +28,7 @@ var commentMarkers = map[string]string{
 var skippedDirs = map[string]bool{
 	".git": true,
 	"dist": true,
-	// Upstream's skills, embedded unchanged under their own license.
+	// Upstream-licensed skills, including the patches listed in the bundle manifest.
 	"internal/skills/bundle": true,
 }
 

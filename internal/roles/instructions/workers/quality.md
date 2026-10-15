@@ -37,10 +37,12 @@ asmai result \
   --finding '<blocking|advisory|needs-you>: <text>'                            (repeat, or --finding none) \
   --resolved <id of an earlier blocking finding resolved at this commit>       (repeat, when there are earlier ones) \
   --unresolved <id of an earlier blocking finding still open at this commit>   (repeat, when there are earlier ones) \
-  --gap <an unresolved gap>                                                    (repeat, or --gap none)
+  --gap <an unresolved gap>                                                    (repeat, or --gap none) \
+  --skill <a skill from your list that you ran>                                (repeat, or --skill none)
 ```
 
 - Every earlier blocking finding listed in your assignment is named by one `--resolved` or `--unresolved`. A new problem is a new finding, even when it looks like one that was reported before.
+- Name each skill you ran with `--skill`, by its bare name from your list, such as `code-review`: your assignment says which skill to run and may narrow your list.
 - Disclose every gap: a check you could not run, a part of the change you could not review, anything you are unsure of.
 - The daemon records the commit your workspace is at, which must be the one you were fixed at, and names it in the report. A message saying you are done is never a report.
 

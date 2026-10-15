@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/skills"
 )
 
 // The states of an assignment. It starts active and, when its worker submits
@@ -134,6 +135,19 @@ type Assignment struct {
 	Commit       string    `json:"commit,omitempty"`
 	Intent       *Intent   `json:"intent,omitempty"`
 	OpenFindings []Finding `json:"open_findings,omitempty"`
+	// Skill is the skill the owning leader named for the worker to run, and
+	// Skills the explicit narrowing, if any; otherwise the current role list
+	// is delivered at each start.
+	Skill  string   `json:"skill,omitempty"`
+	Skills []string `json:"skills,omitempty"`
+}
+
+func (a Assignment) EffectiveSkills() []string {
+	if len(a.Skills) > 0 {
+		return a.Skills
+	}
+	_, role, _ := strings.Cut(a.Worker, "@")
+	return skills.WorkerList(role)
 }
 
 // Effect is a consequential effect an agent made and reported with
@@ -170,6 +184,8 @@ type ReportInput struct {
 	Checks []Check  `json:"checks"`
 	// Gaps are every unresolved gap the worker discloses.
 	Gaps []string `json:"gaps"`
+	// SkillsRun are the skills from its list the worker ran.
+	SkillsRun []string `json:"skills_run,omitempty"`
 	// PRSection is the worker's part of the pull request: what changed, with
 	// before-and-after evidence.
 	PRSection string `json:"pr_section,omitempty"`
@@ -346,6 +362,10 @@ type NewAssignment struct {
 	Workspace Workspace
 	// ReadOnly makes a read-only assignment, whose workspace has no branch.
 	ReadOnly bool
+	// Skill is the skill the assignment names, if it does, and Skills the
+	// explicit narrowing, if any, as the daemon checked it against the role's list.
+	Skill  string
+	Skills []string
 }
 
 // AssignmentCreated records a writing assignment and its workspace, and the
@@ -396,15 +416,19 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 	if err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at, read_only) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at), n.ReadOnly); err != nil {
+	skills, err := json.Marshal(nonNil(n.Skills))
+	if err != nil {
+		return Assignment{}, Dispatch{}, err
+	}
+	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at, read_only, skill, skills) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at), n.ReadOnly, n.Skill, string(skills)); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
 	if _, err := tx.Exec(`INSERT INTO workspaces (assignment, slot, path, tmp, branch, base) VALUES (?, ?, ?, ?, ?, ?)`,
 		w.Assignment, w.Slot, w.Path, w.Tmp, w.Branch, w.Base); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
-	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w}
+	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w, Skill: n.Skill, Skills: n.Skills}
 	if n.ReadOnly {
 		a.ReadOnly, a.Commit = true, w.Base
 		a.Intent = &Intent{Words: j.Words, Reading: j.Reading, Mandate: j.Mandate, Criteria: j.Criteria}
@@ -432,7 +456,7 @@ func (s *Store) Assignment(id int64) (Assignment, error) {
 }
 
 const (
-	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, b.name, w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria`
+	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, b.name, w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria, a.skill, a.skills`
 	assignmentTables  = `assignments a JOIN workspaces w ON w.assignment = a.id JOIN job_branches b ON b.job = a.job JOIN jobs j ON j.number = a.job`
 )
 
@@ -444,15 +468,21 @@ func scanAssignment(row *sql.Row) (Assignment, error) {
 	var a Assignment
 	var criteria, created string
 	var intent Intent
-	var jobCriteria string
+	var jobCriteria, skills string
 	err := row.Scan(&a.ID, &a.Job, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &created, &a.JobBranch, &a.Workspace.Slot, &a.Workspace.Path, &a.Workspace.Tmp, &a.Workspace.Branch, &a.Workspace.Base,
-		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria)
+		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria, &a.Skill, &skills)
 	if err != nil {
 		return Assignment{}, err
 	}
 	a.Workspace.Assignment = a.ID
 	if err := json.Unmarshal([]byte(criteria), &a.Criteria); err != nil {
 		return Assignment{}, err
+	}
+	if err := json.Unmarshal([]byte(skills), &a.Skills); err != nil {
+		return Assignment{}, err
+	}
+	if len(a.Skills) == 0 {
+		a.Skills = nil
 	}
 	if a.ReadOnly {
 		if err := json.Unmarshal([]byte(jobCriteria), &intent.Criteria); err != nil {
@@ -668,6 +698,12 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if !a.ReadOnly && !sub.TookInTip {
 		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
+	list := a.EffectiveSkills()
+	for _, name := range in.SkillsRun {
+		if !slices.Contains(list, name) {
+			return Report{}, Dispatch{}, fmt.Errorf("--skill %q is not on your skill list for assignment %d, which is %s: name only the skills you ran from it", name, a.ID, strings.Join(list, ", "))
+		}
+	}
 	if sub.Kind == ReportResult {
 		if err := checkResult(tx, a, in); err != nil {
 			return Report{}, Dispatch{}, err
@@ -692,6 +728,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	}
 	// A list that is empty is still given, so that a record never says null.
 	in.Artifacts, in.Evidence, in.Tests, in.Gaps = nonNil(in.Artifacts), nonNil(in.Evidence), nonNil(in.Tests), nonNil(in.Gaps)
+	in.SkillsRun = nonNil(in.SkillsRun)
 	if in.Checks == nil {
 		in.Checks = []Check{}
 	}

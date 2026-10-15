@@ -29,12 +29,12 @@ func TestOnlyCasesTheHarnessHasCanBeAskedFor(t *testing.T) {
 	}
 }
 
-func TestTheHarnessCasesAreC1C2C3C4C7C11C19C36C37C41C42C43C45C48C49AndC50(t *testing.T) {
+func TestTheHarnessCasesAreC1C2C3C4C7C11C19C34C36C37C41C42C43C45C48C49AndC50(t *testing.T) {
 	var ids []string
 	for _, c := range Cases {
 		ids = append(ids, c.ID)
 	}
-	if want := []string{"C1", "C2", "C3", "C4", "C7", "C11", "C19", "C36", "C37", "C41", "C42", "C43", "C45", "C48", "C49", "C50"}; !slices.Equal(ids, want) {
+	if want := []string{"C1", "C2", "C3", "C4", "C7", "C11", "C19", "C34", "C36", "C37", "C41", "C42", "C43", "C45", "C48", "C49", "C50"}; !slices.Equal(ids, want) {
 		t.Errorf("the harness runs %q, want %q", ids, want)
 	}
 }

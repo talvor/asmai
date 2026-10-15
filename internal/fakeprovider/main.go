@@ -56,7 +56,7 @@ const (
 // updated itself.
 const VersionEnv = "ASMAI_FAKE_PROVIDER_VERSION"
 
-const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--strict-mcp-config] [--model MODEL] [--append-system-prompt TEXT] [--resume SESSION]"
+const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--strict-mcp-config] [--plugin-dir DIR] [--model MODEL] [--append-system-prompt TEXT] [--resume SESSION]"
 
 // reportedVersion is the version the fake reports: $VersionEnv, else the
 // version the pins file pins.
@@ -91,6 +91,7 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// they are.
 	sources := flags.String("setting-sources", "", "the setting sources Claude Code loads, separated by commas")
 	flags.Bool("strict-mcp-config", false, "use only the MCP servers given on the command line")
+	flags.String("plugin-dir", "", "a plugin directory, whose skills Claude Code gives this session")
 	flags.String("model", "", "the model Claude Code uses")
 	instructions := flags.String("append-system-prompt", "", "text Claude Code appends to its system prompt")
 	resume := flags.String("resume", "", "the session to resume")

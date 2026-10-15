@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has sixteen cases:
+So far it has seventeen cases:
 
 | Case | What it qualifies |
 |---|---|
@@ -13,6 +13,7 @@ So far it has sixteen cases:
 | C7 | An automated nudge counts only after the receiving provider acknowledges its exact prompt |
 | C11 | The user's witnessed request is journaled, while the daemon's nudge is not |
 | C19 | Dispatches and results stay correlated and reconcilable across restarts |
+| C34 | Per-session skill delivery works although Claude Code namespaces plugin skills and upstream skills call each other by bare name |
 | C36 | Instruction files load without the repository's provider configuration |
 | C37 | Provider write guards are switched on |
 | C41 | The daemon's push, and its refusal when origin holds commits AsmAI did not make |
@@ -112,6 +113,18 @@ The leader's directory is in `agents/`, which the user trusted with `asmai setup
 ### C4: no API-key variables in a session
 
 The harness sets a canary in every provider API-key variable AsmAI lists, and in one for each `*_API_KEY` pattern, in the daemon's own environment, and checks that the daemon holds them. It then reads the names of the environment variables of the running leader session from the operating system (`/proc` on Linux, `ps` on macOS) and requires that it holds none of them, and no other name that is a provider API-key variable. It also requires that the process it read is the agent session, by `ASMAI_SESSION`. The canaries are not keys, and no value is read, kept or reported.
+
+### C34: per-session skill delivery
+
+C34 runs the pinned Claude Code non-interactively (`claude -p`, reading its JSON events) in the workspace of the same kind of fixture as C36, with the command line the code under test builds for an Engineering worker whose assignment narrowed its list to `implement` and `tdd` and named `implement` ([08](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/08-skills-and-agent-instructions.md) rules 13, 20 and 22). The plugin is written as the daemon writes it (`skills.WritePlugin`) and given with `--plugin-dir`, and the command line is `providers.ClaudeCodeArgs` with an empty `--setting-sources`, so the arguments qualified are the arguments run. The session is started with the slash invocation of the namespaced skill, `/asmai:implement`, followed by an assignment that is test-first work (a `slugify` function with its tests) and a request to follow `implement`'s instructions exactly, including running the skill it names, before writing any code; the prompt does not name `tdd`, so `implement` is loaded deterministically while the call of the skill it names is the session's own. The model may still leave that call out, so the case asks in up to three fresh sessions, stopping on a successful call or a failed or unresolved call; sessions that show none leave it inconclusive. It requires:
+
+- the session's start to list the `asmai` plugin and exactly its narrowed list, with none of the Engineering skills the assignment narrowed out;
+- `implement` to be started by its slash invocation from the list;
+- `tdd` to resolve: a call of the bare name `tdd` or of its namespaced name `asmai:tdd` to receive a successful Skill tool result. A call that is not found, or that returns no result, fails the case at once, whichever session it is in; only sessions with no call at all count toward inconclusive. The report lists each name the session tried, so that whether Claude Code resolves the bare name itself or the operating guide's `asmai:tdd` is what ran is on record.
+
+If none of the three sessions makes the call, the case fails as inconclusive. It uses the model alias `sonnet`, needs on Linux what C37 needs, and depends on the model running the skills it is asked to run. It does not qualify hiding, which is C33's.
+
+The prompt permits the session to stop after the called skill starts; C34 checks skill delivery and invocation, not whether it writes the function or tests.
 
 ### C36 and C37: instruction files and the write guard
 

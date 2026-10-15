@@ -129,7 +129,7 @@ func (h *Harness) c50(ctx context.Context, f *Factory, r *Result) (err error) {
 		return err
 	}
 	hooks := filepath.Join(scratch, "hooks.jsonl")
-	args := providers.ClaudeCodeArgs(hookLog(hooks), guardModel, instructions, providers.WriteGuard{}, providers.Permissions{Unattended: true})
+	args := providers.ClaudeCodeArgs(hookLog(hooks), guardModel, instructions, "", providers.WriteGuard{}, providers.Permissions{Unattended: true})
 	ask := func(prompt string) (Turn, error) {
 		return h.Provider.Ask(ctx, f, provider, AskSpec{Dir: agent, Args: args, Prompt: prompt})
 	}

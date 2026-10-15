@@ -16,7 +16,7 @@ ASMAI_FAKE_PROVIDER_SCRIPT=FILE fake-provider [CLAUDE CODE FLAGS]
 fake-provider --script FILE [CLAUDE CODE FLAGS]
 ```
 
-The Claude Code flags it takes are the ones the daemon starts Claude Code with: `--settings FILE|JSON`, `--setting-sources SOURCES`, `--strict-mcp-config`, `--model MODEL`, `--append-system-prompt TEXT` and, to resume a session, `--resume SESSION`. Any other flag makes it exit 2, as an unknown option makes Claude Code exit.
+The Claude Code flags it takes are the ones the daemon starts Claude Code with: `--settings FILE|JSON`, `--setting-sources SOURCES`, `--strict-mcp-config`, `--plugin-dir DIR`, `--model MODEL`, `--append-system-prompt TEXT` and, to resume a session, `--resume SESSION`. Any other flag makes it exit 2, as an unknown option makes Claude Code exit.
 
 Run it in a pseudo-terminal, the way the daemon runs a provider CLI. Like the real providers, it puts its terminal in raw mode. Keys arrive exactly as typed, Enter arrives as `\r`, and nothing is echoed unless a scripted screen draws it.
 

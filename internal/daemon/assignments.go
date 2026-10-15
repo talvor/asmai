@@ -15,6 +15,7 @@ import (
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/skills"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -119,6 +120,16 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		return store.Assignment{}, store.Dispatch{}, refuse("a writing assignment is made from the job branch's tip, so it takes no --commit")
 	}
 
+	// The worker's skill list is its role's, or the narrower list the
+	// assignment gives, and the skill the assignment names is on it.
+	skillList, err := skills.WorkerSkills(role, req.Skills, req.Skill)
+	if err != nil {
+		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
+	}
+	if len(req.Skills) == 0 {
+		skillList = nil
+	}
+
 	d.assignMu.Lock()
 	defer d.assignMu.Unlock()
 	j, err := d.store.Job(req.Job)
@@ -211,7 +222,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	}
 	a, dispatch, err := d.store.AssignmentCreated(store.NewAssignment{
 		ID: id, Job: j.Number, Owner: ref.address.String(), Worker: worker.String(),
-		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly,
+		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly, Skill: req.Skill, Skills: skillList,
 	}, time.Now())
 	if err != nil {
 		undo()

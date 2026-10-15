@@ -38,9 +38,11 @@ asmai result \
   --test <a test you added>                                 (repeat, or --test none) \
   --check '<command> -> <outcome at your commit>'           (repeat, or --check none) \
   --gap <an unresolved gap>                                 (repeat, or --gap none) \
+  --skill <a skill from your list that you ran>             (repeat, or --skill none) \
   --pr-section <your part of the pull request>
 ```
 
+- Name each skill you ran with `--skill`, by its bare name from your list, such as `tdd`: your assignment says which skill to run and may narrow your list, and the daemon refuses a skill that is not on it.
 - Link your artifacts and evidence, name the tests you added, and give each check you ran with its outcome at your commit. Disclose every gap: anything you did not do, could not verify, or are unsure of.
 - The PR section is your own part of the pull request: what changed, plus before-and-after evidence. If you merged the job branch's tip in or resolved conflicts, write a section for those changes too.
 - The daemon records the commit your workspace is at, and refuses a result while changes are uncommitted.

@@ -29,6 +29,7 @@ import (
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/session"
+	"github.com/talvor/asmai/internal/skills"
 	"github.com/talvor/asmai/internal/store"
 	"github.com/talvor/asmai/internal/vt"
 )
@@ -618,6 +619,9 @@ type launch struct {
 	// the provider's own session it continues, when it continues one.
 	assignment int64
 	resume     string
+	// skills are the names of the skills the session is given, as the
+	// per-session plugin its command line names.
+	skills []string
 }
 
 // startLeader starts l's session on the installed Claude Code, with
@@ -631,7 +635,7 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating the agent's directory: %w", err)
 	}
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.LeaderModel, dir: dir})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.LeaderModel, dir: dir, skills: skills.LeaderList(l.address.Role)})
 }
 
 // startWorker starts the session of the worker l on the installed Claude
@@ -665,7 +669,7 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, options config
 	}
 	// The worker's git adds the trailers to each commit, as the user.
 	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: a.EffectiveSkills()})
 }
 
 // startSession starts l's session on the installed Claude Code as launch
@@ -686,9 +690,24 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	// conversation: every other session would wait at a native prompt
 	// nobody can answer, so it is denied what its rules do not allow.
 	perms := providers.Permissions{Unattended: l.address.Role != roles.Coordination, Editable: launch.editable}
-	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, guard, perms)
+	// The session's skills are written as a plugin for it alone, copied
+	// afresh at each start from the bundle in the executable.
+	var pluginDir string
+	var delivery skills.Delivery
+	if len(launch.skills) > 0 {
+		pluginDir = filepath.Join(d.cfg.Paths.Plugins, l.address.String())
+		if err := skills.WritePlugin(pluginDir, launch.skills); err != nil {
+			return fmt.Errorf("delivering %s's skills: %w", l.address, err)
+		}
+		perms.Readable = append(perms.Readable, pluginDir)
+	}
+	delivery, err = skills.DeliveryOf(launch.skills)
+	if err != nil {
+		return err
+	}
+	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, pluginDir, guard, perms)
 	if launch.resume != "" {
-		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, guard, perms, launch.resume)
+		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, pluginDir, guard, perms, launch.resume)
 	}
 	set := map[string]string{SessionCredential: credential}
 	maps.Copy(set, launch.env)
@@ -711,6 +730,8 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 		At:         at,
 		Assignment: launch.assignment,
 		Resumes:    launch.resume,
+		Bundle:     delivery.Bundle,
+		Skills:     delivery.Skills,
 	})
 	if err != nil {
 		s.Stop(stopGrace)

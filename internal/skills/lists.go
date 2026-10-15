@@ -109,7 +109,11 @@ func IndexOf(role string) []IndexEntry {
 		if !ok {
 			continue
 		}
-		entries = append(entries, IndexEntry{Name: name, Purpose: s.Purpose(), Applies: applies[name], UserInvoked: s.UserInvoked})
+		purpose := s.Purpose()
+		if purpose == "" {
+			purpose = applies[name]
+		}
+		entries = append(entries, IndexEntry{Name: name, Purpose: purpose, Applies: applies[name], UserInvoked: s.UserInvoked})
 	}
 	return entries
 }

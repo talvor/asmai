@@ -90,8 +90,12 @@ type Skill struct {
 }
 
 // Purpose is what the skill is for: upstream's description without the part
-// that says when to use it.
+// that says when to use it. It is empty when upstream's description is only
+// the when-clause.
 func (s Skill) Purpose() string {
+	if strings.HasPrefix(s.Description, "Use when") {
+		return ""
+	}
 	purpose, _, _ := strings.Cut(s.Description, " Use when")
 	return strings.TrimSpace(purpose)
 }

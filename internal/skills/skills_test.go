@@ -236,7 +236,7 @@ func TestTheOperatingGuideHasTheRequiredContent(t *testing.T) {
 		// Rule 8.
 		"only the list": {"only the skills on your list"},
 		// Rule 9.
-		"structured": {"id", "title", "body", "options", "recommendation", "grilling", "wayfinder", "lavish"},
+		"structured": {"with:\n\n- an id;", "- a title;", "- a body that", "- the options;", "- your recommendation", "grilling", "wayfinder", "lavish"},
 		// Rule 37, every agent.
 		"coordinate":       {"asmai inbox", "dispatch"},
 		"brief":            {"asmai brief"},

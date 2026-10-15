@@ -196,6 +196,7 @@ worker_added_skills = ["~/skills/mine"]
 [roles.quality]
 leader_provider = "claude"
 leader_model = "opus"
+leader_added_skills = ["~/skills/review"]
 
 [repositories.x]
 origin = "o"
@@ -222,6 +223,9 @@ silence_timeout = "45m"
 	if c := got["roles.quality"]; !c.Added {
 		t.Errorf("the new role is %+v", c)
 	}
+	if c := got["roles.quality.leader_added_skills"]; !c.Skills || c.Side != "leader" || !slices.Equal(c.Gained, []string{"~/skills/review"}) {
+		t.Errorf("the new role's added skills are %+v", c)
+	}
 	if c := got["repositories.y"]; !c.Added {
 		t.Errorf("the new repository is %+v", c)
 	}
@@ -238,11 +242,18 @@ silence_timeout = "45m"
 		t.Error("a configuration differs from itself")
 	}
 	gone := Diff(next, old)
+	removedSkills := false
 	var removed []string
 	for _, c := range gone {
 		if c.Removed {
 			removed = append(removed, c.Setting)
 		}
+		if c.Setting == "roles.quality.leader_added_skills" && c.Skills && slices.Equal(c.Lost, []string{"~/skills/review"}) {
+			removedSkills = true
+		}
+	}
+	if !removedSkills {
+		t.Error("removing the role omits its added skills")
 	}
 	slices.Sort(removed)
 	if !slices.Equal(removed, []string{"repositories.y", "roles.quality"}) {

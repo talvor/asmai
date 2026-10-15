@@ -101,17 +101,18 @@ func skillText(shipped, added []string) string {
 type roleChoices struct {
 	leaderProvider, leaderModel string
 	workerProvider, workerModel string
+	present                     map[string]bool
 }
 
 func (c roleChoices) fields() map[string]string {
 	fields := map[string]string{}
-	for _, choice := range []struct{ name, value string }{
-		{"leader_provider", c.leaderProvider},
-		{"leader_model", c.leaderModel},
-		{"worker_provider", c.workerProvider},
-		{"worker_model", c.workerModel},
+	for _, choice := range []struct{ flag, name, value string }{
+		{"leader-provider", "leader_provider", c.leaderProvider},
+		{"leader-model", "leader_model", c.leaderModel},
+		{"worker-provider", "worker_provider", c.workerProvider},
+		{"worker-model", "worker_model", c.workerModel},
 	} {
-		if choice.value != "" {
+		if c.present[choice.flag] {
 			fields[choice.name] = choice.value
 		}
 	}

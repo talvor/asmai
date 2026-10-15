@@ -126,9 +126,9 @@ commands:
                               only when it has no problem; a file with problems is shown them and
                               edited again, or left as it was
   asmai config apply          hand the configuration file to the running factory: validate it, show what
-                              it changes and which running agents pick that up at their next start,
-                              including added skills, and ask to confirm; the applied configuration is
-                              journaled. Repository records change through repo add and repo remove
+                              it changes, which running agents pick up delivered settings at their next
+                              start, and which skill settings await #89; ask to confirm, then journal it.
+                              Repository records change through repo add and repo remove
   asmai role list             list each role's provider and model for its leader and its workers, and its
                               skill lists
   asmai role set <role> [--leader-provider <p>] [--leader-model <m>]
@@ -249,7 +249,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.BoolVar(&repoOptions.noCI, "no-ci", false, "the repository has no CI; Quality's checks stand in")
 		repoOptions.commitTrailers = true
 		flags.BoolVar(&repoOptions.commitTrailers, "commit-trailers", true, "commits carry the AsmAI trailers; --commit-trailers=false switches them off")
-		flags.Var(&repoOptions.skills, "repository-skills", "a role for which the repository's own skills are switched on; may be repeated")
+		flags.Var(&repoOptions.skills, "repository-skills", "record the repository's own skills for this role; may be repeated")
 	case "role set":
 		flags.StringVar(&role.leaderProvider, "leader-provider", "", "the provider of the role's leader")
 		flags.StringVar(&role.leaderModel, "leader-model", "", "the model of the role's leader")
@@ -365,6 +365,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "role list":
 		return roleList(o)
 	case "role set":
+		role.present = map[string]bool{}
+		flags.Visit(func(f *flag.Flag) { role.present[f.Name] = true })
 		return roleSet(o, arg, role)
 	}
 

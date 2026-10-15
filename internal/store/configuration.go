@@ -15,8 +15,7 @@ type AppliedConfiguration struct {
 	SHA256 string `json:"sha256"`
 	// Configuration is the file's content, as applied.
 	Configuration string `json:"configuration"`
-	// Changes are what differs from the configuration applied before, each
-	// with the agents that pick it up.
+	// Changes are what differs from the configuration applied before.
 	Changes []AppliedChange `json:"changes"`
 }
 
@@ -25,9 +24,9 @@ type AppliedChange struct {
 	Setting string `json:"setting"`
 	Before  string `json:"before,omitempty"`
 	After   string `json:"after,omitempty"`
-	// Agents are the running agents that pick the change up at their next
-	// start; none when it applies at once.
+	// Agents are the running agents that pick the change up at their next start.
 	Agents []string `json:"agents,omitempty"`
+	Note   string   `json:"note,omitempty"`
 }
 
 // ConfigurationApplied journals that the user applied c at at.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode"
 
 	toml "github.com/pelletier/go-toml/v2"
 
@@ -106,24 +107,31 @@ func configEdit(o *output, stdin io.Reader) int {
 		return o.fail(err)
 	}
 	original, err := os.ReadFile(path)
-	missing := errors.Is(err, os.ErrNotExist)
-	if err != nil && !missing {
-		return o.fail(fmt.Errorf("reading %s: %w", path, err))
+	if errors.Is(err, os.ErrNotExist) {
+		return o.fail(fmt.Errorf("%s does not exist; run `asmai setup` to create it before editing", path))
 	}
-	if missing {
-		original = config.Default()
+	if err != nil {
+		return o.fail(fmt.Errorf("reading %s: %w", path, err))
 	}
 	editor := firstSet("VISUAL", "EDITOR")
 	if editor == "" {
 		return o.fail(errors.New("no editor is set: set VISUAL or EDITOR to the editor to open, such as EDITOR=vi"))
 	}
-	command := strings.Fields(editor)
+	command, err := editorCommand(editor)
+	if err != nil {
+		return o.fail(fmt.Errorf("invalid editor command %q: %w", editor, err))
+	}
 	// Edit a copy, so that nothing is accepted before it is checked.
 	copyFile, err := os.CreateTemp("", "asmai-config-*.toml")
 	if err != nil {
 		return o.fail(err)
 	}
-	defer os.Remove(copyFile.Name())
+	keepCopy := false
+	defer func() {
+		if !keepCopy {
+			os.Remove(copyFile.Name())
+		}
+	}()
 	if _, err := copyFile.Write(original); err != nil {
 		copyFile.Close()
 		return o.fail(err)
@@ -150,7 +158,7 @@ func configEdit(o *output, stdin io.Reader) int {
 		if err != nil {
 			return o.fail(err)
 		}
-		if bytes.Equal(edited, original) && !missing {
+		if bytes.Equal(edited, original) {
 			fmt.Fprintf(w, "No change; %s is as it was.\n", path)
 			return o.editResult(path, false)
 		}
@@ -179,8 +187,9 @@ func configEdit(o *output, stdin io.Reader) int {
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return o.fail(err)
 		}
-		if !bytes.Equal(now, readOrNil(original, missing)) {
-			return o.fail(fmt.Errorf("%s changed while you edited it, so your edit was not saved; it is at %s until this command ends. Run `asmai config edit` again", path, copyFile.Name()))
+		if !bytes.Equal(now, original) {
+			keepCopy = true
+			return o.fail(fmt.Errorf("%s changed while you edited it, so your edit was not saved; your edited copy remains at %s", path, copyFile.Name()))
 		}
 		if err := config.Replace(path, edited); err != nil {
 			return o.fail(fmt.Errorf("saving %s: %w", path, err))
@@ -197,13 +206,6 @@ func (o *output) editResult(path string, saved bool) int {
 	return 0
 }
 
-func readOrNil(original []byte, missing bool) []byte {
-	if missing {
-		return nil
-	}
-	return original
-}
-
 // firstSet returns the first of the environment variables names that is
 // set and not empty.
 func firstSet(names ...string) string {
@@ -215,9 +217,50 @@ func firstSet(names ...string) string {
 	return ""
 }
 
+func editorCommand(value string) ([]string, error) {
+	var args []string
+	var word strings.Builder
+	var quote rune
+	escaped, started := false, false
+	for _, r := range value {
+		switch {
+		case escaped:
+			word.WriteRune(r)
+			escaped = false
+		case r == '\\' && quote != '\'':
+			escaped = true
+			started = true
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote == 0 && (r == '\'' || r == '"'):
+			quote = r
+			started = true
+		case quote == 0 && unicode.IsSpace(r):
+			if started {
+				args = append(args, word.String())
+				word.Reset()
+				started = false
+			}
+		default:
+			word.WriteRune(r)
+			started = true
+		}
+	}
+	if quote != 0 || escaped {
+		return nil, errors.New("unterminated quote or escape")
+	}
+	if started {
+		args = append(args, word.String())
+	}
+	if len(args) == 0 || args[0] == "" {
+		return nil, errors.New("no editor executable")
+	}
+	return args, nil
+}
+
 // configApply is `asmai config apply`: it hands the configuration file to
 // the running daemon, which validates it and answers with what it changes
-// and which running agents pick that up. Once the user confirms, the daemon
+// and its effect on running agents. Once the user confirms, the daemon
 // applies it and journals it.
 func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	path, data, err := configFile()
@@ -279,7 +322,7 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	return 0
 }
 
-// showChanges prints each change, and the running agents that pick it up.
+// showChanges prints each change and its effect on running agents.
 func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 	noun := "changes"
 	if len(changes) == 1 {
@@ -303,13 +346,15 @@ func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 		}
 		if c.Repository != "" {
 			if len(c.Gained) > 0 {
-				fmt.Fprintf(w, "      switches %s's own skills on for: %s\n", c.Repository, strings.Join(c.Gained, ", "))
+				fmt.Fprintf(w, "      records %s's own skills for: %s\n", c.Repository, strings.Join(c.Gained, ", "))
 			}
 			if len(c.Lost) > 0 {
-				fmt.Fprintf(w, "      switches %s's own skills off for: %s\n", c.Repository, strings.Join(c.Lost, ", "))
+				fmt.Fprintf(w, "      removes %s's own skills setting for: %s\n", c.Repository, strings.Join(c.Lost, ", "))
 			}
 		}
 		switch {
+		case c.Note != "":
+			fmt.Fprintf(w, "      %s\n", c.Note)
 		case len(c.Agents) > 0:
 			fmt.Fprintf(w, "      picked up at the next start of: %s\n", strings.Join(c.Agents, ", "))
 		default:

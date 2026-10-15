@@ -125,8 +125,8 @@ func Render(c Config) []byte {
 	return []byte(b.String())
 }
 
-// EffectiveSkills returns role's skill lists as its agents get them: the
-// file's list, or the role's default when the file has none.
+// EffectiveSkills returns role's configured skill lists: the file's list,
+// or the role's default when the file has none.
 func (c Config) EffectiveSkills(role string) Skills {
 	s := c.Skills[role]
 	return Skills{

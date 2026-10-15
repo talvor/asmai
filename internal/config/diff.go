@@ -75,6 +75,9 @@ func Diff(old, new Config) []Change {
 				reported[e.Table] = true
 				changes = append(changes, tableChange(e.Table, true))
 			}
+			if e.IsList && len(e.List) > 0 && (strings.HasPrefix(e.Table, "roles.") || e.Name == "repository_skills") {
+				changes = append(changes, change(e.Table, e.Name, Entry{}, e))
+			}
 			continue
 		}
 		o, ok := oldBy[e.Table+"."+e.Name]
@@ -88,6 +91,9 @@ func Diff(old, new Config) []Change {
 			if !reported[e.Table] {
 				reported[e.Table] = true
 				changes = append(changes, tableChange(e.Table, false))
+			}
+			if e.IsList && len(e.List) > 0 && (strings.HasPrefix(e.Table, "roles.") || e.Name == "repository_skills") {
+				changes = append(changes, change(e.Table, e.Name, e, Entry{}))
 			}
 			continue
 		}

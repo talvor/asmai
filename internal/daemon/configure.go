@@ -23,7 +23,7 @@ import (
 )
 
 // ConfigApply is what `config.apply` answers: the file's change from the
-// configuration the agents run on, and, once it was applied, that it was.
+// configuration the daemon has applied, and, once applied, that it was.
 type ConfigApply struct {
 	// File is the configuration file this daemon reads, and SHA256 the
 	// digest of the content the request carried.
@@ -35,12 +35,12 @@ type ConfigApply struct {
 	Applied bool `json:"applied"`
 }
 
-// ConfigChange is one change, with the running agents that pick it up.
+// ConfigChange is one change and its effect on running agents.
 type ConfigChange struct {
 	config.Change
-	// Agents are the running agents that pick the change up at their next
-	// start; with none it applies at once.
+	// Agents are the running agents that pick the change up at their next start.
 	Agents []string `json:"agents"`
+	Note   string   `json:"note,omitempty"`
 }
 
 // readApplied reads the configuration file the factory starts on, for
@@ -116,7 +116,7 @@ func (d *daemon) configApplyCommand(conn *net.UnixConn, req Request) {
 }
 
 // configApply validates the file the request carries, works out what it
-// changes and which running agents pick that up, and with Confirm applies
+// changes and their effect on running agents, and with Confirm applies
 // it and journals the applied configuration. Nothing is applied when anything is wrong.
 func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 	d.repoMu.Lock()
@@ -163,7 +163,13 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 		if err != nil {
 			return nil, err
 		}
-		result.Changes = append(result.Changes, ConfigChange{Change: c, Agents: picked})
+		change := ConfigChange{Change: c, Agents: picked}
+		if c.Removed && c.Role != "" {
+			change.Note = "running agents keep running; this role cannot start after removal"
+		} else if pendingSkillDelivery(c) {
+			change.Note = "recorded on apply; reaches sessions once per-session skill delivery lands (#89)"
+		}
+		result.Changes = append(result.Changes, change)
 	}
 	if !req.Confirm || len(result.Changes) == 0 {
 		return result, nil
@@ -171,7 +177,7 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 
 	applied := store.AppliedConfiguration{File: d.cfg.ConfigFile, SHA256: result.SHA256, Configuration: string(content)}
 	for _, c := range result.Changes {
-		applied.Changes = append(applied.Changes, store.AppliedChange{Setting: c.Setting, Before: c.Before, After: c.After, Agents: c.Agents})
+		applied.Changes = append(applied.Changes, store.AppliedChange{Setting: c.Setting, Before: c.Before, After: c.After, Agents: c.Agents, Note: c.Note})
 	}
 	if err := d.store.ConfigurationApplied(applied, time.Now()); err != nil {
 		return result, fmt.Errorf("journaling the applied configuration: %w", err)
@@ -217,6 +223,9 @@ func RepositoryProblems(cfg config.Config, registered []store.Repository) []conf
 // for, that do not already run what it sets.
 func (d *daemon) pickedUpBy(c config.Change, agents []store.Agent) ([]string, error) {
 	picked := []string{}
+	if pendingSkillDelivery(c) || c.Removed && c.Role != "" {
+		return picked, nil
+	}
 	for _, a := range agents {
 		if a.State != store.AgentRunning {
 			continue
@@ -241,10 +250,6 @@ func (d *daemon) pickedUpBy(c config.Change, agents []store.Agent) ([]string, er
 			}
 			affected = job.Repository == c.Repository
 		case c.Role == "" || a.Role != c.Role:
-		case c.Removed:
-			// A role removed from the file keeps its running agents, which
-			// cannot start again.
-			affected = true
 		case c.Side == "leader" && !leader, c.Side == "worker" && leader:
 		case strings.HasSuffix(c.Setting, "_model"):
 			model, err := strconv.Unquote(c.After)
@@ -257,4 +262,8 @@ func (d *daemon) pickedUpBy(c config.Change, agents []store.Agent) ([]string, er
 		}
 	}
 	return picked, nil
+}
+
+func pendingSkillDelivery(c config.Change) bool {
+	return c.Skills || strings.HasSuffix(c.Setting, ".repository_skills")
 }

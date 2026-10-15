@@ -4,6 +4,8 @@ package daemon
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -98,6 +100,56 @@ func TestAConfigurationIsShownThenAppliedAndJournaledOnce(t *testing.T) {
 	}
 	if got := countJournaled(t, p.Socket, store.KindConfigurationApplied); got != 2 {
 		t.Errorf("a no-change apply journaled: %d entries, want 2", got)
+	}
+}
+
+func TestAddedRoleSkillsAreShownAsPendingAndJournaled(t *testing.T) {
+	p, configFile := repoDaemon(t)
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, []byte(appliedStaffing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyConfig(t, p.Socket, appliedStaffing, true); err != nil {
+		t.Fatal(err)
+	}
+	changed := appliedStaffing + fmt.Sprintf("\n[roles.planning]\nleader_added_skills = [%q]\n", t.TempDir())
+	if err := os.WriteFile(configFile, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := applyConfig(t, p.Socket, changed, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range preview.ConfigApply.Changes {
+		if c.Setting == "roles.planning.leader_added_skills" {
+			found = c.Skills && len(c.Gained) == 1 && len(c.Agents) == 0 && strings.Contains(c.Note, "#89")
+		}
+	}
+	if !found {
+		t.Errorf("the preview omits the new role's pending skill: %+v", preview.ConfigApply.Changes)
+	}
+	if _, err := applyConfig(t, p.Socket, changed, true); err != nil {
+		t.Fatal(err)
+	}
+	response, err := Call(p.Socket, Request{Command: CommandExport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded store.AppliedConfiguration
+	if err := json.Unmarshal(response.Journal[len(response.Journal)-1].Data, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	found = false
+	for _, c := range recorded.Changes {
+		if c.Setting == "roles.planning.leader_added_skills" {
+			found = len(c.Agents) == 0 && strings.Contains(c.Note, "#89")
+		}
+	}
+	if !found {
+		t.Errorf("the journal omits the new role's pending skill: %+v", recorded.Changes)
 	}
 }
 
@@ -313,7 +365,11 @@ func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
 			t.Fatalf("%s produced changes %+v", edited, changes)
 		}
 		picked, err := d.pickedUpBy(changes[0], agents)
-		if err != nil || !slices.Equal(picked, []string{"worker1@engineering"}) {
+		want := []string{"worker1@engineering"}
+		if strings.HasPrefix(edited, "repository_skills") {
+			want = []string{}
+		}
+		if err != nil || !slices.Equal(picked, want) {
 			t.Errorf("%s picked %v, %v", edited, picked, err)
 		}
 	}

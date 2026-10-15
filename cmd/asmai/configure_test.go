@@ -139,6 +139,45 @@ func TestConfigEditSavesOnlyAFileWithNoProblem(t *testing.T) {
 	}
 }
 
+func TestConfigEditRequiresAnExistingFile(t *testing.T) {
+	factoryHome(t)
+	if _, stderr, code := runIn(t, "", "config", "edit"); code != 1 || !strings.Contains(stderr, "asmai setup") {
+		t.Errorf("config edit without a file exited %d printing %q", code, stderr)
+	}
+	if _, err := os.Stat(configPath()); !os.IsNotExist(err) {
+		t.Errorf("config edit created a file: %v", err)
+	}
+}
+
+func TestConfigEditPreservesQuotedEditorArgumentsAndConflictingEdits(t *testing.T) {
+	factoryHome(t)
+	writeConfig(t, staffing)
+	editorPath := filepath.Join(t.TempDir(), "Editor With Spaces")
+	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\n[ \"$1\" = 'two words' ] || exit 9\nprintf '\\n[limits]\\nsilence_timeout = \"55m\"\\n' >> \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", quoted(editorPath)+" "+quoted("two words"))
+	if _, stderr, code := runIn(t, "", "config", "edit"); code != 0 || !strings.Contains(readConfig(t), `silence_timeout = "55m"`) {
+		t.Fatalf("quoted editor exited %d printing %q", code, stderr)
+	}
+
+	t.Setenv("ASMAI_CONFIG_PATH", configPath())
+	editor(t, `sed -e 's/55m/41m/' "$1" > "$1.new" && mv "$1.new" "$1"; sed -e 's/55m/42m/' "$ASMAI_CONFIG_PATH" > "$ASMAI_CONFIG_PATH.new" && mv "$ASMAI_CONFIG_PATH.new" "$ASMAI_CONFIG_PATH"`)
+	_, stderr, code := runIn(t, "", "config", "edit")
+	marker := "your edited copy remains at "
+	start := strings.Index(stderr, marker)
+	if code != 1 || start < 0 {
+		t.Fatalf("conflicting edit exited %d printing %q", code, stderr)
+	}
+	copyPath := strings.TrimSpace(stderr[start+len(marker):])
+	t.Cleanup(func() { os.Remove(copyPath) })
+	copyData, err := os.ReadFile(copyPath)
+	if err != nil || !strings.Contains(string(copyData), `silence_timeout = "41m"`) || !strings.Contains(readConfig(t), `silence_timeout = "42m"`) {
+		t.Errorf("edited copy %q: %q, %v; current file: %q", copyPath, copyData, err, readConfig(t))
+	}
+}
+
 func TestRoleListShowsEachRoleAndRoleSetEditsTheFileForClaudeAndRefusesCodex(t *testing.T) {
 	factoryHome(t)
 	writeConfig(t, "# mine\n"+staffing)
@@ -194,6 +233,16 @@ func TestRoleListShowsEachRoleAndRoleSetEditsTheFileForClaudeAndRefusesCodex(t *
 			t.Errorf("role set %s exited %d printing %q", flag, code, stderr)
 		}
 	}
+	for _, tc := range []struct{ flag, field, other string }{
+		{"--leader-provider", "leader_provider", "--worker-model"},
+		{"--worker-provider", "worker_provider", "--leader-model"},
+		{"--leader-model", "leader_model", "--worker-model"},
+		{"--worker-model", "worker_model", "--leader-model"},
+	} {
+		if _, stderr, code := runAsmai(t, "role", "set", "quality", tc.flag, "", tc.other, "sonnet"); code != 1 || !strings.Contains(stderr, tc.field) {
+			t.Errorf("explicit empty %s exited %d printing %q", tc.flag, code, stderr)
+		}
+	}
 	if got := readConfig(t); got != before {
 		t.Errorf("refused role sets changed the file to\n%s", got)
 	}
@@ -227,7 +276,7 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 	for _, want := range []string{
 		"has 4 changes",
 		`roles.coordination.leader_model: "opus" -> "sonnet"`, "picked up at the next start of: leader@coordination",
-		`roles.coordination.leader_added_skills: [] -> [`, "adds skills: " + skills,
+		`roles.coordination.leader_added_skills: [] -> [`, "adds skills: " + skills, "reaches sessions once per-session skill delivery lands (#89)",
 		`roles.coordination.worker_model: "sonnet" -> "haiku"`,
 		`limits.silence_timeout: "30m" -> "45m"`, "no running agent is affected, so it applies at once",
 		"Apply it? [y/N]",
@@ -256,18 +305,21 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 		Changes       []struct {
 			Setting string   `json:"setting"`
 			Agents  []string `json:"agents"`
+			Note    string   `json:"note"`
 		} `json:"changes"`
 	}
 	if err := json.Unmarshal(entries[0].Data, &data); err != nil {
 		t.Fatal(err)
 	}
 	picked := map[string][]string{}
+	notes := map[string]string{}
 	for _, c := range data.Changes {
 		picked[c.Setting] = c.Agents
+		notes[c.Setting] = c.Note
 	}
 	if data.File != configPath() || data.Configuration != text || len(data.SHA256) != 64 || len(picked) != 4 ||
 		len(picked["roles.coordination.leader_model"]) != 1 || picked["roles.coordination.leader_model"][0] != "leader@coordination" ||
-		len(picked["roles.coordination.leader_added_skills"]) != 1 || len(picked["limits.silence_timeout"]) != 0 || len(picked["roles.coordination.worker_model"]) != 0 {
+		len(picked["roles.coordination.leader_added_skills"]) != 0 || !strings.Contains(notes["roles.coordination.leader_added_skills"], "#89") || len(picked["limits.silence_timeout"]) != 0 || len(picked["roles.coordination.worker_model"]) != 0 {
 		t.Errorf("the journaled configuration is %+v", data)
 	}
 
@@ -384,6 +436,37 @@ func TestRepoAddAcceptsEveryNonCodexFieldOfTheEntry(t *testing.T) {
 	// The daemon's own write is no change to apply.
 	if stdout, _, code := runIn(t, "", "config", "apply"); code != 0 || !strings.Contains(stdout, "no change") {
 		t.Errorf("applying after repo add exited %d printing %q, want no change", code, stdout)
+	}
+	o.RepositorySkills = []string{"engineering"}
+	cfg.Options["fixture"] = o
+	writeConfig(t, string(config.Render(cfg)))
+	var applied struct {
+		Applied bool `json:"applied"`
+		Changes []struct {
+			Setting string   `json:"setting"`
+			Agents  []string `json:"agents"`
+			Note    string   `json:"note"`
+		} `json:"changes"`
+	}
+	stdout, stderr, code := runIn(t, "y\n", "config", "apply", "--json")
+	if code != 0 || json.Unmarshal([]byte(stdout), &applied) != nil || !strings.Contains(stderr, "Apply it? [y/N]") {
+		t.Fatalf("applying repository skills as JSON exited %d printing %q, %q", code, stdout, stderr)
+	}
+	if !applied.Applied || len(applied.Changes) != 1 || applied.Changes[0].Setting != "repositories.fixture.repository_skills" || len(applied.Changes[0].Agents) != 0 || !strings.Contains(applied.Changes[0].Note, "#89") {
+		t.Errorf("JSON apply reported %+v", applied)
+	}
+	entries := journaled(t, "configuration.applied")
+	if len(entries) != 1 {
+		t.Fatalf("the journal has %d applied configurations, want 1", len(entries))
+	}
+	var recorded struct {
+		Changes []struct {
+			Setting string `json:"setting"`
+			Note    string `json:"note"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(entries[0].Data, &recorded); err != nil || len(recorded.Changes) != 1 || recorded.Changes[0].Setting != "repositories.fixture.repository_skills" || !strings.Contains(recorded.Changes[0].Note, "#89") {
+		t.Errorf("the repository skill change was not journaled with its delivery note: %+v, %v", recorded, err)
 	}
 }
 

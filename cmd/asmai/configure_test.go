@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -301,7 +302,7 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 	for _, want := range []string{
 		"has 4 changes",
 		`roles.coordination.leader_model: "opus" -> "sonnet"`, "picked up at the next start of: leader@coordination",
-		`roles.coordination.leader_added_skills: [] -> [`, "adds skills: " + skills, "reaches sessions once per-session skill delivery lands (#89)",
+		`roles.coordination.leader_added_skills: [] -> [`, "adds skills: " + skills, "per-session skill delivery (asmai #89)", "affected agents: leader@coordination",
 		`roles.coordination.worker_model: "sonnet" -> "haiku"`,
 		`limits.silence_timeout: "30m" -> "45m"`, "no running agent is affected, so it applies at once",
 		"Apply it? [y/N]",
@@ -344,7 +345,7 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 	}
 	if data.File != configPath() || data.Configuration != text || len(data.SHA256) != 64 || len(picked) != 4 ||
 		len(picked["roles.coordination.leader_model"]) != 1 || picked["roles.coordination.leader_model"][0] != "leader@coordination" ||
-		len(picked["roles.coordination.leader_added_skills"]) != 0 || !strings.Contains(notes["roles.coordination.leader_added_skills"], "#89") || len(picked["limits.silence_timeout"]) != 0 || len(picked["roles.coordination.worker_model"]) != 0 {
+		!slices.Equal(picked["roles.coordination.leader_added_skills"], []string{"leader@coordination"}) || !strings.Contains(notes["roles.coordination.leader_added_skills"], "#89") || len(picked["limits.silence_timeout"]) != 0 || len(picked["roles.coordination.worker_model"]) != 0 {
 		t.Errorf("the journaled configuration is %+v", data)
 	}
 

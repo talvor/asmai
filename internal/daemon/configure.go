@@ -36,10 +36,10 @@ type ConfigApply struct {
 	Applied bool `json:"applied"`
 }
 
-// ConfigChange is one change and its effect on running agents.
+// ConfigChange is one change and its effect on known agents.
 type ConfigChange struct {
 	config.Change
-	// Agents are the running agents that pick the change up at their next start.
+	// Agents are the known agents affected by the change.
 	Agents []string `json:"agents"`
 	Note   string   `json:"note,omitempty"`
 }
@@ -169,8 +169,10 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 		change := ConfigChange{Change: c, Agents: picked}
 		if c.Removed && c.Role != "" {
 			change.Note = "running agents keep running; this role cannot start after removal"
+		} else if c.Skills && c.Role != "" && c.After == "" {
+			change.Note = "this role cannot start after removal"
 		} else if pendingSkillDelivery(c) {
-			change.Note = "recorded on apply; reaches sessions once per-session skill delivery lands (#89)"
+			change.Note = "skills reach affected agents' sessions at their next start once per-session skill delivery (asmai #89) lands"
 		}
 		result.Changes = append(result.Changes, change)
 	}
@@ -224,16 +226,14 @@ func RepositoryProblems(cfg config.Config, registered []store.Repository) []conf
 	return problems
 }
 
-// pickedUpBy returns the running agents that get change c at their next
-// start, by address: the agents of the role it is for, on the side it is
-// for, that do not already run what it sets.
+// pickedUpBy returns the known agents affected by change c, by address.
 func (d *daemon) pickedUpBy(c config.Change, agents []store.Agent) ([]string, error) {
 	picked := []string{}
-	if pendingSkillDelivery(c) || c.Removed && c.Role != "" {
+	if c.Removed && c.Role != "" || c.Skills && c.Role != "" && c.After == "" {
 		return picked, nil
 	}
 	for _, a := range agents {
-		if a.State != store.AgentRunning {
+		if a.State != store.AgentRunning && !(pendingSkillDelivery(c) && a.State == store.AgentStopped) {
 			continue
 		}
 		leader := strings.HasPrefix(a.Agent, roles.Leader+"@")

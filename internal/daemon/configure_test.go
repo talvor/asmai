@@ -385,8 +385,8 @@ func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
 	for _, query := range []string{
 		`INSERT INTO jobs(number, repository, state) VALUES (1, 'a', 'open'), (2, 'b', 'open')`,
 		`INSERT INTO job_branches(job, repository, name, started_from, tip, view, created_at) VALUES (1, 'a', 'one', 'tip', 'tip', 'view', '2026-01-01T00:00:00Z'), (2, 'b', 'two', 'tip', 'tip', 'view', '2026-01-01T00:00:00Z')`,
-		`INSERT INTO assignments(id, job, owner, worker, outcome, criteria, state, created_at) VALUES (1, 1, 'leader@engineering', 'worker1@engineering', 'one', '[]', 'active', '2026-01-01T00:00:00Z'), (2, 2, 'leader@engineering', 'worker2@engineering', 'two', '[]', 'active', '2026-01-01T00:00:00Z')`,
-		`INSERT INTO workspaces(assignment, slot, path, tmp, branch, base) VALUES (1, 1, '/one', '/tmp/one', 'one', 'tip'), (2, 2, '/two', '/tmp/two', 'two', 'tip')`,
+		`INSERT INTO assignments(id, job, owner, worker, outcome, criteria, state, created_at) VALUES (1, 1, 'leader@engineering', 'worker1@engineering', 'one', '[]', 'active', '2026-01-01T00:00:00Z'), (2, 2, 'leader@engineering', 'worker2@engineering', 'two', '[]', 'active', '2026-01-01T00:00:00Z'), (3, 1, 'leader@engineering', 'worker4@engineering', 'three', '[]', 'active', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO workspaces(assignment, slot, path, tmp, branch, base) VALUES (1, 1, '/one', '/tmp/one', 'one', 'tip'), (2, 2, '/two', '/tmp/two', 'two', 'tip'), (3, 3, '/three', '/tmp/three', 'three', 'tip')`,
 	} {
 		if _, err := db.Exec(query); err != nil {
 			t.Fatal(err)
@@ -395,9 +395,11 @@ func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
 	d := &daemon{store: s}
 	agents := []store.Agent{
 		{Agent: "leader@engineering", Role: "engineering", State: store.AgentRunning},
+		{Agent: "leader@quality", Role: "quality", State: store.AgentStopped},
 		{Agent: "worker1@engineering", Role: "engineering", State: store.AgentRunning},
 		{Agent: "worker2@engineering", Role: "engineering", State: store.AgentRunning},
 		{Agent: "worker3@engineering", Role: "engineering", State: store.AgentRunning},
+		{Agent: "worker4@engineering", Role: "engineering", State: store.AgentStopped},
 	}
 	old, _ := config.Parse([]byte("[repositories.a]\norigin = \"a\"\ndefault_branch = \"main\"\n"))
 	for _, edited := range []string{"notes = \"new notes\"", `repository_skills = ["engineering"]`} {
@@ -412,10 +414,23 @@ func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
 		picked, err := d.pickedUpBy(changes[0], agents)
 		want := []string{"worker1@engineering"}
 		if strings.HasPrefix(edited, "repository_skills") {
-			want = []string{}
+			want = []string{"worker1@engineering", "worker4@engineering"}
 		}
 		if err != nil || !slices.Equal(picked, want) {
 			t.Errorf("%s picked %v, %v", edited, picked, err)
+		}
+	}
+	for _, tc := range []struct {
+		change config.Change
+		want   []string
+	}{
+		{config.Change{Role: "quality", Side: "leader", Skills: true, After: `["extra"]`}, []string{"leader@quality"}},
+		{config.Change{Role: "engineering", Side: "worker", Skills: true, After: `["extra"]`}, []string{"worker1@engineering", "worker2@engineering", "worker3@engineering", "worker4@engineering"}},
+		{config.Change{Role: "quality", Side: "leader", Skills: true}, []string{}},
+	} {
+		picked, err := d.pickedUpBy(tc.change, agents)
+		if err != nil || !slices.Equal(picked, tc.want) {
+			t.Errorf("role skill change %+v affected %v, %v; want %v", tc.change, picked, err, tc.want)
 		}
 	}
 }

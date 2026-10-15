@@ -334,7 +334,7 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	return 0
 }
 
-// showChanges prints each change and its effect on running agents.
+// showChanges prints each change and its effect on agents.
 func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 	noun := "changes"
 	if len(changes) == 1 {
@@ -364,12 +364,16 @@ func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 				fmt.Fprintf(w, "      removes %s's own skills setting for: %s\n", c.Repository, strings.Join(c.Lost, ", "))
 			}
 		}
-		switch {
-		case c.Note != "":
+		if c.Note != "" {
 			fmt.Fprintf(w, "      %s\n", c.Note)
-		case len(c.Agents) > 0:
-			fmt.Fprintf(w, "      picked up at the next start of: %s\n", strings.Join(c.Agents, ", "))
-		default:
+		}
+		if len(c.Agents) > 0 {
+			if c.Note != "" {
+				fmt.Fprintf(w, "      affected agents: %s\n", strings.Join(c.Agents, ", "))
+			} else {
+				fmt.Fprintf(w, "      picked up at the next start of: %s\n", strings.Join(c.Agents, ", "))
+			}
+		} else if c.Note == "" {
 			fmt.Fprintf(w, "      no running agent is affected, so it applies at once\n")
 		}
 	}

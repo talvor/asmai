@@ -156,6 +156,7 @@ func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 		sessions: map[string]sessionRef{"credential": {address: owner, generation: 1}},
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+	d.applied = readApplied(configFile)
 	_, _, err = d.assign(Request{Session: "credential", Job: job.Number, Outcome: "Implement it", Criteria: []string{"complete"}})
 	if err == nil || !strings.Contains(err.Error(), "starting worker worker1@engineering") {
 		t.Fatalf("assign returned %v, want the worker startup error", err)
@@ -234,6 +235,7 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 		t.Fatal(err)
 	}
 	d = &daemon{cfg: Config{Paths: paths, ConfigFile: configFile, Pins: testPins("v"), ClaudeVersion: reportsVersion("v"), ClaudeRecord: trustingRecord(t, paths)}, leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	d.applied = readApplied(configFile)
 	t.Cleanup(func() {
 		d.mu.Lock()
 		d.stopping = true

@@ -119,6 +119,9 @@ func change(table, name string, from, to Entry) Change {
 			c.Skills = true
 			c.Gained, c.Lost = listDifference(from.List, to.List)
 		}
+	case strings.HasPrefix(table, "repositories.") && name == "notes":
+		c.Repository = strings.TrimPrefix(table, "repositories.")
+		c.Roles = slices.Clone(roles.All)
 	case strings.HasPrefix(table, "repositories.") && name == "repository_skills":
 		c.Repository = strings.TrimPrefix(table, "repositories.")
 		gained, lost := listDifference(from.List, to.List)

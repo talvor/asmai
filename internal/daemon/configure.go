@@ -5,7 +5,9 @@ package daemon
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -140,8 +142,19 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 	isRegistered := map[string]bool{}
 	for _, r := range registered {
 		isRegistered[r.Name] = true
-		if _, ok := cfg.Repositories[r.Name]; !ok {
+		entry, ok := cfg.Repositories[r.Name]
+		if !ok {
 			removed = append(removed, r.Name)
+			continue
+		}
+		for _, field := range []struct{ name, file, record string }{
+			{"location", entry.Location, r.Location},
+			{"origin", entry.Origin, r.Origin},
+			{"default_branch", entry.DefaultBranch, r.DefaultBranch},
+		} {
+			if field.file != field.record {
+				return nil, refuse("[repositories.%s].%s differs from the registered repository; config apply does not change the repository record", r.Name, field.name)
+			}
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Repositories)) {
@@ -171,7 +184,11 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 		return nil, fmt.Errorf("reading the agents: %w", err)
 	}
 	for _, c := range config.Diff(base, cfg) {
-		result.Changes = append(result.Changes, ConfigChange{Change: c, Agents: pickedUpBy(c, agents)})
+		picked, err := d.pickedUpBy(c, agents)
+		if err != nil {
+			return nil, err
+		}
+		result.Changes = append(result.Changes, ConfigChange{Change: c, Agents: picked})
 	}
 	if !req.Confirm || len(result.Changes) == 0 {
 		return result, nil
@@ -201,7 +218,7 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 // pickedUpBy returns the running agents that get change c at their next
 // start, by address: the agents of the role it is for, on the side it is
 // for, that do not already run what it sets.
-func pickedUpBy(c config.Change, agents []store.Agent) []string {
+func (d *daemon) pickedUpBy(c config.Change, agents []store.Agent) ([]string, error) {
 	picked := []string{}
 	for _, a := range agents {
 		if a.State != store.AgentRunning {
@@ -211,7 +228,21 @@ func pickedUpBy(c config.Change, agents []store.Agent) []string {
 		var affected bool
 		switch {
 		case c.Repository != "":
-			affected = slices.Contains(c.Roles, a.Role)
+			if !slices.Contains(c.Roles, a.Role) || leader {
+				continue
+			}
+			assignment, err := d.store.LiveAssignmentOf(a.Agent)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("reading %s's assignment: %w", a.Agent, err)
+			}
+			job, err := d.store.Job(assignment.Job)
+			if err != nil {
+				return nil, fmt.Errorf("reading job %d: %w", assignment.Job, err)
+			}
+			affected = job.Repository == c.Repository
 		case c.Role == "" || a.Role != c.Role:
 		case c.Removed:
 			// A role removed from the file keeps its running agents, which
@@ -228,5 +259,5 @@ func pickedUpBy(c config.Change, agents []store.Agent) []string {
 			picked = append(picked, a.Agent)
 		}
 	}
-	return picked
+	return picked, nil
 }

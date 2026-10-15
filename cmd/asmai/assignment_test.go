@@ -213,6 +213,9 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 		if err := os.WriteFile(path, []byte(edit(string(data))), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		if _, stderr, code := runAsmai(t, "config", "apply", "--yes"); code != 0 {
+			t.Fatal(stderr)
+		}
 	}
 	a := inTerminal(t, 100, 25)
 	waitFor(t, "Coordination prompt", a.shows(">"))

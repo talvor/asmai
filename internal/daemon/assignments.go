@@ -365,13 +365,11 @@ func (d *daemon) trailers(req Request) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A repository whose conventions forbid trailers has them switched off in
-	// the configuration file, which is read now so that the switch applies to
-	// the next commit. A file that cannot be read leaves them on.
-	if d.cfg.ConfigFile != "" {
-		if cfg, problems, err := config.Load(d.cfg.ConfigFile); err == nil && len(problems) == 0 && !d.repositoryOptions(cfg, a.Job).CommitTrailers {
-			return nil, nil
-		}
+	d.configMu.Lock()
+	cfg := d.applied
+	d.configMu.Unlock()
+	if !d.repositoryOptions(cfg, a.Job).CommitTrailers {
+		return nil, nil
 	}
 	return []string{
 		fmt.Sprintf("%s: %d", TrailerJob, a.Job),

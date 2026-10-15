@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/talvor/asmai/internal/config"
+	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/session"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -208,5 +211,176 @@ func TestRemovingARepositoryFromTheFileIsRefusedWhileItHasAnOpenJob(t *testing.T
 	}
 	if _, err := applyConfig(t, p.Socket, withTable, true); err == nil || !strings.Contains(err.Error(), "asmai repo add") {
 		t.Errorf("applying a repository nothing registered returned %v", err)
+	}
+}
+
+func TestApplyingARegisteredRepositoryIdentityEditIsRefused(t *testing.T) {
+	p, configFile := repoDaemon(t)
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, []byte(appliedStaffing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := applyConfig(t, p.Socket, appliedStaffing, true); err != nil || !resp.ConfigApply.Applied {
+		t.Fatalf("applying staffing returned %+v, %v", resp.ConfigApply, err)
+	}
+	origin := remote(t)
+	registered, err := addRepo(t, p, origin, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []struct{ name, value string }{
+		{"location", "/elsewhere"},
+		{"origin", "/elsewhere"},
+		{"default_branch", "elsewhere"},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			cfg, problems := config.Parse(initial)
+			if len(problems) != 0 {
+				t.Fatal(problems)
+			}
+			entry := cfg.Repositories["fixture"]
+			switch field.name {
+			case "location":
+				entry.Location = field.value
+			case "origin":
+				entry.Origin = field.value
+			case "default_branch":
+				entry.DefaultBranch = field.value
+			}
+			cfg.Repositories["fixture"] = entry
+			changed := string(config.Render(cfg))
+			if err := os.WriteFile(configFile, []byte(changed), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, confirm := range []bool{false, true} {
+				if _, err := applyConfig(t, p.Socket, changed, confirm); err == nil || !strings.Contains(err.Error(), field.name) || !strings.Contains(err.Error(), "does not change the repository record") {
+					t.Errorf("apply with confirm=%t returned %v", confirm, err)
+				}
+			}
+		})
+	}
+	listed, err := Call(p.Socket, Request{Command: CommandRepoShow, Repository: "fixture"})
+	if err != nil || listed.Repository == nil || listed.Repository.Location != registered.Repository.Location || listed.Repository.Origin != origin || listed.Repository.DefaultBranch != "trunk" {
+		t.Errorf("registered repository changed: %+v, %v", listed.Repository, err)
+	}
+	if got := countJournaled(t, p.Socket, store.KindConfigurationApplied); got != 1 {
+		t.Errorf("refused identity edits journaled %d configurations", got)
+	}
+}
+
+func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, query := range []string{
+		`INSERT INTO jobs(number, repository, state) VALUES (1, 'a', 'open'), (2, 'b', 'open')`,
+		`INSERT INTO job_branches(job, repository, name, started_from, tip, view, created_at) VALUES (1, 'a', 'one', 'tip', 'tip', 'view', '2026-01-01T00:00:00Z'), (2, 'b', 'two', 'tip', 'tip', 'view', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO assignments(id, job, owner, worker, outcome, criteria, state, created_at) VALUES (1, 1, 'leader@engineering', 'worker1@engineering', 'one', '[]', 'active', '2026-01-01T00:00:00Z'), (2, 2, 'leader@engineering', 'worker2@engineering', 'two', '[]', 'active', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO workspaces(assignment, slot, path, tmp, branch, base) VALUES (1, 1, '/one', '/tmp/one', 'one', 'tip'), (2, 2, '/two', '/tmp/two', 'two', 'tip')`,
+	} {
+		if _, err := db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := &daemon{store: s}
+	agents := []store.Agent{
+		{Agent: "leader@engineering", Role: "engineering", State: store.AgentRunning},
+		{Agent: "worker1@engineering", Role: "engineering", State: store.AgentRunning},
+		{Agent: "worker2@engineering", Role: "engineering", State: store.AgentRunning},
+		{Agent: "worker3@engineering", Role: "engineering", State: store.AgentRunning},
+	}
+	old, _ := config.Parse([]byte("[repositories.a]\norigin = \"a\"\ndefault_branch = \"main\"\n"))
+	for _, edited := range []string{"notes = \"new notes\"", `repository_skills = ["engineering"]`} {
+		newConfig, problems := config.Parse([]byte("[repositories.a]\norigin = \"a\"\ndefault_branch = \"main\"\n" + edited + "\n"))
+		if len(problems) != 0 {
+			t.Fatal(problems)
+		}
+		changes := config.Diff(old, newConfig)
+		if len(changes) != 1 || changes[0].Repository != "a" {
+			t.Fatalf("%s produced changes %+v", edited, changes)
+		}
+		picked, err := d.pickedUpBy(changes[0], agents)
+		if err != nil || !slices.Equal(picked, []string{"worker1@engineering"}) {
+			t.Errorf("%s picked %v, %v", edited, picked, err)
+		}
+	}
+}
+
+func TestAgentStaffingUsesTheAppliedConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before, problems := config.Parse([]byte(appliedStaffing))
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	changed := strings.Replace(appliedStaffing, `leader_model = "opus"`, `leader_model = "sonnet"`, 1)
+	if err := os.WriteFile(path, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{cfg: Config{ConfigFile: path}, applied: before}
+	if cfg, checks := d.staffing(); len(checks) != 0 || cfg.Roles["coordination"].LeaderModel != "opus" {
+		t.Errorf("before apply, staffing returned %q and %v", cfg.Roles["coordination"].LeaderModel, checks)
+	}
+	after, problems := config.Parse([]byte(changed))
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	d.applied = after
+	if cfg, checks := d.staffing(); len(checks) != 0 || cfg.Roles["coordination"].LeaderModel != "sonnet" {
+		t.Errorf("after apply, staffing returned %q and %v", cfg.Roles["coordination"].LeaderModel, checks)
+	}
+}
+
+func TestCommitTrailersUseTheAppliedRepositorySetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, query := range []string{
+		`INSERT INTO jobs(number, repository, state) VALUES (1, 'a', 'open')`,
+		`INSERT INTO job_branches(job, repository, name, started_from, tip, view, created_at) VALUES (1, 'a', 'one', 'tip', 'tip', 'view', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO assignments(id, job, owner, worker, outcome, criteria, state, created_at) VALUES (1, 1, 'leader@engineering', 'worker1@engineering', 'one', '[]', 'active', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO workspaces(assignment, slot, path, tmp, branch, base) VALUES (1, 1, '/one', '/tmp/one', 'one', 'tip')`,
+		`INSERT INTO messages(id, assignment, job, sender, recipient, kind, body) VALUES (1, 1, 1, 'leader@engineering', 'worker1@engineering', 'assignment', 'one')`,
+		`INSERT INTO dispatches(id, message, agent, state, updated_at) VALUES (1, 1, 'worker1@engineering', 'working', '2026-01-01T00:00:00Z')`,
+	} {
+		if _, err := db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := config.Parse([]byte("[repositories.a]\norigin = \"a\"\ndefault_branch = \"main\"\n"))
+	after, _ := config.Parse([]byte("[repositories.a]\norigin = \"a\"\ndefault_branch = \"main\"\ncommit_trailers = false\n"))
+	address := roles.WorkerOf(roles.Engineering, 1)
+	d := &daemon{
+		store: s, applied: before,
+		leaders:  map[string]*leader{address.String(): {address: address, session: &session.Session{}, generation: 1, currentDispatch: 1}},
+		sessions: map[string]sessionRef{"credential": {address: address, generation: 1}},
+	}
+	if trailers, err := d.trailers(Request{Session: "credential"}); err != nil || len(trailers) != 3 {
+		t.Fatalf("before apply, trailers were %v, %v", trailers, err)
+	}
+	d.applied = after
+	if trailers, err := d.trailers(Request{Session: "credential"}); err != nil || len(trailers) != 0 {
+		t.Errorf("after apply, trailers were %v, %v", trailers, err)
 	}
 }

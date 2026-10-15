@@ -4,8 +4,10 @@ package providers
 
 import (
 	"encoding/json"
+	"github.com/talvor/asmai/internal/roles"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -61,7 +63,7 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	}
 	p := settings.Permissions
 	if !slices.Equal(p.Allow, []string{
-		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
 		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
@@ -105,7 +107,7 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		// without a prompt; every other command is either guarded or raises
 		// the prompt.
 		if want := []string{
-			"asmai *", "echo *", "gh pr create *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"asmai *", "echo *", "cd *", "gh pr create *", "gh pr edit *", "gh pr view *", "gh pr list *", "gh pr checks *",
 			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
 			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
 			"git status *", "git rev-parse *", "git merge *", "git var *",
@@ -359,5 +361,49 @@ func TestTheProbeReportsTheRulesClaudeCodeIgnores(t *testing.T) {
 	}
 	if _, err := probe(t, ""); err == nil {
 		t.Error("no answer was taken for a verdict")
+	}
+}
+
+// neverRunGHCommands are the gh commands the instructions name only to forbid
+// or to leave to the daemon, so no agent runs them and the settings need not
+// allow them.
+var neverRunGHCommands = []string{}
+
+func TestEveryGHCommandTheInstructionsNameIsExcludedAndAllowedOrNeverRun(t *testing.T) {
+	var texts []string
+	for _, role := range []string{roles.Coordination, roles.Engineering, roles.Quality} {
+		leader, err := roles.LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		worker, err := roles.WorkerInstructions(role)
+		if err != nil {
+			continue
+		}
+		texts = append(texts, leader, worker)
+	}
+	var settings struct {
+		Sandbox     struct{ ExcludedCommands []string } `json:"sandbox"`
+		Permissions struct{ Allow []string }            `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{}, Permissions{})), &settings); err != nil {
+		t.Fatal(err)
+	}
+	named := regexp.MustCompile("`gh ([a-z]+ [a-z]+)")
+	found := 0
+	for _, text := range texts {
+		for _, m := range named.FindAllStringSubmatch(text, -1) {
+			found++
+			command := m[1]
+			if slices.Contains(neverRunGHCommands, command) {
+				continue
+			}
+			if !slices.Contains(settings.Sandbox.ExcludedCommands, "gh "+command+" *") || !slices.Contains(settings.Permissions.Allow, "Bash(gh "+command+":*)") {
+				t.Errorf("the instructions name `gh %s`, which the settings do not both exclude from the sandbox and allow", command)
+			}
+		}
+	}
+	if found == 0 {
+		t.Error("the instructions name no gh command")
 	}
 }

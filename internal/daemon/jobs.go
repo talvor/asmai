@@ -144,7 +144,7 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		fmt.Fprintf(&b, "- %s\n", criterion)
 	}
 	if repository.Clone != "" {
-		fmt.Fprintf(&b, "Repository clone: %s\nDefault branch (the base the job branch takes in): %s\n", repository.Clone, repository.DefaultBranch)
+		fmt.Fprintf(&b, "Repository origin: %s\nRepository clone: %s\nDefault branch (the base the job branch takes in): %s\n", repository.Origin, repository.Clone, repository.DefaultBranch)
 	}
 	switch {
 	case branch != nil && j.State == store.JobEnded:

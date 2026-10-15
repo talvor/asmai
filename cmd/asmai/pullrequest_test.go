@@ -18,7 +18,10 @@ import (
 // does for a repository without draft pull requests. `gh pr view` shows one,
 // with its head commit read from origin, and `gh repo view` origin, as
 // talvor/asmai-fixture. It records every call, with where it
-// ran, and does nothing else.
+// ran, and does nothing else. `gh pr create` and `gh pr edit` refuse a call
+// that does not name the repository with --repo talvor/asmai-fixture, as the
+// leader is instructed to run them: a leader's working directory is not the
+// read-only view, so they cannot rely on the directory they run in.
 const fakeGH = `#!/bin/sh
 state="$ASMAI_TEST_DIR/gh"
 mkdir -p "$state"
@@ -26,9 +29,10 @@ printf '%s: %s\n' "$(pwd -P)" "$*" >> "$state/calls"
 case "$1 $2" in
 "pr create")
 	shift 2
-	draft=false title= head= body=
+	draft=false title= head= body= repo=
 	while [ $# -gt 0 ]; do
 		case "$1" in
+		--repo) repo=$2; shift ;;
 		--draft) draft=true ;;
 		--title) title=$2; shift ;;
 		--head) head=$2; shift ;;
@@ -37,6 +41,10 @@ case "$1 $2" in
 		esac
 		shift
 	done
+	if [ "$repo" != talvor/asmai-fixture ]; then
+		echo "gh pr create was not run with --repo talvor/asmai-fixture" >&2
+		exit 1
+	fi
 	if $draft && [ -e "$ASMAI_TEST_DIR/refuse-draft" ]; then
 		echo 'pull request create failed: GraphQL: Draft pull requests are not supported in this repository. (createPullRequest)' >&2
 		exit 1
@@ -47,6 +55,24 @@ case "$1 $2" in
 	printf '{"number":%d,"url":"https://github.com/talvor/asmai-fixture/pull/%d","title":"%s","isDraft":%s,"headRefName":"%s","headRefOid":"%s","state":"OPEN"}\n' "$n" "$n" "$title" "$draft" "$head" "$oid" > "$state/pr-$n.json"
 	cp "$body" "$state/body-$n.md"
 	echo "https://github.com/talvor/asmai-fixture/pull/$n"
+	;;
+"pr edit")
+	shift 2
+	number=$1 body= repo=
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--repo) repo=$2; shift ;;
+		--body-file) body=$2; shift ;;
+		esac
+		shift
+	done
+	if [ "$repo" != talvor/asmai-fixture ] || [ ! -f "$state/pr-$number.json" ]; then
+		echo "gh pr edit was not run with --repo talvor/asmai-fixture on a pull request that exists" >&2
+		exit 1
+	fi
+	cp "$body" "$state/body-$number.md"
+	echo "https://github.com/talvor/asmai-fixture/pull/$number"
 	;;
 "pr view")
 	cat "$state/pr-${3##*/}.json" 2>/dev/null || { echo "no pull requests found for $3" >&2; exit 1; }
@@ -94,13 +120,14 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 	t.Setenv(fakeprovider.ScriptEnv+"_ENGINEERING", filepath.Join(testDir, "engineering.jsonl"))
 
 	body := "## Summary\n\nAdds greeting.txt.\n\n## AsmAI\n\nJob 1: Add a greeting.\n\nRefs #12\n"
-	create := `gh pr create --draft --base main --head ` + jobBranch + ` --title 'Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`
+	updated := body + "\nQuality passed the head.\n"
+	create := `gh pr create --draft --repo talvor/asmai-fixture --base main --head ` + jobBranch + ` --title 'Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`
 	opened := []string{fakeRun(create, 0, "^"+url+"\n$")}
 	state := "a draft"
 	if refuseDraft {
 		opened = []string{
 			fakeRun(create, 1, "Draft pull requests are not supported"),
-			fakeRun(`gh pr create --base main --head `+jobBranch+` --title '[not ready] Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
+			fakeRun(`gh pr create --repo talvor/asmai-fixture --base main --head `+jobBranch+` --title '[not ready] Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
 		}
 		state = `not a draft, with "\[not ready\]" at the start of its title`
 	}
@@ -117,8 +144,13 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 		[]string{
 			fakeRun(`asmai effect pull-request `+url, 0, "(?s)effect [0-9]+ recorded: pull-request "+url+" \\(job 1, dispatch 4\\)\npull request #7 of job 1 recorded, as GitHub has it: "+state+", from "+jobBranch+" at "+sha+"; the daemon follows it\n$"),
 			fakeRun(`asmai brief 1`, 0, "(?s)Pull request \\(the latest the delivery owner recorded, which the daemon follows\\):\n- #7 "+url+", "+state+", from "+jobBranch+" at "+sha+", OPEN on GitHub, effect [0-9]+\n"),
+			// The body is updated as the leader is instructed, as its own
+			// command with --repo, and the update is recorded again.
+			fakeRun(`printf '`+strings.ReplaceAll(updated, "\n", `\n`)+`' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
+			fakeRun(`gh pr edit 7 --repo talvor/asmai-fixture --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
+			fakeRun(`asmai effect pull-request `+url, 0, "(?s)effect [0-9]+ recorded: pull-request "+url+" "),
 			// A pull request from another branch is not the job's.
-			fakeRun(`gh pr create --base main --head asmai/job-1/1 --title 'Not the job branch' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull/8"),
+			fakeRun(`gh pr create --repo talvor/asmai-fixture --base main --head asmai/job-1/1 --title 'Not the job branch' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull/8"),
 			fakeRun(`asmai effect pull-request https://github.com/talvor/asmai-fixture/pull/8`, 1, "nothing is recorded: pull request #8 is from asmai/job-1/1, not the job branch "+jobBranch),
 			// Nor is one in another repository, or from a fork, or one
 			// that is not open.
@@ -223,10 +255,13 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 		Effect   int    `json:"effect"`
 	}
 	recorded := journaled(t, "pull_request.recorded")
-	if len(recorded) != 1 {
+	if len(recorded) != 2 {
 		t.Fatalf("pull requests recorded: %+v", recorded)
 	}
 	pr := decode[prEntry](t, recorded[0])
+	if again := decode[prEntry](t, recorded[1]); again.Number != pr.Number || again.Effect == pr.Effect {
+		t.Errorf("the update was recorded as %+v after %+v", again, pr)
+	}
 	wantTitle := "Add a greeting"
 	if refuseDraft {
 		wantTitle = "[not ready] Add a greeting"
@@ -246,7 +281,7 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 			prEffects = append(prEffects, eff)
 		}
 	}
-	if len(prEffects) != 2 || prEffects[0].Agent != "worker1@engineering" || prEffects[1].Agent != "leader@engineering" || prEffects[1].Ref != url || prEffects[1].ID != pr.Effect {
+	if len(prEffects) != 3 || prEffects[0].Agent != "worker1@engineering" || prEffects[1].Agent != "leader@engineering" || prEffects[1].Ref != url || prEffects[1].ID != pr.Effect || prEffects[2].Agent != "leader@engineering" {
 		t.Errorf("the pull-request effects are %+v", prEffects)
 	}
 
@@ -263,6 +298,10 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 		switch {
 		case strings.HasPrefix(args, "pr create "):
 			creates = append(creates, args)
+			if !strings.Contains(args, " --repo talvor/asmai-fixture ") {
+				t.Errorf("the leader ran gh %s without --repo", args)
+			}
+		case args == "pr edit 7 --repo talvor/asmai-fixture --body-file "+filepath.Join(testDir, "body.md"):
 		case args == "pr view 7 --json number,url,title,isDraft,headRefName,headRefOid,isCrossRepository,state,statusCheckRollup":
 			// The daemon watching the checks on the pushed head, which
 			// this pull request has none of: it is never marked ready.
@@ -288,10 +327,21 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 	if refuseDraft && (strings.Contains(creates[1], "--draft") || !strings.Contains(creates[1], "--title [not ready] Add a greeting")) {
 		t.Errorf("after the refusal, gh pr create ran as %q", creates[1])
 	}
-	if len(views) != 11 || views[1] != "pr view "+url+" --json number,url,title,isDraft,headRefName,headRefOid,isCrossRepository,state" || views[2] != "repo view --json url" {
+	if len(views) != 13 || views[1] != "pr view "+url+" --json number,url,title,isDraft,headRefName,headRefOid,isCrossRepository,state" || views[2] != "repo view --json url" {
 		t.Errorf("gh pr view ran as %q", views)
 	}
-	if got, err := os.ReadFile(filepath.Join(testDir, "gh", "body-7.md")); err != nil || string(got) != body {
+	// No command of the leader's raised a native permission prompt: each
+	// ran as its own command, in the form the instructions give.
+	type observation struct {
+		Agent string `json:"agent"`
+		Event string `json:"event"`
+	}
+	for _, e := range journaled(t, "observation") {
+		if o := decode[observation](t, e); o.Event == "PermissionRequest" {
+			t.Errorf("%s raised a native permission request", o.Agent)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(testDir, "gh", "body-7.md")); err != nil || string(got) != updated {
 		t.Errorf("the pull request's body is %q (%v)", got, err)
 	}
 }

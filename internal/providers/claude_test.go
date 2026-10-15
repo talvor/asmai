@@ -5,6 +5,7 @@ package providers
 import (
 	"encoding/json"
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/skills"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -430,5 +431,37 @@ func TestASessionsSkillsAreItsPluginAndTheUserSettingSourceIsLeftOut(t *testing.
 	}
 	if slices.Contains(ClaudeCodeArgs("hook", "opus", "x", "", WriteGuard{}, Permissions{}), "--plugin-dir") {
 		t.Error("a session with no skills was given a plugin")
+	}
+}
+
+func TestEveryRoleStartsAndResumesWithoutUserSettingSources(t *testing.T) {
+	for _, role := range roles.All {
+		for _, agent := range []struct {
+			name string
+			list []string
+		}{
+			{"leader", skills.LeaderList(role)},
+			{"worker", skills.WorkerList(role)},
+		} {
+			t.Run(role+"/"+agent.name, func(t *testing.T) {
+				plugin := ""
+				if len(agent.list) > 0 {
+					plugin = "/state/plugins/" + agent.name + "@" + role
+				}
+				for name, args := range map[string][]string{
+					"start":  ClaudeCodeArgs("hook", "opus", "instructions", plugin, WriteGuard{}, Permissions{}),
+					"resume": ClaudeCodeResumeArgs("hook", "opus", "instructions", plugin, WriteGuard{}, Permissions{}, "session-id"),
+				} {
+					i := slices.Index(args, "--setting-sources")
+					if i < 0 || i+1 == len(args) || args[i+1] != "" {
+						t.Errorf("%s: %q does not leave out user setting sources", name, args)
+					}
+					i = slices.Index(args, "--plugin-dir")
+					if plugin == "" && i >= 0 || plugin != "" && (i < 0 || i+1 == len(args) || args[i+1] != plugin) {
+						t.Errorf("%s: %q has the wrong plugin for %q", name, args, agent.list)
+					}
+				}
+			})
+		}
 	}
 }

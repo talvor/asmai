@@ -659,17 +659,7 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, options config
 	}
 	// The worker's git adds the trailers to each commit, as the user.
 	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: workerSkills(l.address.Role, a)})
-}
-
-// workerSkills returns the skills a worker is given for assignment a: the
-// list the assignment recorded, or its role's default list for an assignment
-// made before assignments recorded one.
-func workerSkills(role string, a store.Assignment) []string {
-	if len(a.Skills) > 0 {
-		return a.Skills
-	}
-	return skills.WorkerList(role)
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: a.EffectiveSkills()})
 }
 
 // startSession starts l's session on the installed Claude Code as launch

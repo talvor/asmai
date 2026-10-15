@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/skills"
 )
 
 // The states of an assignment. It starts active and, when its worker submits
@@ -139,6 +140,14 @@ type Assignment struct {
 	// narrower list the leader gave.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
+}
+
+func (a Assignment) EffectiveSkills() []string {
+	if len(a.Skills) > 0 {
+		return a.Skills
+	}
+	_, role, _ := strings.Cut(a.Worker, "@")
+	return skills.WorkerList(role)
 }
 
 // Effect is a consequential effect an agent made and reported with
@@ -690,11 +699,10 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if !a.ReadOnly && !sub.TookInTip {
 		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
-	if len(a.Skills) > 0 {
-		for _, name := range in.SkillsRun {
-			if !slices.Contains(a.Skills, name) {
-				return Report{}, Dispatch{}, fmt.Errorf("--skill %q is not on your skill list for assignment %d, which is %s: name only the skills you ran from it", name, a.ID, strings.Join(a.Skills, ", "))
-			}
+	list := a.EffectiveSkills()
+	for _, name := range in.SkillsRun {
+		if !slices.Contains(list, name) {
+			return Report{}, Dispatch{}, fmt.Errorf("--skill %q is not on your skill list for assignment %d, which is %s: name only the skills you ran from it", name, a.ID, strings.Join(list, ", "))
 		}
 	}
 	if sub.Kind == ReportResult {

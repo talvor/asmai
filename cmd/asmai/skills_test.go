@@ -3,10 +3,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/talvor/asmai/internal/skills"
@@ -56,8 +56,16 @@ func TestAWorkerIsGivenTheListItsAssignmentNarrowedToAsAPerSessionPluginAndTheDi
 	if _, err := os.Stat(filepath.Join(plugin, ".claude-plugin", "plugin.json")); err != nil {
 		t.Errorf("the worker's plugin has no manifest: %v", err)
 	}
-	if !strings.Contains(argValue(args, "--settings"), "Read(/"+plugin) {
-		t.Errorf("the worker may not read its plugin without a prompt: %s", argValue(args, "--settings"))
+	var settings struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(argValue(args, "--settings")), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Read(/" + plugin + "/**)"; !slices.Contains(settings.Permissions.Allow, want) {
+		t.Errorf("the worker's permission rules are %q, want %q", settings.Permissions.Allow, want)
 	}
 
 	// Its dispatch records the bundle's version and each skill's fingerprint.

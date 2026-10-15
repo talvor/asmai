@@ -242,6 +242,47 @@ func submission(d Dispatch, kind string) Submission {
 	return Submission{Agent: "worker1@engineering", Generation: 1, Dispatch: d.ID, Kind: kind, Commit: otherCommit, JobTip: tipCommit, TookInTip: true, Input: in}
 }
 
+func TestReportsNameOnlySkillsDeliveredToWorkers(t *testing.T) {
+	for _, kind := range []string{ReportResult, ReportBlocked} {
+		for _, narrowed := range []bool{false, true} {
+			name := kind + "/default"
+			if narrowed {
+				name = kind + "/narrowed"
+			}
+			t.Run(name, func(t *testing.T) {
+				s := open(t, filepath.Join(t.TempDir(), "store.db"))
+				job := jobWithBranch(t, s)
+				a, d := newAssignment(t, s, job)
+				if narrowed {
+					if _, err := s.db.Exec(`UPDATE assignments SET skills = '["tdd"]' WHERE id = ?`, a.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				working(t, s, d)
+				for _, effect := range []struct{ kind, ref string }{{"commit", otherCommit}, {"push", "origin/asmai/job-1/1"}} {
+					if _, err := s.EffectRecorded(a.Worker, 1, d.ID, effect.kind, effect.ref, assignmentsAt); err != nil {
+						t.Fatal(err)
+					}
+				}
+				bad := submission(d, kind)
+				bad.Input.SkillsRun = []string{"code-review"}
+				if narrowed {
+					bad.Input.SkillsRun = []string{"implement"}
+				}
+				if _, _, err := s.ReportSubmitted(bad, assignmentsAt); err == nil || !strings.Contains(err.Error(), "not on your skill list") {
+					t.Errorf("a %s report naming %q returned %v", kind, bad.Input.SkillsRun, err)
+				}
+				good := submission(d, kind)
+				good.Input.SkillsRun = []string{"tdd"}
+				r, _, err := s.ReportSubmitted(good, assignmentsAt)
+				if err != nil || len(r.SkillsRun) != 1 || r.SkillsRun[0] != "tdd" {
+					t.Errorf("a %s report naming tdd returned %+v (%v)", kind, r, err)
+				}
+			})
+		}
+	}
+}
+
 func TestAResultSubmitsTheAssignmentAndGoesToItsOwningLeader(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	job := jobWithBranch(t, s)

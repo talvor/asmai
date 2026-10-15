@@ -492,6 +492,74 @@ func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
 	}
 }
 
+func TestDirectInboxDeliveryRecordsTheActiveSessionAndPreservesItsFirstAttempt(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	start := SessionStart{Agent: "leader@engineering", Role: "engineering", Provider: "claude-code", Version: "v", Model: "m", Executable: "/p", Args: []string{}, Dir: "/a", PID: 1, At: at, Bundle: "old", Skills: map[string]string{"pr": "old-fingerprint"}}
+	if _, err := s.SessionStarted(start); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.db.Exec(`INSERT INTO jobs(repository,state) VALUES('fixture',?)`, JobOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, dispatch, err := s.SendHandoff(Handoff{Job: jobID, Sender: "leader@coordination", Receiver: start.Agent, Outcome: "implement", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Inbox(start.Agent, dispatch.ID, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	delivered, err := s.NextDispatch(start.Agent)
+	if err != nil || delivered.State != DispatchDelivered || delivered.Generation != 1 || delivered.Bundle != "old" || delivered.Skills["pr"] != "old-fingerprint" {
+		t.Fatalf("direct inbox delivery is %+v (%v), want the first session's provenance", delivered, err)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journaled bool
+	for _, entry := range entries {
+		if entry.Kind != KindDispatchChanged {
+			continue
+		}
+		var change struct {
+			ID         int64             `json:"id"`
+			State      string            `json:"state"`
+			Generation int               `json:"generation"`
+			Bundle     string            `json:"bundle"`
+			Skills     map[string]string `json:"skills"`
+		}
+		if err := json.Unmarshal(entry.Data, &change); err != nil {
+			t.Fatal(err)
+		}
+		if change.ID == dispatch.ID && change.State == DispatchDelivered {
+			journaled = change.Generation == 1 && change.Bundle == "old" && change.Skills["pr"] == "old-fingerprint"
+		}
+	}
+	if !journaled {
+		t.Fatal("the delivered dispatch's journal entry omitted the first session's provenance")
+	}
+	start.PID = 2
+	start.At = at.Add(2 * time.Minute)
+	start.Bundle = "new"
+	start.Skills = map[string]string{"pr": "new-fingerprint"}
+	if _, err := s.SessionStarted(start); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Inbox(start.Agent, dispatch.ID, at.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	delivered, err = s.NextDispatch(start.Agent)
+	if err != nil || delivered.Generation != 2 || delivered.Bundle != "old" || delivered.Skills["pr"] != "old-fingerprint" {
+		t.Fatalf("the repeated inbox delivery is %+v (%v), want the first session's provenance", delivered, err)
+	}
+}
+
 // Dispatches changed within one millisecond are still nudged in the order they
 // were changed, not by id.
 func TestNextDispatchOrdersUpdatesWithinAMillisecond(t *testing.T) {

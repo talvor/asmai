@@ -369,12 +369,29 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 				return nil, err
 			}
 		}
-		if _, err = tx.Exec(`UPDATE dispatches SET state=?,updated_at=? WHERE id=? AND state=?`, DispatchDelivered, timestamp(at), m.Dispatch, m.State); err != nil {
+		var firstGeneration int
+		var firstBundle, firstSkills string
+		if m.State == DispatchCreated {
+			err = tx.QueryRow(`SELECT n.generation,n.bundle,n.skills FROM native_sessions n JOIN agents a ON a.agent=n.agent AND a.generation=n.generation WHERE n.agent=? AND a.state=?`, agent, AgentRunning).Scan(&firstGeneration, &firstBundle, &firstSkills)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+		}
+		if _, err = tx.Exec(`UPDATE dispatches SET state=?,updated_at=?,
+			generation=CASE WHEN ?>0 THEN ? ELSE generation END,
+			bundle=CASE WHEN ?>0 THEN ? ELSE bundle END,
+			skills=CASE WHEN ?>0 THEN ? ELSE skills END
+			WHERE id=? AND state=?`, DispatchDelivered, timestamp(at), firstGeneration, firstGeneration, firstGeneration, firstBundle, firstGeneration, firstSkills, m.Dispatch, m.State); err != nil {
 			return nil, err
 		}
 		m.Fetched = true
 		m.State = DispatchDelivered
-		if _, err = appendEntry(tx, at, KindDispatchChanged, map[string]any{"id": m.Dispatch, "state": DispatchDelivered, "agent": agent}); err != nil {
+		var generation int
+		var bundle, skills string
+		if err = tx.QueryRow(`SELECT generation,bundle,skills FROM dispatches WHERE id=?`, m.Dispatch).Scan(&generation, &bundle, &skills); err != nil {
+			return nil, err
+		}
+		if _, err = appendEntry(tx, at, KindDispatchChanged, map[string]any{"id": m.Dispatch, "state": DispatchDelivered, "agent": agent, "generation": generation, "bundle": bundle, "skills": json.RawMessage(skills)}); err != nil {
 			return nil, err
 		}
 	}

@@ -34,8 +34,8 @@ type Change struct {
 	Skills bool     `json:"skills,omitempty"`
 	Gained []string `json:"gained,omitempty"`
 	Lost   []string `json:"lost,omitempty"`
-	// Repository, with Roles, says a repository's repository_skills now
-	// switch its own skills on, or no longer, for these roles.
+	// Repository and Roles identify the repository and roles whose workers
+	// are affected by this setting.
 	Repository string   `json:"repository,omitempty"`
 	Roles      []string `json:"roles,omitempty"`
 }
@@ -125,7 +125,7 @@ func change(table, name string, from, to Entry) Change {
 			c.Skills = true
 			c.Gained, c.Lost = listDifference(from.List, to.List)
 		}
-	case strings.HasPrefix(table, "repositories.") && name == "notes":
+	case strings.HasPrefix(table, "repositories.") && (name == "notes" || name == "commit_trailers"):
 		c.Repository = strings.TrimPrefix(table, "repositories.")
 		c.Roles = slices.Clone(roles.All)
 	case strings.HasPrefix(table, "repositories.") && name == "repository_skills":

@@ -402,7 +402,7 @@ func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
 		{Agent: "worker4@engineering", Role: "engineering", State: store.AgentStopped},
 	}
 	old, _ := config.Parse([]byte("[repositories.a]\norigin = \"a\"\ndefault_branch = \"main\"\n"))
-	for _, edited := range []string{"notes = \"new notes\"", `repository_skills = ["engineering"]`} {
+	for _, edited := range []string{"notes = \"new notes\"", `repository_skills = ["engineering"]`, "commit_trailers = false"} {
 		newConfig, problems := config.Parse([]byte("[repositories.a]\norigin = \"a\"\ndefault_branch = \"main\"\n" + edited + "\n"))
 		if len(problems) != 0 {
 			t.Fatal(problems)
@@ -419,6 +419,16 @@ func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
 		if err != nil || !slices.Equal(picked, want) {
 			t.Errorf("%s picked %v, %v", edited, picked, err)
 		}
+		if edited == "commit_trailers = false" {
+			reversed := config.Diff(newConfig, old)
+			if len(reversed) != 1 {
+				t.Fatalf("reversing %s produced changes %+v", edited, reversed)
+			}
+			picked, err = d.pickedUpBy(reversed[0], agents)
+			if err != nil || !slices.Equal(picked, want) {
+				t.Errorf("reversing %s picked %v, %v", edited, picked, err)
+			}
+		}
 	}
 	for _, tc := range []struct {
 		change config.Change
@@ -432,6 +442,81 @@ func TestRepositoryChangesPickOnlyAssignedWorkers(t *testing.T) {
 		if err != nil || !slices.Equal(picked, tc.want) {
 			t.Errorf("role skill change %+v affected %v, %v; want %v", tc.change, picked, err, tc.want)
 		}
+	}
+}
+
+func TestCommitTrailerApplyNamesAffectedWorkerInPreviewAndJournal(t *testing.T) {
+	p, configFile := repoDaemon(t)
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, []byte(appliedStaffing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyConfig(t, p.Socket, appliedStaffing, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := addRepo(t, p, remote(t), "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	db, err := sql.Open("sqlite3", p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, query := range []string{
+		`INSERT INTO jobs(number, repository, state) VALUES (1, 'fixture', 'open')`,
+		`INSERT INTO job_branches(job, repository, name, started_from, tip, view, created_at) VALUES (1, 'fixture', 'one', 'tip', 'tip', 'view', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO assignments(id, job, owner, worker, outcome, criteria, state, created_at) VALUES (1, 1, 'leader@engineering', 'worker1@engineering', 'one', '[]', 'active', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO workspaces(assignment, slot, path, tmp, branch, base) VALUES (1, 1, '/one', '/tmp/one', 'one', 'tip')`,
+	} {
+		if _, err := db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.SessionStarted(store.SessionStart{Agent: "worker1@engineering", Role: "engineering", Provider: "claude", Model: "opus", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := config.Parse(content)
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	options := cfg.Options["fixture"]
+	options.CommitTrailers = false
+	cfg.Options["fixture"] = options
+	changed := string(config.Render(cfg))
+	if err := os.WriteFile(configFile, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := applyConfig(t, p.Socket, changed, false)
+	if err != nil || preview.ConfigApply == nil || len(preview.ConfigApply.Changes) != 1 {
+		t.Fatalf("preview returned %+v, %v", preview.ConfigApply, err)
+	}
+	change := preview.ConfigApply.Changes[0]
+	if change.Setting != "repositories.fixture.commit_trailers" || !slices.Equal(change.Agents, []string{"worker1@engineering"}) || !strings.Contains(change.Note, "next commit") {
+		t.Errorf("previewed commit trailer change is %+v", change)
+	}
+	applied, err := Call(p.Socket, Request{Command: CommandConfigApply, Configuration: changed, Confirm: true, Preview: preview.ConfigApply})
+	if err != nil || applied.ConfigApply == nil || !applied.ConfigApply.Applied {
+		t.Fatalf("confirmed apply returned %+v, %v", applied.ConfigApply, err)
+	}
+	journal, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := journal[len(journal)-1]
+	var recorded store.AppliedConfiguration
+	if last.Kind != store.KindConfigurationApplied || json.Unmarshal(last.Data, &recorded) != nil || len(recorded.Changes) != 1 || !slices.Equal(recorded.Changes[0].Agents, []string{"worker1@engineering"}) {
+		t.Errorf("journaled commit trailer change is %s %s", last.Kind, last.Data)
 	}
 }
 

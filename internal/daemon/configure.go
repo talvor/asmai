@@ -173,6 +173,8 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 			change.Note = "this role cannot start after removal"
 		} else if pendingSkillDelivery(c) {
 			change.Note = "skills reach affected agents' sessions at their next start once per-session skill delivery (asmai #89) lands"
+		} else if c.Repository != "" && strings.HasSuffix(c.Setting, ".commit_trailers") {
+			change.Note = "running workers use this setting on their next commit"
 		}
 		result.Changes = append(result.Changes, change)
 	}

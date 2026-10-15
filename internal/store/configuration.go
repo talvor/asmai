@@ -24,7 +24,7 @@ type AppliedChange struct {
 	Setting string `json:"setting"`
 	Before  string `json:"before,omitempty"`
 	After   string `json:"after,omitempty"`
-	// Agents are the running agents that pick the change up at their next start.
+	// Agents are the known agents affected by the change.
 	Agents []string `json:"agents,omitempty"`
 	Note   string   `json:"note,omitempty"`
 }

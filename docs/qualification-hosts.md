@@ -75,9 +75,11 @@ On 2026-10-08, at commit 9163957, the harness ran `C7,C11` on this VM against th
 Both passed: C7 observed Engineering's exact nudge submission and inbox fetch, with the transcript path recorded on its dispatch; C11 recorded the user's witnessed request without treating the nudge as witnessed.
 The run used `ASMAI_CONFIG_FILE` and `ASMAI_STATE_DIR` inside a scratch directory, and that directory was removed after the harness stopped its factory.
 
-### Later
+On 2026-10-15, at commit ff7333c, the harness ran all eleven M1 cases, with C48 and C49, on this VM. All 13 passed, and `make test` passed: see [M1 exit checks](m1-exit-checks.md).
 
-From M1, delivery cases watch CI through `gh`, so the harness user will also need `gh` installed and signed in. It is not installed yet.
+### gh
+
+Delivery cases watch CI and open pull requests through `gh`, so `gh` is installed for the harness user and signed in as an account that can push to talvor/asmai-fixture, with git's operations protocol `https`.
 
 ## macOS on Apple silicon: `Phillips-MacBook-Pro`
 
@@ -151,6 +153,8 @@ On 2026-10-07, at commit 5362b09:
 
 These are observations from that day, not requirements. Versions on the Mac will move.
 
-### Later
+On 2026-10-15, at commit ff7333c, the harness ran all eleven M1 cases, with C48 and C49, on this Mac. All 13 passed, and `GOTOOLCHAIN=go1.26.7 make test` passed: see [M1 exit checks](m1-exit-checks.md).
 
-From M1, delivery cases watch CI through `gh`, so the harness user will also need `gh` installed and signed in. It is not installed yet.
+### gh
+
+Delivery cases watch CI and open pull requests through `gh`, so `gh` is installed for the harness user and signed in as an account that can push to talvor/asmai-fixture. git uses it for HTTPS pushes (`gh auth setup-git`).

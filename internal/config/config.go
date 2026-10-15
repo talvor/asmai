@@ -1041,6 +1041,18 @@ recording_retention = "14d"
 worker_cap = 3
 default_model = "opus"
 
+[roles.coordination]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
+[roles.quality]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
 [roles.engineering]
 leader_provider = "claude"
 leader_model = "opus"

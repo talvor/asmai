@@ -64,21 +64,7 @@ func TestConfigCheckPassesTheExampleConfiguration(t *testing.T) {
 	if code != 0 || !strings.Contains(example, "[repositories.otman]") {
 		t.Fatalf("asmai config example exited %d, printing %q (%s)", code, example, stderr)
 	}
-	// The example staffs one role, so the check also names the roles it
-	// leaves unstaffed; what it must never name is a line of the example.
-	writeConfig(t, example+`
-[roles.coordination]
-leader_provider = "claude"
-leader_model = "opus"
-worker_provider = "claude"
-worker_model = "opus"
-
-[roles.quality]
-leader_provider = "claude"
-leader_model = "opus"
-worker_provider = "claude"
-worker_model = "opus"
-`)
+	writeConfig(t, example)
 	stdout, stderr, code := runAsmai(t, "config", "check")
 	if code != 0 || !strings.Contains(stdout, "has no problems") {
 		t.Errorf("asmai config check exited %d on the example: %s%s", code, stdout, stderr)

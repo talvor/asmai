@@ -422,7 +422,7 @@ func TestTheExampleConfigurationPassesItsOwnCheck(t *testing.T) {
 	if len(problems) != 0 {
 		t.Fatalf("the example has problems: %v", problems)
 	}
-	if missing := cfg.MissingStaffing([]string{roles.Engineering}); len(missing) != 0 {
+	if missing := cfg.MissingStaffing(roles.Staffed); len(missing) != 0 {
 		t.Errorf("the example leaves staffing out: %v", missing)
 	}
 	if cfg.Limits != DefaultLimits() || cfg.Logs != DefaultLogs() {

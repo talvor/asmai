@@ -11,26 +11,24 @@ import (
 )
 
 // skillsSession plays Claude Code starting a worker with a plugin: which
-// skills it lists, and how it resolves the skill implement names.
+// skills it lists, and what each fresh session does with the skill implement
+// names.
 type skillsSession struct {
-	// listsExtra makes the session list a skill the assignment narrowed out.
-	listsExtra bool
-	// bareFails makes the bare name not resolve, and namespacedFails the
-	// namespaced one too.
-	bareFails, namespacedFails bool
-	// asksNothing makes the session run no skill.
-	asksNothing bool
-	// noList makes the start list no skills.
-	noList                            bool
-	noPlugin                          bool
-	bareList                          bool
-	unresolvedFirst, unresolvedSecond bool
-	earlySecond                       bool
+	// listsExtra makes the session list a skill the assignment narrowed out,
+	// noPlugin has it not report the plugin, noList has it list no skills and
+	// bareList lists them without the plugin's namespace.
+	listsExtra, noPlugin, noList, bareList bool
+	// attempts is what each fresh session does about tdd, in order: "bare"
+	// runs it by its bare name, "namespaced" as asmai:tdd, "quiet" makes no
+	// call, "missing" makes a call that is not found and "unresolved" one
+	// that returns no result. The last repeats.
+	attempts []string
+	asked    int
 }
 
-func (s skillsSession) ask(spec AskSpec) (Turn, error) {
-	if strings.Contains(spec.Prompt, "tdd") {
-		return Turn{}, fmt.Errorf("the prompt named the skill implement must call: %q", spec.Prompt)
+func (s *skillsSession) ask(spec AskSpec) (Turn, error) {
+	if strings.Contains(spec.Prompt, "tdd") || !strings.HasPrefix(spec.Prompt, "/asmai:implement ") {
+		return Turn{}, fmt.Errorf("the prompt is %q, want the slash invocation of implement and no name of the skill it calls", spec.Prompt)
 	}
 	plugin := argAfter(spec.Args, "--plugin-dir")
 	if plugin == "" || !hasFlagValue(spec.Args, "--setting-sources", "") {
@@ -58,35 +56,21 @@ func (s skillsSession) ask(spec AskSpec) (Turn, error) {
 	if s.noList {
 		turn.Skills = nil
 	}
-	if s.asksNothing {
-		return turn, nil
+	behaviours := s.attempts
+	if len(behaviours) == 0 {
+		behaviours = []string{"bare"}
 	}
-	first := Command{Text: "asmai:implement", CallEvent: 1}
-	if !s.unresolvedFirst {
-		first.ResultEvent = 2
-	}
-	turn.SkillCalls = []Command{first}
-	if s.bareFails {
-		turn.SkillCalls = append(turn.SkillCalls, Command{Text: "tdd", CallEvent: 3, ResultEvent: 4, Failed: true, Output: "Unknown skill: tdd"})
-	}
-	if s.namespacedFails {
-		turn.SkillCalls = append(turn.SkillCalls, Command{Text: "asmai:tdd", CallEvent: 5, ResultEvent: 6, Failed: true, Output: "Unknown skill: asmai:tdd"})
-	} else {
-		name := "asmai:tdd"
-		if !s.bareFails {
-			name = "tdd"
-		}
-		second := Command{Text: name, CallEvent: 3}
-		if s.bareFails {
-			second.CallEvent = 5
-		}
-		if s.earlySecond {
-			second.CallEvent = 1
-		}
-		if !s.unresolvedSecond {
-			second.ResultEvent = second.CallEvent + 1
-		}
-		turn.SkillCalls = append(turn.SkillCalls, second)
+	behaviour := behaviours[min(s.asked, len(behaviours)-1)]
+	s.asked++
+	switch behaviour {
+	case "bare":
+		turn.SkillCalls = []Command{{Text: "tdd", CallEvent: 1, ResultEvent: 2}}
+	case "namespaced":
+		turn.SkillCalls = []Command{{Text: "asmai:tdd", CallEvent: 1, ResultEvent: 2}}
+	case "missing":
+		turn.SkillCalls = []Command{{Text: "tdd", CallEvent: 1, ResultEvent: 2, Failed: true, Output: "Unknown skill: tdd"}}
+	case "unresolved":
+		turn.SkillCalls = []Command{{Text: "asmai:tdd", CallEvent: 1}}
 	}
 	return turn, nil
 }
@@ -101,31 +85,58 @@ func hasFlagValue(args []string, flag, value string) bool {
 	return false
 }
 
-func skillsHarness(t *testing.T, s skillsSession) *Harness {
+func skillsHarness(t *testing.T, s *skillsSession) *Harness {
 	t.Helper()
 	checkGuardDependencies = func() error { return nil }
 	t.Cleanup(func() { checkGuardDependencies = guardDependencies })
 	return harness(t, fakeClaude{auth: AuthStatus{SignedIn: true, Method: "claude.ai"}, ask: s.ask}, startsDirectly)
 }
 
-func TestC34FailsWhenTheCalledSkillResolvesUnderNoName(t *testing.T) {
-	r := result(t, skillsHarness(t, skillsSession{bareFails: true, namespacedFails: true}), "C34")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "did not resolve") {
-		t.Errorf("C34 %s: %q, want it to fail because the call did not resolve", r.Outcome, r.Failure)
+func TestC34PassesWhenTheCalledSkillRunsUnderItsBareOrItsNamespacedName(t *testing.T) {
+	for _, behaviour := range []string{"bare", "namespaced"} {
+		r := result(t, skillsHarness(t, &skillsSession{attempts: []string{behaviour}}), "C34")
+		if r.Outcome != Passed {
+			t.Fatalf("C34 with a %s call %s: %s", behaviour, r.Outcome, r.Failure)
+		}
+		evidence := strings.Join(r.Evidence, "\n")
+		for _, want := range []string{"narrowed list as the plugin asmai: implement, tdd", "started by /asmai:implement"} {
+			if !strings.Contains(evidence, want) {
+				t.Errorf("C34's evidence\n%s\ndoes not say %q", evidence, want)
+			}
+		}
+	}
+}
+
+func TestC34AsksAgainInAFreshSessionWhenTheModelMakesNoCall(t *testing.T) {
+	s := &skillsSession{attempts: []string{"quiet", "quiet", "namespaced"}}
+	r := result(t, skillsHarness(t, s), "C34")
+	if r.Outcome != Passed || s.asked != 3 {
+		t.Errorf("C34 %s after %d sessions: %q, want it to pass on the third", r.Outcome, s.asked, r.Failure)
+	}
+}
+
+func TestC34IsInconclusiveWhenNoSessionMakesTheCall(t *testing.T) {
+	s := &skillsSession{attempts: []string{"quiet"}}
+	r := result(t, skillsHarness(t, s), "C34")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "inconclusive") || s.asked != 3 {
+		t.Errorf("C34 %s after %d sessions: %q, want it to fail as inconclusive after three", r.Outcome, s.asked, r.Failure)
+	}
+}
+
+func TestC34FailsAtOnceWhenTheCallDoesNotResolve(t *testing.T) {
+	for _, behaviour := range []string{"missing", "unresolved"} {
+		s := &skillsSession{attempts: []string{behaviour, "bare"}}
+		r := result(t, skillsHarness(t, s), "C34")
+		if r.Outcome != Failed || !strings.Contains(r.Failure, "did not resolve") || s.asked != 1 {
+			t.Errorf("C34 with a %s call %s after %d sessions: %q, want it to fail at once", behaviour, r.Outcome, s.asked, r.Failure)
+		}
 	}
 }
 
 func TestC34FailsWhenTheSessionHoldsASkillTheAssignmentNarrowedOut(t *testing.T) {
-	r := result(t, skillsHarness(t, skillsSession{listsExtra: true}), "C34")
+	r := result(t, skillsHarness(t, &skillsSession{listsExtra: true}), "C34")
 	if r.Outcome != Failed || !strings.Contains(r.Failure, "narrowed") {
 		t.Errorf("C34 %s: %q, want it to fail because the list was not the narrowed one", r.Outcome, r.Failure)
-	}
-}
-
-func TestC34IsInconclusiveWhenTheSessionRunsNoSkill(t *testing.T) {
-	r := result(t, skillsHarness(t, skillsSession{asksNothing: true}), "C34")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "inconclusive") {
-		t.Errorf("C34 %s: %q, want it to fail as inconclusive", r.Outcome, r.Failure)
 	}
 }
 
@@ -136,32 +147,11 @@ func TestC34RequiresPluginAndNamespacedSkillInventory(t *testing.T) {
 		"bare skills": {bareList: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := result(t, skillsHarness(t, session), "C34")
+			r := result(t, skillsHarness(t, &session), "C34")
 			if r.Outcome != Failed || !(strings.Contains(r.Failure, "plugin") || strings.Contains(r.Failure, "listed")) {
 				t.Errorf("C34 %s: %q, want missing plugin skill evidence to fail", r.Outcome, r.Failure)
 			}
 		})
-	}
-}
-
-func TestC34RequiresSuccessfulResultsForBothSkillCalls(t *testing.T) {
-	for name, session := range map[string]skillsSession{
-		"implement": {unresolvedFirst: true},
-		"tdd":       {unresolvedSecond: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := result(t, skillsHarness(t, session), "C34")
-			if r.Outcome != Failed {
-				t.Errorf("C34 %s: %q, want an unresolved %s Skill call to fail", r.Outcome, r.Failure, name)
-			}
-		})
-	}
-}
-
-func TestC34RequiresImplementToReturnBeforeTheSecondCall(t *testing.T) {
-	r := result(t, skillsHarness(t, skillsSession{earlySecond: true}), "C34")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "before implement returned") {
-		t.Errorf("C34 %s: %q, want an early second call to fail", r.Outcome, r.Failure)
 	}
 }
 

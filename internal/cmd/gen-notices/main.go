@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"github.com/talvor/asmai/internal/licenses"
+	"github.com/talvor/asmai/internal/skills"
 )
 
 const file = "THIRD_PARTY_NOTICES"
@@ -31,7 +32,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "gen-notices:", err)
 		os.Exit(1)
 	}
-	notices, err := licenses.Notices(".", "./cmd/asmai", licenses.Targets, goDist)
+	notices, err := licenses.NoticesWithEmbedded(".", "./cmd/asmai", licenses.Targets, goDist, []licenses.Embedded{{Name: skills.LicenseName(), License: skills.License()}})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen-notices:", err)
 		os.Exit(1)

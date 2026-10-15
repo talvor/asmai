@@ -208,3 +208,28 @@ func TestPinnedToolchainFailsWithoutTheGoDistributionsLicense(t *testing.T) {
 		t.Errorf("PinnedToolchain() error = %v, want the Go distribution's LICENSE to be missing", err)
 	}
 }
+
+func TestEmbeddedMaterialIsHeldToTheAllowListAndFollowsTheModulesInTheNotices(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	mit := licenses.Embedded{Name: "example skills v1 (the bundle)", License: []byte(readFile(t, "testdata/mitlib/LICENSE"))}
+	bsd := licenses.Embedded{Name: "unlicensed", License: []byte(readFile(t, "testdata/unlicensed/LICENSE"))}
+
+	var out bytes.Buffer
+	if !licenses.CheckEmbedded(&out, []licenses.Embedded{mit}) || !strings.Contains(out.String(), "example skills v1 (the bundle)  MIT") {
+		t.Errorf("CheckEmbedded(MIT) failed or did not list it:\n%s", out.String())
+	}
+	out.Reset()
+	if licenses.CheckEmbedded(&out, []licenses.Embedded{mit, bsd}) || !strings.Contains(out.String(), "FAIL unlicensed") {
+		t.Errorf("CheckEmbedded did not fail a license that cannot be determined:\n%s", out.String())
+	}
+
+	got, err := licenses.NoticesWithEmbedded("testdata/mitlib", ".", bothPlatforms, goDist, []licenses.Embedded{mit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(noticesHeader, "its license files.\n", "its license files. Material embedded that is not a Go module comes last.\n", 1) + goSection +
+		"\n" + rule + mit.Name + "\n" + rule + "\n-- LICENSE --\n\n" + readFile(t, "testdata/mitlib/LICENSE")
+	if string(got) != want {
+		t.Errorf("NoticesWithEmbedded() =\n%s\nwant\n%s", got, want)
+	}
+}

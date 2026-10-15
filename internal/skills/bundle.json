@@ -1,0 +1,117 @@
+{
+  "source": "https://github.com/mattpocock/skills",
+  "release": "v1.3.1",
+  "commit": "24fe0ef7737efae15c87225755e9f6f5965e4888",
+  "license": "MIT",
+  "skills": {
+    "ask-matt": {
+      "group": "engineering",
+      "fingerprint": "ae4f261c7569ebc59d27706ab5a55b66f2da8c6689ccf4f593392f8d216e639c"
+    },
+    "code-review": {
+      "group": "engineering",
+      "fingerprint": "c52c28f43ca4820ca7330d0baaba39cbe57865dd4b0c2220d0c4e0ac1bbf4b08"
+    },
+    "codebase-design": {
+      "group": "engineering",
+      "fingerprint": "855f80059b2c4fbb47e97e96c2ebd5166e835efbbcae7a9b51cfacb34532c1a8"
+    },
+    "diagnosing-bugs": {
+      "group": "engineering",
+      "fingerprint": "0eb9874ea5c1cc7c5f8569dbff931fee4ad53805294fa120c881819e7960b8b3"
+    },
+    "domain-modeling": {
+      "group": "engineering",
+      "fingerprint": "c25c0fbd89c5df79a01e7c820e2a7b2ae894f6c44206a50b0cb90e0db5613eb9"
+    },
+    "grill-me": {
+      "group": "productivity",
+      "fingerprint": "8d501635f6935280c1e493a7551658038fef32a346fb3a4acd21a727ceee3b64"
+    },
+    "grill-with-docs": {
+      "group": "engineering",
+      "fingerprint": "d6882d18cf3c2ebcd5f7175ac732b3a0685122ea934b463272949d25657332bc"
+    },
+    "grilling": {
+      "group": "productivity",
+      "fingerprint": "d6ae2cc9cd9778557069d88eff3bbb733ef7f4d6645bb6786c101236d7d422ce"
+    },
+    "handoff": {
+      "group": "productivity",
+      "fingerprint": "05b0154cd8832fbc2edc805548cf7198594a81d01c7c6b5282b077f941196d9a"
+    },
+    "implement": {
+      "group": "engineering",
+      "fingerprint": "379dc7f7c6a3aca41f7743ba8b564500d3c847cd2e8b4957e9156c5eea0fefb6"
+    },
+    "implement-spec": {
+      "group": "engineering",
+      "fingerprint": "a104be9b1919f13fffd1b68792076d2f33fd8ed1370cc2c9338cb228e17babcc"
+    },
+    "improve-codebase-architecture": {
+      "group": "engineering",
+      "fingerprint": "d15e658a232ad79fa58891ef3e418071b28e942e5e95fa17969053e9db1601ce"
+    },
+    "pr": {
+      "group": "engineering",
+      "fingerprint": "f5d91d590a0f2c50a99d767e1050c58f8aa7d897efb77dcc010b4404a86fe15b"
+    },
+    "prototype": {
+      "group": "engineering",
+      "fingerprint": "e86eb0efd570ab11acc4bfe064888e3a1ab56d956404edc27f19645b69b29a7e"
+    },
+    "research": {
+      "group": "engineering",
+      "fingerprint": "1a5c408b1843aba2ef8e67faa23bb02d83ddc6ac3e414101c555c938f5fc9033"
+    },
+    "retro": {
+      "group": "engineering",
+      "fingerprint": "38a906d27ea2af642d0e15ba3a3a68228da1509e1c8dbd9011088fa75b96627d"
+    },
+    "setup-matt-pocock-skills": {
+      "group": "engineering",
+      "fingerprint": "7e82b311fa53df59fc9583104a62671cf1cd706691f575f65a939ef22538ca9b"
+    },
+    "tdd": {
+      "group": "engineering",
+      "fingerprint": "1289fe8710521503a953e2940792bf3fc3a6231a7a2c1347e58bf80267263748"
+    },
+    "teach": {
+      "group": "productivity",
+      "fingerprint": "709c091dc273eddc504fa631bbb8172f32b2a03620ddf5fccfce3fb758ba205b"
+    },
+    "to-questionnaire": {
+      "group": "productivity",
+      "fingerprint": "bea06bbc77c5a926ad61ae63eb6bca55d485ee9546cf41e8d0b7911843bd09b6"
+    },
+    "to-spec": {
+      "group": "engineering",
+      "fingerprint": "96cbcd0ab4c97bcb858703fc85cf15147f5cdb618b3924d26366f32fbc079ee2"
+    },
+    "to-tickets": {
+      "group": "engineering",
+      "fingerprint": "425bd28cab65edbe49b4247725d9f9d172a125d71d19e930d6e01c7d374b5d6a"
+    },
+    "triage": {
+      "group": "engineering",
+      "fingerprint": "b26fcea03379789ace2e8292b66f366487973879c1f60775eb628c51d90fefb7"
+    },
+    "wait-what": {
+      "group": "productivity",
+      "fingerprint": "b36c091368ac4a212fc22f1684f38278a44d0aa9eedc94e23f316170682ea5d6"
+    },
+    "wayfinder": {
+      "group": "engineering",
+      "fingerprint": "3e557aeb71c0b15d281a2464a7f64fb1ccd26b85dcede264915fa998a09bab57"
+    },
+    "wizard": {
+      "group": "engineering",
+      "fingerprint": "08690310882108e335557994359cb915e65dc5df6d05c5aff0273aafa9749848"
+    },
+    "writing-for-agents": {
+      "group": "productivity",
+      "fingerprint": "78c41feba8e14079c320faa34e76395bcd0a74739580999e7cbad8988fefe533"
+    }
+  },
+  "patches": []
+}

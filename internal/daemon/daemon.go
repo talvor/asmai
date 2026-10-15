@@ -319,7 +319,7 @@ func Run(ctx context.Context, cfg Config) error {
 			PID:       os.Getpid(),
 			StartedAt: time.Now(),
 		},
-		stop:    make(chan *net.UnixConn),
+		stop:    make(chan *net.UnixConn, 1),
 		lookNow: make(chan struct{}, 1),
 	}
 	previous, err := st.Started(d.status.Version, d.status.PID, d.status.StartedAt)

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/talvor/asmai/internal/skills"
 )
 
 func TestAgentsAreAddressedNameAtRoleAndARoleMeansItsLeader(t *testing.T) {
@@ -402,5 +404,36 @@ func TestTheUsersNotesCountAsRepositoryInstructionsAfterTheFiles(t *testing.T) {
 	got, err = RepositoryInstructions(dir, "Run make check.")
 	if err != nil || strings.Index(got, "Shared rules.") < 0 || strings.Index(got, "Run make check.") < strings.Index(got, "Shared rules.") {
 		t.Errorf("notes after a file give %q, %v, want the file first", got, err)
+	}
+}
+
+func TestEveryAgentsInstructionsCarryTheOperatingGuideAndLeadersTheirIndex(t *testing.T) {
+	guide := skills.Guide()
+	for _, role := range All {
+		text, err := LeaderInstructions(role)
+		if err != nil {
+			continue // a role without instructions yet
+		}
+		if !strings.Contains(text, guide) {
+			t.Errorf("%s's leader instructions lack the operating guide", role)
+		}
+		for _, name := range skills.LeaderList(role) {
+			if !strings.Contains(text, name) {
+				t.Errorf("%s's leader instructions do not name its skill %s", role, name)
+			}
+		}
+		if index := skills.Index(role); index != "" && !strings.Contains(text, index) {
+			t.Errorf("%s's leader instructions lack the index of its workers' skills", role)
+		}
+	}
+	text, err := WorkerInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, guide) || !strings.Contains(text, "tdd") || strings.Contains(text, "## Your workers' skills") {
+		t.Error("Engineering's worker instructions lack the guide or carry a leader's index")
+	}
+	if !strings.Contains(text, "PR section") {
+		t.Error("Engineering's worker instructions lack the PR section")
 	}
 }

@@ -143,6 +143,19 @@ func configEdit(o *output, stdin io.Reader) int {
 	if o.json {
 		w = o.stderr
 	}
+	failEdit := func(err error) int {
+		copyData, readErr := os.ReadFile(copyFile.Name())
+		if readErr == nil && bytes.Equal(copyData, original) {
+			return o.fail(err)
+		}
+		if readErr != nil {
+			if _, statErr := os.Lstat(copyFile.Name()); statErr != nil {
+				return o.fail(err)
+			}
+		}
+		keepCopy = true
+		return o.fail(fmt.Errorf("%w; your edited copy remains at %s", err, copyFile.Name()))
+	}
 	for {
 		cmd := exec.Command(command[0], append(command[1:], copyFile.Name())...)
 		cmd.Stdout, cmd.Stderr = w, o.stderr
@@ -152,11 +165,11 @@ func configEdit(o *output, stdin io.Reader) int {
 			cmd.Stdin = f
 		}
 		if err := cmd.Run(); err != nil {
-			return o.fail(fmt.Errorf("the editor %q did not finish: %w; %s is as it was", editor, err, path))
+			return failEdit(fmt.Errorf("the editor %q did not finish: %w; %s is as it was", editor, err, path))
 		}
 		edited, err := os.ReadFile(copyFile.Name())
 		if err != nil {
-			return o.fail(err)
+			return failEdit(err)
 		}
 		if bytes.Equal(edited, original) {
 			fmt.Fprintf(w, "No change; %s is as it was.\n", path)
@@ -168,7 +181,7 @@ func configEdit(o *output, stdin io.Reader) int {
 			problems = cfg.MissingStaffing(roles.Staffed)
 			repositoryProblems, err := registeredRepositoryProblems(cfg)
 			if err != nil {
-				return o.fail(err)
+				return failEdit(err)
 			}
 			problems = append(problems, repositoryProblems...)
 		}
@@ -185,14 +198,14 @@ func configEdit(o *output, stdin io.Reader) int {
 		// replace someone else's change.
 		now, err := os.ReadFile(path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return o.fail(err)
+			return failEdit(err)
 		}
 		if !bytes.Equal(now, original) {
 			keepCopy = true
 			return o.fail(fmt.Errorf("%s changed while you edited it, so your edit was not saved; your edited copy remains at %s", path, copyFile.Name()))
 		}
 		if err := config.Replace(path, edited); err != nil {
-			return o.fail(fmt.Errorf("saving %s: %w", path, err))
+			return failEdit(fmt.Errorf("saving %s: %w", path, err))
 		}
 		fmt.Fprintf(w, "Saved %s; it has no problems. Run `asmai config apply` to see which running agents pick the change up.\n", path)
 		return o.editResult(path, true)

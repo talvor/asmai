@@ -178,6 +178,28 @@ func TestConfigEditPreservesQuotedEditorArgumentsAndConflictingEdits(t *testing.
 	}
 }
 
+func TestConfigEditPreservesChangedCopyWhenEditorFails(t *testing.T) {
+	factoryHome(t)
+	writeConfig(t, staffing)
+	before := readConfig(t)
+	editor(t, `printf '\n[limits]\nsilence_timeout = "55m"\n' >> "$1"; exit 7`)
+	_, stderr, code := runIn(t, "", "config", "edit")
+	marker := "your edited copy remains at "
+	start := strings.Index(stderr, marker)
+	if code != 1 || start < 0 || !strings.Contains(stderr, "did not finish") {
+		t.Fatalf("failed editor exited %d printing %q", code, stderr)
+	}
+	copyPath := strings.TrimSpace(stderr[start+len(marker):])
+	t.Cleanup(func() { os.Remove(copyPath) })
+	copyData, err := os.ReadFile(copyPath)
+	if err != nil || !strings.Contains(string(copyData), `silence_timeout = "55m"`) {
+		t.Errorf("edited copy %q: %q, %v", copyPath, copyData, err)
+	}
+	if got := readConfig(t); got != before {
+		t.Errorf("failed edit changed the configuration to %q", got)
+	}
+}
+
 func TestRoleListShowsEachRoleAndRoleSetEditsTheFileForClaudeAndRefusesCodex(t *testing.T) {
 	factoryHome(t)
 	writeConfig(t, "# mine\n"+staffing)

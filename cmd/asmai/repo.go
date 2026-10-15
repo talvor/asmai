@@ -84,8 +84,6 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 	return repoAdded(o, r)
 }
 
-// repoSettings are the settings of the entry that `asmai repo add` was
-// given beyond the repository's location, origin and default branch.
 type repoSettings struct {
 	defaultBranch    string
 	notes            string

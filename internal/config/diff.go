@@ -18,12 +18,10 @@ type Change struct {
 	Setting string `json:"setting"`
 	// Before and After are the values as the file writes them; empty for a
 	// setting or a table that was not there.
-	Before string `json:"before"`
-	After  string `json:"after"`
-	// Table is the table that was added or removed, with Added or Removed
-	// saying which.
-	Added   bool `json:"added,omitempty"`
-	Removed bool `json:"removed,omitempty"`
+	Before  string `json:"before"`
+	After   string `json:"after"`
+	Added   bool   `json:"added,omitempty"`
+	Removed bool   `json:"removed,omitempty"`
 	// Role and Side say which agents a setting of a role is for: its leader
 	// ("leader"), or its workers ("worker"). Both are empty for a setting
 	// that is no role's.

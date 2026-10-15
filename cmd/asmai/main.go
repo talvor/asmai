@@ -39,7 +39,7 @@ var version = "dev"
 
 const usage = `usage: asmai [<command>] [--json]
 
-commands:
+commands you type:
   asmai, asmai chat           talk with Coordination: attach this terminal to Coordination's leader,
                               starting the factory first if it is stopped. What you type reaches
                               Coordination, and each message you submit is journaled word for word.
@@ -58,47 +58,8 @@ commands:
                               native session where it can, in a new dispatch
   asmai status                show the daemon, its version and each leader
   asmai agents                list the factory's agents
-	asmai jobs                  list numbered jobs
-	asmai job <number>          show a job and its witnessed request
-	asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr --criterion <text>
-	                            Coordination's leader opens a job; repeat --criterion for each acceptance criterion
-	asmai brief <number>        read a job's canonical brief
-	asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
-	asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text>
-	asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
-	asmai assign --job <number> --outcome <text> --criterion <text>
-	                            Engineering's leader gives a writing assignment to a worker, in a workspace of
-	                            AsmAI's clone on its own branch; repeat --criterion for each acceptance criterion
-	asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text>
-	                            Quality's leader gives a validation to a worker, in a clean workspace fixed at the
-	                            job branch's exact head, with the job's mandate and criteria
-	asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch;
-	                            the delivery owner's "asmai effect pull-request <url>" also records the pull
-	                            request as gh shows it, its number and whether it is a draft or "[not ready]"
-	asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>]
-	                            a worker submits its assignment's result; repeat a flag for each value
-	asmai result --evidence <text> --check '<command> -> <outcome>'|none --gap <text>|none --finding '<blocking|advisory|needs-you>: <text>'|none [--resolved <id>] [--unresolved <id>]
-	                            a Quality worker submits its validation report
-	asmai blocked --reason <text> [--needs <text>]
-	                            a worker reports that it cannot go on
-	asmai accept --assignment <id> --reason <text>
-	                            Engineering's leader accepts the result of an assignment it owns, and the
-	                            daemon fast-forwards the job branch to it; Quality's leader accepts a validation
-	                            report, and the daemon delivers it to Engineering's leader. Repeat --reason
-	                            for each reason
-	asmai reject --assignment <id> --reason <text>
-	                            a leader returns the result to the same worker, in a new dispatch
-	asmai cancel --assignment <id> --reason <text>
-	                            a leader cancels an assignment it owns; its worker pushes its assignment
-	                            branch, if it has one, and stops
-	asmai push <number>         the delivery owner, Engineering's leader for a code job, asks the daemon to
-	                            push the job branch: it fetches the branch from origin, refuses and records an
-	                            outside change if origin has commits AsmAI did not make, and otherwise pushes
-	                            it with a plain push, never forced, recorded as the daemon's effect
-	asmai decision record --job <number> --choice rerun-failed --rationale <text> --evidence <text>
-	                            Engineering's leader records its judgment that the red checks on the pushed head
-	                            failed for a reason unrelated to the change, as a delegated decision, and the
-	                            daemon re-runs their failed jobs once; a second re-run of the same head is refused
+  asmai jobs                  list numbered jobs
+  asmai job <number>          show a job and its witnessed request
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai log [--follow]        print the daemon's log; --follow waits for more
@@ -119,9 +80,50 @@ commands:
                               its line and the fix; exits 1 if there is any. Only you change the file
   asmai config example        print an example configuration file, with every default written out,
                               which passes asmai config check
-  asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
   asmai version               print the version of this executable
   asmai notices               print AsmAI's license and the third-party notices
+
+commands agents run:
+  asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr --criterion <text>
+                              Coordination's leader opens a job; repeat --criterion for each acceptance criterion
+  asmai brief <number>        read a job's canonical brief
+  asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
+  asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text>
+  asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
+  asmai assign --job <number> --outcome <text> --criterion <text>
+                              Engineering's leader gives a writing assignment to a worker, in a workspace of
+                              AsmAI's clone on its own branch; repeat --criterion for each acceptance criterion
+  asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text>
+                              Quality's leader gives a validation to a worker, in a clean workspace fixed at the
+                              job branch's exact head, with the job's mandate and criteria
+  asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch;
+                              the delivery owner's "asmai effect pull-request <url>" also records the pull
+                              request as gh shows it, its number and whether it is a draft or "[not ready]"
+  asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>]
+                              a worker submits its assignment's result; repeat a flag for each value
+  asmai result --evidence <text> --check '<command> -> <outcome>'|none --gap <text>|none --finding '<blocking|advisory|needs-you>: <text>'|none [--resolved <id>] [--unresolved <id>]
+                              a Quality worker submits its validation report
+  asmai blocked --reason <text> [--needs <text>]
+                              a worker reports that it cannot go on
+  asmai accept --assignment <id> --reason <text>
+                              Engineering's leader accepts the result of an assignment it owns, and the
+                              daemon fast-forwards the job branch to it; Quality's leader accepts a validation
+                              report, and the daemon delivers it to Engineering's leader. Repeat --reason
+                              for each reason
+  asmai reject --assignment <id> --reason <text>
+                              a leader returns the result to the same worker, in a new dispatch
+  asmai cancel --assignment <id> --reason <text>
+                              a leader cancels an assignment it owns; its worker pushes its assignment
+                              branch, if it has one, and stops
+  asmai push <number>         the delivery owner, Engineering's leader for a code job, asks the daemon to
+                              push the job branch: it fetches the branch from origin, refuses and records an
+                              outside change if origin has commits AsmAI did not make, and otherwise pushes
+                              it with a plain push, never forced, recorded as the daemon's effect
+  asmai decision record --job <number> --choice rerun-failed --rationale <text> --evidence <text>
+                              Engineering's leader records its judgment that the red checks on the pushed head
+                              failed for a reason unrelated to the change, as a delegated decision, and the
+                              daemon re-runs their failed jobs once; a second re-run of the same head is refused
+  asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
 Every command accepts --json to print JSON instead of tables; asmai attach --json prints the
 agent's screen as it is now, and asmai chat --json Coordination's.

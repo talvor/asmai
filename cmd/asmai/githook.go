@@ -34,6 +34,9 @@ func gitHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil {
 			return nil, err
 		}
+		if resp.NoTrailers {
+			return nil, nil
+		}
 		if len(resp.Trailers) == 0 {
 			return nil, errors.New("the daemon named no trailers")
 		}

@@ -133,6 +133,15 @@ func assignmentFlow(t *testing.T, worker, leader []string) (fixture writingFixtu
 // holds files.
 func assignmentFlowWith(t *testing.T, setUpGit func(*testing.T), files map[string]string, worker, leader []string) (fixture writingFixture, testDir string) {
 	t.Helper()
+	return assignmentFlowConfigured(t, setUpGit, files, nil, worker, leader)
+}
+
+// assignmentFlowConfigured is assignmentFlowWith for a test that, like the
+// user, edits the configuration file once the repository is registered and
+// before the job is opened: edit is given the file's content and returns the
+// content to leave there.
+func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map[string]string, edit func(config string) string, worker, leader []string) (fixture writingFixture, testDir string) {
+	t.Helper()
 	setUpGit(t)
 	testDir = t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
@@ -195,6 +204,16 @@ func assignmentFlowWith(t *testing.T, setUpGit func(*testing.T), files map[strin
 		t.Fatal(stderr)
 	}
 	fixture = registerWritingFixtureWith(t, files)
+	if edit != nil {
+		path := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(edit(string(data))), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	a := inTerminal(t, 100, 25)
 	waitFor(t, "Coordination prompt", a.shows(">"))
 	a.ptmx.WriteString("Please add a greeting\r")

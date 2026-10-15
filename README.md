@@ -74,12 +74,16 @@ Every start then runs the checks that exist: the roles are staffed in the config
 | `asmai repo list` | The registered repositories: each one's origin, default branch, location and clone |
 | `asmai repo show <name>` | What is recorded for a registered repository, and its clone's path |
 | `asmai repo remove <name>` | Remove a repository's record, its entry in the configuration file and its clone; refused while it has an open job |
+| `asmai config check` | Read the configuration file and report every problem in it, each with its line and the fix; exits 1 if there is any |
+| `asmai config example` | Print an example configuration file, with every default written out, which passes `asmai config check` |
 
 Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now, and `asmai chat --json` Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
 
 ### The configuration file
 
-The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and you edit it by hand. `asmai setup` writes it when it is missing, staffed as below, and never changes it after. So far it holds the staffing of the roles M1 runs: a table for each of Coordination, Engineering and Quality, with the provider and model of the role's leader and of its workers. Claude is the only provider so far. It also holds a `[repositories.<name>]` table for each registered repository, which `asmai repo add` writes (see [Repositories](#repositories)).
+The configuration file is `~/.config/asmai/config.toml`, on Linux and macOS alike, and only you change it: agents never do. `asmai setup` writes it when it is missing, staffed as below, and never changes it after. It has one table for each of `[limits]`, `[logs]`, `[providers.claude]`, `[roles.<role>]` and `[repositories.<name>]`; every field not written has a default. Claude is the only provider so far: `[providers.codex]` and `"codex"` as a role's provider are refused, with a message that Codex arrives in a later asmai. Durations are written like `"30s"`, `"10m"` or `"14d"`, and sizes like `"5GB"` (decimal units).
+
+The staffing of a role, which `asmai setup` writes:
 
 ```toml
 [roles.coordination]
@@ -101,7 +105,17 @@ worker_provider = "claude"
 worker_model = "opus"
 ```
 
-`asmai start` refuses a file it cannot honour, naming the line and the fix: TOML that does not parse, a table or field it does not read, a provider other than `"claude"`, or a role or field left out.
+| Table | Fields |
+| --- | --- |
+| `[limits]` | `leader_idle_grace`, `leader_restarts`, `leader_restart_window`, `silence_timeout`, `drain_timeout`, `side_effect_free_retries`, `provider_error_resumes`, `provider_error_wait`, `provider_error_wait_max`, `recheck_interval`, `dispatch_limit`, `failed_validations`, `first_check_wait`, `free_space_floor` |
+| `[logs]` | `daemon_files`, `daemon_file_size`, `recording_retention` |
+| `[providers.claude]` | `worker_cap`, `default_model` |
+| `[roles.<role>]` | `leader_provider`, `leader_model`, `worker_provider`, `worker_model`, `leader_skills`, `worker_skills`, `leader_added_skills`, `worker_added_skills` |
+| `[repositories.<name>]` | `location`, `origin`, `default_branch`, `notes`, `checks_one_at_a_time`, `no_ci`, `commit_trailers`, `repository_skills` |
+
+Two repository fields take effect in this asmai already. `notes` is your notes for the repository: they reach the repository's workers after its instruction files (`AGENTS.md`, `CLAUDE.md`), as instructions. `commit_trailers = false` switches off the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers on that repository's commits, for a repository whose conventions forbid them; it is read at each commit.
+
+`asmai config check` reads the file and reports every problem in it, each with its line and the fix, and exits 1 if there is any. `asmai config example` prints an example with every default written out, for one role and one repository, which passes `asmai config check`. `asmai start` refuses a file it cannot honour in the same way, naming the line and the fix: TOML that does not parse, a table or field it does not read, a value of the wrong type or out of range, a provider other than `"claude"`, or a role or field left out.
 
 ### Repositories
 

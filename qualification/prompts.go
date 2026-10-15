@@ -180,7 +180,7 @@ func (g guardFixture) workerArgs(hook string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	repository, err := roles.RepositoryInstructions(g.workspace)
+	repository, err := roles.RepositoryInstructions(g.workspace, "")
 	if err != nil {
 		return nil, err
 	}

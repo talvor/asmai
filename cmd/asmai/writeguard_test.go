@@ -277,3 +277,43 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		}
 	}
 }
+
+// The user's notes in a repository's configuration reach its workers as
+// instruction-file content, and its commit_trailers switch takes effect for
+// that repository's commits.
+func TestARepositorysNotesReachItsWorkersAndItsTrailersSwitchTakesEffect(t *testing.T) {
+	const branch = "asmai/job-1/1"
+	worker := []string{
+		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
+		// The trailer hooks are in place, and name no trailers.
+		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit --no-verify -q -m 'Add greeting.txt' && git log -1 --format='%B' | grep -c '^AsmAI-' || true`, 0, "^0\n$"),
+		fakeRun(`git commit --no-verify -q --amend -m 'Add greeting.txt again' && git log -1 --format=%s && git log -1 --format='%B' | grep -c '^AsmAI-' || true`, 0, "^Add greeting.txt again\n0\n$"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
+	}
+	leader := []string{fakeRun(`asmai inbox --dispatch 4`, 0, "result 1 \\| assignment 1 \\| worker1@engineering")}
+	edit := func(config string) string {
+		return config + "notes = \"\"\"Notes canary: run `make check` before every commit.\"\"\"\ncommit_trailers = false\nno_ci = true\n"
+	}
+	fixture, _ := assignmentFlowConfigured(t, userGitConfig, repositoryFiles, edit, worker, leader)
+
+	pushed := gitIn(t, fixture.origin, "rev-parse", "refs/heads/"+branch)
+	commits := strings.Fields(gitIn(t, fixture.origin, "rev-list", fixture.main+".."+pushed))
+	if len(commits) == 0 {
+		t.Fatal("the worker pushed no commit")
+	}
+	for _, commit := range commits {
+		if got := gitIn(t, fixture.origin, "log", "-1", "--format=%(trailers:only,unfold)", commit); strings.Contains(got, "AsmAI-") {
+			t.Errorf("commit %s carries the trailers %q, though the repository switched them off", commit, got)
+		}
+	}
+	instructions := argValue(sessionArgs(t, "worker1@engineering"), "--append-system-prompt")
+	for _, want := range []string{"## AGENTS.md", "Instruction canary", "Notes canary: run `make check` before every commit."} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("the worker's instructions lack %q", want)
+		}
+	}
+	if strings.Index(instructions, "Notes canary") < strings.Index(instructions, "Claude directory canary") {
+		t.Error("the user's notes come before the repository's instruction files, want them after")
+	}
+}

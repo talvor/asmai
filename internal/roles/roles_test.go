@@ -81,7 +81,7 @@ func TestARepositorysInstructionFilesAreGivenInOrderAndItsClaudeConfigurationIsN
 	} {
 		write(t, dir, name, content)
 	}
-	got, err := RepositoryInstructions(dir)
+	got, err := RepositoryInstructions(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestARepositorysInstructionFilesAreGivenInOrderAndItsClaudeConfigurationIsN
 
 func TestARepositoryWithNoInstructionFilesAddsNothingAndALinkIsGivenOnceAndNeverFromOutside(t *testing.T) {
 	dir := t.TempDir()
-	if got, err := RepositoryInstructions(dir); err != nil || got != "" {
+	if got, err := RepositoryInstructions(dir, ""); err != nil || got != "" {
 		t.Errorf("an empty repository gives %q, %v", got, err)
 	}
 	outside := filepath.Join(t.TempDir(), "secret.md")
@@ -116,7 +116,7 @@ func TestARepositoryWithNoInstructionFilesAddsNothingAndALinkIsGivenOnceAndNever
 	if err := os.Symlink("AGENTS.md", filepath.Join(dir, "CLAUDE.md")); err != nil {
 		t.Skip("no symbolic links:", err)
 	}
-	got, err := RepositoryInstructions(dir)
+	got, err := RepositoryInstructions(dir, "")
 	if err != nil || strings.Count(got, "Shared rules.") != 1 || strings.Contains(got, "## CLAUDE.md") {
 		t.Errorf("a CLAUDE.md linking AGENTS.md gives %q, %v, want AGENTS.md once", got, err)
 	}
@@ -125,7 +125,7 @@ func TestARepositoryWithNoInstructionFilesAddsNothingAndALinkIsGivenOnceAndNever
 	if err := os.Symlink(outside, filepath.Join(dir, "AGENTS.md")); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := RepositoryInstructions(dir); err != nil || got != "" {
+	if got, err := RepositoryInstructions(dir, ""); err != nil || got != "" {
 		t.Errorf("an AGENTS.md linking a file outside the repository gives %q, %v, want nothing", got, err)
 	}
 }
@@ -134,7 +134,7 @@ func TestAnOversizedInstructionFileIsGivenInFull(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Repeat("x", (64<<10)+10)
 	write(t, dir, "AGENTS.md", content)
-	got, err := RepositoryInstructions(dir)
+	got, err := RepositoryInstructions(dir, "")
 	if err != nil || !strings.Contains(got, content) {
 		t.Errorf("an oversized file was truncated: %d bytes, %v", len(got), err)
 	}
@@ -382,5 +382,22 @@ func TestAgentsWithoutTheUsersTerminalAreToldADenialReplacesThePrompt(t *testing
 	}
 	if want := "any native permission prompt another agent waits at, which nobody can answer: tell the user"; !strings.Contains(coordination, want) {
 		t.Errorf("Coordination's leader's instructions lack %q", want)
+	}
+}
+
+func TestTheUsersNotesCountAsRepositoryInstructionsAfterTheFiles(t *testing.T) {
+	dir := t.TempDir()
+	got, err := RepositoryInstructions(dir, "  \n")
+	if err != nil || got != "" {
+		t.Errorf("blank notes in a repository with no files give %q, %v, want nothing", got, err)
+	}
+	got, err = RepositoryInstructions(dir, "Run make check.\n")
+	if err != nil || !strings.Contains(got, "# The repository's instruction files") || !strings.Contains(got, "from AsmAI's configuration\n\nRun make check.\n") {
+		t.Errorf("notes alone give %q, %v", got, err)
+	}
+	write(t, dir, "AGENTS.md", "Shared rules.\n")
+	got, err = RepositoryInstructions(dir, "Run make check.")
+	if err != nil || strings.Index(got, "Shared rules.") < 0 || strings.Index(got, "Run make check.") < strings.Index(got, "Shared rules.") {
+		t.Errorf("notes after a file give %q, %v, want the file first", got, err)
 	}
 }

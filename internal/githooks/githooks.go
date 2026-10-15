@@ -41,7 +41,8 @@ const (
 	CommitMessage        = "commit-msg"
 )
 
-// Trailers returns the trailers of a worker's commit, each as "Key: value".
+// Trailers returns the trailers of a worker's commit, each as "Key: value",
+// or none for a repository that has them switched off.
 type Trailers func() ([]string, error)
 
 // Install writes the forwarding hooks into dir, replacing those a previous
@@ -187,6 +188,9 @@ func repairCommitTrailers(ctx context.Context, trailers Trailers) error {
 	if err != nil {
 		return err
 	}
+	if len(lines) == 0 {
+		return nil
+	}
 	hasTrailers := func() (bool, error) {
 		cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%(trailers:only,unfold)")
 		out, err := cmd.Output()
@@ -237,6 +241,10 @@ func addTrailers(ctx context.Context, file string, trailers Trailers) error {
 	lines, err := trailers()
 	if err != nil {
 		return err
+	}
+	// A repository can switch the trailers off.
+	if len(lines) == 0 {
+		return nil
 	}
 	args := []string{"interpret-trailers", "--in-place", "--if-exists", "replace", "--if-missing", "add"}
 	for _, line := range lines {

@@ -9,9 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/store"
 )
 
 // runIn runs asmai in this process with stdin as the user's typing, and
@@ -395,6 +398,34 @@ func TestConfigApplyWithNoFactoryRunningSaysThereIsNothingToPickItUp(t *testing.
 	stdout, stderr, code := runAsmai(t, "config", "apply")
 	if code != 0 || !strings.Contains(stdout, "not running") || stderr != "" {
 		t.Errorf("config apply with no daemon exited %d printing %q, %q", code, stdout, stderr)
+	}
+}
+
+func TestConfigApplyRejectsRepositoryMismatchWithFactoryStopped(t *testing.T) {
+	factoryHome(t)
+	paths, err := statedir.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.Store), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: "https://old.example/fixture.git", DefaultBranch: "trunk", AddedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, staffing+"\n[repositories.fixture]\norigin = \"https://new.example/fixture.git\"\ndefault_branch = \"trunk\"\n")
+	for _, args := range [][]string{{"config", "apply"}, {"config", "apply", "--json"}} {
+		_, stderr, code := runIn(t, "", args...)
+		if code != 1 || !strings.Contains(stderr, "[repositories.fixture].origin differs") || !strings.Contains(stderr, "nothing was applied") {
+			t.Errorf("%v exited %d printing %q", args, code, stderr)
+		}
 	}
 }
 

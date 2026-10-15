@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/roles"
@@ -39,7 +40,51 @@ worker_model = "opus"
 
 func applyConfig(t *testing.T, p string, text string, confirm bool) (Response, error) {
 	t.Helper()
-	return Call(p, Request{Command: CommandConfigApply, Configuration: text, Confirm: confirm})
+	preview, err := Call(p, Request{Command: CommandConfigApply, Configuration: text})
+	if err != nil || !confirm {
+		return preview, err
+	}
+	return Call(p, Request{Command: CommandConfigApply, Configuration: text, Confirm: true, Preview: preview.ConfigApply})
+}
+
+func TestConfigApplyRequiresThePreviewedAgentSet(t *testing.T) {
+	p, configFile := repoDaemon(t)
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, []byte(appliedStaffing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := applyConfig(t, p.Socket, appliedStaffing, false)
+	if err != nil || preview.ConfigApply == nil || len(preview.ConfigApply.Changes) == 0 {
+		t.Fatalf("preview returned %+v, %v", preview.ConfigApply, err)
+	}
+	if _, err := Call(p.Socket, Request{Command: CommandConfigApply, Configuration: appliedStaffing, Confirm: true}); err == nil || !strings.Contains(err.Error(), "changed since the preview") {
+		t.Errorf("confirming without a preview returned %v", err)
+	}
+	s, err := store.Open(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionStarted(store.SessionStart{Agent: "worker@coordination", Role: "coordination", Provider: "claude", Model: "opus", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Call(p.Socket, Request{Command: CommandConfigApply, Configuration: appliedStaffing, Confirm: true, Preview: preview.ConfigApply}); err == nil || !strings.Contains(err.Error(), "affected agents changed since the preview") {
+		t.Errorf("confirming after a worker starts returned %v", err)
+	}
+	if got := countJournaled(t, p.Socket, store.KindConfigurationApplied); got != 0 {
+		t.Errorf("stale confirmation journaled %d configurations", got)
+	}
+	fresh, err := applyConfig(t, p.Socket, appliedStaffing, false)
+	if err != nil || fresh.ConfigApply == nil || !slices.ContainsFunc(fresh.ConfigApply.Changes, func(c ConfigChange) bool { return slices.Contains(c.Agents, "worker@coordination") }) {
+		t.Fatalf("new preview returned %+v, %v", fresh.ConfigApply, err)
+	}
+	if applied, err := Call(p.Socket, Request{Command: CommandConfigApply, Configuration: appliedStaffing, Confirm: true, Preview: fresh.ConfigApply}); err != nil || applied.ConfigApply == nil || !applied.ConfigApply.Applied {
+		t.Fatalf("confirming the fresh preview returned %+v, %v", applied.ConfigApply, err)
+	}
 }
 
 func TestAConfigurationIsShownThenAppliedAndJournaledOnce(t *testing.T) {

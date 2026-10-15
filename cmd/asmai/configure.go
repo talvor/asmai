@@ -40,16 +40,6 @@ func configFile() (path string, data []byte, err error) {
 	return path, data, nil
 }
 
-// problemsOf returns what keeps the factory from running on data: each
-// problem the file has, or a role the factory runs that is not staffed.
-func problemsOf(data []byte) (config.Config, []config.Problem) {
-	cfg, problems := config.Parse(data)
-	if len(problems) == 0 {
-		problems = cfg.MissingStaffing(roles.Staffed)
-	}
-	return cfg, problems
-}
-
 // printProblems tells the user on w what is wrong with the file at path.
 func printProblems(w io.Writer, path string, problems []config.Problem) {
 	noun := "problems"
@@ -280,7 +270,16 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if _, problems := problemsOf(data); len(problems) > 0 {
+	cfg, problems := config.Parse(data)
+	if len(problems) == 0 {
+		problems = cfg.MissingStaffing(roles.Staffed)
+		repositoryProblems, err := registeredRepositoryProblems(cfg)
+		if err != nil {
+			return o.fail(err)
+		}
+		problems = append(problems, repositoryProblems...)
+	}
+	if len(problems) > 0 {
 		printProblems(o.stderr, path, problems)
 		fmt.Fprintln(o.stderr, "asmai: nothing was applied")
 		return 1
@@ -320,7 +319,7 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 		}
 		return o.fail(errors.New("not confirmed; nothing was applied"))
 	}
-	resp, err = daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data), Confirm: true})
+	resp, err = daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data), Confirm: true, Preview: preview})
 	if err != nil {
 		return o.fail(fmt.Errorf("%w; nothing more was applied", err))
 	}

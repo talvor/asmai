@@ -138,7 +138,7 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if resp, err := Call(p.Socket, Request{Command: CommandStart}); err != nil || !slices.ContainsFunc(resp.Checks, func(c Check) bool { return c.Name == "staffing" && strings.Contains(c.Fix, "asmai config apply") }) {
 		t.Fatalf("starting before applying staffing returned %+v, %v", resp.Checks, err)
 	}
-	if resp, err := Call(p.Socket, Request{Command: CommandConfigApply, Configuration: config.String(), Confirm: true}); err != nil || !resp.ConfigApply.Applied {
+	if resp, err := applyConfig(t, p.Socket, config.String(), true); err != nil || !resp.ConfigApply.Applied {
 		t.Fatalf("applying staffing returned %+v, %v", resp.ConfigApply, err)
 	}
 	claude := filepath.Join(p.Providers, "claude-code", "2.1.292", "claude")

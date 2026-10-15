@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -151,6 +152,8 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 		return nil, refuse("%s; %s", mismatches[0].Problem, mismatches[0].Fix)
 	}
 
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.configMu.Lock()
 	base := d.applied
 	d.configMu.Unlock()
@@ -170,6 +173,9 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 			change.Note = "recorded on apply; reaches sessions once per-session skill delivery lands (#89)"
 		}
 		result.Changes = append(result.Changes, change)
+	}
+	if req.Confirm && (req.Preview == nil || !reflect.DeepEqual(*req.Preview, *result)) {
+		return result, refuse("the configuration or affected agents changed since the preview; run `asmai config apply` again")
 	}
 	if !req.Confirm || len(result.Changes) == 0 {
 		return result, nil

@@ -142,8 +142,10 @@ type Request struct {
 	Options       *config.RepositoryOptions `json:"options,omitempty"`
 	// Configuration is the configuration file's content that config.apply
 	// shows the change of, and Confirm has it applied.
-	Configuration string   `json:"configuration,omitempty"`
-	Confirm       bool     `json:"confirm,omitempty"`
+	Configuration string       `json:"configuration,omitempty"`
+	Confirm       bool         `json:"confirm,omitempty"`
+	Preview       *ConfigApply `json:"preview,omitempty"`
+
 	Job           int64    `json:"job,omitempty"`
 	Witness       int64    `json:"witness,omitempty"`
 	LatestWitness bool     `json:"latest_witness,omitempty"`

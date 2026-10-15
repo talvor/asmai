@@ -20,6 +20,7 @@ import (
 // reply. Cases C36 and C37 read it to see what a session loaded and what its
 // write guard let through; neither reads the account or a credential.
 type Turn struct {
+	event int
 	// MCPServers are the names of the MCP servers the session started with.
 	MCPServers []string
 	// Commands are the shell commands the session tried, in order, and
@@ -45,7 +46,9 @@ type Turn struct {
 type Command struct {
 	Text string
 	// Output is what the tool reported back to the session.
-	Output string
+	Output      string
+	CallEvent   int
+	ResultEvent int
 	// Failed reports that the tool returned an error: the command failed, or
 	// it was not allowed.
 	Failed bool
@@ -161,6 +164,7 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 	if err := json.Unmarshal(line, &event); err != nil {
 		return fmt.Errorf("the provider printed %q, which is not JSON: %w", bytes.TrimSpace(line), err)
 	}
+	t.event++
 	var message struct {
 		Content json.RawMessage `json:"content"`
 	}
@@ -202,13 +206,13 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 				switch {
 				case b.Type == "tool_use" && b.Name == "Bash":
 					byID[b.ID] = toolUse{index: len(t.Commands)}
-					t.Commands = append(t.Commands, Command{Text: b.Input.Command, Unsandboxed: b.Input.Unsandboxed})
+					t.Commands = append(t.Commands, Command{Text: b.Input.Command, CallEvent: t.event, Unsandboxed: b.Input.Unsandboxed})
 				case b.Type == "tool_use" && b.Name == "Skill":
 					byID[b.ID] = toolUse{skill: true, index: len(t.SkillCalls)}
-					t.SkillCalls = append(t.SkillCalls, Command{Text: b.Input.Skill})
+					t.SkillCalls = append(t.SkillCalls, Command{Text: b.Input.Skill, CallEvent: t.event})
 				case b.Type == "tool_use" && (b.Name == "Write" || b.Name == "Edit"):
 					byID[b.ID] = toolUse{file: true, index: len(t.Files)}
-					t.Files = append(t.Files, Command{Text: b.Input.FilePath})
+					t.Files = append(t.Files, Command{Text: b.Input.FilePath, CallEvent: t.event})
 				}
 			}
 		}
@@ -223,7 +227,7 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 			for _, b := range blocks {
 				if u, ok := byID[b.ID]; ok && b.Type == "tool_result" {
 					c := t.use(u)
-					c.Output, c.Failed = contentText(b.Content), b.Error
+					c.Output, c.Failed, c.ResultEvent = contentText(b.Content), b.Error, t.event
 				}
 			}
 		}

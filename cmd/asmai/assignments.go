@@ -84,8 +84,8 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if a.Skill != "" {
 		fmt.Fprintf(o.stdout, "skill named: %s\n", a.Skill)
 	}
-	if len(a.Skills) > 0 {
-		fmt.Fprintf(o.stdout, "skill list: %s\n", strings.Join(a.Skills, ", "))
+	if list := a.EffectiveSkills(); len(list) > 0 {
+		fmt.Fprintf(o.stdout, "skill list: %s\n", strings.Join(list, ", "))
 	}
 	if a.ReadOnly {
 		fmt.Fprintf(o.stdout, "read-only workspace fixed at %s of %s, with no branch\nworkspace: %s (slot %d)\n", a.Commit, a.JobBranch, a.Workspace.Path, a.Workspace.Slot)
@@ -316,8 +316,8 @@ func printAssignment(w io.Writer, a store.Assignment) {
 	if a.Skill != "" {
 		fmt.Fprintf(w, "Skill to run: %s\n", a.Skill)
 	}
-	if len(a.Skills) > 0 {
-		fmt.Fprintf(w, "Your skill list for this assignment: %s\n", strings.Join(a.Skills, ", "))
+	if list := a.EffectiveSkills(); len(list) > 0 {
+		fmt.Fprintf(w, "Your skill list for this assignment: %s\n", strings.Join(list, ", "))
 	}
 	if a.ReadOnly {
 		fmt.Fprintf(w, "Read-only workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nFixed at commit: %s, the head of the job branch %s; it has no branch, and you never change the work\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Commit, a.JobBranch)

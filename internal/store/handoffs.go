@@ -434,9 +434,9 @@ func (s *Store) ChangeDispatch(id int64, generation int, from, to, transcript st
 	return s.change(at, func(tx *sql.Tx) (string, any, error) {
 		// The dispatch records the skills of the session it went to.
 		result, err := tx.Exec(`UPDATE dispatches SET state=?,generation=?,transcript=CASE WHEN ?='' THEN transcript ELSE ? END,updated_at=?,
-			bundle=COALESCE((SELECT n.bundle FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), bundle),
-			skills=COALESCE((SELECT n.skills FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), skills)
-			WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), generation, generation, id, from, generation)
+			bundle=CASE WHEN state=? THEN COALESCE((SELECT n.bundle FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), bundle) ELSE bundle END,
+			skills=CASE WHEN state=? THEN COALESCE((SELECT n.skills FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), skills) ELSE skills END
+			WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), DispatchCreated, generation, DispatchCreated, generation, id, from, generation)
 		if err != nil {
 			return "", nil, err
 		}

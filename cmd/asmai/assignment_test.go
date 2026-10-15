@@ -238,7 +238,7 @@ func decode[T any](t *testing.T, e journalEntry) T {
 func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(t *testing.T) {
 	const branch = "asmai/job-1/1"
 	worker := []string{
-		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Add greeting.txt.*greeting.txt says hello.*the check passes.*Assignment branch: asmai/job-1/1, made from the job branch asmai/job-1-add-a-greeting at [0-9a-f]{40}"),
+		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Add greeting.txt.*greeting.txt says hello.*the check passes.*Your skill list for this assignment: implement, tdd.*Assignment branch: asmai/job-1/1, made from the job branch asmai/job-1-add-a-greeting at [0-9a-f]{40}"),
 		fakeRun(`asmai assign --job 1 --outcome x --criterion y`, 1, "only leader@engineering"),
 		fakeRun(`pwd -P > "$ASMAI_TEST_DIR/workspace"; printf '%s\n%s\n' "$ASMAI_SLOT" "$TMPDIR" > "$ASMAI_TEST_DIR/worker-env"; git rev-parse --git-common-dir > "$ASMAI_TEST_DIR/common-dir"`, 0, ""),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
@@ -256,6 +256,15 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 	}
 	fixture, testDir := assignmentFlow(t, worker, leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
+	assignments := journaled(t, "assignment.created")
+	if len(assignments) != 1 {
+		t.Fatalf("assignments created: %+v", assignments)
+	}
+	if a := decode[struct {
+		Skills []string `json:"skills"`
+	}](t, assignments[0]); len(a.Skills) != 0 {
+		t.Errorf("the default list was persisted as %v, want it resolved at each start", a.Skills)
+	}
 
 	// The job branch is named for the job, starts from the default branch as
 	// origin has it, and records the commit it started from.

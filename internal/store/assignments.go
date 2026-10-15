@@ -136,8 +136,8 @@ type Assignment struct {
 	Intent       *Intent   `json:"intent,omitempty"`
 	OpenFindings []Finding `json:"open_findings,omitempty"`
 	// Skill is the skill the owning leader named for the worker to run, and
-	// Skills the list the worker is given: its role's default list, or the
-	// narrower list the leader gave.
+	// Skills the explicit narrowing, if any; otherwise the current role list
+	// is delivered at each start.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
 }
@@ -363,8 +363,7 @@ type NewAssignment struct {
 	// ReadOnly makes a read-only assignment, whose workspace has no branch.
 	ReadOnly bool
 	// Skill is the skill the assignment names, if it does, and Skills the
-	// list the worker is given, both as the daemon checked them against the
-	// role's list.
+	// explicit narrowing, if any, as the daemon checked it against the role's list.
 	Skill  string
 	Skills []string
 }

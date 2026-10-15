@@ -668,14 +668,16 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 		if err != nil {
 			return "", nil, err
 		}
-		_, err = tx.Exec(`UPDATE dispatches SET generation=?, bundle=?, skills=? WHERE agent=? AND (
+		_, err = tx.Exec(`UPDATE dispatches SET generation=?,
+			bundle=CASE WHEN state=? THEN ? ELSE bundle END,
+			skills=CASE WHEN state=? THEN ? ELSE skills END WHERE agent=? AND (
 			(state IN (?,?,?) AND EXISTS (
 				SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NULL
 			)) OR (state IN (?,?) AND EXISTS (
 				SELECT 1 FROM messages JOIN handoffs ON handoffs.id=messages.handoff
 				WHERE messages.id=dispatches.message AND messages.kind='handoff' AND messages.fetched_at IS NOT NULL AND handoffs.state=?
 			))
-		)`, generation, start.Bundle, string(skills), start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
+		)`, generation, DispatchCreated, start.Bundle, DispatchCreated, string(skills), start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
 		if err != nil {
 			return "", nil, err
 		}

@@ -409,7 +409,7 @@ func TestEachSessionOfAnAgentIsTheNextGenerationAndIsJournaled(t *testing.T) {
 func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
-	start := SessionStart{Agent: "leader@engineering", Role: "engineering", Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: "/a", PID: 41, At: at}
+	start := SessionStart{Agent: "leader@engineering", Role: "engineering", Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: "/a", PID: 41, At: at, Bundle: "old", Skills: map[string]string{"pr": "old-fingerprint"}}
 	if generation, err := s.SessionStarted(start); err != nil || generation != 1 {
 		t.Fatalf("the first session generation is %d (%v), want 1", generation, err)
 	}
@@ -421,7 +421,8 @@ func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown} {
+	ids := map[string]int64{}
+	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered} {
 		result, err := s.db.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,created_at) VALUES(?,'leader@coordination','leader@engineering','outcome','','','','','[]','pending',?)`, jobID, timestamp(at))
 		if err != nil {
 			t.Fatal(err)
@@ -430,7 +431,11 @@ func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err = s.db.Exec(`INSERT INTO messages(handoff,job,sender,recipient,kind,body) VALUES(?,?,'leader@coordination','leader@engineering','handoff','outcome')`, handoffID, jobID)
+		var fetched any
+		if state == DispatchDelivered {
+			fetched = timestamp(at)
+		}
+		result, err = s.db.Exec(`INSERT INTO messages(handoff,job,sender,recipient,kind,body,fetched_at) VALUES(?,?,'leader@coordination','leader@engineering','handoff','outcome',?)`, handoffID, jobID, fetched)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,31 +443,52 @@ func TestStartingANewGenerationRebindsUnfetchedDispatches(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.db.Exec(`INSERT INTO dispatches(message,agent,generation,state,updated_at) VALUES(?,'leader@engineering',1,?,?)`, messageID, state, timestamp(at)); err != nil {
+		result, err = s.db.Exec(`INSERT INTO dispatches(message,agent,generation,state,updated_at,bundle,skills) VALUES(?,'leader@engineering',1,?,?,'old','{"pr":"old-fingerprint"}')`, messageID, state, timestamp(at))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[state], err = result.LastInsertId()
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	start.PID = 42
+	start.Bundle = "new"
+	start.Skills = map[string]string{"pr": "new-fingerprint"}
 	if generation, err := s.SessionStarted(start); err != nil || generation != 2 {
 		t.Fatalf("the replacement session generation is %d (%v), want 2", generation, err)
 	}
-	rows, err := s.db.Query(`SELECT generation,state FROM dispatches ORDER BY id`)
+	rows, err := s.db.Query(`SELECT generation,state,bundle,skills FROM dispatches ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown} {
+	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered} {
 		var generation int
-		var got string
+		var got, bundle, skills string
 		if !rows.Next() {
 			t.Fatalf("the %s dispatch is missing", state)
 		}
-		if err := rows.Scan(&generation, &got); err != nil {
+		if err := rows.Scan(&generation, &got, &bundle, &skills); err != nil {
 			t.Fatal(err)
 		}
 		if got != state || generation != 2 {
 			t.Errorf("the dispatch is generation %d in state %s, want generation 2 in state %s", generation, got, state)
 		}
+		wantBundle, wantSkills := "old", `{"pr":"old-fingerprint"}`
+		if state == DispatchCreated {
+			wantBundle, wantSkills = "new", `{"pr":"new-fingerprint"}`
+		}
+		if bundle != wantBundle || skills != wantSkills {
+			t.Errorf("the %s dispatch records bundle %q and skills %s, want %q and %s", state, bundle, skills, wantBundle, wantSkills)
+		}
+	}
+	rows.Close()
+	if err := s.ChangeDispatch(ids[DispatchNudged], 2, DispatchNudged, DispatchUnknown, "transcript", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var bundle, skills string
+	if err := s.db.QueryRow(`SELECT bundle,skills FROM dispatches WHERE id=?`, ids[DispatchNudged]).Scan(&bundle, &skills); err != nil || bundle != "old" || skills != `{"pr":"old-fingerprint"}` {
+		t.Errorf("the retried dispatch records bundle %q and skills %s (%v), want the attempted session's values", bundle, skills, err)
 	}
 }
 

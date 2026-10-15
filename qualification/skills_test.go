@@ -21,10 +21,17 @@ type skillsSession struct {
 	// asksNothing makes the session run no skill.
 	asksNothing bool
 	// noList makes the start list no skills.
-	noList bool
+	noList                            bool
+	noPlugin                          bool
+	bareList                          bool
+	unresolvedFirst, unresolvedSecond bool
+	earlySecond                       bool
 }
 
 func (s skillsSession) ask(spec AskSpec) (Turn, error) {
+	if strings.Contains(spec.Prompt, "tdd") {
+		return Turn{}, fmt.Errorf("the prompt named the skill implement must call: %q", spec.Prompt)
+	}
 	plugin := argAfter(spec.Args, "--plugin-dir")
 	if plugin == "" || !hasFlagValue(spec.Args, "--setting-sources", "") {
 		return Turn{}, fmt.Errorf("the session was started with %q, want a plugin and an empty --setting-sources", spec.Args)
@@ -34,8 +41,15 @@ func (s skillsSession) ask(spec AskSpec) (Turn, error) {
 		return Turn{}, err
 	}
 	turn := Turn{Plugins: []string{"asmai"}, Reply: "done"}
+	if s.noPlugin {
+		turn.Plugins = nil
+	}
 	for _, e := range entries {
-		turn.Skills = append(turn.Skills, "asmai:"+e.Name())
+		name := "asmai:" + e.Name()
+		if s.bareList {
+			name = e.Name()
+		}
+		turn.Skills = append(turn.Skills, name)
 	}
 	turn.Skills = append(turn.Skills, "code-review")
 	if s.listsExtra {
@@ -47,18 +61,32 @@ func (s skillsSession) ask(spec AskSpec) (Turn, error) {
 	if s.asksNothing {
 		return turn, nil
 	}
-	turn.SkillCalls = []Command{{Text: "asmai:implement"}}
+	first := Command{Text: "asmai:implement", CallEvent: 1}
+	if !s.unresolvedFirst {
+		first.ResultEvent = 2
+	}
+	turn.SkillCalls = []Command{first}
 	if s.bareFails {
-		turn.SkillCalls = append(turn.SkillCalls, Command{Text: "tdd", Failed: true, Output: "Unknown skill: tdd"})
+		turn.SkillCalls = append(turn.SkillCalls, Command{Text: "tdd", CallEvent: 3, ResultEvent: 4, Failed: true, Output: "Unknown skill: tdd"})
 	}
 	if s.namespacedFails {
-		turn.SkillCalls = append(turn.SkillCalls, Command{Text: "asmai:tdd", Failed: true, Output: "Unknown skill: asmai:tdd"})
+		turn.SkillCalls = append(turn.SkillCalls, Command{Text: "asmai:tdd", CallEvent: 5, ResultEvent: 6, Failed: true, Output: "Unknown skill: asmai:tdd"})
 	} else {
 		name := "asmai:tdd"
 		if !s.bareFails {
 			name = "tdd"
 		}
-		turn.SkillCalls = append(turn.SkillCalls, Command{Text: name})
+		second := Command{Text: name, CallEvent: 3}
+		if s.bareFails {
+			second.CallEvent = 5
+		}
+		if s.earlySecond {
+			second.CallEvent = 1
+		}
+		if !s.unresolvedSecond {
+			second.ResultEvent = second.CallEvent + 1
+		}
+		turn.SkillCalls = append(turn.SkillCalls, second)
 	}
 	return turn, nil
 }
@@ -124,19 +152,45 @@ func TestC34IsInconclusiveWhenTheSessionRunsNoSkill(t *testing.T) {
 	}
 }
 
-func TestC34SaysSoWhenTheSessionsStartListsNoSkills(t *testing.T) {
-	r := result(t, skillsHarness(t, skillsSession{noList: true}), "C34")
-	if r.Outcome != Passed {
-		t.Fatalf("C34 %s: %s", r.Outcome, r.Failure)
+func TestC34RequiresPluginAndNamespacedSkillInventory(t *testing.T) {
+	for name, session := range map[string]skillsSession{
+		"no plugin":   {noPlugin: true},
+		"no list":     {noList: true},
+		"bare skills": {bareList: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := result(t, skillsHarness(t, session), "C34")
+			if r.Outcome != Failed || !(strings.Contains(r.Failure, "plugin") || strings.Contains(r.Failure, "listed")) {
+				t.Errorf("C34 %s: %q, want missing plugin skill evidence to fail", r.Outcome, r.Failure)
+			}
+		})
 	}
-	if evidence := strings.Join(r.Evidence, "\n"); !strings.Contains(evidence, "known limitation") {
-		t.Errorf("C34's evidence\n%s\ndoes not say the list was not shown", evidence)
+}
+
+func TestC34RequiresSuccessfulResultsForBothSkillCalls(t *testing.T) {
+	for name, session := range map[string]skillsSession{
+		"implement": {unresolvedFirst: true},
+		"tdd":       {unresolvedSecond: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := result(t, skillsHarness(t, session), "C34")
+			if r.Outcome != Failed {
+				t.Errorf("C34 %s: %q, want an unresolved %s Skill call to fail", r.Outcome, r.Failure, name)
+			}
+		})
+	}
+}
+
+func TestC34RequiresImplementToReturnBeforeTheSecondCall(t *testing.T) {
+	r := result(t, skillsHarness(t, skillsSession{earlySecond: true}), "C34")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "before implement returned") {
+		t.Errorf("C34 %s: %q, want an early second call to fail", r.Outcome, r.Failure)
 	}
 }
 
 func TestATurnReadsTheSkillsASessionListedAndRan(t *testing.T) {
 	events := `{"type":"system","subtype":"init","skills":["asmai:tdd","code-review"],"plugins":[{"name":"asmai","path":"/p"}]}
-{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"tdd"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"tdd"}},{"type":"tool_use","id":"t2","name":"Skill","input":{"skill":"asmai:implement"}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Unknown skill: tdd","is_error":true}]}}
 {"type":"result","subtype":"success","result":"done"}
 `
@@ -147,7 +201,7 @@ func TestATurnReadsTheSkillsASessionListedAndRan(t *testing.T) {
 	if strings.Join(turn.Skills, ",") != "asmai:tdd,code-review" || strings.Join(turn.Plugins, ",") != "asmai" {
 		t.Errorf("the turn lists skills %v and plugins %v", turn.Skills, turn.Plugins)
 	}
-	if len(turn.SkillCalls) != 1 || turn.SkillCalls[0].Text != "tdd" || !turn.SkillCalls[0].Failed || turn.SkillCalls[0].Output != "Unknown skill: tdd" {
+	if len(turn.SkillCalls) != 2 || turn.SkillCalls[0].Text != "tdd" || turn.SkillCalls[0].CallEvent != 2 || turn.SkillCalls[0].ResultEvent != 3 || !turn.SkillCalls[0].Failed || turn.SkillCalls[0].Output != "Unknown skill: tdd" || turn.SkillCalls[1].ResultEvent != 0 {
 		t.Errorf("the turn's skill calls are %+v", turn.SkillCalls)
 	}
 }

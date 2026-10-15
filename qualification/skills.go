@@ -65,40 +65,28 @@ func (h *Harness) skillsAreDelivered(ctx context.Context, f *Factory, path strin
 		Dir:  g.workspace,
 		Args: args,
 		Prompt: "You are being qualified. Use the Skill tool to run the skill `" + named + "` from your skill list, once. " +
-			"Its text tells you to use another skill by name: use the Skill tool to run that skill too, under the name your skill list gives it. " +
-			"Do not carry out what the skills tell you, and do not run any other tool: once both skills have started, reply with the single word done.",
+			"Follow its instructions to invoke any skill it names, using the Skill tool and the name your skill list gives it. " +
+			"Do not carry out the rest of the work or run any other tool. Then reply with the single word done.",
 	})
 	if err != nil {
 		return err
 	}
 
 	// The session was given the plugin's skills, and only the narrowed list.
-	if len(turn.Skills) > 0 {
-		// The worker's list is all the bundle's skills it could have been
-		// given: what Claude Code lists besides them is not this case's.
-		var got []string
-		for _, name := range turn.Skills {
-			bare := strings.TrimPrefix(name, skills.Namespaced(""))
-			if slices.Contains(skills.WorkerList(roles.Engineering), bare) && !slices.Contains(got, bare) {
-				got = append(got, bare)
-			}
-		}
-		slices.Sort(got)
-		if want := slices.Sorted(slices.Values(list)); !slices.Equal(got, want) {
-			return fmt.Errorf("the session listed the %s plugin's skills as %v, want exactly the worker's narrowed list %v", skills.PluginName, got, want)
-		}
-		r.observe("the session was given the narrowed list as the plugin %s: %s", skills.PluginName, strings.Join(list, ", "))
-	} else {
-		r.observe("known limitation: the session's start did not list its skills, so the narrowed list is shown by the skills it ran alone")
+	if !slices.Contains(turn.Plugins, skills.PluginName) {
+		return errors.New("the session did not load the per-session plugin")
 	}
-	for _, other := range skills.WorkerList(roles.Engineering) {
-		if slices.Contains(list, other) {
-			continue
-		}
-		if slices.Contains(turn.Skills, skills.Namespaced(other)) || slices.Contains(turn.Skills, other) {
-			return fmt.Errorf("the session was given %s, which the assignment narrowed out of its list", other)
+	var got []string
+	for _, name := range turn.Skills {
+		if bare, ok := strings.CutPrefix(name, skills.Namespaced("")); ok {
+			got = append(got, bare)
 		}
 	}
+	slices.Sort(got)
+	if want := slices.Sorted(slices.Values(list)); !slices.Equal(got, want) {
+		return fmt.Errorf("the session listed the %s plugin's skills as %v, want exactly the worker's narrowed list %v", skills.PluginName, got, want)
+	}
+	r.observe("the session was given the narrowed list as the plugin %s: %s", skills.PluginName, strings.Join(list, ", "))
 
 	// A skill from the list runs.
 	ran := func(name string) (Command, bool) {
@@ -107,7 +95,7 @@ func (h *Harness) skillsAreDelivered(ctx context.Context, f *Factory, path strin
 			if c.Text != name && c.Text != skills.Namespaced(name) {
 				continue
 			}
-			if !c.Failed {
+			if c.ResultEvent > 0 && !c.Failed && !c.Denied {
 				return c, true
 			}
 			found = c
@@ -128,7 +116,9 @@ func (h *Harness) skillsAreDelivered(ctx context.Context, f *Factory, path strin
 	for _, c := range turn.SkillCalls {
 		if c.Text == called || c.Text == skills.Namespaced(called) {
 			state := "ran"
-			if c.Failed {
+			if c.ResultEvent == 0 {
+				state = "had no tool result"
+			} else if c.Failed || c.Denied {
 				state = "was not found: " + strings.TrimSpace(c.Output)
 			}
 			attempts = append(attempts, fmt.Sprintf("%q %s", c.Text, state))
@@ -141,13 +131,13 @@ func (h *Harness) skillsAreDelivered(ctx context.Context, f *Factory, path strin
 	if !ok {
 		return fmt.Errorf("the skill %s, which %s's text names by bare name, did not resolve: %s", called, named, strings.Join(attempts, "; "))
 	}
+	if second.CallEvent <= first.ResultEvent {
+		return fmt.Errorf("the skill %s was called before %s returned its instructions", called, named)
+	}
 	if second.Text == called {
 		r.observe("%s's text names %s by bare name, and Claude Code ran it under that bare name, though the plugin namespaces it as %s", named, called, skills.Namespaced(called))
 	} else {
 		r.observe("%s's text names %s by bare name, and it ran as %q, the name the operating guide gives; attempts: %s", named, called, second.Text, strings.Join(attempts, "; "))
-	}
-	if len(turn.Plugins) > 0 && !slices.ContainsFunc(turn.Plugins, func(name string) bool { return strings.HasPrefix(name, skills.PluginName) }) {
-		return errors.New("the session did not load the per-session plugin")
 	}
 	return nil
 }

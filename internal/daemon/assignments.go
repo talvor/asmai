@@ -126,6 +126,9 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
 	}
+	if len(req.Skills) == 0 {
+		skillList = nil
+	}
 
 	d.assignMu.Lock()
 	defer d.assignMu.Unlock()

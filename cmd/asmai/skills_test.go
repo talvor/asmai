@@ -239,3 +239,26 @@ func TestAddedAndSwitchedOnRepositorySkillsReachTheirRolesAgentsMarkedUnqualifie
 		}
 	}
 }
+
+// A worker whose role's list is configured empty is given no skills, so its
+// list is empty, not the shipped one, and it names none it ran.
+func TestAWorkerGivenAnEmptyListHasNoSkillsToName(t *testing.T) {
+	edit := func(config string) string {
+		return strings.Replace(config, "[roles.engineering]\n", "[roles.engineering]\nworker_skills = []\n", 1)
+	}
+	const branch = "asmai/job-1/1"
+	worker := []string{
+		fakeRun(`asmai inbox --dispatch 3 | grep -q 'skill list' || echo 'no skill list'`, 0, "no skill list"),
+		fakeRun(`printf 'hello\n' > greeting.txt && git add greeting.txt && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
+		fakeRun(`asmai result --evidence x --test none --check none --gap none --skill tdd --pr-section x`, 1, "not on your skill list"),
+		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 0, "result recorded for assignment 1"),
+	}
+	leader := []string{
+		fakeRun(`asmai inbox --dispatch 4`, 0, "assignment 1"),
+	}
+	_, _ = assignmentFlowConfigured(t, gitIdentity, nil, edit, worker, leader)
+	if plugin := argValue(sessionArgs(t, "worker1@engineering"), "--plugin-dir"); plugin != "" {
+		t.Errorf("the worker was given the plugin %s, want none", plugin)
+	}
+}

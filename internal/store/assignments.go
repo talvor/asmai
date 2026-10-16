@@ -441,7 +441,10 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 		a.ReadOnly, a.Commit = true, w.Base
 		a.Intent = &Intent{Words: j.Words, Reading: j.Reading, Mandate: j.Mandate, Criteria: j.Criteria}
 	}
-	if _, err := appendEntry(tx, at, KindAssignmentCreated, a); err != nil {
+	if _, err := appendEntry(tx, at, KindAssignmentCreated, struct {
+		Assignment
+		List []string `json:"list,omitempty"`
+	}{Assignment: a}); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
 	if _, err := appendEntry(tx, at, KindWorkspaceCreated, struct {

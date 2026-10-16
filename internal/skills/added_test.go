@@ -159,6 +159,47 @@ func TestARepositorysSkillsAreItsClaudeSkillsDirectories(t *testing.T) {
 	}
 }
 
+func TestASkillWhoseSKILLmdNamesItOtherThanItsDirectoryIsRefused(t *testing.T) {
+	parent := t.TempDir()
+	ours := filepath.Join(parent, "tdd-ours")
+	if err := os.MkdirAll(ours, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ours, "SKILL.md"), []byte("---\nname: tdd\ndescription: Ours.\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := List([]string{"tdd"}, []string{ours})
+	if err == nil || !strings.Contains(err.Error(), ours) || !strings.Contains(err.Error(), "named tdd") || !strings.Contains(err.Error(), "not tdd-ours") {
+		t.Errorf("an added skill named otherwise by its SKILL.md was added: %v", err)
+	}
+
+	root := t.TempDir()
+	skills := filepath.Join(root, ".claude", "skills")
+	skillDir(t, skills, "house-rules", "The repository's rules.")
+	odd := filepath.Join(skills, "odd")
+	if err := os.MkdirAll(odd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(odd, "SKILL.md"), []byte("---\nname: pr\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list, err := RepositorySkills(root)
+	if err == nil || !strings.Contains(err.Error(), odd) || !strings.Contains(err.Error(), "named pr") || !strings.Contains(err.Error(), "not odd") {
+		t.Errorf("a repository skill named otherwise by its SKILL.md was given: %+v (%v)", list, err)
+	}
+
+	plain := filepath.Join(parent, "plain")
+	if err := os.MkdirAll(plain, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plain, "SKILL.md"), []byte("---\ndescription: No name.\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := List(nil, []string{plain}); err != nil {
+		t.Errorf("an added skill whose SKILL.md gives no name was refused: %v", err)
+	}
+}
+
 // Rule 12: a leader's index covers its workers' added skills too, from their
 // own descriptions, marked as the user's and unqualified.
 func TestALeadersIndexMarksItsWorkersAddedSkillsAsTheUsersAndUnqualified(t *testing.T) {

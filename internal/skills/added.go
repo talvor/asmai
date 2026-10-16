@@ -83,16 +83,32 @@ func addedSkill(dir string) (Given, error) {
 		dir = filepath.Join(home, rest)
 	}
 	dir = filepath.Clean(dir)
-	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
 		return Given{}, fmt.Errorf("the added skill %s has no SKILL.md: %w", dir, err)
 	}
+	if err := nameMatches("added", dir, data); err != nil {
+		return Given{}, err
+	}
 	return Given{Name: filepath.Base(dir), Source: User, Dir: dir}, nil
+}
+
+// nameMatches refuses the kind skill at dir, whose SKILL.md holds data, when
+// its front matter names it other than its directory's name, which is what
+// `asmai` names it by.
+func nameMatches(kind, dir string, data []byte) error {
+	name := frontMatter(strings.ReplaceAll(string(data), "\r\n", "\n"))["name"]
+	if name != "" && name != filepath.Base(dir) {
+		return fmt.Errorf("the %s skill %s is named %s by its SKILL.md, not %s, its directory's name", kind, dir, name, filepath.Base(dir))
+	}
+	return nil
 }
 
 // RepositorySkills returns the skills in the repository at root's
 // .claude/skills, each a directory with a SKILL.md, by name. A repository
 // without that directory, or whose .claude or .claude/skills is a symbolic
-// link, has none.
+// link, has none. A skill whose SKILL.md names it other than its directory's
+// name is refused.
 func RepositorySkills(root string) ([]Given, error) {
 	dir := filepath.Join(root, RepositoryDir)
 	for _, p := range []string{filepath.Dir(dir), dir} {
@@ -113,8 +129,12 @@ func RepositorySkills(root string) ([]Given, error) {
 		if !e.IsDir() {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(skill, "SKILL.md")); err != nil {
+		data, err := os.ReadFile(filepath.Join(skill, "SKILL.md"))
+		if err != nil {
 			continue
+		}
+		if err := nameMatches("repository", skill, data); err != nil {
+			return nil, err
 		}
 		list = append(list, Given{Name: e.Name(), Source: Repository, Dir: skill})
 	}

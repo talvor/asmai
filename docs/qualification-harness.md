@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has seventeen cases:
+So far it has eighteen cases:
 
 | Case | What it qualifies |
 |---|---|
@@ -13,6 +13,7 @@ So far it has seventeen cases:
 | C7 | An automated nudge counts only after the receiving provider acknowledges its exact prompt |
 | C11 | The user's witnessed request is journaled, while the daemon's nudge is not |
 | C19 | Dispatches and results stay correlated and reconcilable across restarts |
+| C33 | Personal, provider built-in and repository skills are hidden, including Claude Code's built-in code-review next to the shipped one |
 | C34 | Per-session skill delivery works although Claude Code namespaces plugin skills and upstream skills call each other by bare name |
 | C36 | Instruction files load without the repository's provider configuration |
 | C37 | Provider write guards are switched on |
@@ -125,6 +126,15 @@ C34 runs the pinned Claude Code non-interactively (`claude -p`, reading its JSON
 If none of the three sessions makes the call, the case fails as inconclusive. It uses the model alias `sonnet`, needs on Linux what C37 needs, and depends on the model running the skills it is asked to run. It does not qualify hiding, which is C33's.
 
 The prompt permits the session to stop after the called skill starts; C34 checks skill delivery and invocation, not whether it writes the function or tests.
+
+### C33: hiding every skill but the session's list
+
+C33 runs the pinned Claude Code non-interactively (`claude -p`, reading its JSON events) in the workspace of the same kind of fixture as C36, with the command line the code under test builds for a Quality worker, whose list holds the shipped `code-review` beside `retro` and `tdd` ([08](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/08-skills-and-agent-instructions.md) rule 19). The plugin is written as the daemon writes it (`skills.WritePlugin`), and the command line is `providers.ClaudeCodeArgs`, so the arguments qualified are the arguments run. Before the session starts, the case plants a personal skill under a random name in the harness user's `~/.claude/skills`, which it removes afterwards, and a repository skill in the workspace's `.claude/skills`. It requires:
+
+- the session's start to list the `asmai` plugin and exactly its list, `asmai:code-review`, `asmai:retro` and `asmai:tdd`, and no other skill: not the planted personal or repository skill, not Claude Code's built-in `code-review` next to the shipped one, and none of Claude Code's other built-in skills;
+- each slash command `providers.ClaudeCodeUnhidden` records as what the pinned Claude Code cannot hide, such as `/security-review` and `/init`, to be listed as a slash command and not as a skill, so that the record `asmai doctor` lists stays true of the pinned version.
+
+The prompt asks only for the word `done`: the case reads what the session listed when it started, not what the model does. It needs on Linux what C37 needs.
 
 ### C36 and C37: instruction files and the write guard
 

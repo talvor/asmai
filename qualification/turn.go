@@ -31,10 +31,12 @@ type Turn struct {
 	// Skills are the names of the skills the session listed when it started,
 	// as Claude Code names them, and Plugins the names of the plugins it
 	// loaded. SkillCalls are the skills it ran with the Skill tool, each as a
-	// Command whose Text is the name it ran the skill by.
-	Skills     []string
-	Plugins    []string
-	SkillCalls []Command
+	// Command whose Text is the name it ran the skill by. SlashCommands are
+	// the slash commands it listed, its skills among them.
+	Skills        []string
+	Plugins       []string
+	SkillCalls    []Command
+	SlashCommands []string
 	// Reply is what the session answered last.
 	Reply string
 	// Said is everything it wrote to the user along the way, its reply
@@ -156,6 +158,7 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 		} `json:"mcp_servers"`
 		Skills  []json.RawMessage `json:"skills"`
 		Plugins []json.RawMessage `json:"plugins"`
+		Slash   []json.RawMessage `json:"slash_commands"`
 		Message json.RawMessage   `json:"message"`
 		Denials []struct {
 			ID string `json:"tool_use_id"`
@@ -184,6 +187,9 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 		}
 		for _, raw := range event.Plugins {
 			t.Plugins = append(t.Plugins, nameOf(raw))
+		}
+		for _, raw := range event.Slash {
+			t.SlashCommands = append(t.SlashCommands, nameOf(raw))
 		}
 	case event.Type == "assistant":
 		var blocks []struct {
@@ -243,8 +249,8 @@ func (t *Turn) add(line []byte, byID map[string]toolUse) error {
 	return nil
 }
 
-// nameOf reads the name of an entry of the init event's skills or plugins,
-// which is a string or an object with a name.
+// nameOf reads the name of an entry of the init event's skills, plugins or
+// slash commands, which is a string or an object with a name.
 func nameOf(raw json.RawMessage) string {
 	var name string
 	if json.Unmarshal(raw, &name) == nil {

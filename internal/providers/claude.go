@@ -166,6 +166,40 @@ func CommandRules() []string {
 	return allow
 }
 
+// claudeCodeOwnSkills are the skills of Claude Code's own that the pinned
+// version still lists to a session once disableBundledSkills has removed the
+// skills it bundles: design and doctor, and plugin-authoring from its
+// built-in plugin of that name. skillOverrides turns each off by name, which
+// leaves the session's own skills alone, as Claude Code names those with the
+// plugin's name ahead of theirs. Case C33 qualifies that nothing else is
+// listed.
+var claudeCodeOwnSkills = []string{"design", "doctor", "plugin-authoring"}
+
+// Unhidden is something of a pinned provider's own that AsmAI cannot keep
+// from an agent session, which `asmai doctor` lists (08 rule 19).
+type Unhidden struct {
+	// What names it, and Why says why it is not hidden and what is done
+	// about it.
+	What, Why string
+	// Commands are the slash commands it covers that case C33 checks the
+	// session lists as commands but not as skills.
+	Commands []string
+}
+
+// ClaudeCodeUnhidden returns what the pinned Claude Code cannot hide from an
+// agent session. Every skill of the user's, of a repository's and of Claude
+// Code's own is hidden, its built-in code-review among them, so only
+// Claude Code's built-in slash commands remain.
+func ClaudeCodeUnhidden() []Unhidden {
+	return []Unhidden{{
+		What: "Claude Code's built-in slash commands, such as /security-review and /init",
+		Why: "Claude Code has no setting that removes them, so they stay listed and can be typed in an agent's terminal. " +
+			"They are hidden from the agent itself, which Claude Code refuses when it tries to run one, " +
+			"and the operating guide tells agents to use only the skills on their list",
+		Commands: []string{"security-review", "init"},
+	}}
+}
+
 // ClaudeCodeSettings returns the settings an agent session of Claude Code is
 // given with --settings: a hook for each of HookEvents that runs
 // hookCommand, the permission rules for `asmai` and selected git and gh
@@ -177,7 +211,10 @@ func CommandRules() []string {
 // perms' Mode: the default mode keeps Claude Code's native permission
 // prompts, and dontAsk turns each into a denial the session sees, for a
 // session whose prompts nobody would answer. Neither approves anything the
-// rules do not allow.
+// rules do not allow. Claude Code's own skills are hidden from the session:
+// the skills it bundles, its built-in code-review among them, are removed
+// with disableBundledSkills, and the rest it lists, claudeCodeOwnSkills, are
+// turned off with skillOverrides (08 rule 19).
 func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions) string {
 	type hook struct {
 		Type    string `json:"type"`
@@ -212,8 +249,14 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 		}
 		sandbox["network"] = map[string]any{"allowUnixSockets": []string{socket}}
 	}
+	overrides := map[string]string{}
+	for _, name := range claudeCodeOwnSkills {
+		overrides[name] = "off"
+	}
 	settings := map[string]any{
-		"hooks": hooks,
+		"disableBundledSkills": true,
+		"skillOverrides":       overrides,
+		"hooks":                hooks,
 		"permissions": map[string]any{
 			"allow":                        allow,
 			"defaultMode":                  perms.Mode(),
@@ -235,9 +278,10 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 //
 // The session's skills are the plugin at pluginDir, which --plugin-dir gives
 // it for this session alone, and no setting source is loaded: the user's own
-// skills live in the user setting source, so leaving it out keeps them from
-// the session, and the flag settings above are all it has. A session with no
-// skills has no pluginDir.
+// skills live in the user setting source and a repository's in
+// `.claude/skills`, its project setting source, so leaving both out keeps
+// them from the session, and the flag settings above, which hide Claude
+// Code's own, are all it has. A session with no skills has no pluginDir.
 func ClaudeCodeArgs(hookCommand, model, instructions, pluginDir string, guard WriteGuard, perms Permissions) []string {
 	args := []string{
 		"--settings", ClaudeCodeSettings(hookCommand, guard, perms),

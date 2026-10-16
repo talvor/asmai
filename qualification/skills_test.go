@@ -166,7 +166,7 @@ func TestC34RequiresPluginAndNamespacedSkillInventory(t *testing.T) {
 }
 
 func TestATurnReadsTheSkillsASessionListedAndRan(t *testing.T) {
-	events := `{"type":"system","subtype":"init","skills":["asmai:tdd","code-review"],"plugins":[{"name":"asmai","path":"/p"}]}
+	events := `{"type":"system","subtype":"init","skills":["asmai:tdd","code-review"],"plugins":[{"name":"asmai","path":"/p"}],"slash_commands":["asmai:tdd","code-review","init"]}
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"tdd"}},{"type":"tool_use","id":"t2","name":"Skill","input":{"skill":"asmai:implement"}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Unknown skill: tdd","is_error":true}]}}
 {"type":"result","subtype":"success","result":"done"}
@@ -177,6 +177,9 @@ func TestATurnReadsTheSkillsASessionListedAndRan(t *testing.T) {
 	}
 	if strings.Join(turn.Skills, ",") != "asmai:tdd,code-review" || strings.Join(turn.Plugins, ",") != "asmai" {
 		t.Errorf("the turn lists skills %v and plugins %v", turn.Skills, turn.Plugins)
+	}
+	if strings.Join(turn.SlashCommands, ",") != "asmai:tdd,code-review,init" {
+		t.Errorf("the turn lists slash commands %v", turn.SlashCommands)
 	}
 	if len(turn.SkillCalls) != 2 || turn.SkillCalls[0].Text != "tdd" || turn.SkillCalls[0].CallEvent != 2 || turn.SkillCalls[0].ResultEvent != 3 || !turn.SkillCalls[0].Failed || turn.SkillCalls[0].Output != "Unknown skill: tdd" || turn.SkillCalls[1].ResultEvent != 0 {
 		t.Errorf("the turn's skill calls are %+v", turn.SkillCalls)

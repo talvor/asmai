@@ -198,6 +198,17 @@ func TestASkillWhoseSKILLmdNamesItOtherThanItsDirectoryIsRefused(t *testing.T) {
 	if _, err := List(nil, []string{plain}); err != nil {
 		t.Errorf("an added skill whose SKILL.md gives no name was refused: %v", err)
 	}
+
+	quoted := filepath.Join(t.TempDir(), "tdd")
+	if err := os.MkdirAll(quoted, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(quoted, "SKILL.md"), []byte("---\nname: 'tdd'\ndescription: Quoted.\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := List([]string{"tdd"}, []string{quoted}); err != nil {
+		t.Errorf("an added skill whose SKILL.md gives its name in single quotes was refused: %v", err)
+	}
 }
 
 // Rule 12: a leader's index covers its workers' added skills too, from their

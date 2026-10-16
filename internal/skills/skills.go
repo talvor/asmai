@@ -129,7 +129,7 @@ var byName = func() map[string]Skill {
 }()
 
 // frontMatter returns the top-level `key: value` lines of a file's front
-// matter, with double quotes taken off the values.
+// matter, with double or single quotes taken off the values.
 func frontMatter(text string) map[string]string {
 	fields := map[string]string{}
 	rest, ok := strings.CutPrefix(text, "---\n")
@@ -145,6 +145,8 @@ func frontMatter(text string) map[string]string {
 		value = strings.TrimSpace(value)
 		if unquoted, err := strconv.Unquote(value); err == nil {
 			value = unquoted
+		} else if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
+			value = value[1 : len(value)-1]
 		}
 		fields[key] = value
 	}

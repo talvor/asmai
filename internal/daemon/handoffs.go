@@ -92,6 +92,13 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 		resp.Messages, err = d.store.Inbox(ref.address.String(), req.Dispatch, time.Now())
 		if err == nil {
 			for i := range resp.Messages {
+				if a := resp.Messages[i].AssignmentData; a != nil {
+					if a.Worker == ref.address.String() {
+						a.List = l.skills
+					} else {
+						d.listSkills(a)
+					}
+				}
 				if err = d.workFetchedReply(l, ref, &resp.Messages[i]); err != nil {
 					break
 				}
@@ -216,7 +223,7 @@ func (d *daemon) ensureRoleLeader(role string) error {
 		l.restart.Stop()
 		l.restart = nil
 	}
-	return d.startLeader(l, cfg.Roles[role], install)
+	return d.startLeader(l, cfg, install)
 }
 
 // boundary is the only time automation gains permission to try a nudge.

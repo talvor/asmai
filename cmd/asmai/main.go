@@ -87,8 +87,8 @@ commands you type:
                               only when it has no problem; a file with problems is shown them and
                               edited again, or left as it was
   asmai config apply          hand the configuration file to the running factory: validate it, show what
-                              it changes, which running agents pick up delivered settings at their next
-                              start, and which skill settings await #89; ask to confirm, then journal it.
+                              it changes and which agents pick each change up at their next start, added
+                              skills included; ask to confirm, then journal it.
                               Repository records change through repo add and repo remove
   asmai role list             list each role's provider and model for its leader and its workers, and its
                               skill lists

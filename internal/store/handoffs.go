@@ -78,18 +78,30 @@ type Dispatch struct {
 	NativeSession string `json:"native_session,omitempty"`
 	// Bundle is the skill bundle's version the session the dispatch went to
 	// ran with, and Skills the fingerprint of each skill that session was
-	// given, by name. They are empty until the dispatch has a session.
-	Bundle string            `json:"bundle,omitempty"`
-	Skills map[string]string `json:"skills,omitempty"`
+	// given, by name. Unqualified says where each of those skills that is
+	// not qualified comes from: "user" for an added skill, "repository" for
+	// a repository's own. They are empty until the dispatch has a session.
+	Bundle      string            `json:"bundle,omitempty"`
+	Skills      map[string]string `json:"skills,omitempty"`
+	Unqualified map[string]string `json:"unqualified,omitempty"`
 }
 
-// scanDispatchSkills reads the skills column of a dispatch into d.
-func scanDispatchSkills(d *Dispatch, skills string) error {
-	d.Skills = nil
-	if skills == "" || skills == "{}" {
-		return nil
+// scanDispatchSkills reads the skills and unqualified columns of a dispatch
+// into d.
+func scanDispatchSkills(d *Dispatch, skills, unqualified string) error {
+	d.Skills, d.Unqualified = nil, nil
+	for _, c := range []struct {
+		text string
+		to   *map[string]string
+	}{{skills, &d.Skills}, {unqualified, &d.Unqualified}} {
+		if c.text == "" || c.text == "{}" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(c.text), c.to); err != nil {
+			return err
+		}
 	}
-	return json.Unmarshal([]byte(skills), &d.Skills)
+	return nil
 }
 
 func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) {
@@ -370,9 +382,9 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 			}
 		}
 		var firstGeneration int
-		var firstBundle, firstSkills string
+		var firstBundle, firstSkills, firstUnqualified string
 		if m.State == DispatchCreated {
-			err = tx.QueryRow(`SELECT n.generation,n.bundle,n.skills FROM native_sessions n JOIN agents a ON a.agent=n.agent AND a.generation=n.generation WHERE n.agent=? AND a.state=?`, agent, AgentRunning).Scan(&firstGeneration, &firstBundle, &firstSkills)
+			err = tx.QueryRow(`SELECT n.generation,n.bundle,n.skills,n.unqualified FROM native_sessions n JOIN agents a ON a.agent=n.agent AND a.generation=n.generation WHERE n.agent=? AND a.state=?`, agent, AgentRunning).Scan(&firstGeneration, &firstBundle, &firstSkills, &firstUnqualified)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return nil, err
 			}
@@ -380,18 +392,19 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 		if _, err = tx.Exec(`UPDATE dispatches SET state=?,updated_at=?,
 			generation=CASE WHEN ?>0 THEN ? ELSE generation END,
 			bundle=CASE WHEN ?>0 THEN ? ELSE bundle END,
-			skills=CASE WHEN ?>0 THEN ? ELSE skills END
-			WHERE id=? AND state=?`, DispatchDelivered, timestamp(at), firstGeneration, firstGeneration, firstGeneration, firstBundle, firstGeneration, firstSkills, m.Dispatch, m.State); err != nil {
+			skills=CASE WHEN ?>0 THEN ? ELSE skills END,
+			unqualified=CASE WHEN ?>0 THEN ? ELSE unqualified END
+			WHERE id=? AND state=?`, DispatchDelivered, timestamp(at), firstGeneration, firstGeneration, firstGeneration, firstBundle, firstGeneration, firstSkills, firstGeneration, firstUnqualified, m.Dispatch, m.State); err != nil {
 			return nil, err
 		}
 		m.Fetched = true
 		m.State = DispatchDelivered
 		var generation int
-		var bundle, skills string
-		if err = tx.QueryRow(`SELECT generation,bundle,skills FROM dispatches WHERE id=?`, m.Dispatch).Scan(&generation, &bundle, &skills); err != nil {
+		var bundle, skills, unqualified string
+		if err = tx.QueryRow(`SELECT generation,bundle,skills,unqualified FROM dispatches WHERE id=?`, m.Dispatch).Scan(&generation, &bundle, &skills, &unqualified); err != nil {
 			return nil, err
 		}
-		if _, err = appendEntry(tx, at, KindDispatchChanged, map[string]any{"id": m.Dispatch, "state": DispatchDelivered, "agent": agent, "generation": generation, "bundle": bundle, "skills": json.RawMessage(skills)}); err != nil {
+		if _, err = appendEntry(tx, at, KindDispatchChanged, map[string]any{"id": m.Dispatch, "state": DispatchDelivered, "agent": agent, "generation": generation, "bundle": bundle, "skills": json.RawMessage(skills), "unqualified": json.RawMessage(unqualified)}); err != nil {
 			return nil, err
 		}
 	}
@@ -406,17 +419,17 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 // changed within one millisecond would tie and the lower id would always win.
 func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 	var d Dispatch
-	var skills string
-	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript,d.bundle,d.skills FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND (
+	var skills, unqualified string
+	err := s.db.QueryRow(`SELECT d.id,d.message,d.agent,d.generation,d.state,d.transcript,d.bundle,d.skills,d.unqualified FROM dispatches d JOIN messages m ON m.id=d.message WHERE d.agent=? AND (
 		(m.fetched_at IS NULL AND d.state IN (?,?)) OR
 		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
 			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
 		))
-	) ORDER BY m.fetched_at IS NOT NULL, d.state<>?, substr(d.updated_at,1,19), CAST(rtrim(substr(d.updated_at,20),'Z') AS REAL), d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending, DispatchCreated).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript, &d.Bundle, &skills)
+	) ORDER BY m.fetched_at IS NOT NULL, d.state<>?, substr(d.updated_at,1,19), CAST(rtrim(substr(d.updated_at,20),'Z') AS REAL), d.id LIMIT 1`, agent, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchNudged, HandoffPending, DispatchCreated).Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript, &d.Bundle, &skills, &unqualified)
 	if err != nil {
 		return d, err
 	}
-	return d, scanDispatchSkills(&d, skills)
+	return d, scanDispatchSkills(&d, skills, unqualified)
 }
 
 // PendingLeaders returns the agents with a message waiting for them, which
@@ -452,8 +465,9 @@ func (s *Store) ChangeDispatch(id int64, generation int, from, to, transcript st
 		// The dispatch records the skills of the session it went to.
 		result, err := tx.Exec(`UPDATE dispatches SET state=?,generation=?,transcript=CASE WHEN ?='' THEN transcript ELSE ? END,updated_at=?,
 			bundle=CASE WHEN state=? THEN COALESCE((SELECT n.bundle FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), bundle) ELSE bundle END,
-			skills=CASE WHEN state=? THEN COALESCE((SELECT n.skills FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), skills) ELSE skills END
-			WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), DispatchCreated, generation, DispatchCreated, generation, id, from, generation)
+			skills=CASE WHEN state=? THEN COALESCE((SELECT n.skills FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), skills) ELSE skills END,
+			unqualified=CASE WHEN state=? THEN COALESCE((SELECT n.unqualified FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), unqualified) ELSE unqualified END
+			WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), DispatchCreated, generation, DispatchCreated, generation, DispatchCreated, generation, id, from, generation)
 		if err != nil {
 			return "", nil, err
 		}
@@ -464,11 +478,11 @@ func (s *Store) ChangeDispatch(id int64, generation int, from, to, transcript st
 		if n != 1 {
 			return "", nil, fmt.Errorf("dispatch %d is not %s in generation %d", id, from, generation)
 		}
-		var bundle, skills string
-		if err := tx.QueryRow(`SELECT bundle, skills FROM dispatches WHERE id=?`, id).Scan(&bundle, &skills); err != nil {
+		var bundle, skills, unqualified string
+		if err := tx.QueryRow(`SELECT bundle, skills, unqualified FROM dispatches WHERE id=?`, id).Scan(&bundle, &skills, &unqualified); err != nil {
 			return "", nil, err
 		}
-		return KindDispatchChanged, map[string]any{"id": id, "generation": generation, "from": from, "state": to, "transcript": transcript, "bundle": bundle, "skills": json.RawMessage(skills)}, nil
+		return KindDispatchChanged, map[string]any{"id": id, "generation": generation, "from": from, "state": to, "transcript": transcript, "bundle": bundle, "skills": json.RawMessage(skills), "unqualified": json.RawMessage(unqualified)}, nil
 	})
 }
 

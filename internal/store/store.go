@@ -233,6 +233,10 @@ ALTER TABLE native_sessions ADD COLUMN skills TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE dispatches ADD COLUMN bundle TEXT NOT NULL DEFAULT '';
 ALTER TABLE dispatches ADD COLUMN skills TEXT NOT NULL DEFAULT '{}';
 `,
+	`
+ALTER TABLE native_sessions ADD COLUMN unqualified TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE dispatches ADD COLUMN unqualified TEXT NOT NULL DEFAULT '{}';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -418,9 +422,12 @@ type SessionStart struct {
 	Resumes    string `json:"resumes,omitempty"`
 	// Bundle is the skill bundle's version and Skills the fingerprint of
 	// each skill of the list the session was given, by name: what every
-	// dispatch delivered in the session records.
-	Bundle string            `json:"bundle,omitempty"`
-	Skills map[string]string `json:"skills,omitempty"`
+	// dispatch delivered in the session records. Unqualified says where
+	// each skill that is not qualified comes from, "user" for an added skill
+	// and "repository" for a repository's own.
+	Bundle      string            `json:"bundle,omitempty"`
+	Skills      map[string]string `json:"skills,omitempty"`
+	Unqualified map[string]string `json:"unqualified,omitempty"`
 }
 
 // Agent is an agent's current state, as the store holds it.
@@ -679,21 +686,26 @@ func (s *Store) SessionStarted(start SessionStart) (generation int, err error) {
 		if err != nil {
 			return "", nil, err
 		}
-		_, err = tx.Exec(`INSERT INTO native_sessions (agent, generation, provider, assignment, bundle, skills) VALUES (?, ?, ?, NULLIF(?, 0), ?, ?)`,
-			start.Agent, generation, start.Provider, start.Assignment, start.Bundle, string(skills))
+		unqualified, err := json.Marshal(nonNilSkills(start.Unqualified))
+		if err != nil {
+			return "", nil, err
+		}
+		_, err = tx.Exec(`INSERT INTO native_sessions (agent, generation, provider, assignment, bundle, skills, unqualified) VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?)`,
+			start.Agent, generation, start.Provider, start.Assignment, start.Bundle, string(skills), string(unqualified))
 		if err != nil {
 			return "", nil, err
 		}
 		_, err = tx.Exec(`UPDATE dispatches SET generation=?,
 			bundle=CASE WHEN state=? THEN ? ELSE bundle END,
-			skills=CASE WHEN state=? THEN ? ELSE skills END WHERE agent=? AND (
+			skills=CASE WHEN state=? THEN ? ELSE skills END,
+			unqualified=CASE WHEN state=? THEN ? ELSE unqualified END WHERE agent=? AND (
 			(state IN (?,?,?) AND EXISTS (
 				SELECT 1 FROM messages WHERE messages.id=dispatches.message AND messages.fetched_at IS NULL
 			)) OR (state IN (?,?) AND EXISTS (
 				SELECT 1 FROM messages JOIN handoffs ON handoffs.id=messages.handoff
 				WHERE messages.id=dispatches.message AND messages.kind='handoff' AND messages.fetched_at IS NOT NULL AND handoffs.state=?
 			))
-		)`, generation, DispatchCreated, start.Bundle, DispatchCreated, string(skills), start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
+		)`, generation, DispatchCreated, start.Bundle, DispatchCreated, string(skills), DispatchCreated, string(unqualified), start.Agent, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending)
 		if err != nil {
 			return "", nil, err
 		}

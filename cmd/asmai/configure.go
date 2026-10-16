@@ -358,10 +358,10 @@ func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 		}
 		if c.Repository != "" {
 			if len(c.Gained) > 0 {
-				fmt.Fprintf(w, "      records %s's own skills for: %s\n", c.Repository, strings.Join(c.Gained, ", "))
+				fmt.Fprintf(w, "      switches on %s's own skills for: %s\n", c.Repository, strings.Join(c.Gained, ", "))
 			}
 			if len(c.Lost) > 0 {
-				fmt.Fprintf(w, "      removes %s's own skills setting for: %s\n", c.Repository, strings.Join(c.Lost, ", "))
+				fmt.Fprintf(w, "      switches off %s's own skills for: %s\n", c.Repository, strings.Join(c.Lost, ", "))
 			}
 		}
 		if c.Note != "" {

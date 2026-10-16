@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -140,8 +141,15 @@ type Assignment struct {
 	// is delivered at each start.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
+	// List is the skill list the worker is given, with added and
+	// switched-on repository skills: in its own inbox, the list its running
+	// session was given, otherwise as the daemon makes it from the
+	// configuration. It is not stored.
+	List []string `json:"list"`
 }
 
+// EffectiveSkills returns the explicit narrowing, or the role's default
+// list when there is none.
 func (a Assignment) EffectiveSkills() []string {
 	if len(a.Skills) > 0 {
 		return a.Skills
@@ -433,7 +441,10 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 		a.ReadOnly, a.Commit = true, w.Base
 		a.Intent = &Intent{Words: j.Words, Reading: j.Reading, Mandate: j.Mandate, Criteria: j.Criteria}
 	}
-	if _, err := appendEntry(tx, at, KindAssignmentCreated, a); err != nil {
+	if _, err := appendEntry(tx, at, KindAssignmentCreated, struct {
+		Assignment
+		List []string `json:"list,omitempty"`
+	}{Assignment: a}); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
 	if _, err := appendEntry(tx, at, KindWorkspaceCreated, struct {
@@ -698,7 +709,20 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if !a.ReadOnly && !sub.TookInTip {
 		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
+	// The skills a worker ran are those its session was given, as the
+	// dispatch records them, which can hold added and repository skills.
 	list := a.EffectiveSkills()
+	var bundle, recorded string
+	if err := tx.QueryRow(`SELECT bundle, skills FROM dispatches WHERE id = ?`, sub.Dispatch).Scan(&bundle, &recorded); err != nil {
+		return Report{}, Dispatch{}, err
+	}
+	var delivered Dispatch
+	if err := scanDispatchSkills(&delivered, recorded, ""); err != nil {
+		return Report{}, Dispatch{}, err
+	}
+	if bundle != "" {
+		list = slices.Sorted(maps.Keys(delivered.Skills))
+	}
 	for _, name := range in.SkillsRun {
 		if !slices.Contains(list, name) {
 			return Report{}, Dispatch{}, fmt.Errorf("--skill %q is not on your skill list for assignment %d, which is %s: name only the skills you ran from it", name, a.ID, strings.Join(list, ", "))

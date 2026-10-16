@@ -97,6 +97,7 @@ var Cases = []Case{
 	{ID: "C7", Title: "Every automated submission has a correlated positive acknowledgment", Env: signedInOnly, Run: (*Harness).c7},
 	{ID: "C11", Title: "Witnessed user messages are distinct from daemon nudges", Env: signedInOnly, Run: (*Harness).c11},
 	{ID: "C19", Title: "Dispatches and results stay correlated and reconcilable across restarts", Env: signedInOnly, Run: (*Harness).c19},
+	{ID: "C33", Title: "Personal, provider built-in and repository skills are hidden, including Claude Code's built-in code-review next to the shipped one", Env: signedInOnly, Run: (*Harness).c33},
 	{ID: "C34", Title: "Per-session skill delivery works although Claude Code namespaces plugin skills and upstream skills call each other by bare name", Env: signedInOnly, Run: (*Harness).c34},
 	{ID: "C36", Title: "Instruction files load without the repository's provider configuration", Env: signedInOnly, Run: (*Harness).c36},
 	{ID: "C37", Title: "Provider write guards are switched on", Env: signedInOnly, Run: (*Harness).c37},

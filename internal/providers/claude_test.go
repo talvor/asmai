@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/skills"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -463,5 +464,69 @@ func TestEveryRoleStartsAndResumesWithoutUserSettingSources(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestEverySessionHidesClaudeCodesOwnSkills(t *testing.T) {
+	for _, role := range roles.All {
+		for _, agent := range []struct {
+			name string
+			list []string
+		}{
+			{"leader", skills.LeaderList(role)},
+			{"worker", skills.WorkerList(role)},
+		} {
+			plugin := ""
+			if len(agent.list) > 0 {
+				plugin = "/state/plugins/" + agent.name + "@" + role
+			}
+			for name, args := range map[string][]string{
+				"start":  ClaudeCodeArgs("hook", "opus", "instructions", plugin, WriteGuard{}, Permissions{}),
+				"resume": ClaudeCodeResumeArgs("hook", "opus", "instructions", plugin, WriteGuard{}, Permissions{}, "session-id"),
+			} {
+				var settings struct {
+					DisableBundledSkills bool              `json:"disableBundledSkills"`
+					SkillOverrides       map[string]string `json:"skillOverrides"`
+				}
+				if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
+					t.Fatal(err)
+				}
+				if !settings.DisableBundledSkills {
+					t.Errorf("%s's %s at %s keeps Claude Code's bundled skills, its code-review among them", role, agent.name, name)
+				}
+				want := map[string]string{"design": "off", "doctor": "off", "plugin-authoring": "off"}
+				if !maps.Equal(settings.SkillOverrides, want) {
+					t.Errorf("%s's %s at %s overrides the skills %v, want %v", role, agent.name, name, settings.SkillOverrides, want)
+				}
+				// Overrides name skills by bare name, and the session's own are
+				// the plugin's, so none of its own is turned off.
+				for skill := range settings.SkillOverrides {
+					if slices.Contains(agent.list, skill) {
+						t.Errorf("%s's %s at %s turns off %s, which is on its list", role, agent.name, name, skill)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestWhatClaudeCodeCannotHideIsRecordedForDoctor(t *testing.T) {
+	unhidden := ClaudeCodeUnhidden()
+	if len(unhidden) == 0 {
+		t.Fatal("nothing is recorded, want Claude Code's built-in slash commands")
+	}
+	for _, u := range unhidden {
+		if u.What == "" || u.Why == "" || len(u.Commands) == 0 {
+			t.Errorf("%+v does not say what is not hidden, why, and which commands C33 checks", u)
+		}
+		for _, command := range u.Commands {
+			if slices.Contains(claudeCodeOwnSkills, command) || command == "code-review" {
+				t.Errorf("%s is recorded as not hidden, but the settings hide it", command)
+			}
+		}
+	}
+	unhidden[0].Commands[0] = "changed"
+	if ClaudeCodeUnhidden()[0].Commands[0] == "changed" {
+		t.Error("the record is shared with its callers")
 	}
 }

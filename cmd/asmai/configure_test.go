@@ -302,7 +302,7 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 	for _, want := range []string{
 		"has 4 changes",
 		`roles.coordination.leader_model: "opus" -> "sonnet"`, "picked up at the next start of: leader@coordination",
-		`roles.coordination.leader_added_skills: [] -> [`, "adds skills: " + skills, "per-session skill delivery (asmai #89)", "affected agents: leader@coordination",
+		`roles.coordination.leader_added_skills: [] -> [`, "adds skills: " + skills + "\n      picked up at the next start of: leader@coordination",
 		`roles.coordination.worker_model: "sonnet" -> "haiku"`,
 		`limits.silence_timeout: "30m" -> "45m"`, "no running agent is affected, so it applies at once",
 		"Apply it? [y/N]",
@@ -345,7 +345,7 @@ func TestConfigApplyShowsWhichRunningAgentsPickUpEachChangeAndJournalsIt(t *test
 	}
 	if data.File != configPath() || data.Configuration != text || len(data.SHA256) != 64 || len(picked) != 4 ||
 		len(picked["roles.coordination.leader_model"]) != 1 || picked["roles.coordination.leader_model"][0] != "leader@coordination" ||
-		!slices.Equal(picked["roles.coordination.leader_added_skills"], []string{"leader@coordination"}) || !strings.Contains(notes["roles.coordination.leader_added_skills"], "#89") || len(picked["limits.silence_timeout"]) != 0 || len(picked["roles.coordination.worker_model"]) != 0 {
+		!slices.Equal(picked["roles.coordination.leader_added_skills"], []string{"leader@coordination"}) || notes["roles.coordination.leader_added_skills"] != "" || len(picked["limits.silence_timeout"]) != 0 || len(picked["roles.coordination.worker_model"]) != 0 {
 		t.Errorf("the journaled configuration is %+v", data)
 	}
 
@@ -506,7 +506,7 @@ func TestRepoAddAcceptsEveryNonCodexFieldOfTheEntry(t *testing.T) {
 	if code != 0 || json.Unmarshal([]byte(stdout), &applied) != nil || !strings.Contains(stderr, "Apply it? [y/N]") {
 		t.Fatalf("applying repository skills as JSON exited %d printing %q, %q", code, stdout, stderr)
 	}
-	if !applied.Applied || len(applied.Changes) != 1 || applied.Changes[0].Setting != "repositories.fixture.repository_skills" || len(applied.Changes[0].Agents) != 0 || !strings.Contains(applied.Changes[0].Note, "#89") {
+	if !applied.Applied || len(applied.Changes) != 1 || applied.Changes[0].Setting != "repositories.fixture.repository_skills" || len(applied.Changes[0].Agents) != 0 || applied.Changes[0].Note != "" {
 		t.Errorf("JSON apply reported %+v", applied)
 	}
 	entries := journaled(t, "configuration.applied")
@@ -519,8 +519,8 @@ func TestRepoAddAcceptsEveryNonCodexFieldOfTheEntry(t *testing.T) {
 			Note    string `json:"note"`
 		} `json:"changes"`
 	}
-	if err := json.Unmarshal(entries[0].Data, &recorded); err != nil || len(recorded.Changes) != 1 || recorded.Changes[0].Setting != "repositories.fixture.repository_skills" || !strings.Contains(recorded.Changes[0].Note, "#89") {
-		t.Errorf("the repository skill change was not journaled with its delivery note: %+v, %v", recorded, err)
+	if err := json.Unmarshal(entries[0].Data, &recorded); err != nil || len(recorded.Changes) != 1 || recorded.Changes[0].Setting != "repositories.fixture.repository_skills" || recorded.Changes[0].Note != "" {
+		t.Errorf("the repository skill change was not journaled as delivered at the next start: %+v, %v", recorded, err)
 	}
 }
 

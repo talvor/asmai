@@ -91,37 +91,69 @@ func Optional() []string {
 	return slices.Clone(optional)
 }
 
-// IndexEntry is one skill in a leader's index.
+// IndexEntry is one skill in a leader's index. Source is where the skill
+// comes from, Shipped, User or Repository.
 type IndexEntry struct {
 	Name        string
 	Purpose     string
 	Applies     string
 	UserInvoked bool
+	Source      string
 }
 
-// IndexOf returns role's leader's index: for each skill on its workers'
-// list, its name, its purpose, when it applies, and whether it starts only on
-// request.
+// IndexOf returns role's leader's index of its workers' default list: see
+// IndexFor.
 func IndexOf(role string) []IndexEntry {
-	var entries []IndexEntry
+	var list []string
 	for _, name := range workers[role] {
-		s, ok := byName[name]
-		if !ok {
-			continue
+		if _, ok := byName[name]; ok {
+			list = append(list, name)
 		}
-		purpose := s.Purpose()
+	}
+	return IndexFor(Bundled(list))
+}
+
+// IndexFor returns a leader's index of its workers' list: for each skill,
+// its name, its purpose, when it applies, and whether it starts only on
+// request. For a skill that is not shipped, or an optional one the factory's
+// own index does not cover, when it applies comes from its own description,
+// which says it after "Use when".
+func IndexFor(list []Given) []IndexEntry {
+	var entries []IndexEntry
+	for _, g := range list {
+		description, userInvoked := g.describe()
+		purpose := Skill{Description: description}.Purpose()
+		var when string
+		if g.Qualified() {
+			when = applies[g.Name]
+		}
+		if when == "" {
+			when = description
+			if _, rest, ok := strings.Cut(description, "Use when"); ok {
+				when = "When" + strings.TrimRight(rest, " ")
+			}
+		}
+		if when == "" {
+			when = "See the skill's own SKILL.md."
+		}
 		if purpose == "" {
-			purpose = applies[name]
+			purpose = when
 		}
-		entries = append(entries, IndexEntry{Name: name, Purpose: purpose, Applies: applies[name], UserInvoked: s.UserInvoked})
+		entries = append(entries, IndexEntry{Name: g.Name, Purpose: purpose, Applies: when, UserInvoked: userInvoked, Source: g.Source})
 	}
 	return entries
 }
 
-// Index returns the text of role's leader's index, or "" when its workers
-// have no skills.
+// Index returns the text of role's leader's index of its workers' default
+// list, or "" when its workers have no skills.
 func Index(role string) string {
-	entries := IndexOf(role)
+	return IndexText(role, IndexOf(role))
+}
+
+// IndexText returns the text of role's leader's index entries, or "" when
+// there are none. A skill that is not shipped is marked as the user's or
+// the repository's, and unqualified.
+func IndexText(role string, entries []IndexEntry) string {
 	if len(entries) == 0 {
 		return ""
 	}
@@ -134,6 +166,9 @@ func Index(role string) string {
 			kind = "starts only on request"
 		}
 		fmt.Fprintf(&b, "\n## %s\n\n- Purpose: %s\n- Applies: %s\n- Invocation: %s\n", e.Name, e.Purpose, e.Applies, kind)
+		if g := (Given{Source: e.Source}); e.Source != "" && !g.Qualified() {
+			fmt.Fprintf(&b, "- Source: %s, unqualified\n", g.Owner())
+		}
 	}
 	return b.String()
 }

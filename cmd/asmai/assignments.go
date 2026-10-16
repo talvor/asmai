@@ -84,7 +84,7 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if a.Skill != "" {
 		fmt.Fprintf(o.stdout, "skill named: %s\n", a.Skill)
 	}
-	if list := a.EffectiveSkills(); len(list) > 0 {
+	if list := listOf(*a); len(list) > 0 {
 		fmt.Fprintf(o.stdout, "skill list: %s\n", strings.Join(list, ", "))
 	}
 	if a.ReadOnly {
@@ -306,6 +306,15 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 	return 0
 }
 
+// listOf returns the skill list of a's worker: the daemon's, or a's
+// narrowing or its role's default list from a daemon that gives none.
+func listOf(a store.Assignment) []string {
+	if len(a.List) > 0 {
+		return a.List
+	}
+	return a.EffectiveSkills()
+}
+
 // printAssignment writes the assignment a worker is given, or a leader's
 // result is about.
 func printAssignment(w io.Writer, a store.Assignment) {
@@ -316,7 +325,7 @@ func printAssignment(w io.Writer, a store.Assignment) {
 	if a.Skill != "" {
 		fmt.Fprintf(w, "Skill to run: %s\n", a.Skill)
 	}
-	if list := a.EffectiveSkills(); len(list) > 0 {
+	if list := listOf(a); len(list) > 0 {
 		fmt.Fprintf(w, "Your skill list for this assignment: %s\n", strings.Join(list, ", "))
 	}
 	if a.ReadOnly {

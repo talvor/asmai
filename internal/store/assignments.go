@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -140,8 +141,15 @@ type Assignment struct {
 	// is delivered at each start.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
+	// List is the skill list the worker is given, as the daemon makes it
+	// from the configuration when it hands the assignment out: its role's,
+	// or the narrowed one, with added and switched-on repository skills. It
+	// is not stored.
+	List []string `json:"list,omitempty"`
 }
 
+// EffectiveSkills returns the explicit narrowing, or the role's default
+// list when there is none.
 func (a Assignment) EffectiveSkills() []string {
 	if len(a.Skills) > 0 {
 		return a.Skills
@@ -698,7 +706,20 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if !a.ReadOnly && !sub.TookInTip {
 		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
+	// The skills a worker ran are those its session was given, as the
+	// dispatch records them, which can hold added and repository skills.
 	list := a.EffectiveSkills()
+	var recorded string
+	if err := tx.QueryRow(`SELECT skills FROM dispatches WHERE id = ?`, sub.Dispatch).Scan(&recorded); err != nil {
+		return Report{}, Dispatch{}, err
+	}
+	var delivered Dispatch
+	if err := scanDispatchSkills(&delivered, recorded, ""); err != nil {
+		return Report{}, Dispatch{}, err
+	}
+	if len(delivered.Skills) > 0 {
+		list = slices.Sorted(maps.Keys(delivered.Skills))
+	}
 	for _, name := range in.SkillsRun {
 		if !slices.Contains(list, name) {
 			return Report{}, Dispatch{}, fmt.Errorf("--skill %q is not on your skill list for assignment %d, which is %s: name only the skills you ran from it", name, a.ID, strings.Join(list, ", "))

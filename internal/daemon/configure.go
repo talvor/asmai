@@ -171,8 +171,6 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 			change.Note = "running agents keep running; this role cannot start after removal"
 		} else if c.Skills && c.Role != "" && c.After == "" {
 			change.Note = "this role cannot start after removal"
-		} else if pendingSkillDelivery(c) {
-			change.Note = "skills reach affected agents' sessions at their next start once per-session skill delivery (asmai #89) lands"
 		} else if c.Repository != "" && strings.HasSuffix(c.Setting, ".commit_trailers") {
 			change.Note = "running workers use this setting on their next commit"
 		}
@@ -235,7 +233,9 @@ func (d *daemon) pickedUpBy(c config.Change, agents []store.Agent) ([]string, er
 		return picked, nil
 	}
 	for _, a := range agents {
-		if a.State != store.AgentRunning && !(pendingSkillDelivery(c) && a.State == store.AgentStopped) {
+		// Skills are copied at an agent's start, so a stopped agent picks a
+		// change of them up as well as a running one.
+		if a.State != store.AgentRunning && !(skillChange(c) && a.State == store.AgentStopped) {
 			continue
 		}
 		leader := strings.HasPrefix(a.Agent, roles.Leader+"@")
@@ -272,6 +272,6 @@ func (d *daemon) pickedUpBy(c config.Change, agents []store.Agent) ([]string, er
 	return picked, nil
 }
 
-func pendingSkillDelivery(c config.Change) bool {
+func skillChange(c config.Change) bool {
 	return c.Skills || strings.HasSuffix(c.Setting, ".repository_skills")
 }

@@ -35,6 +35,7 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 		var a store.Assignment
 		var dispatch store.Dispatch
 		if a, dispatch, err = d.assign(req); err == nil {
+			d.listSkills(&a)
 			resp.Assignment, resp.Dispatch = &a, &dispatch
 		}
 	case CommandEffect:
@@ -120,9 +121,17 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		return store.Assignment{}, store.Dispatch{}, refuse("a writing assignment is made from the job branch's tip, so it takes no --commit")
 	}
 
-	// The worker's skill list is its role's, or the narrower list the
-	// assignment gives, and the skill the assignment names is on it.
-	skillList, err := skills.WorkerSkills(role, req.Skills, req.Skill)
+	// The worker's skill list is its role's in the configuration, with its
+	// added skills, or the narrower list the assignment gives, and the skill
+	// the assignment names is on it.
+	d.configMu.Lock()
+	cfg := d.applied
+	d.configMu.Unlock()
+	roleList, err := workerSkills(cfg, role)
+	if err != nil {
+		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
+	}
+	skillList, err := skills.Narrow(role, skills.NamesOf(roleList), req.Skills, req.Skill)
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
 	}
@@ -563,5 +572,5 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if w, err := d.store.WorkerDispatch(a.ID); err == nil && w.Kind == store.MessageResumption && !w.Fetched {
 		resume = w.Dispatch.NativeSession
 	}
-	return d.startWorker(l, cfg.Roles[address.Role], d.repositoryOptions(cfg, a.Job), install, a, resume)
+	return d.startWorker(l, cfg, install, a, resume)
 }

@@ -170,7 +170,7 @@ func TestAddedRoleSkillsAreShownAsPendingAndJournaled(t *testing.T) {
 	found := false
 	for _, c := range preview.ConfigApply.Changes {
 		if c.Setting == "roles.planning.leader_added_skills" {
-			found = c.Skills && len(c.Gained) == 1 && len(c.Agents) == 0 && strings.Contains(c.Note, "#89")
+			found = c.Skills && len(c.Gained) == 1 && len(c.Agents) == 0 && c.Note == ""
 		}
 	}
 	if !found {
@@ -190,7 +190,7 @@ func TestAddedRoleSkillsAreShownAsPendingAndJournaled(t *testing.T) {
 	found = false
 	for _, c := range recorded.Changes {
 		if c.Setting == "roles.planning.leader_added_skills" {
-			found = len(c.Agents) == 0 && strings.Contains(c.Note, "#89")
+			found = len(c.Agents) == 0 && c.Note == ""
 		}
 	}
 	if !found {

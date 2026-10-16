@@ -595,7 +595,7 @@ func (d *daemon) ensureCoordination() []Check {
 		l.restart.Stop()
 		l.restart = nil
 	}
-	if err := d.startLeader(l, cfg.Roles[roles.Coordination], install); err != nil {
+	if err := d.startLeader(l, cfg, install); err != nil {
 		d.log.Error("starting an agent", "agent", l.address.String(), "error", err.Error())
 		checks = append(checks, Check{Name: l.address.String(), Problem: "it did not start: " + err.Error(), Fix: "see `asmai log`, then run `asmai start` again"})
 		d.lastChecks = checks
@@ -619,15 +619,27 @@ type launch struct {
 	// the provider's own session it continues, when it continues one.
 	assignment int64
 	resume     string
-	// skills are the names of the skills the session is given, as the
-	// per-session plugin its command line names.
-	skills []string
+	// skills are the skills the session is given, as the per-session
+	// plugin its command line names.
+	skills []skills.Given
 }
 
 // startLeader starts l's session on the installed Claude Code, with
-// everything it is given on its command line, and journals it. d.mu is held.
-func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.ProviderInstall) error {
-	instructions, err := roles.LeaderInstructions(l.address.Role)
+// everything it is given on its command line, and journals it: its skills
+// and the index of its workers' are cfg's lists for its role, with their
+// added skills. d.mu is held.
+func (d *daemon) startLeader(l *leader, cfg config.Config, install store.ProviderInstall) error {
+	role := l.address.Role
+	staffing := cfg.Roles[role]
+	own, err := leaderSkills(cfg, role)
+	if err != nil {
+		return err
+	}
+	workers, err := workerSkills(cfg, role)
+	if err != nil {
+		return err
+	}
+	instructions, err := roles.LeaderInstructionsFor(role, skills.NamesOf(own), skills.IndexFor(workers))
 	if err != nil {
 		return err
 	}
@@ -635,22 +647,28 @@ func (d *daemon) startLeader(l *leader, staffing config.Staffing, install store.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating the agent's directory: %w", err)
 	}
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.LeaderModel, dir: dir, skills: skills.LeaderList(l.address.Role)})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.LeaderModel, dir: dir, skills: own})
 }
 
 // startWorker starts the session of the worker l on the installed Claude
 // Code in the workspace of the assignment it carries, with that workspace's
-// slot and temporary directory, and journals it. options are the settings of
-// the job's repository in the configuration file, whose notes the worker is
-// given with the repository's instruction files. A worker that resumes the
-// provider's session resume starts in it. d.mu is held.
-func (d *daemon) startWorker(l *leader, staffing config.Staffing, options config.RepositoryOptions, install store.ProviderInstall, a store.Assignment, resume string) error {
-	instructions, err := roles.WorkerInstructions(l.address.Role)
+// slot and temporary directory, and journals it. The settings of the job's
+// repository in cfg give the user's notes, which the worker is given with
+// the repository's instruction files, and its skills are those of
+// assignmentSkills. A worker that resumes the provider's session resume
+// starts in it. d.mu is held.
+func (d *daemon) startWorker(l *leader, cfg config.Config, install store.ProviderInstall, a store.Assignment, resume string) error {
+	staffing, options := cfg.Roles[l.address.Role], d.repositoryOptions(cfg, a.Job)
+	if _, err := os.Stat(a.Workspace.Path); err != nil {
+		return fmt.Errorf("the workspace of assignment %d is missing: %w", a.ID, err)
+	}
+	given, err := d.assignmentSkills(cfg, a)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(a.Workspace.Path); err != nil {
-		return fmt.Errorf("the workspace of assignment %d is missing: %w", a.ID, err)
+	instructions, err := roles.WorkerInstructionsFor(l.address.Role, skills.NamesOf(given))
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
 		return fmt.Errorf("creating the workspace's temporary directory: %w", err)
@@ -669,7 +687,7 @@ func (d *daemon) startWorker(l *leader, staffing config.Staffing, options config
 	}
 	// The worker's git adds the trailers to each commit, as the user.
 	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: a.EffectiveSkills()})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: given})
 }
 
 // startSession starts l's session on the installed Claude Code as launch
@@ -691,19 +709,17 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	// nobody can answer, so it is denied what its rules do not allow.
 	perms := providers.Permissions{Unattended: l.address.Role != roles.Coordination, Editable: launch.editable}
 	// The session's skills are written as a plugin for it alone, copied
-	// afresh at each start from the bundle in the executable.
+	// afresh at each start from the bundle in the executable and from the
+	// directories of added and repository skills, so editing those never
+	// changes a running session.
 	var pluginDir string
-	var delivery skills.Delivery
+	delivery := skills.Delivery{Bundle: skills.Version(), Skills: map[string]string{}}
 	if len(launch.skills) > 0 {
 		pluginDir = filepath.Join(d.cfg.Paths.Plugins, l.address.String())
-		if err := skills.WritePlugin(pluginDir, launch.skills); err != nil {
+		if delivery, err = skills.WriteSessionPlugin(pluginDir, launch.skills); err != nil {
 			return fmt.Errorf("delivering %s's skills: %w", l.address, err)
 		}
 		perms.Readable = append(perms.Readable, pluginDir)
-	}
-	delivery, err = skills.DeliveryOf(launch.skills)
-	if err != nil {
-		return err
 	}
 	args := providers.ClaudeCodeArgs(hook, launch.model, launch.instructions, pluginDir, guard, perms)
 	if launch.resume != "" {
@@ -718,20 +734,21 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	}
 	at := time.Now()
 	generation, err := d.store.SessionStarted(store.SessionStart{
-		Agent:      l.address.String(),
-		Role:       l.address.Role,
-		Provider:   install.Name,
-		Version:    install.Version,
-		Model:      launch.model,
-		Executable: install.Path,
-		Args:       args,
-		Dir:        launch.dir,
-		PID:        s.PID(),
-		At:         at,
-		Assignment: launch.assignment,
-		Resumes:    launch.resume,
-		Bundle:     delivery.Bundle,
-		Skills:     delivery.Skills,
+		Agent:       l.address.String(),
+		Role:        l.address.Role,
+		Provider:    install.Name,
+		Version:     install.Version,
+		Model:       launch.model,
+		Executable:  install.Path,
+		Args:        args,
+		Dir:         launch.dir,
+		PID:         s.PID(),
+		At:          at,
+		Assignment:  launch.assignment,
+		Resumes:     launch.resume,
+		Bundle:      delivery.Bundle,
+		Skills:      delivery.Skills,
+		Unqualified: delivery.Unqualified,
 	})
 	if err != nil {
 		s.Stop(stopGrace)

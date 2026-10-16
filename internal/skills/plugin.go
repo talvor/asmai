@@ -72,6 +72,9 @@ func WriteSessionPlugin(dir string, list []Given) (Delivery, error) {
 			if err != nil {
 				return err
 			}
+			if entry.Type()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("%s is a symbolic link, which a skill that is copied may not hold", p)
+			}
 			target := filepath.Join(root, filepath.FromSlash(p))
 			if entry.IsDir() {
 				return os.MkdirAll(target, 0o700)

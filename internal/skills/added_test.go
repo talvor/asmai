@@ -200,3 +200,28 @@ func TestNarrowingIsWithinTheRolesListAddedSkillsIncluded(t *testing.T) {
 		t.Error("a skill off the list was named")
 	}
 }
+
+func TestASkillHoldingASymbolicLinkIsRefusedAndNothingOutsideItIsCopied(t *testing.T) {
+	parent := t.TempDir()
+	outside := filepath.Join(parent, "outside")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.md"), []byte("not the skill's\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{"linked-dir": outside, "linked-file": filepath.Join(outside, "secret.md")} {
+		dir := skillDir(t, parent, name, "A skill with a link.")
+		if err := os.Symlink(target, filepath.Join(dir, "shared")); err != nil {
+			t.Fatal(err)
+		}
+		plugin := filepath.Join(t.TempDir(), "plugin")
+		_, err := WriteSessionPlugin(plugin, []Given{{Name: name, Source: Repository, Dir: dir}})
+		if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+			t.Errorf("%s: writing the plugin returned %v, want a refusal of the symbolic link", name, err)
+		}
+		if _, err := os.Lstat(filepath.Join(plugin, Dir, name, "shared")); err == nil {
+			t.Errorf("%s: the link's target was copied into the plugin", name)
+		}
+	}
+}

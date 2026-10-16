@@ -136,6 +136,8 @@ type leader struct {
 	// assignment is the assignment a worker's session carries, and zero for
 	// a leader's.
 	assignment int64
+	// skills names the skills the session was given, in its list's order.
+	skills []string
 	// restart is the timer that restarts the leader after its session ended
 	// on its own, and quickExits counts the sessions in a row that ended
 	// soon after they started.
@@ -755,6 +757,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 		return fmt.Errorf("journaling the session's start: %w", err)
 	}
 	l.session, l.generation, l.startedAt = s, generation, at
+	l.skills = skills.NamesOf(launch.skills)
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", ""
 	l.prompt = nil

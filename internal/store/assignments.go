@@ -141,10 +141,10 @@ type Assignment struct {
 	// is delivered at each start.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
-	// List is the skill list the worker is given, as the daemon makes it
-	// from the configuration when it hands the assignment out: its role's,
-	// or the narrowed one, with added and switched-on repository skills. It
-	// is not stored.
+	// List is the skill list the worker is given, with added and
+	// switched-on repository skills: in its own inbox, the list its running
+	// session was given, otherwise as the daemon makes it from the
+	// configuration. It is not stored.
 	List []string `json:"list,omitempty"`
 }
 

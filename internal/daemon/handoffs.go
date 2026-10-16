@@ -93,7 +93,11 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 		if err == nil {
 			for i := range resp.Messages {
 				if a := resp.Messages[i].AssignmentData; a != nil {
-					d.listSkills(a)
+					if a.Worker == ref.address.String() {
+						a.List = l.skills
+					} else {
+						d.listSkills(a)
+					}
 				}
 				if err = d.workFetchedReply(l, ref, &resp.Messages[i]); err != nil {
 					break

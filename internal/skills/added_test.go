@@ -225,3 +225,24 @@ func TestASkillHoldingASymbolicLinkIsRefusedAndNothingOutsideItIsCopied(t *testi
 		}
 	}
 }
+
+func TestARepositoryWhoseSkillsDirectoryIsASymbolicLinkHasNone(t *testing.T) {
+	for _, link := range []string{".claude", filepath.Join(".claude", "skills")} {
+		outside := t.TempDir()
+		skillDir(t, filepath.Join(outside, "skills"), "personal", "Someone's own skill.")
+		target := outside
+		if link != ".claude" {
+			target = filepath.Join(outside, "skills")
+		}
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, link)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+		if list, err := RepositorySkills(root); err != nil || len(list) != 0 {
+			t.Errorf("a repository whose %s is a symbolic link has %+v (%v), want none", link, list, err)
+		}
+	}
+}

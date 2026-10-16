@@ -91,9 +91,15 @@ func addedSkill(dir string) (Given, error) {
 
 // RepositorySkills returns the skills in the repository at root's
 // .claude/skills, each a directory with a SKILL.md, by name. A repository
-// without that directory has none.
+// without that directory, or whose .claude or .claude/skills is a symbolic
+// link, has none.
 func RepositorySkills(root string) ([]Given, error) {
 	dir := filepath.Join(root, RepositoryDir)
+	for _, p := range []string{filepath.Dir(dir), dir} {
+		if info, err := os.Lstat(p); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return nil, nil
+		}
+	}
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

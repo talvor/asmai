@@ -427,3 +427,24 @@ func TestOpenMigratesAStoreWhoseMessagesAllHaveAHandoff(t *testing.T) {
 		t.Errorf("the first message after the migration is %+v (%v), want message 2 about assignment 1", next, err)
 	}
 }
+
+func TestAReportFromASessionGivenNoSkillsNamesNone(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	a, d := newAssignment(t, s, job)
+	if _, err := s.SessionStarted(SessionStart{Agent: a.Worker, Role: "engineering", Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: "/w", PID: 7, At: assignmentsAt,
+		Assignment: a.ID, Bundle: "b", Skills: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	working(t, s, d)
+	for _, effect := range []struct{ kind, ref string }{{"commit", otherCommit}, {"push", "origin/asmai/job-1/1"}} {
+		if _, err := s.EffectRecorded(a.Worker, 1, d.ID, effect.kind, effect.ref, assignmentsAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sub := submission(d, ReportResult)
+	sub.Input.SkillsRun = []string{"tdd"}
+	if _, _, err := s.ReportSubmitted(sub, assignmentsAt); err == nil || !strings.Contains(err.Error(), "not on your skill list") {
+		t.Errorf("a report naming tdd, which the session was not given, returned %v", err)
+	}
+}

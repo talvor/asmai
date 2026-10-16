@@ -145,7 +145,7 @@ type Assignment struct {
 	// switched-on repository skills: in its own inbox, the list its running
 	// session was given, otherwise as the daemon makes it from the
 	// configuration. It is not stored.
-	List []string `json:"list,omitempty"`
+	List []string `json:"list"`
 }
 
 // EffectiveSkills returns the explicit narrowing, or the role's default
@@ -709,15 +709,15 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	// The skills a worker ran are those its session was given, as the
 	// dispatch records them, which can hold added and repository skills.
 	list := a.EffectiveSkills()
-	var recorded string
-	if err := tx.QueryRow(`SELECT skills FROM dispatches WHERE id = ?`, sub.Dispatch).Scan(&recorded); err != nil {
+	var bundle, recorded string
+	if err := tx.QueryRow(`SELECT bundle, skills FROM dispatches WHERE id = ?`, sub.Dispatch).Scan(&bundle, &recorded); err != nil {
 		return Report{}, Dispatch{}, err
 	}
 	var delivered Dispatch
 	if err := scanDispatchSkills(&delivered, recorded, ""); err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if len(delivered.Skills) > 0 {
+	if bundle != "" {
 		list = slices.Sorted(maps.Keys(delivered.Skills))
 	}
 	for _, name := range in.SkillsRun {

@@ -309,7 +309,7 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 // listOf returns the skill list of a's worker: the daemon's, or a's
 // narrowing or its role's default list from a daemon that gives none.
 func listOf(a store.Assignment) []string {
-	if len(a.List) > 0 {
+	if a.List != nil {
 		return a.List
 	}
 	return a.EffectiveSkills()

@@ -564,3 +564,25 @@ func TestAHandoffCaseRegistersPastAFixtureEntryAnEarlierRunLeft(t *testing.T) {
 		t.Errorf("the configuration file changed in the run:\n%s\nwant\n%s", after, before)
 	}
 }
+
+// The disposable copy of the configuration file holds no repository entry,
+// whichever the host's own file registers, because the disposable state
+// registers none and setup refuses an entry that is not registered.
+func TestTheDisposableConfigurationHoldsNoRepositoryEntry(t *testing.T) {
+	h := harness(t, fakeClaude{auth: AuthStatus{SignedIn: true, Method: "claude.ai"}}, startsDirectly)
+	for _, name := range []string{"asmai-fixture", qualificationRepository} {
+		if err := config.AddRepository(h.ConfigFile, name, config.Repository{Origin: filepath.Join(t.TempDir(), name+".git"), DefaultBranch: "main"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.resetDisposableState(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems, err := config.Load(h.disposableConfig())
+	if err != nil || len(problems) > 0 {
+		t.Fatalf("loading the copy: %v, %v", err, problems)
+	}
+	if len(cfg.Repositories) != 0 {
+		t.Errorf("the copy holds %d repository entries, want none", len(cfg.Repositories))
+	}
+}

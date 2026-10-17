@@ -124,8 +124,7 @@ func (m model) jobsBody() []string {
 	return rows
 }
 
-// jobRow lays out one row in the columns that fit, with the stage cell in
-// style, and pads it to the table's width.
+// jobRow lays out one row in the columns that fit, styling the stage cell.
 func (m model) jobRow(c jobColumns, cells jobCells, stage lipgloss.Style) string {
 	var b strings.Builder
 	b.WriteString(" ")

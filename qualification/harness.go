@@ -108,6 +108,7 @@ var Cases = []Case{
 	{ID: "C48", Title: "With the agents folder and a registered repository's clone trusted at setup, a new agent directory and a new worker's worktree of the clone start with no trust question", Env: signedInOnly, Run: (*Harness).c48},
 	{ID: "C49", Title: "An agent with no user terminal never waits at a native prompt: a worker's Write tool writes in its workspace, and a shell write it cannot be prompted for is denied, with the agent told", Env: signedInOnly, Run: (*Harness).c49},
 	{ID: "C50", Title: "Engineering's leader opens and updates the job's pull request in its real session and sandbox", Env: signedInOnly, Run: (*Harness).c50},
+	{ID: "C51", Title: "An Engineering worker commits and pushes its assignment branch in its real session and sandbox", Env: signedInOnly, Run: (*Harness).c51},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in

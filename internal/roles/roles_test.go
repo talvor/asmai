@@ -437,3 +437,19 @@ func TestEveryAgentsInstructionsCarryTheOperatingGuideAndLeadersTheirIndex(t *te
 		t.Error("Engineering's worker instructions lack the PR section")
 	}
 }
+
+func TestEngineeringsWorkersAreToldToRunGitCommitAndPushAsSinglePlainBashCalls(t *testing.T) {
+	worker, err := WorkerInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Run `git commit` and `git push` the same way: each as its own single, plain Bash call",
+		"never chained with `&&`, `;` or `||`, piped into `tail` or `head`, put after a `cd`",
+		"stays in the guard",
+	} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("an Engineering worker's instructions lack %q", want)
+		}
+	}
+}

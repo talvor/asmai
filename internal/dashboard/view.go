@@ -80,8 +80,11 @@ func (m model) stopped() []string {
 // the tabs, the Waiting on you banner and the footer of keys.
 func (m model) shell() string {
 	body := []string{m.header(), m.tabs(), m.banner()}
-	if m.tab == tabAgents {
+	switch m.tab {
+	case tabAgents:
 		body = append(body, m.agentsBody()...)
+	case tabJobs:
+		body = append(body, m.jobsBody()...)
 	}
 	return m.frame(body)
 }

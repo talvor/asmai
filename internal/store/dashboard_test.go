@@ -38,3 +38,17 @@ func TestAgentWorksReadTheLatestDispatchAndTheAssignmentsNeedingReconciliation(t
 		t.Errorf("a held worker's work is %+v, want assignment %d reconciling with an unknown dispatch", w, a.ID)
 	}
 }
+
+func TestJobWorksCountAssignmentsByStateAndNamePullRequestAndTitle(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	a, _ := newAssignment(t, s, job)
+
+	works, err := s.JobWorks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(works) != 1 || works[0].Number != job || works[0].Ended || works[0].Assignments[AssignmentActive] != 1 || works[0].PullRequest != 0 || works[0].Validating || works[0].NeedsYou != 0 {
+		t.Fatalf("the job's work is %+v, want one active assignment of an open job with no pull request (assignment %d)", works, a.ID)
+	}
+}

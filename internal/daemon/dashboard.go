@@ -91,9 +91,63 @@ type DashboardAgent struct {
 	Doing string `json:"doing,omitempty"`
 }
 
+// JobStage is where a job is, as the Dashboard shows it. The daemon derives
+// it, so every client agrees.
+type JobStage string
+
+// The stages, in the precedence they are derived in: a job is at the first
+// that holds.
+const (
+	StageDelivered  JobStage = "delivered"
+	StageNeedsYou   JobStage = "needs-you"
+	StageValidating JobStage = "validating"
+	StageDelivering JobStage = "delivering"
+	StageWorking    JobStage = "working"
+)
+
+// Word is how the stage reads.
+func (s JobStage) Word() string {
+	switch s {
+	case StageDelivered:
+		return "Delivered"
+	case StageNeedsYou:
+		return "Needs you"
+	case StageValidating:
+		return "Validating"
+	case StageDelivering:
+		return "Delivering"
+	default:
+		return "Working"
+	}
+}
+
+// AssignmentCounts is how many of a job's assignments are in each state.
+type AssignmentCounts struct {
+	Active         int `json:"active,omitempty"`
+	Submitted      int `json:"submitted,omitempty"`
+	Reconciliation int `json:"reconciliation,omitempty"`
+	Cancelling     int `json:"cancelling,omitempty"`
+	Accepted       int `json:"accepted,omitempty"`
+	Cancelled      int `json:"cancelled,omitempty"`
+}
+
+// DashboardJob is one job in the snapshot.
+type DashboardJob struct {
+	Job   int64    `json:"job"`
+	Stage JobStage `json:"stage"`
+	// Assignments counts the job's assignments by state.
+	Assignments AssignmentCounts `json:"assignments"`
+	// PullRequest is the number of the job's pull request, zero for none.
+	PullRequest int `json:"pull_request,omitempty"`
+	// Title is the pull request's title, or the first line of the user's
+	// request while the job has no pull request.
+	Title string `json:"title"`
+}
+
 // DashboardSnapshot is the Dashboard's read of the factory.
 type DashboardSnapshot struct {
 	Agents []DashboardAgent `json:"agents"`
+	Jobs   []DashboardJob   `json:"jobs"`
 }
 
 // agentLive is what the daemon knows of a running agent in memory.
@@ -171,8 +225,39 @@ func doing(w store.AgentWork) string {
 	}
 }
 
+// deriveJob derives the stage of a job from what its records say. This is the
+// one derivation of the stage vocabulary; the Dashboard only shows it.
+func deriveJob(w store.JobWork) DashboardJob {
+	out := DashboardJob{Job: w.Number, PullRequest: w.PullRequest, Title: w.Title}
+	if out.Title == "" {
+		out.Title, _, _ = strings.Cut(strings.TrimSpace(w.Words), "\n")
+	}
+	out.Assignments = AssignmentCounts{
+		Active:         w.Assignments[store.AssignmentActive],
+		Submitted:      w.Assignments[store.AssignmentSubmitted],
+		Reconciliation: w.Assignments[store.AssignmentNeedsReconciliation],
+		Cancelling:     w.Assignments[store.AssignmentCancelling],
+		Accepted:       w.Assignments[store.AssignmentAccepted],
+		Cancelled:      w.Assignments[store.AssignmentCancelled],
+	}
+	switch {
+	case w.Ended:
+		out.Stage = StageDelivered
+	case w.NeedsYou > 0:
+		out.Stage = StageNeedsYou
+	case w.Validating:
+		out.Stage = StageValidating
+	case w.Pushed || w.PullRequest != 0 || (w.Validated && w.OpenBlocking == 0):
+		out.Stage = StageDelivering
+	default:
+		out.Stage = StageWorking
+	}
+	return out
+}
+
 // dashboardSnapshot reads the factory for the Dashboard: every agent the store
-// knows, and every staffed leader that has not run yet, as Stopped.
+// knows, and every staffed leader that has not run yet, as Stopped, and every
+// job with its stage.
 func (d *daemon) dashboardSnapshot() (DashboardSnapshot, error) {
 	agents, err := d.store.Agents()
 	if err != nil {
@@ -192,7 +277,14 @@ func (d *daemon) dashboardSnapshot() (DashboardSnapshot, error) {
 
 	lives := d.liveAgents()
 
-	snapshot := DashboardSnapshot{Agents: []DashboardAgent{}}
+	jobs, err := d.store.JobWorks()
+	if err != nil {
+		return DashboardSnapshot{}, fmt.Errorf("reading the jobs: %w", err)
+	}
+	snapshot := DashboardSnapshot{Agents: []DashboardAgent{}, Jobs: []DashboardJob{}}
+	for _, w := range jobs {
+		snapshot.Jobs = append(snapshot.Jobs, deriveJob(w))
+	}
 	for _, a := range agents {
 		snapshot.Agents = append(snapshot.Agents, deriveAgent(a, lives[a.Agent], works[a.Agent]))
 	}

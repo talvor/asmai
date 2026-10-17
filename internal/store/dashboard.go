@@ -80,3 +80,86 @@ func (s *Store) AgentWorks() (map[string]AgentWork, error) {
 	}
 	return works, held.Err()
 }
+
+// JobWork is what a job's records say about where it is, for the daemon to
+// derive its stage from.
+type JobWork struct {
+	Number int64
+	// Ended is whether the job is ended, which a delivery does.
+	Ended bool
+	// Words is the user's request, for a job with no pull request to name it.
+	Words string
+	// PullRequest and Title are the latest pull request recorded for the
+	// job, zero and empty when it has none.
+	PullRequest int
+	Title       string
+	// Assignments counts the job's assignments by state.
+	Assignments map[string]int
+	// Validating is whether a read-only assignment, which is Quality's
+	// validation, has not ended. NeedsYou counts the needs-you findings, and
+	// OpenBlocking the blocking findings no validation has cleared.
+	Validating   bool
+	NeedsYou     int
+	OpenBlocking int
+	// Validated is whether Quality's validation was accepted and sent to the
+	// delivery owner, and Pushed whether the job branch was pushed.
+	Validated bool
+	Pushed    bool
+}
+
+// JobWorks returns what the records say of each job, in job order. It only
+// reads.
+func (s *Store) JobWorks() ([]JobWork, error) {
+	rows, err := s.db.Query(`SELECT j.number, j.state = ?, j.words,
+			COALESCE((SELECT p.number FROM pull_requests p WHERE p.job = j.number ORDER BY p.id DESC LIMIT 1), 0),
+			COALESCE((SELECT p.title FROM pull_requests p WHERE p.job = j.number ORDER BY p.id DESC LIMIT 1), ''),
+			EXISTS (SELECT 1 FROM assignments a WHERE a.job = j.number AND a.read_only AND a.state NOT IN (?, ?)),
+			(SELECT count(*) FROM findings f WHERE f.job = j.number AND f.kind = ?),
+			(SELECT count(*) FROM findings f WHERE f.job = j.number AND f.kind = ? AND f.cleared_by IS NULL),
+			EXISTS (SELECT 1 FROM messages m WHERE m.job = j.number AND m.kind = ?),
+			EXISTS (SELECT 1 FROM pushes x WHERE x.job = j.number)
+		FROM jobs j ORDER BY j.number`, JobEnded, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	works := []JobWork{}
+	for rows.Next() {
+		w := JobWork{Assignments: map[string]int{}}
+		if err := rows.Scan(&w.Number, &w.Ended, &w.Words, &w.PullRequest, &w.Title, &w.Validating, &w.NeedsYou, &w.OpenBlocking, &w.Validated, &w.Pushed); err != nil {
+			return nil, err
+		}
+		works = append(works, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	counts, err := s.db.Query(`SELECT job, state, count(*) FROM assignments GROUP BY job, state`)
+	if err != nil {
+		return nil, err
+	}
+	defer counts.Close()
+	byJob := map[int64]map[string]int{}
+	for counts.Next() {
+		var job int64
+		var state string
+		var n int
+		if err := counts.Scan(&job, &state, &n); err != nil {
+			return nil, err
+		}
+		if byJob[job] == nil {
+			byJob[job] = map[string]int{}
+		}
+		byJob[job][state] = n
+	}
+	if err := counts.Err(); err != nil {
+		return nil, err
+	}
+	for i := range works {
+		if c := byJob[works[i].Number]; c != nil {
+			works[i].Assignments = c
+		}
+	}
+	return works, nil
+}

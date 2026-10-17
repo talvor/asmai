@@ -1,0 +1,38 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ JOB   STAGE          ASSIGNMENTS                  TITLE
+ #9    ✓ Delivered    4 accepted                   feat(daemon): add the journa…
+ #10   ▲ Needs you    1 submitted, 2 accepted      fix(store): clear a blocking…
+ #11   ▶ Delivering   3 accepted                   docs: record the dashboard's…
+ #12   ◐ Validating   1 active, 2 accepted         Add the Jobs tab to the dash…
+ #14   ● Working      2 active, 1 reconcile, 1 ac… Make the log read take a cur…
+ #15   ● Working      -                            Plan the next release
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · ↑/↓ move · q quit
+--- attributes
+1 1-80: reverse
+2 2-11: faint
+2 13-20: reverse
+2 22-28: faint
+4 1-33: faint
+4 52-56: faint
+5 1-80: reverse
+6 8-21: fg=0x1000003
+7 8-21: fg=0x1000006
+8 8-21: fg=0x1000006
+9 8-21: fg=0x1000004
+10 8-21: fg=0x1000004
+24 1-80: reverse

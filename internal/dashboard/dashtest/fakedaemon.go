@@ -38,6 +38,7 @@ type FakeDaemon struct {
 	// the subscriptions open.
 	head     int64
 	watchers map[net.Conn]bool
+	snapshot daemon.DashboardSnapshot
 }
 
 // NewFakeDaemon starts a fake daemon that answers status and an empty
@@ -56,6 +57,7 @@ func NewFakeDaemon(t *testing.T) *FakeDaemon {
 		return daemon.Response{Status: &daemon.Status{Version: "fake", PID: 1}}
 	})
 	f.SetAgents()
+	f.SetJobs()
 	f.Start()
 	t.Cleanup(f.Stop)
 	return f
@@ -64,8 +66,26 @@ func NewFakeDaemon(t *testing.T) *FakeDaemon {
 // SetAgents sets the agents the snapshot lists, each with the status a test
 // gives it: the fake daemon derives nothing, as the Dashboard does not.
 func (f *FakeDaemon) SetAgents(agents ...daemon.DashboardAgent) {
-	snapshot := daemon.DashboardSnapshot{Agents: append([]daemon.DashboardAgent{}, agents...)}
+	f.mu.Lock()
+	f.snapshot.Agents = append([]daemon.DashboardAgent{}, agents...)
+	f.mu.Unlock()
+	f.serveSnapshot()
+}
+
+// SetJobs sets the jobs the snapshot lists, each with the stage a test gives
+// it.
+func (f *FakeDaemon) SetJobs(jobs ...daemon.DashboardJob) {
+	f.mu.Lock()
+	f.snapshot.Jobs = append([]daemon.DashboardJob{}, jobs...)
+	f.mu.Unlock()
+	f.serveSnapshot()
+}
+
+func (f *FakeDaemon) serveSnapshot() {
 	f.Handle(daemon.CommandDashboardSnapshot, func(daemon.Request) daemon.Response {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		snapshot := f.snapshot
 		return daemon.Response{Dashboard: &snapshot}
 	})
 }

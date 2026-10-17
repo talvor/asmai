@@ -264,12 +264,14 @@ func (d *daemon) subscribe(conn *net.UnixConn, r io.Reader) {
 		latest, err := d.store.JournalHead()
 		if err != nil {
 			d.log.Error("reading the journal head", "error", err.Error())
+			conn.SetWriteDeadline(time.Now().Add(time.Second))
 			reply(conn, Response{Error: "reading the journal head: " + err.Error()})
 			return
 		}
 		if now := d.liveMark(); latest != head || now != mark {
 			head, mark = latest, now
 			line, _ := json.Marshal(Response{Change: &DashboardChange{Journal: latest}})
+			conn.SetWriteDeadline(time.Now().Add(time.Second))
 			if _, err := conn.Write(append(line, '\n')); err != nil {
 				return
 			}

@@ -22,7 +22,7 @@ func TestAttachReturnDiscardsEarlierSnapshotAndRetry(t *testing.T) {
 		t.Fatal("attach return did not request a new snapshot")
 	}
 
-	updated, cmd = m.Update(readMsg{generation: m.generation})
+	updated, cmd = m.Update(readMsg{generation: m.generation, number: m.readNumber})
 	m = updated.(model)
 	if cmd == nil || !strings.Contains(m.View().Content, "The factory is not running.") {
 		t.Fatal("return snapshot did not show the stopped factory and continue polling")
@@ -38,7 +38,7 @@ func TestAttachReturnDiscardsEarlierSnapshotAndRetry(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("retry queued before attach started another read")
 	}
-	_, cmd = m.Update(retryMsg{generation: m.generation})
+	_, cmd = m.Update(retryMsg{generation: m.generation, round: m.round})
 	if cmd == nil {
 		t.Fatal("current retry did not continue polling")
 	}

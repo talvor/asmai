@@ -107,6 +107,7 @@ type model struct {
 	// the factory is stopped before the daemon has been asked.
 	read       bool
 	generation int
+	readNumber int
 	// failed is true while the last refresh failed with the daemon running,
 	// so the agents shown are older than the note says.
 	failed bool
@@ -137,6 +138,7 @@ type readMsg struct {
 	factory    factory
 	err        error
 	generation int
+	number     int
 }
 
 // retryMsg fires when it is time to read again, unless a read since has
@@ -160,20 +162,20 @@ type changeMsg struct{ journal int64 }
 type resubscribeMsg struct{}
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(read(m.socket, m.generation), subscribe(m.socket, m.watch))
+	return tea.Batch(read(m.socket, m.generation, m.readNumber), subscribe(m.socket, m.watch))
 }
 
 // read asks the daemon for everything the Dashboard shows.
-func read(socket string, generation int) tea.Cmd {
+func read(socket string, generation, number int) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := daemon.Call(socket, daemon.Request{Command: daemon.CommandDashboardSnapshot})
 		if err == nil && resp.Dashboard == nil {
 			err = errors.New("the daemon answered without a snapshot")
 		}
 		if err != nil {
-			return readMsg{err: err, generation: generation}
+			return readMsg{err: err, generation: generation, number: number}
 		}
-		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, readAt: time.Now()}, generation: generation}
+		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, readAt: time.Now()}, generation: generation, number: number}
 	}
 }
 
@@ -248,7 +250,9 @@ func await(w *watch) tea.Cmd {
 // reading sends a read now.
 func (m model) reading(now time.Time) (model, tea.Cmd) {
 	m.lastRead = now
-	return m, read(m.socket, m.generation)
+	m.readNumber++
+	m.round++
+	return m, read(m.socket, m.generation, m.readNumber)
 }
 
 // ticked asks for a read after a tick: at once when none was sent in the last
@@ -289,7 +293,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wait = false
 		return m.reading(time.Now())
 	case readMsg:
-		if msg.generation != m.generation {
+		if msg.generation != m.generation || msg.number != m.readNumber {
 			return m, nil
 		}
 		if msg.err != nil && !errors.Is(msg.err, daemon.ErrNotRunning) && m.factory.running {
@@ -320,7 +324,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		generation := m.generation
 		return m, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} })
 	case retryMsg:
-		if msg.generation != m.generation || (msg.round != 0 && msg.round != m.round) {
+		if msg.generation != m.generation || msg.round != m.round {
 			return m, nil
 		}
 		return m.reading(time.Now())
@@ -329,7 +333,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// terminal may have changed size and the factory may have stopped
 		// while attach had it, so ask for both again and draw it all anew.
 		m.generation++
-		m.round++
 		m.wait = false
 		fresh, cmd := m.reading(time.Now())
 		return fresh, tea.Batch(tea.RequestWindowSize, tea.ClearScreen, cmd)

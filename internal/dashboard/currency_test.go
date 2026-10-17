@@ -167,7 +167,54 @@ func TestAStaleRefreshTimerDoesNothing(t *testing.T) {
 	if _, cmd := m.Update(retryMsg{round: m.round - 1}); cmd != nil {
 		t.Error("a stale timer started a read")
 	}
+	if _, cmd := m.Update(retryMsg{}); cmd != nil {
+		t.Error("an unnumbered timer started a read")
+	}
 	if _, cmd := m.Update(retryMsg{round: m.round}); cmd == nil {
 		t.Error("the current timer did not start a read")
+	}
+	oldRound := m.round
+	m, _ = m.reading(time.Now())
+	if _, cmd := m.Update(retryMsg{round: oldRound}); cmd != nil {
+		t.Error("a timer fired while a newer read was pending")
+	}
+}
+
+func TestSupersededSnapshotRepliesDoNotReplaceCurrentState(t *testing.T) {
+	fresh := factory{running: true, agents: []daemon.DashboardAgent{{Agent: "leader@coordination"}}, readAt: time.Now()}
+	stale := factory{running: true, agents: []daemon.DashboardAgent{{Agent: "worker-1@engineering"}}, readAt: time.Now().Add(-time.Hour)}
+	for _, old := range []struct {
+		name string
+		msg  readMsg
+	}{
+		{"success", readMsg{factory: stale}},
+		{"failure", readMsg{err: errors.New("old failure")}},
+		{"stopped", readMsg{err: daemon.ErrNotRunning}},
+	} {
+		t.Run(old.name, func(t *testing.T) {
+			m := newModel("", Options{Refresh: time.Second})
+			m, _ = m.reading(time.Now())
+			next, _ := m.Update(readMsg{factory: fresh, number: m.readNumber})
+			m = next.(model)
+			before := shownAt(m)
+			next, cmd := m.Update(old.msg)
+			m = next.(model)
+			if cmd != nil || shownAt(m) != before {
+				t.Errorf("superseded %s reply changed the current dashboard", old.name)
+			}
+		})
+	}
+
+	m := newModel("", Options{Refresh: time.Second})
+	next, _ := m.Update(readMsg{factory: fresh})
+	m = next.(model)
+	m, _ = m.reading(time.Now())
+	next, _ = m.Update(readMsg{err: errors.New("current failure"), number: m.readNumber})
+	m = next.(model)
+	before := shownAt(m)
+	next, cmd := m.Update(readMsg{factory: stale})
+	m = next.(model)
+	if cmd != nil || shownAt(m) != before || !m.failed {
+		t.Error("a superseded success cleared the current failure note")
 	}
 }

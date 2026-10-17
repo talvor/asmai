@@ -60,11 +60,8 @@ func (m model) frame(body []string) string {
 
 func (m model) footer() string {
 	keys := footerKeys
-	switch m.tab {
-	case tabAgents:
+	if m.tab == tabAgents {
 		keys = "1/2/3 tab · ↑/↓ move · enter attach · q quit"
-	case tabLog:
-		keys = "1/2/3 tab · q quit"
 	}
 	return bar(" "+keys, m.width)
 }

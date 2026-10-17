@@ -64,7 +64,7 @@ type setupStep struct {
 // configuration file is never changed: its problems are only reported.
 // Claude Code records the trust itself; setup only reads its record, and
 // never writes ~/.claude.json or ~/.claude.
-func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes bool) int {
+func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes bool, requestedModel string) int {
 	// With --json, stdout carries only the result, and Claude Code draws on
 	// stderr.
 	w := o.stdout
@@ -124,7 +124,21 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		return fail(err)
 	}
 	stage(2, "Config", fmt.Sprintf("Setup writes the configuration file, %s, if it is missing. An existing one is never changed.", configFile))
-	created, err := config.CreateDefault(configFile)
+	_, statErr := os.Stat(configFile)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return fail(fmt.Errorf("checking %s: %w", configFile, statErr))
+	}
+	if statErr == nil && requestedModel != "" {
+		return fail(fmt.Errorf("%s already exists; edit [providers.claude].default_model there to change it", configFile))
+	}
+	model := "opus"
+	if errors.Is(statErr, os.ErrNotExist) {
+		model, err = chooseClaudeDefaultModel(w, stdin, assumeYes, requestedModel)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	created, err := config.CreateDefault(configFile, model)
 	if err != nil {
 		return fail(err)
 	}
@@ -133,7 +147,7 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		return fail(err)
 	}
 	if created {
-		report("config", stepDone, fmt.Sprintf("Wrote %s, staffing %s and setting Claude's default model to opus", configFile, staffedRoles()))
+		report("config", stepDone, fmt.Sprintf("Wrote %s, staffing %s and setting Claude's default model to %s", configFile, staffedRoles(), model))
 	} else {
 		report("config", stepAlreadyDone, fmt.Sprintf("%s exists, and setup leaves it as it is", configFile))
 	}
@@ -246,6 +260,30 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	}
 	fmt.Fprintln(w, "Init is done: `asmai start` starts the factory, and `asmai repo add` registers a repository for it to work on.")
 	return 0
+}
+
+func chooseClaudeDefaultModel(w io.Writer, stdin io.Reader, assumeYes bool, requested string) (string, error) {
+	if requested != "" {
+		if requested != "opus" && requested != "sonnet" {
+			return "", fmt.Errorf("Claude's default model %q is not opus or sonnet", requested)
+		}
+		return requested, nil
+	}
+	if in, ok := stdin.(*os.File); !ok || !term.IsTerminal(int(in.Fd())) || assumeYes {
+		return "opus", nil
+	}
+	for {
+		fmt.Fprint(w, "Claude default model (opus or sonnet) [opus]: ")
+		answer := strings.ToLower(strings.TrimSpace(readLine(stdin)))
+		switch answer {
+		case "", "opus":
+			return "opus", nil
+		case "sonnet":
+			return "sonnet", nil
+		default:
+			fmt.Fprintln(w, "Choose opus or sonnet.")
+		}
+	}
 }
 
 // errNoTerminal is why trustFolder could not have the user trust a folder:

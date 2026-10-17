@@ -1006,10 +1006,10 @@ const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` +
 // none: a header pointing to the README's section on the file, and a table
 // staffing each role M1 runs as exampleStaffing does, with Claude's default
 // fallback model. It registers no repository.
-func Default() []byte {
+func Default(claudeModel string) []byte {
 	var b strings.Builder
 	b.WriteString(defaultHeader)
-	b.WriteString("\n[providers.claude]\ndefault_model = \"opus\"\n")
+	b.WriteString("\n[providers.claude]\ndefault_model = \"" + claudeModel + "\"\n")
 	for _, role := range roles.Staffed {
 		b.WriteString("\n" + Example(role) + "\n")
 	}
@@ -1090,7 +1090,7 @@ func ExampleConfiguration() []byte {
 // CreateDefault writes Default to path, making its directory, unless a file
 // is already there, which it leaves exactly as it is. It reports whether it
 // wrote the file.
-func CreateDefault(path string) (created bool, err error) {
+func CreateDefault(path, claudeModel string) (created bool, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return false, fmt.Errorf("creating the configuration file's directory: %w", err)
 	}
@@ -1101,7 +1101,7 @@ func CreateDefault(path string) (created bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("creating the configuration file: %w", err)
 	}
-	_, err = f.Write(Default())
+	_, err = f.Write(Default(claudeModel))
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}

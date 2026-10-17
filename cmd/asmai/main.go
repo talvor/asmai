@@ -45,10 +45,12 @@ commands you type:
                               starting the factory first if it is stopped. What you type reaches
                               Coordination, and each message you submit is journaled word for word.
                               Ctrl-] leaves the conversation, which pauses nothing
-  asmai init [--yes]          the first run: check this platform is certified, write a configuration
-                              file staffing every role if there is none, make the state directory's
-                              folders, install the pinned Claude Code once you confirm (--yes
-                              confirms, and agrees to open Claude Code), check it and that it applies
+  asmai init [--yes] [--claude-default-model opus|sonnet]
+                              the first run: check this platform is certified, choose Claude's
+                              default model and write a file staffing every role if there is none;
+                              make the state directory's folders, install the pinned Claude Code
+                              once you confirm (--yes confirms and agrees to open Claude Code),
+                              check it and that it applies
                               AsmAI's permission rules, and open it in the agents and workspaces
                               folders and each registered repository's clone for you to trust them.
                               A step already done is skipped. asmai setup is its old name
@@ -245,11 +247,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var decisionJob int64
 	var repoOptions repoSettings
 	var role roleChoices
+	var claudeDefaultModel string
 	var choice, rationale string
 	var resultArgs resultFlags
 	switch name {
 	case "init":
 		assumeYes = flags.Bool("yes", false, "confirm the install and agree to open Claude Code without asking")
+		flags.StringVar(&claudeDefaultModel, "claude-default-model", "", "Claude's fallback model in a new config: opus or sonnet (default opus)")
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
 	case "log":
@@ -392,7 +396,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	switch name {
 	case "init":
-		return initFactory(o, paths, stdin, *assumeYes)
+		return initFactory(o, paths, stdin, *assumeYes, claudeDefaultModel)
 	case "doctor":
 		return doctor(o, paths)
 	case "start":

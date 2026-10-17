@@ -219,7 +219,7 @@ func TestScratchConfigFileOverride(t *testing.T) {
 // The file `asmai init` writes staffs every role M1 runs, points to the
 // README's section on the file, and registers no repository.
 func TestTheDefaultFileStaffsEveryRoleAndRegistersNoRepository(t *testing.T) {
-	data := Default()
+	data := Default("opus")
 	cfg, problems := Parse(data)
 	if len(problems) != 0 {
 		t.Fatalf("the default file has problems: %v", problems)
@@ -238,6 +238,9 @@ func TestTheDefaultFileStaffsEveryRoleAndRegistersNoRepository(t *testing.T) {
 	if got := cfg.Providers["claude"].DefaultModel; got != "opus" {
 		t.Errorf("the default file gives Claude model %q, want opus", got)
 	}
+	if sonnet, problems := Parse(Default("sonnet")); len(problems) != 0 || sonnet.Providers["claude"].DefaultModel != "sonnet" {
+		t.Errorf("the Sonnet default file has model %q and problems %v", sonnet.Providers["claude"].DefaultModel, problems)
+	}
 	if !strings.HasPrefix(string(data), "# ") || !strings.Contains(string(data), "README") || !strings.Contains(string(data), "#the-configuration-file") {
 		t.Errorf("the default file opens\n%s\nwant a comment pointing to the README's section on the file", data)
 	}
@@ -245,11 +248,11 @@ func TestTheDefaultFileStaffsEveryRoleAndRegistersNoRepository(t *testing.T) {
 
 func TestCreateDefaultWritesOnlyWhenThereIsNoFile(t *testing.T) {
 	path := DefaultPath(t.TempDir())
-	created, err := CreateDefault(path)
+	created, err := CreateDefault(path, "opus")
 	if err != nil || !created {
 		t.Fatalf("CreateDefault of a missing file = %t, %v, want it written", created, err)
 	}
-	if got, _ := os.ReadFile(path); string(got) != string(Default()) {
+	if got, _ := os.ReadFile(path); string(got) != string(Default("opus")) {
 		t.Errorf("the file holds\n%s\nwant the default", got)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
@@ -259,7 +262,7 @@ func TestCreateDefaultWritesOnlyWhenThereIsNoFile(t *testing.T) {
 	if err := os.WriteFile(path, mine, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	created, err = CreateDefault(path)
+	created, err = CreateDefault(path, "sonnet")
 	if err != nil || created {
 		t.Errorf("CreateDefault of an existing file = %t, %v, want nothing written", created, err)
 	}

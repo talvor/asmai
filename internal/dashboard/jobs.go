@@ -13,7 +13,7 @@ import (
 
 // The Jobs tab's columns. The job, stage and title always stay and the title
 // takes what is left; Pull request, then Assignments drop as the width
-// shrinks, and the title is never narrower than minTitle.
+// shrinks.
 const (
 	jobNumberWidth = 5
 	stageWidth     = 14
@@ -81,7 +81,7 @@ func assignmentWords(a daemon.AssignmentCounts) string {
 		word string
 	}{{a.Active, "act"}, {a.Submitted, "sub"}, {a.Reconciliation, "rec"}, {a.Cancelling, "cng"}, {a.Accepted, "acc"}, {a.Cancelled, "cxl"}} {
 		if s.n > 0 {
-			parts = append(parts, fmt.Sprintf("%s:%d", s.word, s.n))
+			parts = append(parts, fmt.Sprintf("%s%d", s.word, s.n))
 		}
 	}
 	if len(parts) == 0 {
@@ -99,12 +99,11 @@ func (m model) jobsBody() []string {
 	}
 	c := m.jobColumns()
 	width := min(m.width, maxWidth)
-	heading := m.jobRow(c, jobHeading, lipgloss.NewStyle())
-	if len(jobs) > m.listRows() {
-		count := fmt.Sprintf(" %d/%d", m.jobCursor+1, len(jobs))
-		heading = clip(heading, width-lipgloss.Width(count))
-		heading += strings.Repeat(" ", max(width-lipgloss.Width(heading)-lipgloss.Width(count), 0)) + count
+	headingCells := jobHeading
+	if !c.assignments {
+		headingCells.assignments = ""
 	}
+	heading := m.jobRow(c, headingCells, lipgloss.NewStyle())
 	rows := []string{dimStyle.Render(pad(heading, width))}
 	end := min(m.jobOffset+m.listRows(), len(jobs))
 	for i := m.jobOffset; i < end; i++ {
@@ -139,6 +138,17 @@ func (m model) jobRow(c jobColumns, cells jobCells, stage lipgloss.Style) string
 		b.WriteString(pad(cells.pr, prWidth))
 		b.WriteString(" ")
 	}
-	b.WriteString(clip(cells.title, c.title))
+	titleWidth := c.title
+	inlineCounts := !c.assignments && cells.assignments != "" && cells.assignments != "-"
+	if inlineCounts {
+		titleWidth -= lipgloss.Width(cells.assignments) + 1
+	}
+	if titleWidth > 0 {
+		b.WriteString(clip(cells.title, titleWidth))
+	}
+	if inlineCounts {
+		b.WriteString(" ")
+		b.WriteString(cells.assignments)
+	}
 	return b.String()
 }

@@ -118,7 +118,7 @@ func TestDashboardJobsShowTheDaemonsStageAndDeriveNone(t *testing.T) {
 	d.WaitForText("factory running")
 	d.Send("2")
 	screen := d.WaitForText("two")
-	for _, want := range []string{"✓ Delivered", "● Working", "act:3", "acc:3", "#5"} {
+	for _, want := range []string{"✓ Delivered", "● Working", "act3", "acc3", "#5"} {
 		if !strings.Contains(screen, want) {
 			t.Errorf("the screen lacks %q:\n%s", want, screen)
 		}
@@ -129,13 +129,26 @@ func TestDashboardJobsShowEveryNonzeroAssignmentCount(t *testing.T) {
 	fake := dashtest.NewFakeDaemon(t)
 	fake.SetJobs(daemon.DashboardJob{Job: 1, Stage: daemon.StageWorking, Assignments: daemon.AssignmentCounts{
 		Active: 2, Submitted: 3, Reconciliation: 4, Cancelling: 5, Accepted: 6, Cancelled: 7,
-	}, Title: "all states"})
-	d := dashboardIn(t, fake, 100, 30)
-	d.WaitForText("factory running")
-	d.Send("2")
-	screen := d.WaitForText("all states")
-	if !strings.Contains(screen, "act:2 sub:3 rec:4 cng:5 acc:6 cxl:7") {
-		t.Errorf("the assignment counts are incomplete:\n%s", screen)
+	}, Title: "all states with a title long enough to be truncated"})
+	for _, size := range dashboardSizes {
+		for _, env := range [][]string{nil, {"NO_COLOR=1"}} {
+			name := fmt.Sprintf("%dx%d", size[0], size[1])
+			if len(env) > 0 {
+				name += "-no_color"
+			}
+			t.Run(name, func(t *testing.T) {
+				d := dashboardIn(t, fake, size[0], size[1], env...)
+				d.WaitForText("factory running")
+				d.Send("2")
+				screen := d.WaitForText("all states")
+				if !strings.Contains(screen, "act2 sub3 rec4 cng5 acc6 cxl7") {
+					t.Errorf("the assignment counts are incomplete:\n%s", screen)
+				}
+				if size[0] == 80 && !strings.Contains(screen, "… act2 sub3 rec4 cng5 acc6 cxl7") {
+					t.Errorf("the 80-column title did not truncate before the counts:\n%s", screen)
+				}
+			})
+		}
 	}
 }
 
@@ -164,7 +177,7 @@ func TestDashboardJobsScrollWithTheCursor(t *testing.T) {
 	}
 	d.WaitForText("job title 26")
 	screen := d.Screen()
-	if strings.Contains(screen, "job title 01") || !strings.Contains(screen, " 26/40") {
+	if strings.Contains(screen, "job title 01") || !strings.Contains(screen, "job title 26") || strings.Contains(screen, "26/40") {
 		t.Errorf("after 25 moves down the screen is:\n%s", screen)
 	}
 	dashtest.Golden(t, "jobs-scrolled-80x24", d.Snapshot())
@@ -175,7 +188,7 @@ func TestDashboardJobsScrollWithTheCursor(t *testing.T) {
 	d.WaitForText("job title 01")
 	d.Send("\x1b[A")
 	d.Send("\x1b[6~")
-	d.WaitForText(" 20/40")
+	d.WaitForText("job title 20")
 }
 
 func TestDashboardJobsKeepTheCursorOnItsJobWhenReread(t *testing.T) {

@@ -2,11 +2,11 @@
   1 Agents   2 Jobs   3 Log
 
  JOB   STAGE          TITLE
- #9    ✓ Delivered    feat(daemon): add the journal cursor read
- #10   ▲ Needs you    fix(store): clear a blocking finding only by a later vali…
- #11   ▶ Delivering   docs: record the dashboard's daemon calls
- #12   ◐ Validating   Add the Jobs tab to the dashboard so a user can see how e…
- #14   ● Working      Make the log read take a cursor in both directions
+ #9    ✓ Delivered    feat(daemon): add the journal cursor read acc4
+ #10   ▲ Needs you    fix(store): clear a blocking finding only by a … sub1 acc2
+ #11   ▶ Delivering   docs: record the dashboard's daemon calls acc3
+ #12   ◐ Validating   Add the Jobs tab to the dashboard so a user can… act1 acc2
+ #14   ● Working      Make the log read take a cursor in bo… act2 rec1 acc1 cxl1
  #15   ● Working      Plan the next release
 
 

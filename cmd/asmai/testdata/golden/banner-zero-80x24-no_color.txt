@@ -2,7 +2,7 @@
   1 Agents   2 Jobs   3 Log
 
  AGENT                STATUS                 JOB    DOING
- leader@coordination  ▲ Waiting on you       -      you hold its input in /dev/…
+ leader@coordination  ○ Idle                 -
  leader@engineering   ● Working              #12    handoff: Add the Agents tab…
  leader@planning      ○ Idle                 -
  leader@quality       ○ Idle (unknown)       -      dispatch state unknown

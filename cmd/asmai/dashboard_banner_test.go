@@ -43,8 +43,37 @@ func TestDashboardBannerGoldenScreens(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					fake := dashtest.NewFakeDaemon(t)
-					fake.SetAgents(agentsAt(time.Now())...)
-					fake.SetWaiting(c.items(time.Now())...)
+					now := time.Now()
+					items := c.items(now)
+					agents := agentsAt(now)
+					for i := range agents {
+						switch agents[i].Agent {
+						case "leader@coordination":
+							if c.name == "several" {
+								agents[i].Since = items[1].Since
+							} else {
+								agents[i].Status = daemon.StatusIdle
+								agents[i].Input = daemon.InputAutomation
+								agents[i].Doing = ""
+							}
+						case "leader@quality":
+							if c.name != "zero" {
+								agents[i].Status = daemon.StatusWaitingOnYou
+								agents[i].DispatchUnknown = false
+								agents[i].Job = items[0].Job
+								agents[i].Since = items[0].Since
+								agents[i].Doing = strings.TrimPrefix(items[0].Text, agents[i].Agent+" ")
+							}
+						case "worker-2@quality":
+							if c.name != "zero" {
+								agents[i].Status = daemon.StatusIdle
+								agents[i].Job = 0
+								agents[i].Doing = ""
+							}
+						}
+					}
+					fake.SetAgents(agents...)
+					fake.SetWaiting(items...)
 					d := dashboardIn(t, fake, size[0], size[1], env...)
 					screen := d.WaitForText("worker-2@quality")
 					if c.want != "" && !strings.Contains(screen, c.want) {
@@ -64,8 +93,8 @@ func TestDashboardBannerGoldenScreens(t *testing.T) {
 // orders nothing itself.
 func TestDashboardBannerShowsTheFirstItemTheDaemonListed(t *testing.T) {
 	fake := dashtest.NewFakeDaemon(t)
-	fake.SetAgents(agentsAt(time.Now())...)
 	items := waitingAt(time.Now())
+	fake.SetAgents(daemon.DashboardAgent{Agent: items[0].Agent, Role: "quality", Status: daemon.StatusWaitingOnYou, Job: items[0].Job, Input: daemon.InputAutomation, Since: items[0].Since, Doing: strings.TrimPrefix(items[0].Text, items[0].Agent+" ")})
 	fake.SetWaiting(items[2], items[0])
 	d := dashboardIn(t, fake, 100, 30)
 	screen := d.WaitForText("Waiting on you: job 12 finding 7")

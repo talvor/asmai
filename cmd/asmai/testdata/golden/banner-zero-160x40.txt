@@ -2,7 +2,7 @@
   1 Agents   2 Jobs   3 Log
 
  AGENT                STATUS                 JOB    INPUT      SINCE DOING
- leader@coordination  ▲ Waiting on you       -      user       12m   you hold its input in /dev/pts/3
+ leader@coordination  ○ Idle                 -      automation 12m
  leader@engineering   ● Working              #12    automation 2m    handoff: Add the Agents tab to the dashboard so a user can see who is working and who wait…
  leader@planning      ○ Idle                 -      automation 3h
  leader@quality       ○ Idle (unknown)       -      automation 41m   dispatch state unknown

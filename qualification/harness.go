@@ -178,8 +178,10 @@ func (h *Harness) disposableConfig() string {
 // such as a job, a handoff, its read-only view and the work a start would
 // restore, so that the case's leaders start with nothing to do but the
 // case's own request. It keeps the pinned provider copy, which takes long to
-// fetch, and puts a fresh copy of the configuration file there, less any
-// entry for the handoff fixture that a run before the copy was made left.
+// fetch, and puts a fresh copy of the configuration file there, less every
+// repository entry: the disposable state registers none, so an entry the host's
+// own file holds, such as the handoff fixture's or another repository's, would
+// be in the file but not registered, and `asmai setup` would refuse the file.
 func (h *Harness) resetDisposableState() error {
 	p := h.QualificationPaths
 	if _, err := daemon.Call(p.Socket, daemon.Request{Command: daemon.CommandStatus}); err == nil {
@@ -211,8 +213,14 @@ func (h *Harness) resetDisposableState() error {
 	if err := os.WriteFile(h.disposableConfig(), data, 0o600); err != nil {
 		return err
 	}
-	if _, err := config.RemoveRepository(h.disposableConfig(), qualificationRepository); err != nil {
-		return fmt.Errorf("removing the [repositories.%s] entry an earlier run left from the copy of the configuration file: %w", qualificationRepository, err)
+	cfg, _, err := config.Load(h.disposableConfig())
+	if err != nil {
+		return fmt.Errorf("reading the copy of the configuration file in the disposable state: %w", err)
+	}
+	for name := range cfg.Repositories {
+		if _, err := config.RemoveRepository(h.disposableConfig(), name); err != nil {
+			return fmt.Errorf("removing the [repositories.%s] entry from the copy of the configuration file: %w", name, err)
+		}
 	}
 	return nil
 }

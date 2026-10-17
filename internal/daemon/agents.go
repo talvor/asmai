@@ -267,25 +267,37 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 	}
 
 	pinned := d.cfg.Pins.ClaudeCode.Version
-	name := "Claude Code " + pinned
 	install, err := d.claudeCode(pinned)
-	switch {
-	case pinned == "":
-		checks = append(checks, Check{Name: "Claude Code", Problem: "this asmai pins no Claude Code", Fix: "run an asmai built with its pins file"})
-	case err != nil:
-		checks = append(checks, Check{Name: name, Problem: err.Error(), Fix: "run `asmai providers install`"})
-	default:
-		checks = append(checks, Check{Name: name, OK: true})
-		// A copy that is not the pinned version is refused before it runs
-		// for anything, the permission rules probe included.
-		version := d.versionCheck(install.Path, pinned)
-		checks = append(checks, version)
-		if version.OK {
-			checks = append(checks, d.permissionRulesCheck(install.Path))
-		}
-	}
+	claude := ClaudeCodeChecks(pinned, install.Path, err,
+		func(path string) Check { return d.versionCheck(path, pinned) }, d.permissionRulesCheck)
+	checks = append(checks, claude...)
 	checks = append(checks, d.trustCheck())
 	return checks, cfg, install
+}
+
+// ClaudeCodeChecks runs the checks of the pinned Claude Code of version
+// pinned, which the daemon's start, `asmai init` and `asmai doctor` all run:
+// that it is installed, at path, or else why installing it failed
+// (installErr), that it reports the pinned version, and that this account
+// lets AsmAI's own permission rules take effect. version and rules run the
+// last two against the install at the path they are given; they are not run
+// for a copy that is missing, and rules is not run for one that is not the
+// pinned version, which is refused before it runs for anything.
+func ClaudeCodeChecks(pinned, path string, installErr error, version, rules func(path string) Check) []Check {
+	name := "Claude Code " + pinned
+	switch {
+	case pinned == "":
+		return []Check{{Name: "Claude Code", Problem: "this asmai pins no Claude Code", Fix: "run an asmai built with its pins file"}}
+	case installErr != nil:
+		return []Check{{Name: name, Problem: installErr.Error(), Fix: "run `asmai providers install`"}}
+	}
+	checks := []Check{{Name: name, OK: true}}
+	v := version(path)
+	checks = append(checks, v)
+	if v.OK {
+		checks = append(checks, rules(path))
+	}
+	return checks
 }
 
 // platformCheck checks that this platform is certified, so that an
@@ -393,20 +405,27 @@ func (d *daemon) trustCheck() Check {
 			return Check{Name: trustName, Problem: fmt.Sprintf("reading the registered repositories: %v", err), Fix: "run `asmai start` again"}
 		}
 		// A clone that is missing has no workspace to start a worker in, and
-		// `asmai setup` has none to trust.
+		// `asmai init` has none to trust.
 		for _, r := range registered {
 			if _, err := os.Stat(r.Clone); err == nil {
 				dirs = append(dirs, r.Clone)
 			}
 		}
 	}
+	return TrustCheck(d.cfg.ClaudeRecord, dirs)
+}
+
+// TrustCheck checks that Claude Code's record, at record, trusts every one
+// of dirs, as the daemon's start, `asmai init` and `asmai doctor` all do.
+// It never changes the record.
+func TrustCheck(record string, dirs []string) Check {
 	var untrusted []string
 	for _, dir := range dirs {
-		if err := d.trusted(dir); err != nil {
+		if err := trusted(record, dir); err != nil {
 			var notTrusted *untrustedError
 			if !errors.As(err, &notTrusted) {
-				fix := "make " + d.cfg.ClaudeRecord + " readable, then run `asmai start` again"
-				if d.cfg.ClaudeRecord == "" {
+				fix := "make " + record + " readable, then run `asmai start` again"
+				if record == "" {
 					fix = "start the factory with `asmai start`"
 				}
 				return Check{Name: trustName, Problem: err.Error(), Fix: fix}
@@ -419,7 +438,7 @@ func (d *daemon) trustCheck() Check {
 	}
 	return Check{Name: trustName,
 		Problem: fmt.Sprintf("Claude Code does not trust %s, so an agent started there would wait at its question about trusting the folder", strings.Join(untrusted, " or ")),
-		Fix:     "run `asmai setup`, which opens Claude Code there for you to trust it"}
+		Fix:     "run `asmai init`, which opens Claude Code there for you to trust it"}
 }
 
 // untrustedError is a directory Claude Code's record does not trust, and
@@ -431,19 +450,19 @@ type untrustedError struct {
 
 func (e *untrustedError) Error() string {
 	if e.folder != e.dir {
-		return fmt.Sprintf("Claude Code does not trust %s, the repository %s is checked out from, so the agent would wait at its question about trusting the folder; run `asmai setup`, which opens Claude Code there for you to trust it", e.folder, e.dir)
+		return fmt.Sprintf("Claude Code does not trust %s, the repository %s is checked out from, so the agent would wait at its question about trusting the folder; run `asmai init`, which opens Claude Code there for you to trust it", e.folder, e.dir)
 	}
-	return fmt.Sprintf("Claude Code does not trust %s, so the agent would wait at its question about trusting the folder; run `asmai setup`", e.dir)
+	return fmt.Sprintf("Claude Code does not trust %s, so the agent would wait at its question about trusting the folder; run `asmai init`", e.dir)
 }
 
 // trusted returns nil when Claude Code's record trusts dir, an
 // untrustedError when it does not, and why the record cannot be read
 // otherwise. It never changes the record.
-func (d *daemon) trusted(dir string) error {
-	if d.cfg.ClaudeRecord == "" {
+func trusted(record, dir string) error {
+	if record == "" {
 		return errors.New("this daemon reads no record of Claude Code's directory trust")
 	}
-	ok, err := providers.Trusted(d.cfg.ClaudeRecord, dir)
+	ok, err := providers.Trusted(record, dir)
 	if err != nil {
 		return fmt.Errorf("reading Claude Code's record of directory trust: %w", err)
 	}
@@ -471,7 +490,7 @@ func (d *daemon) staffing() (config.Config, []Check) {
 		var err error
 		cfg, problems, err = config.Load(path)
 		if errors.Is(err, config.ErrMissing) {
-			return cfg, []Check{failed(fmt.Sprintf("%s does not exist, so no role is staffed", path), "run `asmai setup` to write the configuration file")}
+			return cfg, []Check{failed(fmt.Sprintf("%s does not exist, so no role is staffed", path), "run `asmai init` to write the configuration file")}
 		}
 		if err != nil {
 			return cfg, []Check{failed(fmt.Sprintf("reading %s: %v", path, err), "make the file readable")}
@@ -521,7 +540,7 @@ func (d *daemon) claudeCode(version string) (store.ProviderInstall, error) {
 
 // pinnedCopy records the pinned Claude Code as installed when it is at the
 // path the pins file's plan puts it, matching the pin, though no install
-// records it: as when `asmai setup` fetched it while the daemon was stopped.
+// records it: as when `asmai init` fetched it while the daemon was stopped.
 func (d *daemon) pinnedCopy() (store.ProviderInstall, bool) {
 	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
 	if !ok {
@@ -697,7 +716,7 @@ func (d *daemon) startWorker(l *leader, cfg config.Config, install store.Provide
 func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch launch) error {
 	// Claude Code asks whether to trust a directory it is not trusted in
 	// before anything else, and only the user can answer it.
-	if err := d.trusted(launch.dir); err != nil {
+	if err := trusted(d.cfg.ClaudeRecord, launch.dir); err != nil {
 		return err
 	}
 	credential, err := newCredential()

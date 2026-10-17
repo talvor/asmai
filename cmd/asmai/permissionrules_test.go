@@ -13,7 +13,7 @@ import (
 // Under a managed policy that allows managed permission rules only, Claude
 // Code ignores the rules AsmAI gives its agents, so an agent would stop at its
 // first command that needs approval. `asmai start` refuses before any agent
-// starts, and `asmai setup` reports the same, each naming the policy and what
+// starts, and `asmai init` reports the same, each naming the policy and what
 // to do.
 func TestStartAndSetupRefuseUnderAManagedPolicyThatIgnoresAsmaisPermissionRules(t *testing.T) {
 	t.Setenv(fakeprovider.ManagedRulesOnlyEnv, "1")
@@ -32,13 +32,13 @@ func TestStartAndSetupRefuseUnderAManagedPolicyThatIgnoresAsmaisPermissionRules(
 		t.Errorf("asmai start started %v under the policy, want no agent", running)
 	}
 
-	stdout, stderr, code := runAsmai(t, "setup")
+	stdout, stderr, code := runAsmai(t, "init")
 	if code != 1 {
-		t.Errorf("asmai setup exited %d under the policy, want 1; it printed %q", code, stdout+stderr)
+		t.Errorf("asmai init exited %d under the policy, want 1; it printed %q", code, stdout+stderr)
 	}
 	for _, want := range []string{"permission rules: failed.", "allowManagedPermissionRulesOnly", "administrator"} {
 		if !strings.Contains(stdout+stderr, want) {
-			t.Errorf("asmai setup printed\n%s\nwant it to say %q", stdout+stderr, want)
+			t.Errorf("asmai init printed\n%s\nwant it to say %q", stdout+stderr, want)
 		}
 	}
 }

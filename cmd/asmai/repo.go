@@ -19,10 +19,10 @@ import (
 
 // repoAdd registers the repository source names, as name when the user chose
 // one. The daemon makes AsmAI's clone, writes the configuration entry and
-// records it. Then, as `asmai setup` does, repo add has the user trust the
+// records it. Then, as `asmai init` does, repo add has the user trust the
 // clone, in which the pinned Claude Code asks first (ADR 0011): workers
 // start in worktrees of it. With no terminal, or no pinned Claude Code yet,
-// it opens none, and says to run `asmai setup` in a terminal; the
+// it opens none, and says to run `asmai init` in a terminal; the
 // repository is registered all the same. A source that is a path on this
 // host is given to the daemon absolute, because the daemon does not run
 // where this command does.
@@ -66,14 +66,14 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 	if trusted, err := providers.Trusted(record, r.Clone); err != nil {
 		return o.fail(err)
 	} else if !trusted && !exists(plan.Path) {
-		fmt.Fprintf(w, "%s, and the pinned %s is not installed yet: run `asmai setup` in a terminal, which installs it and opens it in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
+		fmt.Fprintf(w, "%s, and the pinned %s is not installed yet: run `asmai init` in a terminal, which installs it and opens it in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
 		return repoAdded(o, r)
 	}
 	step := "trust " + trustStep(paths, r.Clone)
-	state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, r.Clone, true, "repo add")
+	state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, r.Clone, true, "repo add", false)
 	switch {
 	case errors.Is(err, errNoTerminal):
-		fmt.Fprintf(w, "%s, and trusting it needs you at a terminal: run `asmai setup` in a terminal, which opens %s in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
+		fmt.Fprintf(w, "%s, and trusting it needs you at a terminal: run `asmai init` in a terminal, which opens %s in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
 		return repoAdded(o, r)
 	case state != "":
 		fmt.Fprintf(w, "%s: %s. %s\n", step, state, detail)

@@ -289,7 +289,7 @@ func readyConfig(t *testing.T, dir string) string {
 
 // An agent started in a folder Claude Code does not trust would wait at its
 // question about trusting the folder, which only the user can answer: the
-// checks fail naming `asmai setup`, and no agent starts, until the record
+// checks fail naming `asmai init`, and no agent starts, until the record
 // holds the user's trust of both folders. The daemon only reads the record.
 func TestTheDaemonStartsNoAgentUntilTheUserTrustsTheFoldersAgentsStartIn(t *testing.T) {
 	testDir := t.TempDir()
@@ -323,8 +323,8 @@ func TestTheDaemonStartsNoAgentUntilTheUserTrustsTheFoldersAgentsStartIn(t *test
 			trust = c
 		}
 	}
-	if trust.OK || !strings.Contains(trust.Problem, p.Workspaces) || strings.Contains(trust.Problem, p.Agents+" ") || !strings.Contains(trust.Fix, "asmai setup") {
-		t.Errorf("with the workspaces folder untrusted, the trust check is %+v, want it failed naming the folder and `asmai setup`", trust)
+	if trust.OK || !strings.Contains(trust.Problem, p.Workspaces) || strings.Contains(trust.Problem, p.Agents+" ") || !strings.Contains(trust.Fix, "asmai init") {
+		t.Errorf("with the workspaces folder untrusted, the trust check is %+v, want it failed naming the folder and `asmai init`", trust)
 	}
 	if resp.Leaders[0].State != store.AgentStopped {
 		t.Errorf("with a folder untrusted, Coordination's leader is %s", resp.Leaders[0].State)
@@ -361,8 +361,8 @@ func TestTheDaemonRefusesToLaunchAnAgentWhoseFolderIsNotTrusted(t *testing.T) {
 	}
 	d := &daemon{cfg: Config{Paths: p, ClaudeRecord: record}}
 	err := d.startSession(&leader{}, store.ProviderInstall{Path: "/bin/false"}, launch{dir: filepath.Join(p.Workspaces, "job-1", "assignment-1", "repo")})
-	if err == nil || !strings.Contains(err.Error(), "does not trust") || !strings.Contains(err.Error(), "asmai setup") {
-		t.Errorf("starting an agent in an untrusted workspace returned %v, want a refusal naming `asmai setup`", err)
+	if err == nil || !strings.Contains(err.Error(), "does not trust") || !strings.Contains(err.Error(), "asmai init") {
+		t.Errorf("starting an agent in an untrusted workspace returned %v, want a refusal naming `asmai init`", err)
 	}
 	d.cfg.ClaudeRecord = ""
 	if err := d.startSession(&leader{}, store.ProviderInstall{Path: "/bin/false"}, launch{dir: filepath.Join(p.Agents, "leader@engineering")}); err == nil {
@@ -373,7 +373,7 @@ func TestTheDaemonRefusesToLaunchAnAgentWhoseFolderIsNotTrusted(t *testing.T) {
 // A worker's workspace is a worktree of AsmAI's clone, which Claude Code
 // trusts only through the clone's own trust, not the workspaces folder's:
 // with the clone untrusted, the checks fail and the worker is refused, each
-// naming the clone and `asmai setup`.
+// naming the clone and `asmai init`.
 func TestTheDaemonRefusesAWorkerWhoseClonesTrustIsMissing(t *testing.T) {
 	p := stateDir(t)
 	clone := filepath.Join(p.Repositories, "fixture")
@@ -400,8 +400,8 @@ func TestTheDaemonRefusesAWorkerWhoseClonesTrustIsMissing(t *testing.T) {
 	}
 	d := &daemon{cfg: Config{Paths: p, ClaudeRecord: record}, store: s}
 
-	if c := d.trustCheck(); c.OK || !strings.Contains(c.Problem, "does not trust "+clone) || !strings.Contains(c.Fix, "asmai setup") {
-		t.Errorf("with the clone untrusted, the trust check is %+v, want it failed naming %s and `asmai setup`", c, clone)
+	if c := d.trustCheck(); c.OK || !strings.Contains(c.Problem, "does not trust "+clone) || !strings.Contains(c.Fix, "asmai init") {
+		t.Errorf("with the clone untrusted, the trust check is %+v, want it failed naming %s and `asmai init`", c, clone)
 	}
 	// git names the clone by its resolved path in the worktree's files.
 	resolved, err := filepath.EvalSymlinks(clone)
@@ -409,24 +409,24 @@ func TestTheDaemonRefusesAWorkerWhoseClonesTrustIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = d.startSession(&leader{}, store.ProviderInstall{Path: "/bin/false"}, launch{dir: workspace})
-	if err == nil || !strings.Contains(err.Error(), "does not trust "+resolved+", the repository "+workspace+" is checked out from") || !strings.Contains(err.Error(), "asmai setup") {
-		t.Errorf("starting a worker in a worktree of the untrusted clone returned %v, want a refusal naming the clone and `asmai setup`", err)
+	if err == nil || !strings.Contains(err.Error(), "does not trust "+resolved+", the repository "+workspace+" is checked out from") || !strings.Contains(err.Error(), "asmai init") {
+		t.Errorf("starting a worker in a worktree of the untrusted clone returned %v, want a refusal naming the clone and `asmai init`", err)
 	}
 
-	trusted := []byte(`{"projects": {"` + p.Agents + `": {"hasTrustDialogAccepted": true}, "` + p.Workspaces + `": {"hasTrustDialogAccepted": true}, "` + clone + `": {"hasTrustDialogAccepted": true}}}`)
-	if err := os.WriteFile(record, trusted, 0o600); err != nil {
+	trustRecord := []byte(`{"projects": {"` + p.Agents + `": {"hasTrustDialogAccepted": true}, "` + p.Workspaces + `": {"hasTrustDialogAccepted": true}, "` + clone + `": {"hasTrustDialogAccepted": true}}}`)
+	if err := os.WriteFile(record, trustRecord, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if c := d.trustCheck(); !c.OK {
 		t.Errorf("with the clone trusted, the trust check is %+v", c)
 	}
-	if err := d.trusted(workspace); err != nil {
+	if err := trusted(d.cfg.ClaudeRecord, workspace); err != nil {
 		t.Errorf("with the clone trusted, its worktree is %v", err)
 	}
 }
 
 // The pinned Claude Code at its path, matching the pin, is installed though
-// no install records it, as when `asmai setup` fetched it with the daemon
+// no install records it, as when `asmai init` fetched it with the daemon
 // stopped: the daemon records it as it checks.
 func TestTheDaemonRecordsThePinnedCopyItFindsAtItsPath(t *testing.T) {
 	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)

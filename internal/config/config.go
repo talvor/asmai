@@ -971,7 +971,7 @@ func (c Config) MissingStaffing(need []string) []Problem {
 }
 
 // exampleStaffing is the staffing a missing role's fix suggests, and the
-// staffing of each role in the file `asmai setup` writes.
+// staffing of each role in the file `asmai init` writes.
 func exampleStaffing() Staffing {
 	return Staffing{LeaderProvider: Claude, LeaderModel: "opus", WorkerProvider: Claude, WorkerModel: "opus"}
 }
@@ -995,14 +995,14 @@ func Example(role string) string {
 	return "[roles." + role + "]\n" + strings.Join(exampleStaffing().assignments(), "\n")
 }
 
-// defaultHeader opens the file `asmai setup` writes.
-const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` + "`asmai setup`" + ` wrote it
+// defaultHeader opens the file `asmai init` writes.
+const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` + "`asmai init`" + ` wrote it
 # once, with each role staffed, and never changes it. What each table and
 # field means is in the README's section on the configuration file:
 # https://github.com/talvor/asmai#the-configuration-file
 `
 
-// Default returns the configuration file `asmai setup` writes when there is
+// Default returns the configuration file `asmai init` writes when there is
 // none: a header pointing to the README's section on the file, and a table
 // staffing each role M1 runs as exampleStaffing does. It registers no
 // repository.

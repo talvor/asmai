@@ -74,7 +74,7 @@ func TestConfigCheckPassesTheExampleConfiguration(t *testing.T) {
 func TestConfigCheckOfAMissingFileSaysSo(t *testing.T) {
 	factoryHome(t)
 	_, stderr, code := runAsmai(t, "config", "check")
-	if code != 1 || !strings.Contains(stderr, "does not exist") || !strings.Contains(stderr, "asmai setup") {
+	if code != 1 || !strings.Contains(stderr, "does not exist") || !strings.Contains(stderr, "asmai init") {
 		t.Errorf("asmai config check of no file exited %d: %s", code, stderr)
 	}
 	// Nothing was made.

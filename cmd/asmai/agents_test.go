@@ -61,7 +61,7 @@ func writeConfig(t *testing.T, text string) {
 
 // trustFactory records in the test's home that the user trusts the folders
 // agents start in, in the state directory stateDir, as Claude Code records
-// their answer to the question `asmai setup` has it ask.
+// their answer to the question `asmai init` has it ask.
 func trustFactory(t *testing.T, stateDir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".claude.json"), []byte(trustRecord(stateDir)), 0o600); err != nil {

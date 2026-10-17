@@ -140,7 +140,7 @@ func roleSet(o *output, role string, c roleChoices) int {
 		return o.fail(err)
 	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return o.fail(fmt.Errorf("%s does not exist; run `asmai setup`, which writes it with every role staffed", path))
+		return o.fail(fmt.Errorf("%s does not exist; run `asmai init`, which writes it with every role staffed", path))
 	}
 	if err := config.SetStaffing(path, role, fields); err != nil {
 		return o.fail(err)

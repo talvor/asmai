@@ -216,7 +216,7 @@ func TestScratchConfigFileOverride(t *testing.T) {
 	}
 }
 
-// The file `asmai setup` writes staffs every role M1 runs, points to the
+// The file `asmai init` writes staffs every role M1 runs, points to the
 // README's section on the file, and registers no repository.
 func TestTheDefaultFileStaffsEveryRoleAndRegistersNoRepository(t *testing.T) {
 	data := Default()

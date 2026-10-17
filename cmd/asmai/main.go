@@ -45,11 +45,16 @@ commands you type:
                               starting the factory first if it is stopped. What you type reaches
                               Coordination, and each message you submit is journaled word for word.
                               Ctrl-] leaves the conversation, which pauses nothing
-  asmai setup                 the first run: write a configuration file staffing every role if there
-                              is none, make the state directory's folders, install the pinned Claude
-                              Code once you confirm, and open it in the agents and workspaces folders
-                              and each registered repository's clone for you to trust them. A step
-                              already done is skipped
+  asmai init [--yes]          the first run: check this platform is certified, write a configuration
+                              file staffing every role if there is none, make the state directory's
+                              folders, install the pinned Claude Code once you confirm (--yes
+                              confirms, and agrees to open Claude Code), check it and that it applies
+                              AsmAI's permission rules, and open it in the agents and workspaces
+                              folders and each registered repository's clone for you to trust them.
+                              A step already done is skipped. asmai setup is its old name
+  asmai doctor                run the same checks as init and start without changing anything, and
+                              report what skill hiding cannot cover, the added and repository skills
+                              (unqualified), and whether upstream has a newer skill release
   asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
                               the daemon runs in the background unless --foreground
   asmai stop                  persist the factory's state and stop its daemon and agents; queued
@@ -197,6 +202,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		args = append([]string{"chat"}, args...)
 	}
 	name, args := args[0], args[1:]
+	if name == "setup" {
+		name = "init"
+	}
 	if name == "job" {
 		if len(args) > 0 && args[0] == "open" {
 			name, args = "job open", args[1:]
@@ -221,7 +229,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("asmai "+name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")
-	foreground, follow, repoName := new(bool), new(bool), new(string)
+	foreground, follow, repoName, assumeYes := new(bool), new(bool), new(string), new(bool)
 	var message string
 	var reading, mandate, repository string
 	var handoffJob, handoffID, dispatchID int64
@@ -240,6 +248,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var choice, rationale string
 	var resultArgs resultFlags
 	switch name {
+	case "init":
+		assumeYes = flags.Bool("yes", false, "confirm the install and agree to open Claude Code without asking")
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
 	case "log":
@@ -309,7 +319,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "setup", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
+	case "chat", "doctor", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -339,7 +349,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
-		if slices.Contains([]string{"setup", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
+		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -381,8 +391,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return o.fail(err)
 	}
 	switch name {
-	case "setup":
-		return setup(o, paths, stdin)
+	case "init":
+		return initFactory(o, paths, stdin, *assumeYes)
+	case "doctor":
+		return doctor(o, paths)
 	case "start":
 		if *foreground {
 			return startForeground(o, paths)
@@ -843,6 +855,12 @@ func pinnedPlan(paths statedir.Paths) (providers.Plan, error) {
 // checked and where it is kept, and once the user confirms on stdin fetches
 // it, unless the pinned download is already at its path.
 func fetchPinned(w io.Writer, stdin io.Reader, plan providers.Plan) error {
+	return fetchPinnedAs(w, stdin, plan, false)
+}
+
+// fetchPinnedAs is fetchPinned, except that assumeYes confirms the install
+// without asking.
+func fetchPinnedAs(w io.Writer, stdin io.Reader, plan providers.Plan, assumeYes bool) error {
 	fmt.Fprintf(w, "asmai will install %s %s, as pinned in this asmai:\n", plan.Title, plan.Version)
 	writeTable(w, [][]string{
 		{"  fetch", plan.URL},
@@ -851,13 +869,17 @@ func fetchPinned(w io.Writer, stdin io.Reader, plan providers.Plan) error {
 		{"  keep at", plan.Path},
 	})
 	fmt.Fprintf(w, "It is AsmAI's own copy: your own %s and ~/.claude are not touched.\n", plan.Title)
-	fmt.Fprint(w, "Install it? [y/N] ")
-	answer := readLine(stdin)
-	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-		if !strings.HasSuffix(answer, "\n") {
-			fmt.Fprintln(w)
+	if assumeYes {
+		fmt.Fprintln(w, "Installing it: --yes confirms.")
+	} else {
+		fmt.Fprint(w, "Install it? [y/N] ")
+		answer := readLine(stdin)
+		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+			if !strings.HasSuffix(answer, "\n") {
+				fmt.Fprintln(w)
+			}
+			return errors.New("not confirmed; nothing was fetched or installed")
 		}
-		return errors.New("not confirmed; nothing was fetched or installed")
 	}
 	present, err := providers.Present(plan)
 	if err != nil {

@@ -145,7 +145,7 @@ func TestConfigEditSavesOnlyAFileWithNoProblem(t *testing.T) {
 
 func TestConfigEditRequiresAnExistingFile(t *testing.T) {
 	factoryHome(t)
-	if _, stderr, code := runIn(t, "", "config", "edit"); code != 1 || !strings.Contains(stderr, "asmai setup") {
+	if _, stderr, code := runIn(t, "", "config", "edit"); code != 1 || !strings.Contains(stderr, "asmai init") {
 		t.Errorf("config edit without a file exited %d printing %q", code, stderr)
 	}
 	if _, err := os.Stat(configPath()); !os.IsNotExist(err) {

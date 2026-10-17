@@ -28,7 +28,7 @@ var (
 	dimStyle      = lipgloss.NewStyle().Faint(true)
 )
 
-const footerKeys = "1/2/3 tab · ↑/↓ move · q quit"
+const footerKeys = "1/2/3 tab · ↑/↓ move · enter attach · q quit"
 
 // render draws the whole screen: exactly height lines of at most width cells.
 func (m model) render() string {

@@ -27,7 +27,7 @@
 
 
 
- 1/2/3 tab · ↑/↓ move · q quit
+ 1/2/3 tab · ↑/↓ move · enter attach · q quit
 --- attributes
 1 1-100: reverse
 2 2-11: faint

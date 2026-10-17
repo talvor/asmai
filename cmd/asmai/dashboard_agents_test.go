@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +193,116 @@ func TestDashboardCommandsHaveNoCLISubcommand(t *testing.T) {
 		}
 		if strings.Contains(usage, command) {
 			t.Errorf("the usage text lists %s", command)
+		}
+	}
+}
+
+// Enter hands the terminal to `asmai attach` for the selected agent, as a
+// child process; when attach exits the Dashboard has the terminal back and
+// reads the factory again.
+func TestDashboardEnterHandsTheTerminalToAttachAndTakesItBack(t *testing.T) {
+	fake := dashtest.NewFakeDaemon(t)
+	fake.SetAgents(agentsAt(time.Now())...)
+	fake.ServeAttach("the agent's own screen")
+	d := dashboardIn(t, fake, 100, 30)
+	d.WaitForText("worker-2@quality")
+
+	d.Send("jj") // leader@planning is the third agent
+	d.Send("\r")
+	d.WaitForText("leader@planning · observing · Ctrl-] detaches")
+	if screen := d.Screen(); !strings.Contains(screen, "the agent's own screen") || strings.Contains(screen, "asmai dashboard") {
+		t.Errorf("while attached the screen is\n%s\nwant the agent's screen and none of the Dashboard's", screen)
+	}
+	if exited, _ := d.Exited(); exited {
+		t.Fatal("the Dashboard exited when it ran attach, want it to wait for attach")
+	}
+	var attaches []string
+	for _, call := range fake.Calls() {
+		if call.Command == daemon.CommandAttach {
+			attaches = append(attaches, call.Agent)
+		}
+	}
+	if !slices.Equal(attaches, []string{"leader@planning"}) {
+		t.Errorf("the daemon was asked to attach %q, want only leader@planning", attaches)
+	}
+
+	// Keys typed while attached are attach's, not the Dashboard's: q does not
+	// quit, and only Ctrl-] detaches.
+	d.Send("q")
+	d.Send("\x1d")
+	screen := d.WaitForText("factory running")
+	if !strings.Contains(screen, "Agents") || !strings.Contains(screen, "worker-2@quality") || strings.Contains(screen, "observing") {
+		t.Errorf("after attach the screen is\n%s\nwant the Agents tab drawn again", screen)
+	}
+	if exited, _ := d.Exited(); exited {
+		t.Fatal("the Dashboard quit on a q typed in attach")
+	}
+	// Raw mode is back: a key acts at once, with no Enter and no echo.
+	d.Send("2")
+	d.WaitFor("tab 2 selected", func(string) bool { return strings.Contains(d.Attributes(), "\n2 13-20: reverse\n") })
+	d.Send("1")
+	d.WaitForText("worker-2@quality")
+	d.Send("q")
+	if err := d.WaitExit(); err != nil {
+		t.Errorf("asmai dashboard exited with %v after q, want 0", err)
+	}
+}
+
+// The terminal may be another size when attach returns it, and the Dashboard
+// draws for that size.
+func TestDashboardReadsTheSizeAgainWhenAttachReturns(t *testing.T) {
+	fake := dashtest.NewFakeDaemon(t)
+	fake.SetAgents(agentsAt(time.Now())...)
+	fake.ServeAttach("the agent's own screen")
+	d := dashboardIn(t, fake, 100, 30)
+	d.WaitForText("worker-2@quality")
+	d.Send("\r")
+	d.WaitForText("observing")
+
+	d.Resize(80, 24)
+	d.WaitFor("attach drawn at the new size", func(screen string) bool {
+		return strings.Contains(screen, "observing") && len(strings.Split(screen, "\n")) == 25
+	})
+	d.Send("\x1d")
+	d.WaitFor("the Agents tab at 80x24", func(screen string) bool {
+		return strings.Contains(screen, "worker-2@quality") && !strings.Contains(screen, "observing") && len(strings.Split(screen, "\n")) == 25
+	})
+	dashtest.Golden(t, "attach-return-80x24", d.Snapshot())
+}
+
+// A factory that stopped while attach had the terminal shows as stopped on
+// return, with nothing of the old data.
+func TestDashboardShowsTheFactoryStoppedWhenAttachReturnsToADeadDaemon(t *testing.T) {
+	fake := dashtest.NewFakeDaemon(t)
+	fake.SetAgents(agentsAt(time.Now())...)
+	fake.ServeAttach("the agent's own screen")
+	d := dashboardIn(t, fake, 100, 30)
+	d.WaitForText("worker-2@quality")
+	d.Send("\r")
+	d.WaitForText("observing")
+
+	fake.Stop()
+	d.Send("\x1d")
+	screen := d.WaitForText("The factory is not running.")
+	if strings.Contains(screen, "worker-2@quality") || strings.Contains(screen, "observing") {
+		t.Errorf("the screen after attach to a stopped factory is\n%s\nwant none of the agents or of attach", screen)
+	}
+}
+
+// Enter only attaches where there is an agent to attach to.
+func TestDashboardEnterAttachesNothingElsewhere(t *testing.T) {
+	fake := dashtest.NewFakeDaemon(t)
+	fake.SetAgents(agentsAt(time.Now())...)
+	fake.ServeAttach("the agent's own screen")
+	d := dashboardIn(t, fake, 100, 30)
+	d.WaitForText("worker-2@quality")
+	d.Send("2")
+	d.Send("\r")
+	d.Send("1")
+	d.WaitForText("worker-2@quality")
+	for _, call := range fake.Calls() {
+		if call.Command == daemon.CommandAttach {
+			t.Errorf("the Dashboard asked the daemon to attach %q from the Jobs tab", call.Agent)
 		}
 	}
 }

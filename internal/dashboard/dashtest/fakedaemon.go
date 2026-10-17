@@ -9,6 +9,7 @@ package dashtest
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/vt"
 )
 
 // FakeDaemon answers the Dashboard's calls on a Unix socket in a state
@@ -30,6 +32,8 @@ type FakeDaemon struct {
 	ln       net.Listener
 	handlers map[string]func(daemon.Request) daemon.Response
 	calls    []daemon.Request
+	// attachScreen, when set, is what an attach to any agent is shown.
+	attachScreen *string
 }
 
 // NewFakeDaemon starts a fake daemon that answers status and an empty
@@ -60,6 +64,35 @@ func (f *FakeDaemon) SetAgents(agents ...daemon.DashboardAgent) {
 	f.Handle(daemon.CommandDashboardSnapshot, func(daemon.Request) daemon.Response {
 		return daemon.Response{Dashboard: &snapshot}
 	})
+}
+
+// ServeAttach makes the fake daemon let `asmai attach` follow any agent, as the
+// real one does: it answers with the agent and streams a screen showing text,
+// then holds the connection until the client hangs up.
+func (f *FakeDaemon) ServeAttach(text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attachScreen = &text
+}
+
+// holdAttach answers an attach request and keeps the stream open; it reports
+// whether it did.
+func (f *FakeDaemon) holdAttach(conn net.Conn, req daemon.Request) bool {
+	f.mu.Lock()
+	screen := f.attachScreen
+	f.mu.Unlock()
+	if req.Command != daemon.CommandAttach || screen == nil {
+		return false
+	}
+	term := vt.New(max(req.Columns, 1), max(req.Rows, 1))
+	term.Write([]byte("\x1b[2J\x1b[H" + *screen))
+	state := term.State()
+	for _, v := range []any{daemon.Response{Attached: &daemon.Leader{Agent: req.Agent, State: "running", Generation: 1}}, daemon.Frame{State: &state}} {
+		out, _ := json.Marshal(v)
+		conn.Write(append(out, '\n'))
+	}
+	io.Copy(io.Discard, conn)
+	return true
 }
 
 // StateDir is the state directory asmai finds the fake daemon in, as
@@ -133,6 +166,9 @@ func (f *FakeDaemon) answer(conn net.Conn) {
 	f.calls = append(f.calls, req)
 	handler := f.handlers[req.Command]
 	f.mu.Unlock()
+	if f.holdAttach(conn, req) {
+		return
+	}
 	resp := daemon.Response{Error: "the fake daemon does not answer " + req.Command}
 	if handler != nil {
 		resp = handler(req)

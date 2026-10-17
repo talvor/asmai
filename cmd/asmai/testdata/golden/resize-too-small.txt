@@ -17,6 +17,6 @@ terminal too small: needs 80x24, has 60x20
 
 
 
- 1/2/3 tab · ↑/↓ move · q quit
+ 1/2/3 tab · ↑/↓ move · enter attach · q quit
 --- attributes
 20 1-60: reverse

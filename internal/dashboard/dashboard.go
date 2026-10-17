@@ -8,6 +8,8 @@ package dashboard
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -93,7 +95,8 @@ type model struct {
 	cursor, offset int
 	// read is false until the first answer, so the first frame does not claim
 	// the factory is stopped before the daemon has been asked.
-	read bool
+	read       bool
+	generation int
 }
 
 func newModel(socket string, o Options) model {
@@ -101,22 +104,29 @@ func newModel(socket string, o Options) model {
 }
 
 // readMsg is the daemon's answer to a read of everything the Dashboard shows.
-type readMsg struct{ factory factory }
+type readMsg struct {
+	factory    factory
+	generation int
+}
+
+// attachedMsg says that `asmai attach` has exited and the Dashboard has the
+// terminal again.
+type attachedMsg struct{}
 
 // retryMsg fires when it is time to read again.
-type retryMsg struct{}
+type retryMsg struct{ generation int }
 
-func (m model) Init() tea.Cmd { return read(m.socket) }
+func (m model) Init() tea.Cmd { return read(m.socket, m.generation) }
 
 // read asks the daemon for everything the Dashboard shows. A daemon that
 // does not answer is the stopped factory.
-func read(socket string) tea.Cmd {
+func read(socket string, generation int) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := daemon.Call(socket, daemon.Request{Command: daemon.CommandDashboardSnapshot})
 		if err != nil || resp.Dashboard == nil {
-			return readMsg{}
+			return readMsg{generation: generation}
 		}
-		return readMsg{factory{running: true, agents: resp.Dashboard.Agents, readAt: time.Now()}}
+		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, readAt: time.Now()}, generation: generation}
 	}
 }
 
@@ -126,6 +136,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m = m.scrolled()
 	case readMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
 		m.read = true
 		selected := m.selected()
 		m.factory = msg.factory
@@ -140,11 +153,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.factory.running {
 			wait = m.opts.StoppedRetry
 		}
-		return m, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{} })
+		return m, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{generation: m.generation} })
 	case retryMsg:
-		return m, read(m.socket)
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		return m, read(m.socket, m.generation)
+	case attachedMsg:
+		// Bubble Tea has restored raw mode and the alternate screen. The
+		// terminal may have changed size and the factory may have stopped
+		// while attach had it, so ask for both again and draw it all anew.
+		m.generation++
+		return m, tea.Batch(tea.RequestWindowSize, tea.ClearScreen, read(m.socket, m.generation))
 	case tea.KeyPressMsg:
 		switch msg.String() {
+		case "enter":
+			return m, m.attach()
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "1":
@@ -168,6 +192,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// attach hands the terminal to `asmai attach` for the selected agent, as a
+// child process (ADR 0015): Bubble Tea releases the terminal first and takes
+// it back when attach exits. Attach is unchanged and only observes.
+func (m model) attach() tea.Cmd {
+	agent := m.selected()
+	if m.tab != tabAgents || !m.read || !m.factory.running || agent == "" || m.width < MinColumns || m.height < MinRows {
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	c := exec.Command(exe, "attach", agent)
+	c.Env = m.opts.Environ
+	return tea.ExecProcess(c, func(error) tea.Msg { return attachedMsg{} })
 }
 
 func (m model) View() tea.View {

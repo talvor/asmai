@@ -37,7 +37,7 @@ Looking again every few seconds.
 
 
 
- 1/2/3 tab · ↑/↓ move · q quit
+ 1/2/3 tab · ↑/↓ move · enter attach · q quit
 --- attributes
 1 1-160: reverse
 40 1-160: reverse

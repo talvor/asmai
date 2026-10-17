@@ -589,6 +589,22 @@ func TestInitDoctorAndStartAgreeOnInstalledProvider(t *testing.T) {
 	}
 }
 
+func TestInitRestoresNonExecutablePinnedProvider(t *testing.T) {
+	stateDir := readyFactory(t, idleLeader)
+	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runIn(t, "", "init", "--yes")
+	if code != 0 {
+		t.Fatalf("init with a nonexecutable pinned copy exited %d printing %q", code, stdout+stderr)
+	}
+	if !providers.Executable(path) {
+		t.Errorf("init left the pinned copy at %s nonexecutable", path)
+	}
+}
+
 func TestInitStopsBeforeTrustWhenPinnedClaudeReportsAnotherVersion(t *testing.T) {
 	t.Setenv(fakeprovider.VersionEnv, "2.1.293")
 	_, testDir := setupFactory(t, map[string][]string{"agents": trusting})

@@ -159,7 +159,7 @@ func Present(plan Plan) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return n == plan.Download.Size && hex.EncodeToString(h.Sum(nil)) == plan.Download.SHA256, nil
+	return n == plan.Download.Size && hex.EncodeToString(h.Sum(nil)) == plan.Download.SHA256 && Executable(plan.Path), nil
 }
 
 // Executable reports whether path names a regular file its owner can execute.

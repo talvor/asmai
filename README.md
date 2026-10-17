@@ -87,6 +87,8 @@ Every start then runs the checks that exist: this platform is certified (Linux o
 | `asmai role set <role> [--leader-provider <p>] [--leader-model <m>] [--worker-provider <p>] [--worker-model <m>]` | Set a role's provider and model in the configuration file; `claude` is the only provider, and `codex` is refused |
 | `asmai config example` | Print an example configuration file, with every default written out, which passes `asmai config check` |
 
+In the Dashboard's Jobs tab, an accepted needs-you finding keeps the job at Needs you until it finishes. Tracking the finding's resolution is a follow-up.
+
 Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now, and `asmai chat --json` Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
 
 ### The configuration file

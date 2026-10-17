@@ -43,24 +43,27 @@ var stageStyles = map[daemon.JobStage]lipgloss.Style{
 
 // jobColumns says which optional columns fit in width.
 type jobColumns struct {
-	assignments, pr    bool
-	assignWidth, title int
+	assignments, pr                  bool
+	job, assignWidth, prWidth, title int
 }
 
 func (m model) jobColumns() jobColumns {
 	width := min(m.width, maxWidth)
-	var c jobColumns
-	c.assignWidth = minAssignWidth
+	c := jobColumns{job: jobNumberWidth, assignWidth: minAssignWidth, prWidth: prWidth}
 	for _, job := range m.factory.jobs {
+		c.job = max(c.job, lipgloss.Width(fmt.Sprintf("#%d", job.Job)))
 		c.assignWidth = max(c.assignWidth, lipgloss.Width(assignmentWords(job.Assignments)))
+		if job.PullRequest != 0 {
+			c.prWidth = max(c.prWidth, lipgloss.Width(fmt.Sprintf("#%d", job.PullRequest)))
+		}
 	}
-	used := 1 + jobNumberWidth + 1 + stageWidth + 1 // gutter, job, stage
+	used := 1 + c.job + 1 + stageWidth + 1 // gutter, job, stage
 	if used+c.assignWidth+1+minTitle <= width {
 		c.assignments = true
 		used += c.assignWidth + 1
-		if used+prWidth+1+minTitle <= width {
+		if used+c.prWidth+1+minTitle <= width {
 			c.pr = true
-			used += prWidth + 1
+			used += c.prWidth + 1
 		}
 	}
 	c.title = max(width-used, 0)
@@ -126,7 +129,7 @@ func (m model) jobsBody() []string {
 func (m model) jobRow(c jobColumns, cells jobCells, stage lipgloss.Style) string {
 	var b strings.Builder
 	b.WriteString(" ")
-	b.WriteString(pad(cells.job, jobNumberWidth))
+	b.WriteString(pad(cells.job, c.job))
 	b.WriteString(" ")
 	b.WriteString(stage.Render(pad(cells.stage, stageWidth)))
 	b.WriteString(" ")
@@ -135,7 +138,7 @@ func (m model) jobRow(c jobColumns, cells jobCells, stage lipgloss.Style) string
 		b.WriteString(" ")
 	}
 	if c.pr {
-		b.WriteString(pad(cells.pr, prWidth))
+		b.WriteString(pad(cells.pr, c.prWidth))
 		b.WriteString(" ")
 	}
 	titleWidth := c.title

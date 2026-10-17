@@ -81,6 +81,34 @@ func TestDashboardJobsDropColumnsAsTheWidthShrinks(t *testing.T) {
 	}
 }
 
+func TestDashboardJobsPreserveJobAndPullRequestNumbers(t *testing.T) {
+	fake := dashtest.NewFakeDaemon(t)
+	fake.SetJobs(
+		daemon.DashboardJob{Job: 10000, Stage: daemon.StageWorking, PullRequest: 1234567, Title: "first"},
+		daemon.DashboardJob{Job: 10001, Stage: daemon.StageWorking, PullRequest: 1234568, Title: "second"},
+	)
+	for _, width := range []int{80, 100, 160} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			d := dashboardIn(t, fake, width, 30)
+			d.WaitForText("factory running")
+			d.Send("2")
+			screen := d.WaitForText("second")
+			for _, number := range []string{"#10000", "#10001"} {
+				if !strings.Contains(screen, number) {
+					t.Errorf("the %d-column screen clips job %s:\n%s", width, number, screen)
+				}
+			}
+			if width > 80 {
+				for _, number := range []string{"#1234567", "#1234568"} {
+					if !strings.Contains(screen, number) {
+						t.Errorf("the %d-column screen clips pull request %s:\n%s", width, number, screen)
+					}
+				}
+			}
+		})
+	}
+}
+
 // The title is cut with an ellipsis, and wider terminals give it room only up
 // to about 160 columns.
 func TestDashboardJobsTruncateTheTitle(t *testing.T) {

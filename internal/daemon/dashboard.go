@@ -331,13 +331,12 @@ func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings 
 	var items []WaitingItem
 	for _, kind := range []string{WaitingNativePrompt, WaitingInput} {
 		for _, a := range agents {
-			if a.Status != StatusWaitingOnYou || (lives[a.Agent].prompt != nil) != (kind == WaitingNativePrompt) {
+			if a.Status != StatusWaitingOnYou || (lives[a.Agent].prompt != nil) != (kind == WaitingNativePrompt) || (kind == WaitingNativePrompt && a.Agent != roles.LeaderOf(a.Role).String()) {
 				continue
 			}
 			items = append(items, WaitingItem{Kind: kind, Agent: a.Agent, Job: a.Job, Text: a.Agent + " " + a.Doing, Since: a.Since})
 		}
 	}
-	items = append(items, pendingDecisions()...)
 	for _, f := range findings {
 		text, _, _ := strings.Cut(strings.TrimSpace(f.Text), "\n")
 		items = append(items, WaitingItem{Kind: WaitingFinding, Job: f.Job, Finding: f.ID, Text: fmt.Sprintf("job %d finding %d: %s", f.Job, f.ID, text), Since: f.At})
@@ -356,7 +355,3 @@ func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings 
 	}
 	return items
 }
-
-// pendingDecisions are the pending decision requests. There is no daemon state
-// for them yet, so the slot is reserved and empty.
-func pendingDecisions() []WaitingItem { return nil }

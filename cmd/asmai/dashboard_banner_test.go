@@ -16,7 +16,7 @@ import (
 func waitingAt(now time.Time) []daemon.WaitingItem {
 	ago := func(d time.Duration) time.Time { return now.Add(-d) }
 	return []daemon.WaitingItem{
-		{Kind: daemon.WaitingNativePrompt, Agent: "worker-2@quality", Job: 12, Text: "worker-2@quality native prompt: Bash `gh pr diff 98`", Since: ago(4 * time.Minute)},
+		{Kind: daemon.WaitingNativePrompt, Agent: "leader@quality", Job: 12, Text: "leader@quality native prompt: Bash `gh pr diff 98`", Since: ago(4 * time.Minute)},
 		{Kind: daemon.WaitingInput, Agent: "leader@coordination", Text: "leader@coordination you hold its input in /dev/pts/3", Since: ago(12 * time.Minute)},
 		{Kind: daemon.WaitingFinding, Job: 12, Finding: 7, Text: "job 12 finding 7: the migration drops a column in use", Since: ago(time.Hour)},
 	}
@@ -31,7 +31,7 @@ func TestDashboardBannerGoldenScreens(t *testing.T) {
 		want  string
 	}{
 		{"zero", func(time.Time) []daemon.WaitingItem { return nil }, ""},
-		{"one", func(now time.Time) []daemon.WaitingItem { return waitingAt(now)[:1] }, "▲ Waiting on you: worker-2@quality native prompt"},
+		{"one", func(now time.Time) []daemon.WaitingItem { return waitingAt(now)[:1] }, "▲ Waiting on you: leader@quality native prompt"},
 		{"several", waitingAt, "+2 more"},
 	}
 	for _, c := range cases {

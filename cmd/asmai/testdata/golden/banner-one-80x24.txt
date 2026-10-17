@@ -1,6 +1,6 @@
  asmai dashboard  factory running
   1 Agents   2 Jobs   3 Log
- ▲ Waiting on you: worker-2@quality native prompt: Bash `gh pr diff 98`
+ ▲ Waiting on you: leader@quality native prompt: Bash `gh pr diff 98`
  AGENT                STATUS                 JOB    DOING
  leader@coordination  ▲ Waiting on you       -      you hold its input in /dev/…
  leader@engineering   ● Working              #12    handoff: Add the Agents tab…
@@ -27,7 +27,7 @@
 2 2-11: reverse
 2 13-20: faint
 2 22-28: faint
-3 1-71: bold, fg=0x1000003
+3 1-69: bold, fg=0x1000003
 4 1-6: faint
 4 23-28: faint
 4 46-57: faint

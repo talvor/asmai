@@ -252,24 +252,29 @@ func TestSubscriptionTicksOnJournalPromptAndInputOwnerChanges(t *testing.T) {
 // only.
 func TestTheWaitingSetHoldsPromptsHeldInputAndFindingsAndNothingElse(t *testing.T) {
 	now := time.Now()
-	run := func(name string) store.Agent {
-		return store.Agent{Agent: name, Role: roles.Engineering, State: store.AgentRunning, StartedAt: now.Add(-time.Hour)}
+	run := func(address roles.Address) store.Agent {
+		return store.Agent{Agent: address.String(), Role: address.Role, State: store.AgentRunning, StartedAt: now.Add(-time.Hour)}
 	}
-	held, prompted, olderPrompt, reconciling, working := run("leader@coordination"), run("worker-1@quality"), run("worker-2@quality"), run("worker-3@engineering"), run("worker-4@engineering")
+	held, prompted, olderPrompt := run(roles.LeaderOf(roles.Coordination)), run(roles.LeaderOf(roles.Quality)), run(roles.LeaderOf(roles.Engineering))
+	workerPrompt, reconciling, working := run(roles.WorkerOf(roles.Engineering, 1)), run(roles.WorkerOf(roles.Engineering, 3)), run(roles.WorkerOf(roles.Engineering, 4))
 	lives := map[string]agentLive{
-		held.Agent:        {input: InputUser, conversation: "/dev/pts/3"},
-		prompted.Agent:    {input: InputAutomation, prompt: &WaitingPrompt{Agent: prompted.Agent, About: "Bash `ls`", Since: now.Add(-2 * time.Minute)}},
-		olderPrompt.Agent: {input: InputAutomation, prompt: &WaitingPrompt{Agent: olderPrompt.Agent, About: "Edit", Since: now.Add(-9 * time.Minute)}},
-		reconciling.Agent: {input: InputAutomation},
-		working.Agent:     {input: InputAutomation},
+		held.Agent:         {input: InputUser, conversation: "/dev/pts/3"},
+		prompted.Agent:     {input: InputAutomation, prompt: &WaitingPrompt{Agent: prompted.Agent, About: "Bash `ls`", Since: now.Add(-2 * time.Minute)}},
+		olderPrompt.Agent:  {input: InputAutomation, prompt: &WaitingPrompt{Agent: olderPrompt.Agent, About: "Edit", Since: now.Add(-9 * time.Minute)}},
+		workerPrompt.Agent: {input: InputAutomation, prompt: &WaitingPrompt{Agent: workerPrompt.Agent, About: "Bash `pwd`", Since: now.Add(-12 * time.Minute)}},
+		reconciling.Agent:  {input: InputAutomation},
+		working.Agent:      {input: InputAutomation},
 	}
 	works := map[string]store.AgentWork{
 		reconciling.Agent: {Reconciling: 7, ReconcilingJob: 3, ReconcilingAt: now},
 		working.Agent:     {Dispatch: store.DispatchWorking, Job: 3},
 	}
 	var agents []DashboardAgent
-	for _, a := range []store.Agent{working, reconciling, held, prompted, olderPrompt} {
+	for _, a := range []store.Agent{working, reconciling, held, prompted, olderPrompt, workerPrompt} {
 		agents = append(agents, deriveAgent(a, lives[a.Agent], works[a.Agent]))
+	}
+	if agents[len(agents)-1].Status != StatusWaitingOnYou {
+		t.Fatal("the worker's prompt is missing from its agent status")
 	}
 	findings := []store.NeedsYouFinding{{ID: 7, Job: 3, Text: "greet whom?\nmore", At: now.Add(-time.Hour)}}
 
@@ -293,8 +298,5 @@ func TestTheWaitingSetHoldsPromptsHeldInputAndFindingsAndNothingElse(t *testing.
 	}
 	if empty := waitingOnYou(nil, nil, nil); empty == nil || len(empty) != 0 {
 		t.Errorf("nothing waiting is %#v, want an empty set", empty)
-	}
-	if len(pendingDecisions()) != 0 {
-		t.Error("a pending decision is listed, but the daemon has no state for one")
 	}
 }

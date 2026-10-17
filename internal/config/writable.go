@@ -395,6 +395,12 @@ func (st *state) writableField(d *writableDraft, path []string, value *unstable.
 // order written.
 func (st *state) finishWritable() {
 	for _, d := range st.drafts {
+		if _, ok := st.cfg.Repositories[d.repo]; !ok {
+			st.problems = append(st.problems, Problem{Line: d.line,
+				Problem: fmt.Sprintf("[[repositories.%s.writable]] has no [repositories.%s] entry", d.repo, d.repo),
+				Fix:     fmt.Sprintf("add [repositories.%s] for this writable folder", d.repo)})
+			continue
+		}
 		if d.bad {
 			continue
 		}
@@ -410,13 +416,22 @@ func (st *state) finishWritable() {
 			st.problems = append(st.problems, Problem{Line: line, Problem: fmt.Sprintf("%s writable folder %s", table, why), Fix: fix})
 		}
 		invalid := false
-		if why, fix := checkWritablePath(d.w.Path); why != "" {
-			problem(d.pathLine, why, fix)
+		pathWhy, pathFix := checkWritablePath(d.w.Path)
+		if pathWhy != "" {
+			problem(d.pathLine, pathWhy, pathFix)
 			invalid = true
 		}
-		if why, fix := checkWritableEnv(d.w); why != "" {
-			problem(d.envLine, why, fix)
+		envWhy, envFix := checkWritableEnv(d.w)
+		if envWhy != "" {
+			problem(d.envLine, envWhy, envFix)
 			invalid = true
+			if pathWhy == "" {
+				if home, err := os.UserHomeDir(); err == nil {
+					if why, fix := (Bounds{Home: home}).check(d.w); why != "" {
+						problem(d.pathLine, why, fix)
+					}
+				}
+			}
 		}
 		if invalid {
 			continue

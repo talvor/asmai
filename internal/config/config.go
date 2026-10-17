@@ -326,7 +326,6 @@ func Parse(data []byte) (Config, []Problem) {
 					skipping = true
 					continue
 				}
-				st.declare(path[:2])
 				writable = &writableDraft{repo: path[1], line: line}
 				st.drafts = append(st.drafts, writable)
 				skipping = false

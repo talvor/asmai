@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -34,10 +35,13 @@ func TestAWritableFolderIsReadFromItsTableWithItsOptionalVariable(t *testing.T) 
 	if _, ok := cfg.Repositories["otman"]; !ok {
 		t.Error("the repository is not in the file")
 	}
-	// A repository with no table of its own is there for its folders.
 	cfg, problems = Parse([]byte("[[repositories.bare.writable]]\npath = \"/a\"\n"))
-	if _, ok := cfg.Repositories["bare"]; !ok || len(problems) != 0 {
-		t.Errorf("a repository with only a writable folder is %v, %v", cfg.Repositories, problems)
+	if _, ok := cfg.Repositories["bare"]; ok || len(problems) != 1 || !strings.Contains(problems[0].Problem, "has no [repositories.bare] entry") {
+		t.Errorf("a writable folder without a repository is %v, %v", cfg.Repositories, problems)
+	}
+	cfg, problems = Parse([]byte("[[repositories.bare.writable]]\npath = \"/a\"\n[repositories.bare]\norigin = \"o\"\n"))
+	if len(problems) != 0 || !slices.Equal(cfg.Options["bare"].Writable, []Writable{{Path: "/a"}}) {
+		t.Errorf("a repository declared after its folder is %v, %v", cfg.Options["bare"].Writable, problems)
 	}
 	// None declared is none.
 	cfg, _ = Parse([]byte("[repositories.otman]\norigin = \"o\"\n"))
@@ -95,6 +99,38 @@ func TestWritableTableReportsIndependentPathAndEnvErrors(t *testing.T) {
 	}
 	if problems[1].Line != 5 || !strings.Contains(problems[1].Problem, `exports "", which is not an environment variable name`) {
 		t.Errorf("env problem: %+v", problems[1])
+	}
+}
+
+func TestWritableTableReportsProtectedPathWithInvalidEnv(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	for _, tc := range []struct {
+		path, env, reason string
+	}{
+		{"~", "PATH", "your home directory or one of its ancestors"},
+		{filepath.Dir(home), "PATH", "your home directory or one of its ancestors"},
+		{"~/.ssh", "PATH", "~/.ssh, where your SSH keys are"},
+		{"~/.claude", "PATH", "~/.claude, where Claude Code keeps its settings"},
+		{"~/.claude.json", "PATH", "~/.claude.json, where Claude Code records your trust"},
+		{"~/.ssh", "", "~/.ssh, where your SSH keys are"},
+	} {
+		t.Run(tc.path+"_"+tc.env, func(t *testing.T) {
+			file := fmt.Sprintf("[repositories.otman]\norigin = \"o\"\n[[repositories.otman.writable]]\npath = %q\nenv = %q\n", tc.path, tc.env)
+			cfg, problems := Parse([]byte(file))
+			if len(problems) != 2 {
+				t.Fatalf("Parse found %+v, want env and protected path reasons", problems)
+			}
+			if problems[0].Line != 5 || !strings.Contains(problems[0].Problem, fmt.Sprintf("exports %q", tc.env)) {
+				t.Errorf("env problem: %+v", problems[0])
+			}
+			if problems[1].Line != 4 || !strings.Contains(problems[1].Problem, tc.reason) {
+				t.Errorf("path problem: %+v", problems[1])
+			}
+			if len(cfg.Options["otman"].Writable) != 0 {
+				t.Errorf("refused folder entered the repository: %+v", cfg.Options["otman"].Writable)
+			}
+		})
 	}
 }
 
@@ -225,7 +261,7 @@ func TestASymbolicLinkIsNoWayIntoAClosedPlace(t *testing.T) {
 }
 
 func TestEveryRepositoryOfTheFileIsCheckedAgainstTheBounds(t *testing.T) {
-	cfg, problems := Parse([]byte(goEntry + "\n[[repositories.bad.writable]]\npath = \"~/.ssh\"\n"))
+	cfg, problems := Parse([]byte(goEntry + "\n[repositories.bad]\norigin = \"b\"\n[[repositories.bad.writable]]\npath = \"~/.ssh\"\n"))
 	if len(problems) != 0 {
 		t.Fatal(problems)
 	}

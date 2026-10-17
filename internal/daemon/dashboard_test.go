@@ -3,6 +3,14 @@
 package daemon
 
 import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -129,4 +137,112 @@ func TestEveryStatusHasItsOwnWord(t *testing.T) {
 func merge(a, b store.AgentWork) store.AgentWork {
 	a.Reconciling, a.ReconcilingJob, a.ReconcilingAt, a.Dispatch = b.Reconciling, b.ReconcilingJob, b.ReconcilingAt, b.Dispatch
 	return a
+}
+
+// The change subscription ticks at once, and again when the journal grows,
+// when a native prompt appears or goes, and when an input owner changes; it
+// is quiet while nothing does.
+func TestSubscriptionTicksOnJournalPromptAndInputOwnerChanges(t *testing.T) {
+	p := stateDir(t)
+	if err := os.MkdirAll(filepath.Dir(p.Store), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	worker := roles.Address{Name: "worker-1", Role: roles.Engineering}
+	l := &leader{address: worker, session: &session.Session{}, generation: 1}
+	work, stop := context.WithCancel(context.Background())
+	defer stop()
+	d := &daemon{
+		work:    work,
+		store:   st,
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		leaders: map[string]*leader{worker.String(): l},
+	}
+
+	dir, err := os.MkdirTemp("", "sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "s"), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		conn, err := ln.AcceptUnix()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		d.subscribe(conn, bufio.NewReader(conn))
+	}()
+	conn, err := net.Dial("unix", filepath.Join(dir, "s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	tick := func(within time.Duration) (int64, bool) {
+		conn.SetReadDeadline(time.Now().Add(within))
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			return 0, false
+		}
+		var resp Response
+		if err := json.Unmarshal(line, &resp); err != nil || resp.Change == nil {
+			t.Fatalf("the daemon sent %q, want a tick", line)
+		}
+		return resp.Change.Journal, true
+	}
+	if head, ok := tick(5 * time.Second); !ok || head != 0 {
+		t.Fatalf("first tick is %d (%v), want one at once with the empty journal's head 0", head, ok)
+	}
+	if head, ok := tick(500 * time.Millisecond); ok {
+		t.Fatalf("a tick %d came with nothing changed", head)
+	}
+
+	if err := st.ConversationLeft(worker.String(), worker.Role, 1, "/dev/pts/1", "left", InputAutomation, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	want, err := st.JournalHead()
+	if err != nil || want == 0 {
+		t.Fatalf("journal head %d (%v), want it to have grown", want, err)
+	}
+	if head, ok := tick(5 * time.Second); !ok || head != want {
+		t.Errorf("tick after a journal entry is %d (%v), want the head %d", head, ok, want)
+	}
+
+	for _, change := range []struct {
+		name string
+		do   func()
+	}{
+		{"a waiting prompt appearing", func() {
+			l.prompt = &WaitingPrompt{Agent: worker.String(), Generation: 1, About: "Bash `ls`", Since: time.Now()}
+		}},
+		{"a waiting prompt going", func() { l.prompt = nil }},
+		{"the user taking the input", func() { l.userInput = true }},
+		{"the input going to automation", func() { l.userInput = false }},
+	} {
+		d.mu.Lock()
+		change.do()
+		d.mu.Unlock()
+		if head, ok := tick(5 * time.Second); !ok || head != want {
+			t.Errorf("no tick for %s: got %d (%v), want one with head %d", change.name, head, ok, want)
+		}
+	}
+
+	conn.Close()
+	select {
+	case <-served:
+	case <-time.After(5 * time.Second):
+		t.Error("the subscription outlived its client")
+	}
 }

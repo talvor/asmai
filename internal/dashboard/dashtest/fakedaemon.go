@@ -34,6 +34,10 @@ type FakeDaemon struct {
 	calls    []daemon.Request
 	// attachScreen, when set, is what an attach to any agent is shown.
 	attachScreen *string
+	// head is the journal ID the subscription last ticked with; watchers are
+	// the subscriptions open.
+	head     int64
+	watchers map[net.Conn]bool
 }
 
 // NewFakeDaemon starts a fake daemon that answers status and an empty
@@ -47,7 +51,7 @@ func NewFakeDaemon(t *testing.T) *FakeDaemon {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	f := &FakeDaemon{t: t, paths: statedir.At(dir), handlers: map[string]func(daemon.Request) daemon.Response{}}
+	f := &FakeDaemon{t: t, paths: statedir.At(dir), handlers: map[string]func(daemon.Request) daemon.Response{}, watchers: map[net.Conn]bool{}}
 	f.Handle(daemon.CommandStatus, func(daemon.Request) daemon.Response {
 		return daemon.Response{Status: &daemon.Status{Version: "fake", PID: 1}}
 	})
@@ -95,6 +99,9 @@ func (f *FakeDaemon) holdAttach(conn net.Conn, req daemon.Request) bool {
 	return true
 }
 
+// Paths are the state directory's paths the fake daemon listens in.
+func (f *FakeDaemon) Paths() statedir.Paths { return f.paths }
+
 // StateDir is the state directory asmai finds the fake daemon in, as
 // ASMAI_STATE_DIR.
 func (f *FakeDaemon) StateDir() string { return f.paths.Dir }
@@ -140,6 +147,46 @@ func (f *FakeDaemon) Stop() {
 	f.ln.Close()
 	os.Remove(filepath.Clean(f.paths.Socket))
 	f.ln = nil
+	for conn := range f.watchers {
+		conn.Close()
+	}
+}
+
+// Tick sends every open change subscription a tick, as the daemon does when
+// the journal grows or a waiting prompt or an input owner changes.
+func (f *FakeDaemon) Tick() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.head++
+	for conn := range f.watchers {
+		f.tick(conn)
+	}
+}
+
+// Subscribers is how many change subscriptions are open.
+func (f *FakeDaemon) Subscribers() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.watchers)
+}
+
+// tick writes one tick to conn. f.mu is held.
+func (f *FakeDaemon) tick(conn net.Conn) {
+	out, _ := json.Marshal(daemon.Response{Change: &daemon.DashboardChange{Journal: f.head}})
+	conn.Write(append(out, '\n'))
+}
+
+// subscribe keeps conn open as a change subscription, with a tick at once,
+// until either side closes it.
+func (f *FakeDaemon) subscribe(conn net.Conn, r *bufio.Reader) {
+	f.mu.Lock()
+	f.watchers[conn] = true
+	f.tick(conn)
+	f.mu.Unlock()
+	io.Copy(io.Discard, r)
+	f.mu.Lock()
+	delete(f.watchers, conn)
+	f.mu.Unlock()
 }
 
 func (f *FakeDaemon) serve(ln net.Listener) {
@@ -154,7 +201,8 @@ func (f *FakeDaemon) serve(ln net.Listener) {
 
 func (f *FakeDaemon) answer(conn net.Conn) {
 	defer conn.Close()
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	r := bufio.NewReader(conn)
+	line, err := r.ReadBytes('\n')
 	if err != nil {
 		return
 	}
@@ -164,6 +212,11 @@ func (f *FakeDaemon) answer(conn net.Conn) {
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, req)
+	if req.Command == daemon.CommandDashboardSubscribe && f.handlers[req.Command] == nil {
+		f.mu.Unlock()
+		f.subscribe(conn, r)
+		return
+	}
 	handler := f.handlers[req.Command]
 	f.mu.Unlock()
 	if f.holdAttach(conn, req) {

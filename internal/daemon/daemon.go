@@ -196,6 +196,8 @@ type Response struct {
 	// answer.
 	Prompts []WaitingPrompt `json:"prompts,omitempty"`
 	Agents  []store.Agent   `json:"agents,omitempty"`
+	// Change is one tick of the Dashboard's change subscription.
+	Change *DashboardChange `json:"change,omitempty"`
 	// Dashboard is the Dashboard's snapshot of the factory.
 	Dashboard *DashboardSnapshot `json:"dashboard,omitempty"`
 	// Attached is the agent an attach follows, and Screen its screen when
@@ -545,6 +547,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			return false
 		}
 		reply(conn, Response{Dashboard: &snapshot})
+	case CommandDashboardSubscribe:
+		d.subscribe(conn, r)
 	case CommandAttach:
 		d.attach(conn, r, req)
 	case CommandConversation:

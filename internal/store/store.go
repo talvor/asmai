@@ -911,6 +911,13 @@ func (s *Store) Journal() ([]Entry, error) {
 	return entries, rows.Err()
 }
 
+// JournalHead is the ID of the latest journal entry, zero when there is none.
+func (s *Store) JournalHead() (int64, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM journal`).Scan(&id)
+	return id, err
+}
+
 func timestamp(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }

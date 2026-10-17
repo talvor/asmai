@@ -75,7 +75,11 @@ func Run(socket string, o Options) error {
 // every read, so nothing outlives the daemon.
 type factory struct {
 	running bool
-	status  daemon.Status
+	// agents are the agents with the status the daemon derived for each; the
+	// Dashboard shows them and derives nothing itself.
+	agents []daemon.DashboardAgent
+	// readAt is when the daemon answered, which "since" is counted from.
+	readAt time.Time
 }
 
 type model struct {
@@ -85,6 +89,8 @@ type model struct {
 	height  int
 	tab     tab
 	factory factory
+	// cursor is the selected agent and offset the first one the list shows.
+	cursor, offset int
 	// read is false until the first answer, so the first frame does not claim
 	// the factory is stopped before the daemon has been asked.
 	read bool
@@ -106,11 +112,11 @@ func (m model) Init() tea.Cmd { return read(m.socket) }
 // does not answer is the stopped factory.
 func read(socket string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := daemon.Call(socket, daemon.Request{Command: daemon.CommandStatus})
-		if err != nil || resp.Status == nil {
+		resp, err := daemon.Call(socket, daemon.Request{Command: daemon.CommandDashboardSnapshot})
+		if err != nil || resp.Dashboard == nil {
 			return readMsg{}
 		}
-		return readMsg{factory{running: true, status: *resp.Status}}
+		return readMsg{factory{running: true, agents: resp.Dashboard.Agents, readAt: time.Now()}}
 	}
 }
 
@@ -118,9 +124,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m = m.scrolled()
 	case readMsg:
 		m.read = true
+		selected := m.selected()
 		m.factory = msg.factory
+		m.cursor = 0
+		for i, a := range m.factory.agents {
+			if a.Agent == selected {
+				m.cursor = i
+			}
+		}
+		m = m.scrolled()
 		wait := m.opts.Refresh
 		if !m.factory.running {
 			wait = m.opts.StoppedRetry
@@ -138,6 +153,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tab = tabJobs
 		case "3":
 			m.tab = tabLog
+		case "up", "k":
+			m = m.moved(-1)
+		case "down", "j":
+			m = m.moved(1)
+		case "pgup":
+			m = m.moved(-m.listRows())
+		case "pgdown":
+			m = m.moved(m.listRows())
+		case "home", "g":
+			m = m.moved(-len(m.factory.agents))
+		case "end", "G":
+			m = m.moved(len(m.factory.agents))
 		}
 	}
 	return m, nil
@@ -147,4 +174,30 @@ func (m model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
 	return v
+}
+
+// selected is the agent the cursor is on, or empty.
+func (m model) selected() string {
+	if m.cursor < len(m.factory.agents) {
+		return m.factory.agents[m.cursor].Agent
+	}
+	return ""
+}
+
+// moved moves the cursor of the Agents tab by delta, within the list.
+func (m model) moved(delta int) model {
+	if m.tab != tabAgents || len(m.factory.agents) == 0 {
+		return m
+	}
+	m.cursor = min(max(m.cursor+delta, 0), len(m.factory.agents)-1)
+	return m.scrolled()
+}
+
+// scrolled puts the list's window where the cursor is in it.
+func (m model) scrolled() model {
+	rows := m.listRows()
+	m.cursor = min(max(m.cursor, 0), max(len(m.factory.agents)-1, 0))
+	m.offset = min(max(m.offset, m.cursor-rows+1), m.cursor)
+	m.offset = max(min(m.offset, len(m.factory.agents)-rows), 0)
+	return m
 }

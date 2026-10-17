@@ -32,8 +32,8 @@ type FakeDaemon struct {
 	calls    []daemon.Request
 }
 
-// NewFakeDaemon starts a fake daemon that answers status as a running
-// factory does, and stops it when the test ends. Add answers to the calls the
+// NewFakeDaemon starts a fake daemon that answers status and an empty
+// snapshot as a running factory does, and stops it when the test ends. Add answers to the calls the
 // Dashboard learns to make with Handle.
 func NewFakeDaemon(t *testing.T) *FakeDaemon {
 	t.Helper()
@@ -47,9 +47,19 @@ func NewFakeDaemon(t *testing.T) *FakeDaemon {
 	f.Handle(daemon.CommandStatus, func(daemon.Request) daemon.Response {
 		return daemon.Response{Status: &daemon.Status{Version: "fake", PID: 1}}
 	})
+	f.SetAgents()
 	f.Start()
 	t.Cleanup(f.Stop)
 	return f
+}
+
+// SetAgents sets the agents the snapshot lists, each with the status a test
+// gives it: the fake daemon derives nothing, as the Dashboard does not.
+func (f *FakeDaemon) SetAgents(agents ...daemon.DashboardAgent) {
+	snapshot := daemon.DashboardSnapshot{Agents: append([]daemon.DashboardAgent{}, agents...)}
+	f.Handle(daemon.CommandDashboardSnapshot, func(daemon.Request) daemon.Response {
+		return daemon.Response{Dashboard: &snapshot}
+	})
 }
 
 // StateDir is the state directory asmai finds the fake daemon in, as

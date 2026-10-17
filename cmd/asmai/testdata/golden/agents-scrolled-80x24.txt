@@ -1,0 +1,53 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ AGENT                 STATUS                 JOB    DOING                 26/40
+ worker-08@engineering ○ Idle                 -
+ worker-09@engineering ○ Idle                 -
+ worker-10@engineering ○ Idle                 -
+ worker-11@engineering ○ Idle                 -
+ worker-12@engineering ○ Idle                 -
+ worker-13@engineering ○ Idle                 -
+ worker-14@engineering ○ Idle                 -
+ worker-15@engineering ○ Idle                 -
+ worker-16@engineering ○ Idle                 -
+ worker-17@engineering ○ Idle                 -
+ worker-18@engineering ○ Idle                 -
+ worker-19@engineering ○ Idle                 -
+ worker-20@engineering ○ Idle                 -
+ worker-21@engineering ○ Idle                 -
+ worker-22@engineering ○ Idle                 -
+ worker-23@engineering ○ Idle                 -
+ worker-24@engineering ○ Idle                 -
+ worker-25@engineering ○ Idle                 -
+ worker-26@engineering ○ Idle                 -
+ 1/2/3 tab · ↑/↓ move · q quit
+--- attributes
+1 1-80: reverse
+2 2-11: reverse
+2 13-20: faint
+2 22-28: faint
+4 1-6: faint
+4 24-29: faint
+4 47-58: faint
+4 76-80: faint
+5 24-29: faint
+6 24-29: faint
+7 24-29: faint
+8 24-29: faint
+9 24-29: faint
+10 24-29: faint
+11 24-29: faint
+12 24-29: faint
+13 24-29: faint
+14 24-29: faint
+15 24-29: faint
+16 24-29: faint
+17 24-29: faint
+18 24-29: faint
+19 24-29: faint
+20 24-29: faint
+21 24-29: faint
+22 24-29: faint
+23 1-80: reverse
+24 1-80: reverse

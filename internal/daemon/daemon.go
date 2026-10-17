@@ -196,6 +196,8 @@ type Response struct {
 	// answer.
 	Prompts []WaitingPrompt `json:"prompts,omitempty"`
 	Agents  []store.Agent   `json:"agents,omitempty"`
+	// Dashboard is the Dashboard's snapshot of the factory.
+	Dashboard *DashboardSnapshot `json:"dashboard,omitempty"`
 	// Attached is the agent an attach follows, and Screen its screen when
 	// a snapshot was asked for.
 	Attached *Leader   `json:"attached,omitempty"`
@@ -535,6 +537,14 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			return false
 		}
 		reply(conn, Response{Agents: agents})
+	case CommandDashboardSnapshot:
+		snapshot, err := d.dashboardSnapshot()
+		if err != nil {
+			d.log.Error("reading the dashboard snapshot", "error", err.Error())
+			reply(conn, Response{Error: err.Error()})
+			return false
+		}
+		reply(conn, Response{Dashboard: &snapshot})
 	case CommandAttach:
 		d.attach(conn, r, req)
 	case CommandConversation:

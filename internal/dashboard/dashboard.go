@@ -2,7 +2,7 @@
 
 // Package dashboard is the Dashboard (ADR 0015): a read-only terminal view of
 // the factory, built on Bubble Tea and Lip Gloss. It never sends the daemon an
-// action; it only asks whether the daemon answers.
+// action; it reads snapshots and change notifications from the daemon.
 package dashboard
 
 import (
@@ -39,8 +39,8 @@ type Options struct {
 	// Columns and Rows are the initial size, for when the terminal cannot say.
 	Columns, Rows int
 	// StoppedRetry is how often to look for the daemon while it is down;
-	// zero means 3 seconds. Refresh is how often to re-read while it runs;
-	// zero means 5 seconds.
+	// zero means 3 seconds. Refresh is the fallback read interval while it
+	// runs; zero means 5 seconds.
 	StoppedRetry, Refresh time.Duration
 }
 
@@ -109,8 +109,8 @@ type model struct {
 	generation        int
 	readNumber        int
 	appliedReadNumber int
-	// failed is true while the last refresh failed with the daemon running,
-	// so the agents shown are older than the note says.
+	// failed is true while the last refresh failed with the daemon running;
+	// the last successful read remains on screen.
 	failed bool
 	// watch holds the change subscription's connection, shared by every copy
 	// of the model so that Run can close it.

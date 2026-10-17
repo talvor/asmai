@@ -136,13 +136,16 @@ func TestLastUpdatedIsShownOnlyAfterAFailedRefresh(t *testing.T) {
 		t.Errorf("a good read shows a last updated note:\n%s", screen)
 	}
 
-	next, _ = m.Update(readMsg{err: errors.New("the daemon did not answer")})
+	m, _ = m.reading(time.Now())
+	next, _ = m.Update(readMsg{err: errors.New("the daemon did not answer"), number: m.readNumber})
 	m = next.(model)
 	screen := shownAt(m)
 	if !strings.Contains(screen, "last updated 03:04:05") || !strings.Contains(screen, "leader@coordination") {
 		t.Errorf("a failed refresh shows:\n%s\nwant the note and the agents read before", screen)
 	}
 
+	m, _ = m.reading(time.Now())
+	good.number = m.readNumber
 	next, _ = m.Update(good)
 	m = next.(model)
 	if screen := shownAt(m); strings.Contains(screen, "last updated") {
@@ -150,7 +153,8 @@ func TestLastUpdatedIsShownOnlyAfterAFailedRefresh(t *testing.T) {
 	}
 
 	// A daemon that is not running is the stopped factory, not a failed refresh.
-	next, _ = m.Update(readMsg{err: daemon.ErrNotRunning})
+	m, _ = m.reading(time.Now())
+	next, _ = m.Update(readMsg{err: daemon.ErrNotRunning, number: m.readNumber})
 	m = next.(model)
 	if screen := shownAt(m); strings.Contains(screen, "last updated") || !strings.Contains(screen, "factory stopped") {
 		t.Errorf("a daemon that is down shows:\n%s", screen)
@@ -162,7 +166,8 @@ func TestAStaleRefreshTimerDoesNothing(t *testing.T) {
 	m := newModel("", Options{Refresh: time.Second, StoppedRetry: time.Second})
 	next, _ := m.Update(readMsg{factory: factory{running: true}})
 	m = next.(model)
-	next, _ = m.Update(readMsg{factory: factory{running: true}})
+	m, _ = m.reading(time.Now())
+	next, _ = m.Update(readMsg{factory: factory{running: true}, number: m.readNumber})
 	m = next.(model)
 	if _, cmd := m.Update(retryMsg{round: m.round - 1}); cmd != nil {
 		t.Error("a stale timer started a read")
@@ -216,5 +221,51 @@ func TestSupersededSnapshotRepliesDoNotReplaceCurrentState(t *testing.T) {
 	m = next.(model)
 	if cmd != nil || shownAt(m) != before || !m.failed {
 		t.Error("a superseded success cleared the current failure note")
+	}
+}
+
+func TestSlowReadAdvancesBeforeANewerReadCompletes(t *testing.T) {
+	m := newModel("", Options{Refresh: time.Second, StoppedRetry: time.Second})
+	older := m.readNumber
+	m, _ = m.reading(time.Now())
+	newer := m.readNumber
+	next, cmd := m.Update(readMsg{factory: factory{running: true, agents: []daemon.DashboardAgent{{Agent: "leader@coordination"}}}, number: older})
+	m = next.(model)
+	if cmd == nil || !m.factory.running || m.appliedReadNumber != older {
+		t.Fatal("a completed read was discarded while a newer read was pending")
+	}
+	next, cmd = m.Update(readMsg{factory: factory{running: true, agents: []daemon.DashboardAgent{{Agent: "worker-1@engineering"}}}, number: newer})
+	m = next.(model)
+	if cmd == nil || m.appliedReadNumber != newer || len(m.factory.agents) != 1 || m.factory.agents[0].Agent != "worker-1@engineering" {
+		t.Fatal("the newer read did not replace the earlier result")
+	}
+	next, cmd = m.Update(readMsg{err: daemon.ErrNotRunning, number: older})
+	m = next.(model)
+	if cmd != nil || !m.factory.running {
+		t.Fatal("an older reply replaced the newer result")
+	}
+	for _, slow := range []struct {
+		name string
+		err  error
+	}{
+		{"failure", errors.New("snapshot failed")},
+		{"stopped", daemon.ErrNotRunning},
+	} {
+		t.Run(slow.name, func(t *testing.T) {
+			m, _ = m.reading(time.Now())
+			older = m.readNumber
+			m, _ = m.reading(time.Now())
+			newer = m.readNumber
+			next, _ = m.Update(readMsg{err: slow.err, number: older})
+			m = next.(model)
+			if slow.name == "failure" && !m.failed || slow.name == "stopped" && m.factory.running {
+				t.Fatal("a completed slow read did not update the dashboard")
+			}
+			next, _ = m.Update(readMsg{factory: factory{running: true}, number: newer})
+			m = next.(model)
+			if !m.factory.running || m.failed {
+				t.Fatal("the newer success did not restore the dashboard")
+			}
+		})
 	}
 }

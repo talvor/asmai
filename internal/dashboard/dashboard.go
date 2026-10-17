@@ -105,9 +105,10 @@ type model struct {
 	cursor, offset int
 	// read is false until the first answer, so the first frame does not claim
 	// the factory is stopped before the daemon has been asked.
-	read       bool
-	generation int
-	readNumber int
+	read              bool
+	generation        int
+	readNumber        int
+	appliedReadNumber int
 	// failed is true while the last refresh failed with the daemon running,
 	// so the agents shown are older than the note says.
 	failed bool
@@ -124,7 +125,7 @@ type model struct {
 }
 
 func newModel(socket string, o Options) model {
-	return model{socket: socket, opts: o, width: o.Columns, height: o.Rows, watch: &watch{}}
+	return model{socket: socket, opts: o, width: o.Columns, height: o.Rows, watch: &watch{}, appliedReadNumber: -1}
 }
 
 // attachedMsg says that `asmai attach` has exited and the Dashboard has the
@@ -150,13 +151,9 @@ type flushMsg struct{ generation int }
 
 // subscribedMsg is the outcome of opening the change subscription: its first
 // tick, or why there is none.
-type subscribedMsg struct {
-	first daemon.DashboardChange
-	err   error
-}
+type subscribedMsg struct{ err error }
 
-// changeMsg is a tick: the factory changed, up to journal entry journal.
-type changeMsg struct{ journal int64 }
+type changeMsg struct{}
 
 // resubscribeMsg fires when it is time to open the subscription again.
 type resubscribeMsg struct{}
@@ -224,7 +221,7 @@ func subscribe(socket string, w *watch) tea.Cmd {
 			return subscribedMsg{err: err}
 		}
 		w.hold(conn, r)
-		return subscribedMsg{first: *resp.Change}
+		return subscribedMsg{}
 	}
 }
 
@@ -243,7 +240,7 @@ func await(w *watch) tea.Cmd {
 		if err != nil {
 			return subscribedMsg{err: err}
 		}
-		return changeMsg{resp.Change.Journal}
+		return changeMsg{}
 	}
 }
 
@@ -293,9 +290,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wait = false
 		return m.reading(time.Now())
 	case readMsg:
-		if msg.generation != m.generation || msg.number != m.readNumber {
+		if msg.generation != m.generation || msg.number <= m.appliedReadNumber {
 			return m, nil
 		}
+		m.appliedReadNumber = msg.number
 		if msg.err != nil && !errors.Is(msg.err, daemon.ErrNotRunning) && m.factory.running {
 			// The daemon runs but did not answer: keep what was read and say
 			// how old it is.

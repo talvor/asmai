@@ -111,9 +111,25 @@ func (m model) tabs() string {
 	return b.String()
 }
 
-// banner is the Waiting on you row. It is empty until the snapshot supplies
-// what waits on the user.
-func (m model) banner() string { return "" }
+// bannerStyle is the colour of the banner's text; its glyph and words carry
+// the meaning without it.
+var bannerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+
+// banner is the Waiting on you row: the first thing the factory cannot
+// continue without the user, and "+N more" for the rest. It is empty when
+// nothing waits.
+func (m model) banner() string {
+	items := m.factory.waiting
+	if len(items) == 0 {
+		return ""
+	}
+	more := ""
+	if len(items) > 1 {
+		more = fmt.Sprintf(" · +%d more", len(items)-1)
+	}
+	text := clip(" ▲ Waiting on you: "+items[0].Text, max(m.width-lipgloss.Width(more), 0))
+	return bannerStyle.Render(pad(text+more, m.width))
+}
 
 // bar draws s across the whole width in reverse video.
 func bar(s string, width int) string { return barStyle.Render(pad(s, width)) }

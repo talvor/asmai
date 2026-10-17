@@ -246,3 +246,55 @@ func TestSubscriptionTicksOnJournalPromptAndInputOwnerChanges(t *testing.T) {
 		t.Error("the subscription outlived its client")
 	}
 }
+
+// The Waiting on you set holds native prompts, then held input, then
+// needs-you findings; reconciliation and the working agents are statuses
+// only.
+func TestTheWaitingSetHoldsPromptsHeldInputAndFindingsAndNothingElse(t *testing.T) {
+	now := time.Now()
+	run := func(name string) store.Agent {
+		return store.Agent{Agent: name, Role: roles.Engineering, State: store.AgentRunning, StartedAt: now.Add(-time.Hour)}
+	}
+	held, prompted, olderPrompt, reconciling, working := run("leader@coordination"), run("worker-1@quality"), run("worker-2@quality"), run("worker-3@engineering"), run("worker-4@engineering")
+	lives := map[string]agentLive{
+		held.Agent:        {input: InputUser, conversation: "/dev/pts/3"},
+		prompted.Agent:    {input: InputAutomation, prompt: &WaitingPrompt{Agent: prompted.Agent, About: "Bash `ls`", Since: now.Add(-2 * time.Minute)}},
+		olderPrompt.Agent: {input: InputAutomation, prompt: &WaitingPrompt{Agent: olderPrompt.Agent, About: "Edit", Since: now.Add(-9 * time.Minute)}},
+		reconciling.Agent: {input: InputAutomation},
+		working.Agent:     {input: InputAutomation},
+	}
+	works := map[string]store.AgentWork{
+		reconciling.Agent: {Reconciling: 7, ReconcilingJob: 3, ReconcilingAt: now},
+		working.Agent:     {Dispatch: store.DispatchWorking, Job: 3},
+	}
+	var agents []DashboardAgent
+	for _, a := range []store.Agent{working, reconciling, held, prompted, olderPrompt} {
+		agents = append(agents, deriveAgent(a, lives[a.Agent], works[a.Agent]))
+	}
+	findings := []store.NeedsYouFinding{{ID: 7, Job: 3, Text: "greet whom?\nmore", At: now.Add(-time.Hour)}}
+
+	got := waitingOnYou(agents, lives, findings)
+	var kinds, who []string
+	for _, item := range got {
+		kinds = append(kinds, item.Kind)
+		who = append(who, item.Agent)
+	}
+	if want := []string{WaitingNativePrompt, WaitingNativePrompt, WaitingInput, WaitingFinding}; !slices.Equal(kinds, want) {
+		t.Fatalf("the set is %v, want %v: %+v", kinds, want, got)
+	}
+	if want := []string{olderPrompt.Agent, prompted.Agent, held.Agent, ""}; !slices.Equal(who, want) {
+		t.Errorf("the set is in the order of %v, want %v (oldest prompt first)", who, want)
+	}
+	if got[3].Finding != 7 || got[3].Job != 3 || got[3].Text != "job 3 finding 7: greet whom?" {
+		t.Errorf("the finding is %+v", got[3])
+	}
+	if got[2].Text != "leader@coordination you hold its input in /dev/pts/3" {
+		t.Errorf("the held input reads %q", got[2].Text)
+	}
+	if empty := waitingOnYou(nil, nil, nil); empty == nil || len(empty) != 0 {
+		t.Errorf("nothing waiting is %#v, want an empty set", empty)
+	}
+	if len(pendingDecisions()) != 0 {
+		t.Error("a pending decision is listed, but the daemon has no state for one")
+	}
+}

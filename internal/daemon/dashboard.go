@@ -91,9 +91,42 @@ type DashboardAgent struct {
 	Doing string `json:"doing,omitempty"`
 }
 
+// The kinds of item the factory cannot continue without the user for, in the
+// order the Waiting on you set lists them. A not-ready or red-CI pull request
+// and an assignment needing reconciliation are statuses, not in the set.
+const (
+	// WaitingNativePrompt is a native permission prompt waiting in a leader's session.
+	WaitingNativePrompt = "prompt"
+	// WaitingInput is an agent whose input the user still holds.
+	WaitingInput = "input"
+	// WaitingDecision is a pending decision request. Its place is reserved:
+	// the decision request record is not daemon state yet, so none is listed.
+	WaitingDecision = "decision"
+	// WaitingFinding is a needs-you finding of a job not yet delivered.
+	WaitingFinding = "finding"
+)
+
+// WaitingItem is one thing the factory cannot continue without the user for.
+type WaitingItem struct {
+	Kind string `json:"kind"`
+	// Agent is the agent that waits, for a prompt or held input.
+	Agent string `json:"agent,omitempty"`
+	// Job is the job the item is about, zero for none.
+	Job int64 `json:"job,omitempty"`
+	// Finding is the finding's ID, for a needs-you finding.
+	Finding int64 `json:"finding,omitempty"`
+	// Text says what waits, in words.
+	Text string `json:"text"`
+	// Since is when it began to wait.
+	Since time.Time `json:"since,omitzero"`
+}
+
 // DashboardSnapshot is the Dashboard's read of the factory.
 type DashboardSnapshot struct {
 	Agents []DashboardAgent `json:"agents"`
+	// Waiting is the Waiting on you set, in kind order and, within a kind,
+	// oldest first. It is empty when nothing waits.
+	Waiting []WaitingItem `json:"waiting"`
 }
 
 // agentLive is what the daemon knows of a running agent in memory.
@@ -196,6 +229,11 @@ func (d *daemon) dashboardSnapshot() (DashboardSnapshot, error) {
 	for _, a := range agents {
 		snapshot.Agents = append(snapshot.Agents, deriveAgent(a, lives[a.Agent], works[a.Agent]))
 	}
+	needsYou, err := d.store.NeedsYouFindings()
+	if err != nil {
+		return DashboardSnapshot{}, fmt.Errorf("reading the needs-you findings: %w", err)
+	}
+	snapshot.Waiting = waitingOnYou(snapshot.Agents, lives, needsYou)
 	return snapshot, nil
 }
 
@@ -285,3 +323,40 @@ func (d *daemon) subscribe(conn *net.UnixConn, r io.Reader) {
 		}
 	}
 }
+
+// waitingOnYou derives the Waiting on you set: the agents the snapshot derived
+// as waiting, with a native prompt before held input, then the pending
+// decision requests, then the needs-you findings.
+func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings []store.NeedsYouFinding) []WaitingItem {
+	var items []WaitingItem
+	for _, kind := range []string{WaitingNativePrompt, WaitingInput} {
+		for _, a := range agents {
+			if a.Status != StatusWaitingOnYou || (lives[a.Agent].prompt != nil) != (kind == WaitingNativePrompt) {
+				continue
+			}
+			items = append(items, WaitingItem{Kind: kind, Agent: a.Agent, Job: a.Job, Text: a.Agent + " " + a.Doing, Since: a.Since})
+		}
+	}
+	items = append(items, pendingDecisions()...)
+	for _, f := range findings {
+		text, _, _ := strings.Cut(strings.TrimSpace(f.Text), "\n")
+		items = append(items, WaitingItem{Kind: WaitingFinding, Job: f.Job, Finding: f.ID, Text: fmt.Sprintf("job %d finding %d: %s", f.Job, f.ID, text), Since: f.At})
+	}
+	rank := func(kind string) int {
+		return slices.Index([]string{WaitingNativePrompt, WaitingInput, WaitingDecision, WaitingFinding}, kind)
+	}
+	slices.SortStableFunc(items, func(a, b WaitingItem) int {
+		if c := rank(a.Kind) - rank(b.Kind); c != 0 {
+			return c
+		}
+		return a.Since.Compare(b.Since)
+	})
+	if items == nil {
+		items = []WaitingItem{}
+	}
+	return items
+}
+
+// pendingDecisions are the pending decision requests. There is no daemon state
+// for them yet, so the slot is reserved and empty.
+func pendingDecisions() []WaitingItem { return nil }

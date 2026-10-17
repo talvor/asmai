@@ -27,6 +27,7 @@ import (
 	"github.com/talvor/asmai"
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
+	_ "github.com/talvor/asmai/internal/dashboard"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"

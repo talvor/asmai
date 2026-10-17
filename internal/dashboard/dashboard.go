@@ -6,10 +6,15 @@
 package dashboard
 
 import (
+	"bufio"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -42,6 +47,9 @@ type Options struct {
 const (
 	defaultStoppedRetry = 3 * time.Second
 	defaultRefresh      = 5 * time.Second
+	// redrawEvery is the least time between two reads that ticks cause: about
+	// four redraws a second however fast the factory changes.
+	redrawEvery = 250 * time.Millisecond
 )
 
 // Run shows the Dashboard on the terminal until the user quits, asking the
@@ -67,6 +75,7 @@ func Run(socket string, o Options) error {
 		opts = append(opts, tea.WithWindowSize(o.Columns, o.Rows))
 	}
 	m := newModel(socket, o)
+	defer m.watch.close()
 	if _, err := tea.NewProgram(m, opts...).Run(); err != nil {
 		return fmt.Errorf("running the dashboard: %w", err)
 	}
@@ -80,7 +89,8 @@ type factory struct {
 	// agents are the agents with the status the daemon derived for each; the
 	// Dashboard shows them and derives nothing itself.
 	agents []daemon.DashboardAgent
-	// readAt is when the daemon answered, which "since" is counted from.
+	// readAt is when the daemon last answered a read, which "since" is counted
+	// from and "last updated" names.
 	readAt time.Time
 }
 
@@ -97,37 +107,163 @@ type model struct {
 	// the factory is stopped before the daemon has been asked.
 	read       bool
 	generation int
+	// failed is true while the last refresh failed with the daemon running,
+	// so the agents shown are older than the note says.
+	failed bool
+	// watch holds the change subscription's connection, shared by every copy
+	// of the model so that Run can close it.
+	watch *watch
+	// lastRead is when the latest read was sent; wait is true while a timer
+	// holds back the read that ticks since then have asked for.
+	lastRead time.Time
+	wait     bool
+	// round numbers the fallback timers, so a timer from before a newer read
+	// does nothing.
+	round int
 }
 
 func newModel(socket string, o Options) model {
-	return model{socket: socket, opts: o, width: o.Columns, height: o.Rows}
-}
-
-// readMsg is the daemon's answer to a read of everything the Dashboard shows.
-type readMsg struct {
-	factory    factory
-	generation int
+	return model{socket: socket, opts: o, width: o.Columns, height: o.Rows, watch: &watch{}}
 }
 
 // attachedMsg says that `asmai attach` has exited and the Dashboard has the
 // terminal again.
 type attachedMsg struct{}
 
-// retryMsg fires when it is time to read again.
-type retryMsg struct{ generation int }
+// readMsg is the daemon's answer to a read of everything the Dashboard shows:
+// the factory, or why it could not be read. A daemon that is not running is
+// the stopped factory.
+type readMsg struct {
+	factory    factory
+	err        error
+	generation int
+}
 
-func (m model) Init() tea.Cmd { return read(m.socket, m.generation) }
+// retryMsg fires when it is time to read again, unless a read since has
+// started a later round.
+type retryMsg struct{ round, generation int }
 
-// read asks the daemon for everything the Dashboard shows. A daemon that
-// does not answer is the stopped factory.
+// flushMsg fires when the read that ticks asked for may be sent.
+type flushMsg struct{ generation int }
+
+// subscribedMsg is the outcome of opening the change subscription: its first
+// tick, or why there is none.
+type subscribedMsg struct {
+	first daemon.DashboardChange
+	err   error
+}
+
+// changeMsg is a tick: the factory changed, up to journal entry journal.
+type changeMsg struct{ journal int64 }
+
+// resubscribeMsg fires when it is time to open the subscription again.
+type resubscribeMsg struct{}
+
+func (m model) Init() tea.Cmd {
+	return tea.Batch(read(m.socket, m.generation), subscribe(m.socket, m.watch))
+}
+
+// read asks the daemon for everything the Dashboard shows.
 func read(socket string, generation int) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := daemon.Call(socket, daemon.Request{Command: daemon.CommandDashboardSnapshot})
-		if err != nil || resp.Dashboard == nil {
-			return readMsg{generation: generation}
+		if err == nil && resp.Dashboard == nil {
+			err = errors.New("the daemon answered without a snapshot")
+		}
+		if err != nil {
+			return readMsg{err: err, generation: generation}
 		}
 		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, readAt: time.Now()}, generation: generation}
 	}
+}
+
+// watch is the change subscription's connection.
+type watch struct {
+	mu     sync.Mutex
+	conn   net.Conn
+	closed bool
+	// reader is what the daemon sends after its first tick.
+	reader *bufio.Reader
+}
+
+// hold keeps conn to close, or closes it if the Dashboard has already quit.
+func (w *watch) hold(conn net.Conn, r *bufio.Reader) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.conn != nil {
+		w.conn.Close()
+	}
+	w.conn, w.reader = conn, r
+	if w.closed {
+		conn.Close()
+	}
+}
+
+func (w *watch) close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+	if w.conn != nil {
+		w.conn.Close()
+	}
+}
+
+// subscribe opens the change subscription, which answers with a tick at once.
+func subscribe(socket string, w *watch) tea.Cmd {
+	return func() tea.Msg {
+		conn, r, resp, err := daemon.Open(socket, daemon.Request{Command: daemon.CommandDashboardSubscribe})
+		if err == nil && resp.Change == nil {
+			err = errors.New("the daemon answered without a tick")
+		}
+		if err != nil {
+			if conn != nil {
+				conn.Close()
+			}
+			return subscribedMsg{err: err}
+		}
+		w.hold(conn, r)
+		return subscribedMsg{first: *resp.Change}
+	}
+}
+
+// await waits for the subscription's next tick. The subscription ending is
+// the same as it failing to open.
+func await(w *watch) tea.Cmd {
+	return func() tea.Msg {
+		line, err := w.reader.ReadBytes('\n')
+		var resp daemon.Response
+		if err == nil {
+			err = json.Unmarshal(line, &resp)
+		}
+		if err == nil && resp.Change == nil {
+			err = errors.New("the daemon sent something that is not a tick")
+		}
+		if err != nil {
+			return subscribedMsg{err: err}
+		}
+		return changeMsg{resp.Change.Journal}
+	}
+}
+
+// reading sends a read now.
+func (m model) reading(now time.Time) (model, tea.Cmd) {
+	m.lastRead = now
+	return m, read(m.socket, m.generation)
+}
+
+// ticked asks for a read after a tick: at once when none was sent in the last
+// quarter second, else when that quarter second is over. Ticks that come while
+// it waits are that read.
+func (m model) ticked(now time.Time) (model, tea.Cmd) {
+	if m.wait {
+		return m, nil
+	}
+	if left := redrawEvery - now.Sub(m.lastRead); left > 0 {
+		m.wait = true
+		generation := m.generation
+		return m, tea.Tick(left, func(time.Time) tea.Msg { return flushMsg{generation} })
+	}
+	return m.reading(now)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -135,11 +271,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m = m.scrolled()
+	case subscribedMsg:
+		if msg.err != nil {
+			return m, tea.Tick(m.opts.StoppedRetry, func(time.Time) tea.Msg { return resubscribeMsg{} })
+		}
+		m, cmd := m.ticked(time.Now())
+		return m, tea.Batch(cmd, await(m.watch))
+	case changeMsg:
+		m, cmd := m.ticked(time.Now())
+		return m, tea.Batch(cmd, await(m.watch))
+	case resubscribeMsg:
+		return m, subscribe(m.socket, m.watch)
+	case flushMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.wait = false
+		return m.reading(time.Now())
 	case readMsg:
 		if msg.generation != m.generation {
 			return m, nil
 		}
-		m.read = true
+		if msg.err != nil && !errors.Is(msg.err, daemon.ErrNotRunning) && m.factory.running {
+			// The daemon runs but did not answer: keep what was read and say
+			// how old it is.
+			m.failed = true
+			m.round++
+			round := m.round
+			generation := m.generation
+			return m, tea.Tick(m.opts.Refresh, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} })
+		}
+		m.read, m.failed = true, false
 		selected := m.selected()
 		m.factory = msg.factory
 		m.cursor = 0
@@ -153,18 +315,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.factory.running {
 			wait = m.opts.StoppedRetry
 		}
-		return m, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{generation: m.generation} })
+		m.round++
+		round := m.round
+		generation := m.generation
+		return m, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} })
 	case retryMsg:
-		if msg.generation != m.generation {
+		if msg.generation != m.generation || (msg.round != 0 && msg.round != m.round) {
 			return m, nil
 		}
-		return m, read(m.socket, m.generation)
+		return m.reading(time.Now())
 	case attachedMsg:
 		// Bubble Tea has restored raw mode and the alternate screen. The
 		// terminal may have changed size and the factory may have stopped
 		// while attach had it, so ask for both again and draw it all anew.
 		m.generation++
-		return m, tea.Batch(tea.RequestWindowSize, tea.ClearScreen, read(m.socket, m.generation))
+		m.round++
+		m.wait = false
+		fresh, cmd := m.reading(time.Now())
+		return fresh, tea.Batch(tea.RequestWindowSize, tea.ClearScreen, cmd)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "enter":

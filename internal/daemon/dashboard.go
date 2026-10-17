@@ -3,7 +3,10 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -19,10 +22,25 @@ const (
 	// CommandDashboardSnapshot is the Dashboard's read of the factory: every
 	// agent with its derived status.
 	CommandDashboardSnapshot = "dashboard.snapshot"
+	// CommandDashboardSubscribe keeps the connection open and sends a tick
+	// carrying the latest journal ID, at once and again whenever the journal
+	// grows or a waiting prompt or an input owner changes, which are not
+	// journaled. The Dashboard re-reads on a tick and derives nothing from it.
+	CommandDashboardSubscribe = "dashboard.subscribe"
 )
 
 // DashboardCommands are the commands only the Dashboard sends.
-var DashboardCommands = []string{CommandDashboardSnapshot}
+var DashboardCommands = []string{CommandDashboardSnapshot, CommandDashboardSubscribe}
+
+// DashboardChange is one tick of the change subscription.
+type DashboardChange struct {
+	// Journal is the ID of the latest journal entry, zero for an empty journal.
+	Journal int64 `json:"journal"`
+}
+
+// changePoll is how often the subscription looks for a change. Ticks are
+// coalesced by the Dashboard, so this only bounds how late one can be.
+const changePoll = 100 * time.Millisecond
 
 // AgentStatus is what an agent is doing, as the Dashboard shows it. The
 // daemon derives it, so every client agrees.
@@ -172,9 +190,21 @@ func (d *daemon) dashboardSnapshot() (DashboardSnapshot, error) {
 	}
 	slices.SortFunc(agents, func(a, b store.Agent) int { return strings.Compare(a.Agent, b.Agent) })
 
+	lives := d.liveAgents()
+
+	snapshot := DashboardSnapshot{Agents: []DashboardAgent{}}
+	for _, a := range agents {
+		snapshot.Agents = append(snapshot.Agents, deriveAgent(a, lives[a.Agent], works[a.Agent]))
+	}
+	return snapshot, nil
+}
+
+// liveAgents is what the daemon knows in memory of each running agent, by
+// address.
+func (d *daemon) liveAgents() map[string]agentLive {
 	lives := map[string]agentLive{}
 	d.mu.Lock()
-	conversation := d.conversation
+	defer d.mu.Unlock()
 	for name, l := range d.leaders {
 		if l.session == nil {
 			continue
@@ -185,8 +215,8 @@ func (d *daemon) dashboardSnapshot() (DashboardSnapshot, error) {
 		} else if l.userInput {
 			live.input = InputUser
 		}
-		if conversation != nil && conversation.leader == l {
-			live.conversation = conversation.terminal
+		if d.conversation != nil && d.conversation.leader == l {
+			live.conversation = d.conversation.terminal
 		}
 		if l.prompt != nil && l.prompt.Generation == l.generation {
 			p := *l.prompt
@@ -194,11 +224,62 @@ func (d *daemon) dashboardSnapshot() (DashboardSnapshot, error) {
 		}
 		lives[name] = live
 	}
-	d.mu.Unlock()
+	return lives
+}
 
-	snapshot := DashboardSnapshot{Agents: []DashboardAgent{}}
-	for _, a := range agents {
-		snapshot.Agents = append(snapshot.Agents, deriveAgent(a, lives[a.Agent], works[a.Agent]))
+// liveMark is a string that differs whenever a waiting prompt or an input
+// owner does, which the journal does not record.
+func (d *daemon) liveMark() string {
+	lives := d.liveAgents()
+	names := make([]string, 0, len(lives))
+	for name := range lives {
+		names = append(names, name)
 	}
-	return snapshot, nil
+	slices.Sort(names)
+	var b strings.Builder
+	for _, name := range names {
+		l := lives[name]
+		fmt.Fprintf(&b, "%s|%s|%s", name, l.input, l.conversation)
+		if l.prompt != nil {
+			fmt.Fprintf(&b, "|%s|%d", l.prompt.About, l.prompt.Since.UnixNano())
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// subscribe answers a change subscription on conn: a tick now and a tick at
+// each change, until the Dashboard goes or the daemon stops. It only reads.
+func (d *daemon) subscribe(conn *net.UnixConn, r io.Reader) {
+	conn.SetDeadline(time.Time{})
+	gone := make(chan struct{})
+	go func() {
+		io.Copy(io.Discard, r)
+		close(gone)
+	}()
+	head, mark := int64(-1), ""
+	ticker := time.NewTicker(changePoll)
+	defer ticker.Stop()
+	for {
+		latest, err := d.store.JournalHead()
+		if err != nil {
+			d.log.Error("reading the journal head", "error", err.Error())
+			reply(conn, Response{Error: "reading the journal head: " + err.Error()})
+			return
+		}
+		if now := d.liveMark(); latest != head || now != mark {
+			head, mark = latest, now
+			line, _ := json.Marshal(Response{Change: &DashboardChange{Journal: latest}})
+			if _, err := conn.Write(append(line, '\n')); err != nil {
+				return
+			}
+		}
+		select {
+		case <-ticker.C:
+		case <-gone:
+			return
+		case <-d.work.Done():
+			return
+		}
+	}
 }

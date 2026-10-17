@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/dashboard/dashtest"
@@ -163,4 +164,29 @@ func TestAnAgentCannotRunTheDashboard(t *testing.T) {
 	if code := run([]string{"dashboard"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "an agent cannot") {
 		t.Errorf("asmai dashboard with an agent credential exited %d printing %q, want 1 and a refusal", code, stderr.String())
 	}
+}
+
+// A refresh that fails with the factory running keeps the screen and says how
+// old it is; the next good read clears the note. A tick makes the read.
+func TestDashboardShowsLastUpdatedOnlyAfterAFailedRefresh(t *testing.T) {
+	fake := dashtest.NewFakeDaemon(t)
+	d := dashboardIn(t, fake, 100, 30)
+	d.WaitForText("factory running")
+	if strings.Contains(d.Screen(), "last updated") {
+		t.Fatalf("a good read shows a last updated note:\n%s", d.Screen())
+	}
+	for fake.Subscribers() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	fake.Handle(daemon.CommandDashboardSnapshot, func(daemon.Request) daemon.Response {
+		return daemon.Response{Error: "reading the agents: database is locked"}
+	})
+	fake.Tick()
+	d.WaitForText("last updated")
+	d.WaitForText("factory running")
+
+	fake.SetAgents()
+	fake.Tick()
+	d.WaitFor("the note to clear", func(screen string) bool { return !strings.Contains(screen, "last updated") })
 }

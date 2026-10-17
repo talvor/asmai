@@ -88,6 +88,10 @@ func (m model) shell() string {
 
 func (m model) header() string {
 	left := " asmai dashboard  factory running"
+	if m.failed {
+		// Only a failed refresh says how old the screen is.
+		left += "  ·  refresh failed, last updated " + m.factory.readAt.Format("15:04:05")
+	}
 	return bar(left, m.width)
 }
 

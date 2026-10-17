@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -17,7 +18,12 @@ func ClaudeCodeAuthStatus(ctx context.Context, path string) (bool, string, error
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "auth", "status", "--json")
-	cmd.Env = append(os.Environ(), "DISABLE_AUTOUPDATER=1")
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); !IsAPIKeyVariable(name) && name != "DISABLE_AUTOUPDATER" {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
 	out, _ := cmd.Output()
 	if ctx.Err() != nil {
 		return false, "", fmt.Errorf("Claude Code did not report its sign-in within 30s")

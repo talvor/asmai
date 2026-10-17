@@ -33,3 +33,26 @@ func TestClaudeCodeAuthStatusReadsOnlySignInStateAndMethod(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeCodeAuthStatusUsesAgentCredentialEnvironment(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "key")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "token")
+	t.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+	t.Setenv("ANTHROPIC_EXTRA_API_KEY", "another-key")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "subscription")
+	path := filepath.Join(t.TempDir(), "claude")
+	program := `#!/bin/sh
+if [ -n "${ANTHROPIC_API_KEY-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN-}" ] || [ -n "${CLAUDE_CODE_USE_BEDROCK-}" ] || [ -n "${ANTHROPIC_EXTRA_API_KEY-}" ]; then
+  printf '%s\n' '{"loggedIn":true,"authMethod":"apiKey"}'
+elif [ "$DISABLE_AUTOUPDATER" = 1 ] && [ "$CLAUDE_CODE_OAUTH_TOKEN" = subscription ]; then
+  printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'
+fi
+`
+	if err := os.WriteFile(path, []byte(program), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	loggedIn, method, err := ClaudeCodeAuthStatus(context.Background(), path)
+	if err != nil || !loggedIn || method != "claude.ai" {
+		t.Errorf("auth status with exported API credentials = %t, %q, %v, want subscription", loggedIn, method, err)
+	}
+}

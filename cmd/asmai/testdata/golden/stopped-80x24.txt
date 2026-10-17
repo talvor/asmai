@@ -1,0 +1,27 @@
+ asmai dashboard  factory stopped
+
+The factory is not running.
+Nothing is shown. Start it with `asmai start`.
+Looking again every few seconds.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · q quit
+--- attributes
+1 1-80: reverse
+24 1-80: reverse

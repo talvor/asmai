@@ -241,6 +241,10 @@ func TestTheDefaultFileStaffsEveryRoleAndRegistersNoRepository(t *testing.T) {
 	if sonnet, problems := Parse(Default("sonnet")); len(problems) != 0 || sonnet.Providers["claude"].DefaultModel != "sonnet" {
 		t.Errorf("the Sonnet default file has model %q and problems %v", sonnet.Providers["claude"].DefaultModel, problems)
 	}
+	customModel := "model\"name\\variant"
+	if custom, problems := Parse(Default(customModel)); len(problems) != 0 || custom.Providers["claude"].DefaultModel != customModel {
+		t.Errorf("the custom default file has model %q and problems %v", custom.Providers["claude"].DefaultModel, problems)
+	}
 	if !strings.HasPrefix(string(data), "# ") || !strings.Contains(string(data), "README") || !strings.Contains(string(data), "#the-configuration-file") {
 		t.Errorf("the default file opens\n%s\nwant a comment pointing to the README's section on the file", data)
 	}

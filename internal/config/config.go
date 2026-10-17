@@ -10,6 +10,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -1009,7 +1010,8 @@ const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` +
 func Default(claudeModel string) []byte {
 	var b strings.Builder
 	b.WriteString(defaultHeader)
-	b.WriteString("\n[providers.claude]\ndefault_model = \"" + claudeModel + "\"\n")
+	model, _ := json.Marshal(claudeModel)
+	b.WriteString("\n[providers.claude]\ndefault_model = " + string(model) + "\n")
 	for _, role := range roles.Staffed {
 		b.WriteString("\n" + Example(role) + "\n")
 	}

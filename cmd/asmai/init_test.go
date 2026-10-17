@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -219,7 +218,7 @@ func (s *setupTerminal) confirmInstall(t *testing.T) {
 
 func (s *setupTerminal) chooseModel(t *testing.T, model string) {
 	t.Helper()
-	waitFor(t, "init to ask for Claude's default model", s.shows("Claude default model (opus or sonnet) [opus]:"))
+	waitFor(t, "init to ask for Claude's default model", s.shows("Claude default model [opus]:"))
 	s.typeKeys(t, model+"\r")
 }
 
@@ -279,7 +278,7 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 
 	agents, workspaces := filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces")
 	s := setupInTerminal(t)
-	s.chooseModel(t, "sonnet")
+	s.chooseModel(t, "haiku")
 	s.confirmInstall(t)
 	s.trust(t, agents)
 	s.trust(t, workspaces)
@@ -336,11 +335,11 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(testDir, "environments")); string(got) != "agents DISABLE_AUTOUPDATER=1\nworkspaces DISABLE_AUTOUPDATER=1\n" {
 		t.Errorf("setup opened Claude Code with\n%swant DISABLE_AUTOUPDATER=1 in agents and workspaces", got)
 	}
-	if got, _ := os.ReadFile(configFile); string(got) != string(config.Default("sonnet")) {
+	if got, _ := os.ReadFile(configFile); string(got) != string(config.Default("haiku")) {
 		t.Errorf("the configuration file holds\n%s\nwant the default", got)
 	}
-	if cfg, problems, err := config.Load(configFile); err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "sonnet" {
-		t.Errorf("init's Claude default model is %q with problems %v and error %v, want sonnet", cfg.Providers["claude"].DefaultModel, problems, err)
+	if cfg, problems, err := config.Load(configFile); err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "haiku" {
+		t.Errorf("init's Claude default model is %q with problems %v and error %v, want haiku", cfg.Providers["claude"].DefaultModel, problems, err)
 	}
 	for _, dir := range []string{"providers", "bin", "githooks", "agents", "repositories", "workspaces", "views"} {
 		if info, err := os.Stat(filepath.Join(stateDir, dir)); err != nil || !info.IsDir() {
@@ -589,7 +588,7 @@ func TestInitDoctorAndStartAgreeOnInstalledProvider(t *testing.T) {
 	}
 }
 
-func TestInitRestoresNonExecutablePinnedProvider(t *testing.T) {
+func TestInitRejectsNonExecutablePinnedProvider(t *testing.T) {
 	stateDir := readyFactory(t, idleLeader)
 	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
 	if err := os.Chmod(path, 0o644); err != nil {
@@ -597,11 +596,11 @@ func TestInitRestoresNonExecutablePinnedProvider(t *testing.T) {
 	}
 
 	stdout, stderr, code := runIn(t, "", "init", "--yes")
-	if code != 0 {
+	if code != 1 || !strings.Contains(stdout+stderr, "Claude Code 2.1.292: failed.") || !strings.Contains(stdout+stderr, "asmai providers install") {
 		t.Fatalf("init with a nonexecutable pinned copy exited %d printing %q", code, stdout+stderr)
 	}
-	if !providers.Executable(path) {
-		t.Errorf("init left the pinned copy at %s nonexecutable", path)
+	if providers.Executable(path) {
+		t.Errorf("init changed the nonexecutable pinned copy at %s", path)
 	}
 }
 
@@ -969,7 +968,7 @@ func TestInitYesAsksNeitherToInstallNorToOpenClaudeCode(t *testing.T) {
 		t.Fatalf("asmai init --yes exited %d, printing\n%s", code, s.printed())
 	}
 	out := s.printed()
-	if strings.Contains(out, "Claude default model (opus or sonnet)") || strings.Contains(out, "Install it? [y/N]") || strings.Contains(out, trustPrompt) {
+	if strings.Contains(out, "Claude default model [opus]") || strings.Contains(out, "Install it? [y/N]") || strings.Contains(out, trustPrompt) {
 		t.Errorf("asmai init --yes asked a question:\n%s", out)
 	}
 	for _, want := range []string{"Installing it: --yes confirms.", "Claude Code version: already done.", "permission rules: already done.", "trust workspaces/: done. Claude Code trusts " + filepath.Join(stateDir, "workspaces")} {
@@ -985,7 +984,7 @@ func TestInitYesAcceptsClaudeDefaultModelFlagWithoutPrompts(t *testing.T) {
 	if code != 1 || !strings.Contains(stdout+stderr, "needs you at a terminal") {
 		t.Fatalf("init --yes with an untrusted folder exited %d printing %q", code, stdout+stderr)
 	}
-	if strings.Contains(stdout+stderr, "Claude default model (opus or sonnet)") {
+	if strings.Contains(stdout+stderr, "Claude default model [opus]") {
 		t.Errorf("init --yes asked for a model: %q", stdout+stderr)
 	}
 	cfg, problems, err := config.Load(configPath())
@@ -1007,13 +1006,14 @@ func TestInitYesAcceptsClaudeDefaultModelFlagWithoutPrompts(t *testing.T) {
 	}
 }
 
-func TestInitRejectsUnknownClaudeDefaultModelBeforeWritingConfig(t *testing.T) {
+func TestInitAcceptsCustomClaudeDefaultModel(t *testing.T) {
 	setupFactory(t, nil)
 	stdout, stderr, code := runIn(t, "", "init", "--yes", "--claude-default-model", "haiku")
-	if code != 1 || !strings.Contains(stdout+stderr, "not opus or sonnet") {
-		t.Errorf("init with an unknown model exited %d printing %q", code, stdout+stderr)
+	if code != 1 || !strings.Contains(stdout+stderr, "needs you at a terminal") {
+		t.Errorf("init with a custom model exited %d printing %q", code, stdout+stderr)
 	}
-	if _, err := os.Stat(configPath()); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("init wrote a configuration despite the unknown model: %v", err)
+	cfg, problems, err := config.Load(configPath())
+	if err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "haiku" {
+		t.Errorf("init saved model %q with problems %v and error %v, want haiku", cfg.Providers["claude"].DefaultModel, problems, err)
 	}
 }

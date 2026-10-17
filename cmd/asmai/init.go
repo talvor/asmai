@@ -187,24 +187,28 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		return fail(err)
 	}
 	present := providers.Executable(plan.Path)
+	_, pathErr := os.Lstat(plan.Path)
+	unusable := !present && !errors.Is(pathErr, os.ErrNotExist)
 	recorded := false
 	for _, installed := range resp.Providers {
 		recorded = recorded || installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && present
 	}
-	if present && (recorded || !running) {
-		report(plan.Title, stepAlreadyDone, fmt.Sprintf("The pinned %s %s is at %s", plan.Title, plan.Version, plan.Path))
-	} else {
-		if !present {
-			if err := fetchPinnedAs(w, stdin, plan, assumeYes); err != nil {
-				return fail(err)
+	if !unusable {
+		if present && (recorded || !running) {
+			report(plan.Title, stepAlreadyDone, fmt.Sprintf("The pinned %s %s is at %s", plan.Title, plan.Version, plan.Path))
+		} else {
+			if !present {
+				if err := fetchPinnedAs(w, stdin, plan, assumeYes); err != nil {
+					return fail(err)
+				}
 			}
-		}
-		if running {
-			if _, err := recordInstall(paths, plan); err != nil {
-				return fail(err)
+			if running {
+				if _, err := recordInstall(paths, plan); err != nil {
+					return fail(err)
+				}
 			}
+			report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 		}
-		report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 	}
 
 	// The pinned Claude Code is there now: check that it reports the pinned
@@ -265,26 +269,20 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 
 func chooseClaudeDefaultModel(w io.Writer, stdin io.Reader, assumeYes bool, requested string) (string, error) {
 	if requested != "" {
-		if requested != "opus" && requested != "sonnet" {
-			return "", fmt.Errorf("Claude's default model %q is not opus or sonnet", requested)
+		if strings.TrimSpace(requested) == "" {
+			return "", fmt.Errorf("Claude's default model must not be empty")
 		}
 		return requested, nil
 	}
 	if in, ok := stdin.(*os.File); !ok || !term.IsTerminal(int(in.Fd())) || assumeYes {
 		return "opus", nil
 	}
-	for {
-		fmt.Fprint(w, "Claude default model (opus or sonnet) [opus]: ")
-		answer := strings.ToLower(strings.TrimSpace(readLine(stdin)))
-		switch answer {
-		case "", "opus":
-			return "opus", nil
-		case "sonnet":
-			return "sonnet", nil
-		default:
-			fmt.Fprintln(w, "Choose opus or sonnet.")
-		}
+	fmt.Fprint(w, "Claude default model [opus]: ")
+	answer := strings.TrimSpace(readLine(stdin))
+	if answer == "" {
+		return "opus", nil
 	}
+	return answer, nil
 }
 
 // errNoTerminal is why trustFolder could not have the user trust a folder:

@@ -263,6 +263,9 @@ func TestAJobsStageFollowsTheStatedPrecedence(t *testing.T) {
 		{"writing rework beats old delivery", store.JobWork{Writing: true, PRCurrent: true, Pushed: true, Validated: true}, StageWorking},
 		{"an old pull request is working", store.JobWork{PullRequest: 4}, StageWorking},
 		{"an accepted validation with a blocking finding is working", store.JobWork{Validated: true, OpenBlocking: 1}, StageWorking},
+		{"a pushed head with a blocking finding is working", store.JobWork{Pushed: true, OpenBlocking: 1}, StageWorking},
+		{"a current pull request with a blocking finding is working", store.JobWork{PullRequest: 4, PRCurrent: true, OpenBlocking: 1}, StageWorking},
+		{"all delivery evidence with a blocking finding is working", store.JobWork{Validated: true, Pushed: true, PRCurrent: true, OpenBlocking: 1}, StageWorking},
 		{"no validation or pull request is working", store.JobWork{}, StageWorking},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

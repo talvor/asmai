@@ -1,13 +1,13 @@
  asmai dashboard  factory running
   1 Agents   2 Jobs   3 Log
 
- JOB   STAGE          ASSIGNMENTS                  PR      TITLE
- #9    ✓ Delivered    4 accepted                   #131    feat(daemon): add the journal cursor read
- #10   ▲ Needs you    1 submitted, 2 accepted      #140    fix(store): clear a blocking finding only by a later validation
- #11   ▶ Delivering   3 accepted                   #149    docs: record the dashboard's daemon calls
- #12   ◐ Validating   1 active, 2 accepted         -       Add the Jobs tab to the dashboard so a user can see how each job is progressing
- #14   ● Working      2 active, 1 reconcile, 1 ac… -       Make the log read take a cursor in both directions
- #15   ● Working      -                            -       Plan the next release
+ JOB   STAGE          ASSIGNMENTS                      PR      TITLE
+ #9    ✓ Delivered    acc:4                            #131    feat(daemon): add the journal cursor read
+ #10   ▲ Needs you    sub:1 acc:2                      #140    fix(store): clear a blocking finding only by a later validation
+ #11   ▶ Delivering   acc:3                            #149    docs: record the dashboard's daemon calls
+ #12   ◐ Validating   act:1 acc:2                      -       Add the Jobs tab to the dashboard so a user can see how each job is progressing
+ #14   ● Working      act:2 rec:1 acc:1 cxl:1          -       Make the log read take a cursor in both directions
+ #15   ● Working      -                                -       Plan the next release
 
 
 
@@ -44,6 +44,6 @@
 2 13-20: reverse
 2 22-28: faint
 4 1-33: faint
-4 52-64: faint
+4 56-68: faint
 5 1-160: reverse
 40 1-160: reverse

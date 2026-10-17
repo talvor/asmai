@@ -17,7 +17,7 @@ import (
 const (
 	jobNumberWidth = 5
 	stageWidth     = 14
-	assignWidth    = 28
+	minAssignWidth = 32
 	prWidth        = 7
 	minTitle       = 28
 )
@@ -43,22 +43,24 @@ var stageStyles = map[daemon.JobStage]lipgloss.Style{
 
 // jobColumns says which optional columns fit in width.
 type jobColumns struct {
-	assignments, pr bool
-	title           int
+	assignments, pr    bool
+	assignWidth, title int
 }
 
 func (m model) jobColumns() jobColumns {
 	width := min(m.width, maxWidth)
 	var c jobColumns
+	c.assignWidth = minAssignWidth
+	for _, job := range m.factory.jobs {
+		c.assignWidth = max(c.assignWidth, lipgloss.Width(assignmentWords(job.Assignments)))
+	}
 	used := 1 + jobNumberWidth + 1 + stageWidth + 1 // gutter, job, stage
-	// The optional columns come back in the order they are dropped in reverse.
-	for _, col := range []struct {
-		on    *bool
-		width int
-	}{{&c.assignments, assignWidth}, {&c.pr, prWidth}} {
-		if used+col.width+1+minTitle <= width {
-			*col.on = true
-			used += col.width + 1
+	if used+c.assignWidth+1+minTitle <= width {
+		c.assignments = true
+		used += c.assignWidth + 1
+		if used+prWidth+1+minTitle <= width {
+			c.pr = true
+			used += prWidth + 1
 		}
 	}
 	c.title = max(width-used, 0)
@@ -77,15 +79,15 @@ func assignmentWords(a daemon.AssignmentCounts) string {
 	for _, s := range []struct {
 		n    int
 		word string
-	}{{a.Active, "active"}, {a.Submitted, "submitted"}, {a.Reconciliation, "reconcile"}, {a.Cancelling, "cancelling"}, {a.Accepted, "accepted"}, {a.Cancelled, "cancelled"}} {
+	}{{a.Active, "act"}, {a.Submitted, "sub"}, {a.Reconciliation, "rec"}, {a.Cancelling, "cng"}, {a.Accepted, "acc"}, {a.Cancelled, "cxl"}} {
 		if s.n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", s.n, s.word))
+			parts = append(parts, fmt.Sprintf("%s:%d", s.word, s.n))
 		}
 	}
 	if len(parts) == 0 {
 		return "-"
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, " ")
 }
 
 // jobsBody draws the Jobs tab: a row of column names and the jobs the
@@ -130,7 +132,7 @@ func (m model) jobRow(c jobColumns, cells jobCells, stage lipgloss.Style) string
 	b.WriteString(stage.Render(pad(cells.stage, stageWidth)))
 	b.WriteString(" ")
 	if c.assignments {
-		b.WriteString(pad(cells.assignments, assignWidth))
+		b.WriteString(pad(cells.assignments, c.assignWidth))
 		b.WriteString(" ")
 	}
 	if c.pr {

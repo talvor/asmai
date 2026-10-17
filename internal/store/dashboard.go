@@ -99,26 +99,51 @@ type JobWork struct {
 	// validation, has not ended. NeedsYou counts the needs-you findings, and
 	// OpenBlocking the blocking findings no validation has cleared.
 	Validating   bool
+	Writing      bool
 	NeedsYou     int
 	OpenBlocking int
 	// Validated is whether Quality's validation was accepted and sent to the
-	// delivery owner, and Pushed whether the job branch was pushed.
+	// delivery owner for the current head. Pushed and PRCurrent are also
+	// evidence for that head.
 	Validated bool
 	Pushed    bool
+	PRCurrent bool
 }
 
 // JobWorks returns what the records say of each job, in job order. It only
 // reads.
 func (s *Store) JobWorks() ([]JobWork, error) {
-	rows, err := s.db.Query(`SELECT j.number, j.state = ?, j.words,
-			COALESCE((SELECT p.number FROM pull_requests p WHERE p.job = j.number ORDER BY p.id DESC LIMIT 1), 0),
-			COALESCE((SELECT p.title FROM pull_requests p WHERE p.job = j.number ORDER BY p.id DESC LIMIT 1), ''),
-			EXISTS (SELECT 1 FROM assignments a WHERE a.job = j.number AND a.read_only AND a.state NOT IN (?, ?)),
-			(SELECT count(*) FROM findings f WHERE f.job = j.number AND f.kind = ?),
-			(SELECT count(*) FROM findings f WHERE f.job = j.number AND f.kind = ? AND f.cleared_by IS NULL),
-			EXISTS (SELECT 1 FROM messages m WHERE m.job = j.number AND m.kind = ?),
-			EXISTS (SELECT 1 FROM pushes x WHERE x.job = j.number)
-		FROM jobs j ORDER BY j.number`, JobEnded, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation)
+	rows, err := s.db.Query(`WITH latest_pr AS (
+			SELECT p.job, p.number, p.title, p.head FROM pull_requests p
+			JOIN (SELECT job, MAX(id) id FROM pull_requests GROUP BY job) last ON last.id = p.id
+		), assignment_state AS (
+			SELECT job,
+				MAX(CASE WHEN read_only AND state NOT IN (?, ?) THEN 1 ELSE 0 END) validating,
+				MAX(CASE WHEN NOT read_only AND state NOT IN (?, ?) THEN 1 ELSE 0 END) writing
+			FROM assignments GROUP BY job
+		), finding_state AS (
+			SELECT job,
+				SUM(CASE WHEN kind = ? THEN 1 ELSE 0 END) needs_you,
+				SUM(CASE WHEN kind = ? AND cleared_by IS NULL THEN 1 ELSE 0 END) open_blocking
+			FROM findings GROUP BY job
+		), validations AS (
+			SELECT m.job, r.commit_id, 1 validated FROM messages m
+			JOIN reports r ON r.id = m.report WHERE m.kind = ? GROUP BY m.job, r.commit_id
+		), pushed_heads AS (
+			SELECT job, commit_id, 1 pushed FROM pushes WHERE result = ? GROUP BY job, commit_id
+		)
+		SELECT j.number, j.state = ?, j.words, COALESCE(p.number, 0), COALESCE(p.title, ''),
+			COALESCE(a.validating, 0), COALESCE(a.writing, 0),
+			COALESCE(f.needs_you, 0), COALESCE(f.open_blocking, 0),
+			COALESCE(v.validated, 0), COALESCE(x.pushed, 0), COALESCE(p.head = b.tip, 0)
+		FROM jobs j
+		LEFT JOIN job_branches b ON b.job = j.number
+		LEFT JOIN latest_pr p ON p.job = j.number
+		LEFT JOIN assignment_state a ON a.job = j.number
+		LEFT JOIN finding_state f ON f.job = j.number
+		LEFT JOIN validations v ON v.job = j.number AND v.commit_id = b.tip
+		LEFT JOIN pushed_heads x ON x.job = j.number AND x.commit_id = b.tip
+		ORDER BY j.number`, AssignmentAccepted, AssignmentCancelled, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation, PushPushed, JobEnded)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +151,7 @@ func (s *Store) JobWorks() ([]JobWork, error) {
 	works := []JobWork{}
 	for rows.Next() {
 		w := JobWork{Assignments: map[string]int{}}
-		if err := rows.Scan(&w.Number, &w.Ended, &w.Words, &w.PullRequest, &w.Title, &w.Validating, &w.NeedsYou, &w.OpenBlocking, &w.Validated, &w.Pushed); err != nil {
+		if err := rows.Scan(&w.Number, &w.Ended, &w.Words, &w.PullRequest, &w.Title, &w.Validating, &w.Writing, &w.NeedsYou, &w.OpenBlocking, &w.Validated, &w.Pushed, &w.PRCurrent); err != nil {
 			return nil, err
 		}
 		works = append(works, w)

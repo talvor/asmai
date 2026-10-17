@@ -50,9 +50,9 @@ func TestDashboardJobsDropColumnsAsTheWidthShrinks(t *testing.T) {
 		has     []string
 		lacks   []string
 	}{
-		{160, []string{"JOB", "STAGE", "ASSIGNMENTS", "PR", "TITLE"}, nil},
 		{100, []string{"JOB", "STAGE", "ASSIGNMENTS", "PR", "TITLE"}, nil},
-		{80, []string{"JOB", "STAGE", "ASSIGNMENTS", "TITLE"}, []string{"PR "}},
+		{90, []string{"JOB", "STAGE", "ASSIGNMENTS", "TITLE"}, []string{"PR "}},
+		{80, []string{"JOB", "STAGE", "TITLE"}, []string{"ASSIGNMENTS", "PR "}},
 	} {
 		t.Run(fmt.Sprint(tt.columns), func(t *testing.T) {
 			fake := dashtest.NewFakeDaemon(t)
@@ -118,10 +118,24 @@ func TestDashboardJobsShowTheDaemonsStageAndDeriveNone(t *testing.T) {
 	d.WaitForText("factory running")
 	d.Send("2")
 	screen := d.WaitForText("two")
-	for _, want := range []string{"✓ Delivered", "● Working", "3 active", "3 accepted", "#5"} {
+	for _, want := range []string{"✓ Delivered", "● Working", "act:3", "acc:3", "#5"} {
 		if !strings.Contains(screen, want) {
 			t.Errorf("the screen lacks %q:\n%s", want, screen)
 		}
+	}
+}
+
+func TestDashboardJobsShowEveryNonzeroAssignmentCount(t *testing.T) {
+	fake := dashtest.NewFakeDaemon(t)
+	fake.SetJobs(daemon.DashboardJob{Job: 1, Stage: daemon.StageWorking, Assignments: daemon.AssignmentCounts{
+		Active: 2, Submitted: 3, Reconciliation: 4, Cancelling: 5, Accepted: 6, Cancelled: 7,
+	}, Title: "all states"})
+	d := dashboardIn(t, fake, 100, 30)
+	d.WaitForText("factory running")
+	d.Send("2")
+	screen := d.WaitForText("all states")
+	if !strings.Contains(screen, "act:2 sub:3 rec:4 cng:5 acc:6 cxl:7") {
+		t.Errorf("the assignment counts are incomplete:\n%s", screen)
 	}
 }
 

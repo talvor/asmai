@@ -247,7 +247,7 @@ func deriveJob(w store.JobWork) DashboardJob {
 		out.Stage = StageNeedsYou
 	case w.Validating:
 		out.Stage = StageValidating
-	case w.Pushed || w.PullRequest != 0 || (w.Validated && w.OpenBlocking == 0):
+	case !w.Writing && (w.Pushed || w.PRCurrent || (w.Validated && w.OpenBlocking == 0)):
 		out.Stage = StageDelivering
 	default:
 		out.Stage = StageWorking

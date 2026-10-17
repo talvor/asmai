@@ -28,7 +28,7 @@ var (
 	dimStyle      = lipgloss.NewStyle().Faint(true)
 )
 
-const footerKeys = "1/2/3 tab · ↑/↓ move · enter attach · q quit"
+const footerKeys = "1/2/3 tab · ↑/↓ move · q quit"
 
 // render draws the whole screen: exactly height lines of at most width cells.
 func (m model) render() string {
@@ -58,7 +58,16 @@ func (m model) frame(body []string) string {
 	return strings.Join(rows, "\n")
 }
 
-func (m model) footer() string { return bar(" "+footerKeys, m.width) }
+func (m model) footer() string {
+	keys := footerKeys
+	switch m.tab {
+	case tabAgents:
+		keys = "1/2/3 tab · ↑/↓ move · enter attach · q quit"
+	case tabLog:
+		keys = "1/2/3 tab · q quit"
+	}
+	return bar(" "+keys, m.width)
+}
 
 // tooSmall is the only thing shown below the minimum size.
 func (m model) tooSmall() []string {

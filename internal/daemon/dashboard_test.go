@@ -257,9 +257,11 @@ func TestAJobsStageFollowsTheStatedPrecedence(t *testing.T) {
 		{"delivered beats everything", store.JobWork{Ended: true, NeedsYou: 1, Validating: true, PullRequest: 4}, StageDelivered},
 		{"a needs-you finding beats validation and delivery", store.JobWork{NeedsYou: 1, Validating: true, PullRequest: 4}, StageNeedsYou},
 		{"a live validation is validating", store.JobWork{Validating: true, Validated: true}, StageValidating},
-		{"a pull request is delivering", store.JobWork{PullRequest: 4}, StageDelivering},
+		{"a current pull request is delivering", store.JobWork{PullRequest: 4, PRCurrent: true}, StageDelivering},
 		{"a push is delivering", store.JobWork{Pushed: true}, StageDelivering},
 		{"an accepted validation with nothing blocking is delivering", store.JobWork{Validated: true}, StageDelivering},
+		{"writing rework beats old delivery", store.JobWork{Writing: true, PRCurrent: true, Pushed: true, Validated: true}, StageWorking},
+		{"an old pull request is working", store.JobWork{PullRequest: 4}, StageWorking},
 		{"an accepted validation with a blocking finding is working", store.JobWork{Validated: true, OpenBlocking: 1}, StageWorking},
 		{"no validation or pull request is working", store.JobWork{}, StageWorking},
 	} {

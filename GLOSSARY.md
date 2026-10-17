@@ -105,6 +105,10 @@ _Avoid_: Worktree, sandbox, checkout (when meaning an assignment's working copy)
 **Write guard**:
 Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in the workspace, `asmai`, git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt in Coordination's leader's session and is denied in every other agent's. It guards against mistakes; it is not a security boundary.
 
+**Writable folder**:
+A folder outside a workspace that a repository's entry declares its workers may write, usually a build cache, optionally with an environment variable that names it for the repository's tools. It opens the write guard for that folder in the workers of the repository's jobs and nowhere else.
+_Avoid_: Cache directory, allowlist entry
+
 **Directory trust**:
 The user's own trust, given to the provider at setup, in the factory directories where agents start: the one holding the leaders' directories and the one holding the workspaces, once each, and AsmAI's clone of each registered repository, once as `asmai repo add` registers it. The first covers every agent directory the factory later creates in it; a clone's covers every workspace checked out from it, which the provider trusts only through the repository it is a worktree of. So no agent ever waits at the provider's question about trusting its folder.
 _Avoid_: Workspace trust (it covers leaders' directories too), folder approval

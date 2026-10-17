@@ -16,12 +16,12 @@ C1, C2, C33 and C34 are M2's cases. C51 came after them, from [#151](https://git
 | Case | `asmai-vm` (linux/amd64) | Mac (darwin/arm64) |
 |---|---|---|
 | C1 | passed | passed |
-| C2 | failed at main; passed with this pull request's fix | passed |
+| C2 | failed at main; passed with this pull request's fix, including at its head | passed |
 | C33 | passed | passed |
 | C34 | passed | passed |
 | C51 | passed | passed |
 
-C2 failed on `asmai-vm` at main with `config.toml has a problem; fix it, then run asmai start`. The harness removed only its own `qualification-handoff` table from the disposable copy of the configuration file, so any other `[repositories.*]` table the host's file held was in the file but not registered in the fresh store, and `asmai setup` refused the copy. This pull request's fix removes every repository table from the copy, and with it C2 passed on both hosts in an earlier run (built as `3a467a3` on the Mac, and applied on top of main on `asmai-vm`). C2 passed at main on the Mac because its configuration file holds no repository table, so there was nothing to strip. A rerun of C2 on `asmai-vm` against this pull request's head: **not yet recorded**.
+C2 failed on `asmai-vm` at main with `config.toml has a problem; fix it, then run asmai start`. The harness removed only its own `qualification-handoff` table from the disposable copy of the configuration file, so any other `[repositories.*]` table the host's file held was in the file but not registered in the fresh store, and `asmai setup` refused the copy. This pull request's fix removes every repository table from the copy, and with it C2 passed on both hosts in an earlier run (built as `3a467a3` on the Mac, and applied on top of main on `asmai-vm`). C2 passed at main on the Mac because its configuration file holds no repository table, so there was nothing to strip. C2 also passed on `asmai-vm` at this pull request's head: its commits through `076c740` applied locally on main `6974d1c` and built as `77e691c0bb065578b90ecbf2fdd31779967662bb`.
 
 On the Mac, a stale unregistered `[repositories.asmai-fixture]` table in the host's own configuration file, rejected by [#88](https://github.com/talvor/asmai/issues/88)'s stricter check, was removed first (a host fix, with a backup kept; the harness only reads that file).
 
@@ -33,7 +33,7 @@ No case failed on the Mac, so this run needs no ticket for the next milestone.
 |---|---|
 | `asmai-vm`, `make test` | passed |
 | Mac, `make test` | passed |
-| Hosted CI, this pull request | **not yet recorded** (`test (ubuntu-latest)` and `test (macos-latest)`) |
+| Hosted CI, this pull request | **pipeline-recorded after merge** (`test (ubuntu-latest)` and `test (macos-latest)`) |
 
 ## The demo path
 

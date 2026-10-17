@@ -1,63 +1,70 @@
 # M2 exit checks
 
-M2's exit checks ([#93](https://github.com/talvor/asmai/issues/93); [the M2 milestone](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/milestones/M2-skills.md); [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)) are run on a development build of M2's head. These are the results of those runs. They are not a qualification record ([ADR 0009](adr/0009-a-release-is-the-qualified-commit-plus-its-record.md)).
-
-Cells marked **not yet recorded** have not been run. Nothing here is filled in until the run has happened.
+M2's exit checks ([#93](https://github.com/talvor/asmai/issues/93); [the M2 milestone](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/milestones/M2-skills.md); [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)) were run on a development build of M2's head. These are the results of those runs. They are not a qualification record ([ADR 0009](adr/0009-a-release-is-the-qualified-commit-plus-its-record.md)).
 
 | | |
 |---|---|
-| Commit | `672388386e9571167cf1cb595d3f41167d88bb99` (main), with the C2 fix `0378a7d13a687944da65ab4fdb7895e3cd54f444` from this pull request applied on top for C2 (built as `3a467a3` on the Mac) |
+| Commit | `6974d1ca5db5fa3369ca19f60f5c5745022144c2` (main), with the C2 fix from this pull request (`0378a7d`) applied on top for the runs that name it |
 | Provider | Claude Code 2.1.292, pinned |
 | Hosts | `asmai-vm` and the qualification Mac, each as its harness user `phillip` ([qualification hosts](qualification-hosts.md)) |
-| Harness | `./bin/qualify --cases C1,C2,C33,C34`, built with `make qualify` from the commit ([the qualification harness](qualification-harness.md)) |
+| Harness | `./bin/qualify --cases C1,C2,C33,C34,C51`, built with `make qualify` from the commit ([the qualification harness](qualification-harness.md)) |
 
 ## Qualification cases
+
+C1, C2, C33 and C34 are M2's cases. C51 came after them, from [#151](https://github.com/talvor/asmai/issues/151), and is reported apart.
 
 | Case | `asmai-vm` (linux/amd64) | Mac (darwin/arm64) |
 |---|---|---|
 | C1 | passed | passed |
-| C2 | passed, with the fix | passed, with the fix |
+| C2 | failed at main; passed with this pull request's fix | passed |
 | C33 | passed | passed |
 | C34 | passed | passed |
+| C51 | passed | passed |
 
-C2 failed on both hosts at main: the harness removed only its own `qualification-handoff` table from the disposable copy of the configuration file, so any other `[repositories.*]` table the host's file held was in the file but not registered in the fresh store, and `asmai setup` refused the copy. The fix removes every repository table from the copy. With it, C2 passed on both hosts.
+C2 failed on `asmai-vm` at main with `config.toml has a problem; fix it, then run asmai start`. The harness removed only its own `qualification-handoff` table from the disposable copy of the configuration file, so any other `[repositories.*]` table the host's file held was in the file but not registered in the fresh store, and `asmai setup` refused the copy. This pull request's fix removes every repository table from the copy, and with it C2 passed on both hosts in an earlier run (built as `3a467a3` on the Mac, and applied on top of main on `asmai-vm`). C2 passed at main on the Mac because its configuration file holds no repository table, so there was nothing to strip. A rerun of C2 on `asmai-vm` against this pull request's head: **not yet recorded**.
 
-On the Mac, a stale unregistered `[repositories.asmai-fixture]` table in the host's own configuration file, rejected by [#88](https://github.com/talvor/asmai/issues/88)'s stricter check, was removed first (a host fix; the harness only reads that file).
+On the Mac, a stale unregistered `[repositories.asmai-fixture]` table in the host's own configuration file, rejected by [#88](https://github.com/talvor/asmai/issues/88)'s stricter check, was removed first (a host fix, with a backup kept; the harness only reads that file).
 
-No case failed on the Mac after that, so no ticket for the next milestone is needed.
+No case failed on the Mac, so this run needs no ticket for the next milestone.
 
 ## Development tests
 
-| | Result at the commit |
+| | Result |
 |---|---|
 | `asmai-vm`, `make test` | passed |
 | Mac, `make test` | passed |
-| Hosted CI, the pull request that merges the commit | not yet recorded |
+| Hosted CI, this pull request | **not yet recorded** (`test (ubuntu-latest)` and `test (macos-latest)`) |
 
 ## The demo path
 
-The demo runs once on the fixture repository, [talvor/asmai-fixture](https://github.com/talvor/asmai-fixture), with the factory in a throwaway state directory on a new host set up with `asmai init`, and with Coordination, Engineering and Quality on Claude Code. The sequence is:
+The demo ran once on the qualification Mac, with the factory in a throwaway state directory, at main `6974d1c`, after #151 merged, with Coordination, Engineering and Quality on Claude Code. The sequence was:
 
-1. `asmai init` (answer Claude Code's "Yes, I trust this folder" for `agents/` and `workspaces/`), then `asmai start`, then `asmai repo add https://github.com/talvor/asmai-fixture.git` (answer the trust question for the clone).
-2. In the conversation, the user's request: "In asmai-fixture, add an exported `farewell(name = 'world')` function to src/index.js that returns `Goodbye, ${name}!`, with a test beside the existing greet test. Deliver it as a tested pull request."
-3. Coordination opens a job. Engineering's workers write and validate the change; each assignment names the skill its worker is to run from its role's list. The daemon pushes the change, Engineering's leader opens the draft pull request, and the daemon watches CI and marks it ready.
-4. Coordination reports the delivery and that the job has ended.
-5. `asmai job <id>` shows the job `ended`, and the pull request on the fixture repository is open, not a draft, with its `test` check passed.
+1. `asmai init` (the trust of `agents/`, `workspaces/` and the fixture clone was reported already done: Claude Code remembers trust by path from earlier attempts), then `asmai start`, then `asmai repo add https://github.com/talvor/asmai-fixture.git`.
+2. In `asmai chat`, the user's request: "In asmai-fixture, add an exported `farewell(name = 'world')` function to src/index.js that returns `Goodbye, ${name}!`, with a test beside the existing greet test. Deliver it as a tested pull request."
+3. Coordination opened job 1. Engineering's worker1 (assignment 1) returned its result, and Quality's worker1 (assignment 2) validation was accepted. The daemon pushed the branch and recorded and delivered the pull request.
+4. [talvor/asmai-fixture#64](https://github.com/talvor/asmai-fixture/pull/64) was open, not a draft, with its `test` check passed, at head `8a8524ab3a64a6a5cb13cc59c6250c698ddbff63`.
 
-Observed run: **not yet recorded** (job id, pull request, head commit, host).
+Every dispatch recorded skill bundle v1.3.1.
 
-Recording: **not yet recorded**. The run is recorded with asciinema in the demo terminal. Phillip keeps the recording; it is not published.
+The run was recorded with asciinema, about 15 minutes. The maintainer keeps the recording, `m2-demo-mac-6974d1c.cast`; it is not published.
+
+Host notes:
+
+- The Mac demo used its own Git configuration (name and email, commit signing off through `GIT_CONFIG_GLOBAL`), because the Mac signs commits through a graphical pinentry that blocks an unattended worker.
+- The Mac's own configuration file had a stale unregistered fixture table removed (backup kept), because #88's check rejects it.
+- Two earlier demo attempts, one on Linux and one on the Mac, stalled before #151, because workers could not push. They are why #151 exists.
 
 ## Skills the workers named
 
-Each worker says which skills it ran with `asmai result --skill <name>`, which must be on its assignment's list. From the job's results:
+Each worker says which skills it ran with `asmai result --skill <name>`, which must be on its assignment's list.
 
 | Role | Assignment | Skills named |
 |---|---|---|
-| Engineering | **not yet recorded** | **not yet recorded** |
-| Quality | **not yet recorded** | **not yet recorded** |
-| Coordination | **not yet recorded** | **not yet recorded** |
+| Engineering | worker1, assignment 1 | `tdd` and `pr`, from its leader's review note; the journal row's field was not directly readable |
+| Quality | worker1, assignment 2 | `code-review` |
 
 ## Found on the way
 
-**None recorded yet.**
+- A new case, C51 ([#151](https://github.com/talvor/asmai/issues/151)): workers could not commit and push their assignment branch in their real session and sandbox, which stalled two earlier demo attempts. It was fixed before this run.
+- C2 refused any host configuration file holding a repository table other than the harness's own (this pull request's fix).
+- Candidate follow-up, not filed: `asmai init` does not warn when the Git identity or commit signing is unusable for workers.

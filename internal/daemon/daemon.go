@@ -208,18 +208,21 @@ type Response struct {
 	// a repo command added, showed or removed.
 	Repositories []store.Repository `json:"repositories,omitempty"`
 	Repository   *store.Repository  `json:"repository,omitempty"`
-	Jobs         []store.Job        `json:"jobs,omitempty"`
-	Job          *store.Job         `json:"job,omitempty"`
-	Brief        string             `json:"brief,omitempty"`
-	Handoff      *store.Handoff     `json:"handoff,omitempty"`
-	Dispatch     *store.Dispatch    `json:"dispatch,omitempty"`
-	Messages     []store.Message    `json:"messages,omitempty"`
-	Assignment   *store.Assignment  `json:"assignment,omitempty"`
-	Effect       *store.Effect      `json:"effect,omitempty"`
-	Report       *store.Report      `json:"report,omitempty"`
-	Decision     *store.Decision    `json:"decision,omitempty"`
-	JobBranch    *store.JobBranch   `json:"job_branch,omitempty"`
-	Push         *store.Push        `json:"push,omitempty"`
+	// Writable are the folders outside their workspaces that the shown
+	// repository's workers may write.
+	Writable   []config.Folder   `json:"writable,omitempty"`
+	Jobs       []store.Job       `json:"jobs,omitempty"`
+	Job        *store.Job        `json:"job,omitempty"`
+	Brief      string            `json:"brief,omitempty"`
+	Handoff    *store.Handoff    `json:"handoff,omitempty"`
+	Dispatch   *store.Dispatch   `json:"dispatch,omitempty"`
+	Messages   []store.Message   `json:"messages,omitempty"`
+	Assignment *store.Assignment `json:"assignment,omitempty"`
+	Effect     *store.Effect     `json:"effect,omitempty"`
+	Report     *store.Report     `json:"report,omitempty"`
+	Decision   *store.Decision   `json:"decision,omitempty"`
+	JobBranch  *store.JobBranch  `json:"job_branch,omitempty"`
+	Push       *store.Push       `json:"push,omitempty"`
 	// PullRequest is the pull request the delivery owner's effect named,
 	// as the daemon recorded it.
 	PullRequest *store.PullRequest `json:"pull_request,omitempty"`
@@ -263,6 +266,10 @@ type Config struct {
 	// trust in, ~/.claude.json, which the daemon reads and never writes; with
 	// none, no agent starts.
 	ClaudeRecord string
+	// Home is the user's home directory, which ~ in a repository's writable
+	// folders means; with none, it is the home directory of the user this
+	// daemon runs as.
+	Home string
 	// ClaudeVersion reads the version the Claude Code at path reports, which
 	// the checks require to be the pinned one; with none, it is
 	// providers.ClaudeCodeVersion, which runs it with --version.

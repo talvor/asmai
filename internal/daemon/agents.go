@@ -692,7 +692,8 @@ func (d *daemon) startLeader(l *leader, cfg config.Config, install store.Provide
 
 // startWorker starts the session of the worker l on the installed Claude
 // Code in the workspace of the assignment it carries, with that workspace's
-// slot and temporary directory, and journals it. The settings of the job's
+// slot and temporary directory and the writable folders its job's repository
+// declares, and journals it. The settings of the job's
 // repository in cfg give the user's notes, which the worker is given with
 // the repository's instruction files, and its skills are those of
 // assignmentSkills. A worker that resumes the provider's session resume
@@ -720,14 +721,29 @@ func (d *daemon) startWorker(l *leader, cfg config.Config, install store.Provide
 	if repository != "" {
 		instructions += "\n" + repository
 	}
+	// The folders its repository declares are checked again here, as the
+	// file may have been applied before today's rules.
+	folders, err := d.workerFolders(cfg, a.Job)
+	if err != nil {
+		return err
+	}
 	l.assignment = a.ID
 	env := map[string]string{
 		SlotVariable: strconv.Itoa(a.Workspace.Slot),
 		"TMPDIR":     a.Workspace.Tmp,
 	}
+	writable := []string{a.Workspace.Tmp}
+	for _, f := range folders {
+		writable = append(writable, f.Resolved)
+		if f.Env != "" {
+			// The session's environment sets it over any value the daemon
+			// inherited, so the tools use the folder the guard opened.
+			env[f.Env] = f.Resolved
+		}
+	}
 	// The worker's git adds the trailers to each commit, as the user.
 	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: []string{a.Workspace.Tmp}, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: given})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: writable, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: given})
 }
 
 // startSession starts l's session on the installed Claude Code as launch

@@ -5,7 +5,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/talvor/asmai/internal/config"
@@ -36,7 +39,7 @@ func configCheck(o *output) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	_, problems, err := fileProblems(path)
+	cfg, problems, err := fileProblems(path)
 	if errors.Is(err, config.ErrMissing) {
 		return o.fail(fmt.Errorf("%s does not exist; run `asmai init`, which writes it with every role staffed, or print an example to start from with `asmai config example`", path))
 	}
@@ -48,7 +51,11 @@ func configCheck(o *output) int {
 		for _, p := range problems {
 			list = append(list, configProblem{Line: p.Line, Problem: p.Problem, Fix: p.Fix})
 		}
-		code := o.printJSON(map[string]any{"file": path, "valid": len(problems) == 0, "problems": list})
+		writable := cfg.OpenFolders(home)
+		if writable == nil {
+			writable = []config.RepositoryFolders{}
+		}
+		code := o.printJSON(map[string]any{"file": path, "valid": len(problems) == 0, "problems": list, "writable": writable})
 		if code == 0 && len(problems) > 0 {
 			code = 1
 		}
@@ -56,6 +63,7 @@ func configCheck(o *output) int {
 	}
 	if len(problems) == 0 {
 		fmt.Fprintf(o.stdout, "%s has no problems.\n", path)
+		printOpenFolders(o.stdout, cfg.OpenFolders(home))
 		return 0
 	}
 	noun := "problems"
@@ -99,13 +107,40 @@ func fileProblems(path string) (config.Config, []config.Problem, error) {
 	return cfg, problems, nil
 }
 
+// printOpenFolders tells the user on w which folders each repository opens
+// outside its workspaces for its workers to write.
+func printOpenFolders(w io.Writer, open []config.RepositoryFolders) {
+	if len(open) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Folders outside their workspaces that a repository's workers may write:")
+	for _, r := range open {
+		for _, f := range r.Folders {
+			text := f.Resolved
+			if f.Env != "" {
+				text += " (exported as " + f.Env + ")"
+			}
+			fmt.Fprintf(w, "  %s: %s\n", r.Repository, text)
+		}
+	}
+}
+
+// registeredRepositoryProblems returns the problems of the file's
+// repositories on this host: those the registered repositories have with
+// their entries, and the places the entries' writable folders open that are
+// closed to them.
 func registeredRepositoryProblems(cfg config.Config) ([]config.Problem, error) {
 	paths, err := statedir.Default()
 	if err != nil {
 		return nil, err
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("finding the home directory: %w", err)
+	}
+	writable := cfg.WritableProblems(config.NewBounds(home, paths.Dir, paths.Repositories, slices.Collect(maps.Keys(cfg.Repositories))))
 	if _, err := os.Stat(paths.Store); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return writable, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("reading the registered repositories: %w", err)
 	}
@@ -118,7 +153,7 @@ func registeredRepositoryProblems(cfg config.Config) ([]config.Problem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the registered repositories: %w", err)
 	}
-	return daemon.RepositoryProblems(cfg, registered), nil
+	return append(daemon.RepositoryProblems(cfg, registered), writable...), nil
 }
 
 // configExample is `asmai config example`: it prints the example

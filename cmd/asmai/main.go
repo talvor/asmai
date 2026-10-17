@@ -86,7 +86,10 @@ commands you type:
                               checkout is never used for work. It also takes the entry's other
                               settings: --default-branch <branch>, --notes <text>,
                               --checks-one-at-a-time, --no-ci, --commit-trailers=false and
-                              --repository-skills <role> (repeat for each role)
+                              --repository-skills <role> (repeat for each role) and
+                              --writable <path>[=<ENV>] (repeat for each folder), the folders
+                              outside their workspaces that the repository's workers may write,
+                              such as a build cache; with none, the folders its language suggests
   asmai repo list             list the registered repositories
   asmai repo show <name>      show what is recorded for a registered repository
   asmai repo remove <name>    remove a repository's record, its configuration entry and its
@@ -271,6 +274,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		repoOptions.commitTrailers = true
 		flags.BoolVar(&repoOptions.commitTrailers, "commit-trailers", true, "commits carry the AsmAI trailers; --commit-trailers=false switches them off")
 		flags.Var(&repoOptions.skills, "repository-skills", "record the repository's own skills for this role; may be repeated")
+		flags.Var(&repoOptions.writable, "writable", "a folder outside the workspace that workers of the repository's jobs may write, as <path> or <path>=<ENV>; may be repeated")
 	case "role set":
 		flags.StringVar(&role.leaderProvider, "leader-provider", "", "the provider of the role's leader")
 		flags.StringVar(&role.leaderModel, "leader-model", "", "the model of the role's leader")

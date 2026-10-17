@@ -287,9 +287,10 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
 	if errors.Is(err, daemon.ErrNotRunning) {
 		if o.json {
-			return o.printJSON(map[string]any{"file": path, "applied": false, "running": false})
+			return o.printJSON(map[string]any{"file": path, "applied": false, "running": false, "writable": openFolders(cfg)})
 		}
 		fmt.Fprintf(o.stdout, "%s has no problems. The factory is not running, so no agent has anything to pick up: it reads the file when it starts, with `asmai start`.\n", path)
+		printOpenFolders(o.stdout, cfg.OpenFolders(userHome()))
 		return 0
 	}
 	if err != nil {
@@ -304,6 +305,7 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 			return o.printJSON(preview)
 		}
 		fmt.Fprintf(o.stdout, "%s is as applied; there is no change.\n", path)
+		printOpenFolders(o.stdout, preview.Writable)
 		return 0
 	}
 	w := o.stdout
@@ -311,6 +313,7 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 		w = o.stderr
 	}
 	showChanges(w, path, preview.Changes)
+	printOpenFolders(w, preview.Writable)
 	fmt.Fprint(w, "Apply it? [y/N] ")
 	answer := readLine(stdin)
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
@@ -356,7 +359,14 @@ func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 		if c.Skills && len(c.Lost) > 0 {
 			fmt.Fprintf(w, "      removes skills: %s\n", strings.Join(c.Lost, ", "))
 		}
-		if c.Repository != "" {
+		if c.Folders {
+			if len(c.Gained) > 0 {
+				fmt.Fprintf(w, "      opens for %s's workers to write: %s\n", c.Repository, strings.Join(c.Gained, ", "))
+			}
+			if len(c.Lost) > 0 {
+				fmt.Fprintf(w, "      closes for %s's workers: %s\n", c.Repository, strings.Join(c.Lost, ", "))
+			}
+		} else if c.Repository != "" {
 			if len(c.Gained) > 0 {
 				fmt.Fprintf(w, "      switches on %s's own skills for: %s\n", c.Repository, strings.Join(c.Gained, ", "))
 			}
@@ -377,6 +387,21 @@ func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 			fmt.Fprintf(w, "      no running agent is affected, so it applies at once\n")
 		}
 	}
+}
+
+// userHome returns the user's home directory, or "" when it cannot be
+// found, in which case no folder resolves.
+func userHome() string {
+	home, _ := os.UserHomeDir()
+	return home
+}
+
+// openFolders returns the folders cfg's repositories open, never nil.
+func openFolders(cfg config.Config) []config.RepositoryFolders {
+	if open := cfg.OpenFolders(userHome()); open != nil {
+		return open
+	}
+	return []config.RepositoryFolders{}
 }
 
 func orNone(text string) string {

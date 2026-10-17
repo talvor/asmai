@@ -27,6 +27,10 @@ type Entry struct {
 	// List is the value of a list setting, and IsList says it is one.
 	List   []string
 	IsList bool
+	// Folders are the writable folders of a repository's "writable" entry,
+	// which the file writes as a [[repositories.<name>.writable]] table
+	// each; its List has them as `asmai repo add --writable` does.
+	Folders []Writable
 }
 
 // Entries returns every setting of c in the order the file is documented,
@@ -101,6 +105,16 @@ func Entries(c Config) []Entry {
 		add(table, "no_ci", strconv.FormatBool(o.NoCI))
 		add(table, "commit_trailers", strconv.FormatBool(o.CommitTrailers))
 		addList(table, "repository_skills", o.RepositorySkills)
+		if len(o.Writable) > 0 {
+			items := make([]string, len(o.Writable))
+			for i, w := range o.Writable {
+				items[i] = w.Path
+				if w.Env != "" {
+					items[i] += "=" + w.Env
+				}
+			}
+			out = append(out, Entry{Table: table, Name: "writable", Text: list(items), List: items, IsList: true, Folders: slices.Clone(o.Writable)})
+		}
 	}
 	return out
 }
@@ -119,6 +133,15 @@ func Render(c Config) []byte {
 			}
 			fmt.Fprintf(&b, "[%s]\n", e.Table)
 			table = e.Table
+		}
+		if e.Folders != nil {
+			for _, w := range e.Folders {
+				fmt.Fprintf(&b, "\n[[%s.writable]]\npath = %s\n", e.Table, quote(w.Path))
+				if w.Env != "" {
+					fmt.Fprintf(&b, "env = %s\n", quote(w.Env))
+				}
+			}
+			continue
 		}
 		fmt.Fprintf(&b, "%s = %s\n", e.Name, e.Text)
 	}

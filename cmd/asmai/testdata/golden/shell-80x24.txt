@@ -1,0 +1,30 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · q quit
+--- attributes
+1 1-80: reverse
+2 2-11: reverse
+2 13-20: faint
+2 22-28: faint
+24 1-80: reverse

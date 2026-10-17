@@ -70,6 +70,7 @@ Every start then runs the checks that exist: this platform is certified (Linux o
 | `asmai agents` | The agents that have run: each one's state, generation, provider, model and process |
 | `asmai jobs`, `asmai job <number>` | List numbered jobs or show one with the user's words and Coordination's reading |
 | `asmai attach <agent>` | Show an agent's terminal and observe it. Ctrl-] detaches |
+| `asmai dashboard` | A read-only live view of the factory in three tabs, `1 Agents`, `2 Jobs` and `3 Log`, which shows only a message while the factory is stopped or the terminal is under 80x24. `q` leaves |
 | `asmai log [--follow]` | The daemon's log, oldest first; `--follow` waits for new lines. It reads the log files, so it works while the daemon is stopped |
 | `asmai export` | The journal, written out for inspection |
 | `asmai providers install` | Fetch the pinned provider CLIs, once you confirm (see [Pinned providers](#pinned-providers)) |

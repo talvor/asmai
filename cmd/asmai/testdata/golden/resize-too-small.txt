@@ -1,0 +1,22 @@
+terminal too small: needs 80x24, has 60x20
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · q quit
+--- attributes
+20 1-60: reverse

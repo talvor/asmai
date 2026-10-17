@@ -27,7 +27,6 @@ import (
 	"github.com/talvor/asmai"
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
-	_ "github.com/talvor/asmai/internal/dashboard"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
@@ -71,6 +70,10 @@ commands you type:
   asmai job <number>          show a job and its witnessed request
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
+  asmai dashboard             show the factory live in this terminal: agents, jobs and the log in three
+                              tabs, 1, 2 and 3, under a banner of what waits on you; q leaves. It only
+                              reads, never acts on the factory, and shows a message while the factory
+                              is stopped. It needs a terminal of at least 80 columns by 24 rows
   asmai log [--follow]        print the daemon's log; --follow waits for more
   asmai export                write the journal out for inspection
   asmai providers install     fetch the pinned provider CLIs, after you confirm
@@ -324,7 +327,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "doctor", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
+	case "chat", "dashboard", "doctor", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -441,6 +444,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return decisionRecord(o, paths, decisionJob, choice, rationale, evidence)
 	case "chat":
 		return chat(o, paths, stdin)
+	case "dashboard":
+		return dashboardCommand(o, paths, stdin)
 	case "attach":
 		return attach(o, paths, arg, stdin)
 	case "hook":

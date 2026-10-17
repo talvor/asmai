@@ -16,6 +16,7 @@ import (
 
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/fakeprovider"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/vt"
 )
@@ -74,8 +75,8 @@ func setupFactory(t *testing.T, scripts map[string][]string) (stateDir, testDir 
 	t.Setenv("ASMAI_FAKE_PROVIDER_SCRIPT", leader)
 	claude := []byte(`#!/bin/sh
 folder=$(basename "$PWD")
-# The permission rules probe and the version check are not a folder the user opens Claude Code in.
-if [ "$1" = -p ] || [ "$1" = --version ]; then exec ` + providers.ShellQuote(fakeProvider) + ` "$@"; fi
+# The permission rules probe, sign-in check and version check are not a folder the user opens Claude Code in.
+if [ "$1" = -p ] || [ "$1" = --version ] || [ "$1" = auth ]; then exec ` + providers.ShellQuote(fakeProvider) + ` "$@"; fi
 echo "$folder" >> "$ASMAI_TEST_DIR/opened"
 echo "$folder DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER-}" >> "$ASMAI_TEST_DIR/environments"
 if [ -e "$ASMAI_TEST_DIR/script-$folder.jsonl" ]; then
@@ -329,6 +330,9 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	if got, _ := os.ReadFile(configFile); string(got) != string(config.Default()) {
 		t.Errorf("the configuration file holds\n%s\nwant the default", got)
 	}
+	if cfg, problems, err := config.Load(configFile); err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "opus" {
+		t.Errorf("init's Claude default model is %q with problems %v and error %v, want opus", cfg.Providers["claude"].DefaultModel, problems, err)
+	}
 	for _, dir := range []string{"providers", "bin", "githooks", "agents", "repositories", "workspaces", "views"} {
 		if info, err := os.Stat(filepath.Join(stateDir, dir)); err != nil || !info.IsDir() {
 			t.Errorf("setup made no %s folder: %v", dir, err)
@@ -384,7 +388,7 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("asmai init --json printed %q: %v", stdout.String(), err)
 	}
-	if len(result.Steps) != 8 || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+	if len(result.Steps) != 9 || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
 		t.Errorf("asmai init --json reported %+v, want six steps already done", result.Steps)
 	}
 }
@@ -477,8 +481,38 @@ func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("asmai init --json printed %q: %v", stdout.String(), err)
 	}
-	if len(result.Steps) != 9 || result.Steps[8].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
-		t.Errorf("asmai init --json reported %+v, want seven steps already done, the clone's last", result.Steps)
+	if len(result.Steps) != 10 || result.Steps[9].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+		t.Errorf("asmai init --json reported %+v, want ten steps already done, the clone's last", result.Steps)
+	}
+	configFile := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := added.Repository.Origin
+	changed := strings.Replace(string(data), origin, origin+"-conflict", 1)
+	if changed == string(data) {
+		t.Fatalf("the registered origin %q was absent from the configuration", origin)
+	}
+	if err := os.WriteFile(configFile, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"init"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "problem") || !strings.Contains(stdout.String(), "origin") {
+		t.Errorf("init with a conflicting registered origin exited %d printing %q", code, stdout.String()+stderr.String())
+	}
+}
+
+func TestInitStopsBeforeTrustWhenPinnedClaudeReportsAnotherVersion(t *testing.T) {
+	t.Setenv(fakeprovider.VersionEnv, "2.1.293")
+	_, testDir := setupFactory(t, map[string][]string{"agents": trusting})
+	stdout, stderr, code := runIn(t, "", "init", "--yes")
+	if code != 1 || !strings.Contains(stdout+stderr, "Claude Code version: failed.") {
+		t.Errorf("init with the wrong CLI version exited %d printing %q", code, stdout+stderr)
+	}
+	if got := opened(testDir); len(got) != 0 {
+		t.Errorf("init opened Claude Code in %v after its version failed", got)
 	}
 }
 

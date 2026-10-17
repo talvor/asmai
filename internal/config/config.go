@@ -1004,11 +1004,12 @@ const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` +
 
 // Default returns the configuration file `asmai init` writes when there is
 // none: a header pointing to the README's section on the file, and a table
-// staffing each role M1 runs as exampleStaffing does. It registers no
-// repository.
+// staffing each role M1 runs as exampleStaffing does, with Claude's default
+// fallback model. It registers no repository.
 func Default() []byte {
 	var b strings.Builder
 	b.WriteString(defaultHeader)
+	b.WriteString("\n[providers.claude]\ndefault_model = \"opus\"\n")
 	for _, role := range roles.Staffed {
 		b.WriteString("\n" + Example(role) + "\n")
 	}

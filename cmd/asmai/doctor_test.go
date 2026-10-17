@@ -65,7 +65,7 @@ func TestDoctorReportsAReadyFactoryAndUpstreamsNewerRelease(t *testing.T) {
 	configFile := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
 	for _, want := range []string{
 		"Platform       ", "Provider pin   Claude Code 2.1.292", "Configuration  " + configFile,
-		"ok      staffing", "ok      Claude Code 2.1.292", "ok      Claude Code version", "ok      permission rules", "ok      directory trust",
+		"ok      staffing", "ok      Claude Code 2.1.292", "ok      Claude Code version", "ok      Claude Code sign-in", "ok      permission rules", "ok      directory trust",
 		"Claude Code's built-in slash commands, such as /security-review and /init",
 		"Upstream has a newer skill release: v99.0.0, and the bundle is " + skills.Version(),
 		"Every check passed.",
@@ -100,6 +100,12 @@ func TestDoctorSaysWhenUpstreamIsNotNewerOrCannotBeReached(t *testing.T) {
 	stdout, stderr, code = doctorIn(t)
 	if want := "Could not look up upstream's latest release"; code != 0 || !strings.Contains(stdout, want) || !strings.Contains(stdout, "no route to host") {
 		t.Errorf("with upstream out of reach, asmai doctor exited %d printing %q, want it to say %q", code, stdout+stderr, want)
+	}
+
+	fakeUpstream(t, "v0.0.1", nil)
+	stdout, stderr, code = doctorIn(t)
+	if code != 0 || !strings.Contains(stdout, "No newer upstream skill release was found") || strings.Contains(stdout, "is upstream's latest skill release") {
+		t.Errorf("with an older upstream release, doctor exited %d printing %q", code, stdout+stderr)
 	}
 }
 

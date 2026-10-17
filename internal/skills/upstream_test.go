@@ -21,7 +21,8 @@ func TestNewerComparesReleaseNumbers(t *testing.T) {
 		{"v1.3.1", "v1.3.0", false},
 		{"v1.9.0", "v1.10.0", true},
 		{"v1.3", "v1.3.1", true},
-		{"v1.3.1", "nightly", true},
+		{"v1.3.1", "nightly", false},
+		{"nightly", "v1.4.0", false},
 	} {
 		if got := Newer(c.current, c.latest); got != c.want {
 			t.Errorf("Newer(%q, %q) = %v, want %v", c.current, c.latest, got, c.want)

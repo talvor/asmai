@@ -61,7 +61,8 @@ type upstreamReport struct {
 // `asmai doctor` all run, without changing anything: that this platform is
 // certified, that the configuration file staffs the roles and holds no
 // problem, that the pinned Claude Code is installed, reports the pinned
-// version and lets AsmAI's permission rules take effect, and that Claude
+// version, uses a Claude subscription sign-in and lets AsmAI's permission
+// rules take effect, and that Claude
 // Code trusts the directories agents start in. It returns them with the
 // configuration file's path and the configuration, when it could be read.
 func hostChecks(paths statedir.Paths, home string, registered []store.Repository) (checks []daemon.Check, configFile string, cfg config.Config, err error) {
@@ -114,7 +115,7 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 		checks = append(checks, daemon.ClaudeCodeChecks(p.ClaudeCode.Version, plan.Path, installErr,
 			func(path string) daemon.Check {
 				return daemon.Check(certify.Version(context.Background(), path, p.ClaudeCode.Version, providers.ClaudeCodeVersion))
-			},
+			}, daemon.SignInCheck,
 			func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir) })...)
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
@@ -308,8 +309,10 @@ func doctor(o *output, paths statedir.Paths) int {
 		fmt.Fprintf(w, "  Could not look up upstream's latest release (%s): %s. The bundle is %s.\n", upstream.Source, upstream.Error, upstream.Bundled)
 	case upstream.Newer:
 		fmt.Fprintf(w, "  Upstream has a newer skill release: %s, and the bundle is %s (%s). A newer asmai release brings it once qualified.\n", upstream.Latest, upstream.Bundled, upstream.Source)
-	default:
+	case upstream.Latest == upstream.Bundled:
 		fmt.Fprintf(w, "  The bundle, %s, is upstream's latest skill release (%s).\n", upstream.Bundled, upstream.Source)
+	default:
+		fmt.Fprintf(w, "  No newer upstream skill release was found; upstream reports %s and the bundle is %s (%s).\n", upstream.Latest, upstream.Bundled, upstream.Source)
 	}
 
 	if failures > 0 {

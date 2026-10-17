@@ -59,7 +59,7 @@ func LatestRelease(ctx context.Context, client *http.Client, address string) (st
 
 // Newer reports whether the release latest is newer than the release
 // current, comparing dotted numbers such as v1.3.1. Releases that are not
-// dotted numbers are newer when they differ.
+// dotted numbers cannot be ordered here.
 func Newer(current, latest string) bool {
 	if current == latest {
 		return false
@@ -67,7 +67,7 @@ func Newer(current, latest string) bool {
 	c, cok := releaseNumbers(current)
 	l, lok := releaseNumbers(latest)
 	if !cok || !lok {
-		return true
+		return false
 	}
 	for i := 0; i < max(len(c), len(l)); i++ {
 		var a, b int

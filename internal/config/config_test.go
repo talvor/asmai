@@ -235,6 +235,9 @@ func TestTheDefaultFileStaffsEveryRoleAndRegistersNoRepository(t *testing.T) {
 	if len(cfg.Repositories) != 0 {
 		t.Errorf("the default file registers %v", cfg.Repositories)
 	}
+	if got := cfg.Providers["claude"].DefaultModel; got != "opus" {
+		t.Errorf("the default file gives Claude model %q, want opus", got)
+	}
 	if !strings.HasPrefix(string(data), "# ") || !strings.Contains(string(data), "README") || !strings.Contains(string(data), "#the-configuration-file") {
 		t.Errorf("the default file opens\n%s\nwant a comment pointing to the README's section on the file", data)
 	}

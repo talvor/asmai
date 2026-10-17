@@ -269,7 +269,7 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 	pinned := d.cfg.Pins.ClaudeCode.Version
 	install, err := d.claudeCode(pinned)
 	claude := ClaudeCodeChecks(pinned, install.Path, err,
-		func(path string) Check { return d.versionCheck(path, pinned) }, d.permissionRulesCheck)
+		func(path string) Check { return d.versionCheck(path, pinned) }, SignInCheck, d.permissionRulesCheck)
 	checks = append(checks, claude...)
 	checks = append(checks, d.trustCheck())
 	return checks, cfg, install
@@ -278,12 +278,10 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 // ClaudeCodeChecks runs the checks of the pinned Claude Code of version
 // pinned, which the daemon's start, `asmai init` and `asmai doctor` all run:
 // that it is installed, at path, or else why installing it failed
-// (installErr), that it reports the pinned version, and that this account
-// lets AsmAI's own permission rules take effect. version and rules run the
-// last two against the install at the path they are given; they are not run
-// for a copy that is missing, and rules is not run for one that is not the
-// pinned version, which is refused before it runs for anything.
-func ClaudeCodeChecks(pinned, path string, installErr error, version, rules func(path string) Check) []Check {
+// (installErr), that it reports the pinned version, that its sign-in uses a
+// Claude subscription, and that this account lets AsmAI's permission rules
+// take effect. Later checks run only when earlier ones pass.
+func ClaudeCodeChecks(pinned, path string, installErr error, version, signIn, rules func(path string) Check) []Check {
 	name := "Claude Code " + pinned
 	switch {
 	case pinned == "":
@@ -295,9 +293,30 @@ func ClaudeCodeChecks(pinned, path string, installErr error, version, rules func
 	v := version(path)
 	checks = append(checks, v)
 	if v.OK {
-		checks = append(checks, rules(path))
+		a := signIn(path)
+		checks = append(checks, a)
+		if a.OK {
+			checks = append(checks, rules(path))
+		}
 	}
 	return checks
+}
+
+// SignInCheck accepts only the user's Claude subscription sign-in.
+func SignInCheck(path string) Check {
+	const name = "Claude Code sign-in"
+	fix := fmt.Sprintf("run `%s auth login` to sign in with your Claude subscription", path)
+	loggedIn, method, err := providers.ClaudeCodeAuthStatus(context.Background(), path)
+	if err != nil {
+		return Check{Name: name, Problem: err.Error(), Fix: fix}
+	}
+	if !loggedIn {
+		return Check{Name: name, Problem: "Claude Code is signed out", Fix: fix}
+	}
+	if method != "claude.ai" {
+		return Check{Name: name, Problem: fmt.Sprintf("Claude Code uses sign-in method %q, which is not a Claude subscription", method), Fix: fix}
+	}
+	return Check{Name: name, OK: true}
 }
 
 // platformCheck checks that this platform is certified, so that an

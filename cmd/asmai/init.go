@@ -128,26 +128,22 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	if err != nil {
 		return fail(err)
 	}
-	var problems []config.Problem
+	_, problems, err := fileProblems(configFile)
+	if err != nil {
+		return fail(err)
+	}
 	if created {
-		report("config", stepDone, fmt.Sprintf("Wrote %s, staffing %s", configFile, staffedRoles()))
+		report("config", stepDone, fmt.Sprintf("Wrote %s, staffing %s and setting Claude's default model to opus", configFile, staffedRoles()))
 	} else {
-		cfg, found, err := config.Load(configFile)
-		if err != nil {
-			return fail(fmt.Errorf("reading %s: %w", configFile, err))
-		}
-		if problems = found; len(problems) == 0 {
-			problems = cfg.MissingStaffing(roles.Staffed)
-		}
 		report("config", stepAlreadyDone, fmt.Sprintf("%s exists, and setup leaves it as it is", configFile))
-		for _, p := range problems {
-			where := configFile
-			if p.Line > 0 {
-				where = fmt.Sprintf("%s, line %d", configFile, p.Line)
-			}
-			fmt.Fprintf(w, "  problem  %s: %s\n", where, p.Problem)
-			fmt.Fprintf(w, "      fix  %s\n", strings.ReplaceAll(p.Fix, "\n", "\n           "))
+	}
+	for _, p := range problems {
+		where := configFile
+		if p.Line > 0 {
+			where = fmt.Sprintf("%s, line %d", configFile, p.Line)
 		}
+		fmt.Fprintf(w, "  problem  %s: %s\n", where, p.Problem)
+		fmt.Fprintf(w, "      fix  %s\n", strings.ReplaceAll(p.Fix, "\n", "\n           "))
 	}
 
 	current = "folders"
@@ -167,7 +163,7 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		return fail(err)
 	}
 	current = plan.Title
-	stage(4, plan.Title, fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already, then checks that it reports the pinned version and asks it whether this account lets AsmAI's own permission rules take effect.", plan.Title, plan.Version))
+	stage(4, plan.Title, fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already, then checks its version, subscription sign-in and permission rules.", plan.Title, plan.Version))
 	// A running daemon records the install now, and a pin it records is
 	// installed, as `asmai providers install` takes it; a stopped one finds
 	// the pinned copy at its path when it next starts.
@@ -203,15 +199,12 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	}
 
 	// The pinned Claude Code is there now: check that it reports the pinned
-	// version and ask it whether this account lets AsmAI's own permission
-	// rules take effect. A check that fails is reported with the fix, and
-	// fails init once the trust stage is done.
+	// version, sign-in and permission rules. A failed check stops before trust.
 	current = "Claude Code checks"
-	var checkProblems []error
 	for _, check := range daemon.ClaudeCodeChecks(pinList.ClaudeCode.Version, plan.Path, nil,
 		func(path string) daemon.Check {
 			return daemon.Check(certify.Version(context.Background(), path, pinList.ClaudeCode.Version, providers.ClaudeCodeVersion))
-		},
+		}, daemon.SignInCheck,
 		func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir) }) {
 		if check.Name == "Claude Code "+plan.Version {
 			continue // The install, reported above.
@@ -222,7 +215,7 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		}
 		report(check.Name, stepFailed, check.Problem)
 		fmt.Fprintf(w, "      fix  %s\n", check.Fix)
-		checkProblems = append(checkProblems, fmt.Errorf("%s: %s; fix: %s", check.Name, check.Problem, check.Fix))
+		return fail(fmt.Errorf("%s: %s; fix: %s", check.Name, check.Problem, check.Fix))
 	}
 
 	stage(5, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
@@ -245,9 +238,6 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	}
 
 	fmt.Fprintln(w)
-	if len(checkProblems) > 0 {
-		return fail(checkProblems[0])
-	}
 	if len(problems) > 0 {
 		return fail(fmt.Errorf("%s has %s; fix %s, then run `asmai start`", configFile, plural(len(problems), "a problem", "problems"), plural(len(problems), "it", "them")))
 	}

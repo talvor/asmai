@@ -29,6 +29,10 @@ if [ "$1" = --version ]; then
 	echo "2.1.292 (Claude Code)"
 	exit 0
 fi
+if [ "$1" = auth ]; then
+	echo '{"loggedIn":true,"authMethod":"claude.ai"}'
+	exit 0
+fi
 if [ "$1" = -p ]; then
 	# The permission rules probe: answer with what the test wrote.
 	cat > /dev/null
@@ -79,7 +83,8 @@ func rulesAnswer(t *testing.T, managedOnly bool) string {
 // answers the permission rules probe, as Claude Code does with no policy.
 func answersTheRulesProbe(t *testing.T) string {
 	t.Helper()
-	return "if [ \"$1\" = -p ]; then cat > /dev/null; printf '%s\\n' '" + rulesAnswer(t, false) + "'; exit 0; fi\n"
+	return "if [ \"$1\" = auth ]; then echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'; exit 0; fi\n" +
+		"if [ \"$1\" = -p ]; then cat > /dev/null; printf '%s\\n' '" + rulesAnswer(t, false) + "'; exit 0; fi\n"
 }
 
 // testPins pins version of Claude Code for this platform, which the daemon's

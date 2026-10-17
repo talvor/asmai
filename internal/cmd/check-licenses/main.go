@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command check-licenses lists every Go module compiled into the packages
-// selected by licenses.Packages for each target platform with its license. It
-// fails when a license is not on the allow-list in package licenses or cannot
-// be determined. CI runs it from the repository root with:
+// Command check-licenses lists every Go module compiled into asmai for each
+// target platform with its license, and fails when a license is not on the
+// allow-list in package licenses or cannot be determined. CI runs it from the
+// repository root with:
 //
 //	go run ./internal/cmd/check-licenses
 package main

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command gen-notices generates THIRD_PARTY_NOTICES, which asmai embeds, from
-// the Go distribution's LICENSE and every Go module compiled into the packages
-// selected by licenses.Packages for each target platform. It needs the Go
-// toolchain go.mod pins, from an official distribution with its LICENSE at
-// GOROOT. With -check it changes nothing and fails when THIRD_PARTY_NOTICES
-// differs from what generation produces. Run it from the repository root:
+// the Go distribution's LICENSE and every Go module compiled into asmai for
+// each target platform. It needs the Go toolchain go.mod pins, from an official
+// distribution with its LICENSE at GOROOT. With -check it changes nothing and
+// fails when THIRD_PARTY_NOTICES differs from what generation produces. Run it
+// from the repository root:
 //
 //	go run ./internal/cmd/gen-notices
 //	go run ./internal/cmd/gen-notices -check

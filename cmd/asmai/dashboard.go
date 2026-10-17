@@ -17,6 +17,9 @@ import (
 // leaves it. The Dashboard only reads: it needs the daemon's answer, not its
 // consent, and starts nothing.
 func dashboardCommand(o *output, paths statedir.Paths, stdin io.Reader) int {
+	if o.toon {
+		return o.fail(errors.New("asmai dashboard draws on a terminal and has no --toon form; `asmai status`, `agents`, `jobs` and `log` print TOON"))
+	}
 	if o.json {
 		return o.fail(errors.New("asmai dashboard draws on a terminal and has no --json form; `asmai status`, `agents`, `jobs` and `log` print JSON"))
 	}

@@ -87,7 +87,7 @@ Every start then runs the checks that exist: this platform is certified (Linux o
 | `asmai role set <role> [--leader-provider <p>] [--leader-model <m>] [--worker-provider <p>] [--worker-model <m>]` | Set a role's provider and model in the configuration file; `claude` is the only provider, and `codex` is refused |
 | `asmai config example` | Print an example configuration file, with every default written out, which passes `asmai config check` |
 
-Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now, and `asmai chat --json` Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
+Every command prints readable tables, or JSON with `--json`, or [TOON](https://github.com/toon-format/toon) (Token-Oriented Object Notation) with `--toon`. `--toon` prints the same data as `--json`, encoded from the same values, in fewer tokens: uniform lists, such as `asmai agents`, are written as one table with their field names given once. Agents pass `--toon`; scripts and tests use `--json`. Giving both is a usage error, and under `--toon` a failure is a TOON `error` with the exit code `--json` gives. `asmai log --toon` prints each log record as a TOON document, with an empty line between records. `asmai attach --json` (or `--toon`) prints the agent's screen as it is now, and `asmai chat --json` (or `--toon`) Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
 
 ### The configuration file
 

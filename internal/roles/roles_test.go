@@ -349,6 +349,28 @@ func TestEveryAgentIsToldToRunEachAsmaiCommandAsItsOwnBashCall(t *testing.T) {
 	}
 }
 
+func TestEveryAgentIsToldToPassTOONToAsmai(t *testing.T) {
+	want := "Pass `--toon` to every `asmai` command you run, such as `asmai inbox --dispatch <id> --toon` and `asmai brief <job> --toon`"
+	for _, role := range []string{Coordination, Engineering, Quality} {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(leader, want) {
+			t.Errorf("%s's leader's instructions lack %q", Title(role), want)
+		}
+	}
+	for _, role := range []string{Engineering, Quality} {
+		worker, err := WorkerInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(worker, want) {
+			t.Errorf("%s's workers' instructions lack %q", Title(role), want)
+		}
+	}
+}
+
 // Nobody answers a native prompt in any terminal but Coordination's, so
 // every other agent is told it is denied instead and what to do then, and a
 // worker is told to write files with the tools its permissions allow.

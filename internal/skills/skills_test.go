@@ -240,6 +240,7 @@ func TestTheOperatingGuideHasTheRequiredContent(t *testing.T) {
 		// Rule 37, every agent.
 		"coordinate":       {"asmai inbox", "dispatch"},
 		"brief":            {"asmai brief"},
+		"toon":             {"pass `--toon` to every `asmai` command", "asmai brief <job> --toon"},
 		"never ask":        {"never ask the user directly", "never supply the user's side"},
 		"choice":           {"distinct viable approaches", "routine choices"},
 		"repository":       {"never widen", "escalate a conflict"},

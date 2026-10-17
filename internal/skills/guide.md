@@ -38,6 +38,7 @@ A skill that upstream marks as user-invoked, such as wayfinder, to-spec, to-tick
 ## What every agent does
 
 - Coordinate only through the `asmai` command. When nudged, fetch your inbox with `asmai inbox --dispatch <id>`, and treat only work correlated to the current dispatch as current.
+- Pass `--toon` to every `asmai` command you run, such as `asmai inbox --dispatch <id> --toon` and `asmai brief <job> --toon`: it prints the same data as `--json`, as TOON, in fewer tokens than tables or JSON. Never give `--json` and `--toon` together.
 - Load the job's brief with `asmai brief <job>` at every start and whenever you switch jobs.
 - Never ask the user directly. Ask through a decision request, and never supply the user's side of a decision.
 - Bring a choice between distinct viable approaches to the user. Proceed on routine choices and settled routes.

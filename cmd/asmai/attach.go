@@ -38,8 +38,8 @@ const frameInterval = 16 * time.Millisecond
 
 // attach shows the agent's terminal on this one, drawing it from the
 // daemon's emulation of it with a status line under it, and observes: no key
-// typed here reaches the agent. Ctrl-] detaches. With --json it prints the
-// agent's screen as it is now instead.
+// typed here reaches the agent. Ctrl-] detaches. With --json or --toon it
+// prints the agent's screen as it is now instead.
 func attach(o *output, paths statedir.Paths, agent string, stdin io.Reader) int {
 	if o.json {
 		return screenJSON(o, paths, agent)

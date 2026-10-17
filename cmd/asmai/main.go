@@ -32,13 +32,14 @@ import (
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
+	"github.com/talvor/asmai/internal/toon"
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
 // Development builds keep "dev".
 var version = "dev"
 
-const usage = `usage: asmai [<command>] [--json]
+const usage = `usage: asmai [<command>] [--json|--toon]
 
 commands you type:
   asmai, asmai chat           talk with Coordination: attach this terminal to Coordination's leader,
@@ -155,7 +156,9 @@ commands agents run:
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
 Every command accepts --json to print JSON instead of tables; asmai attach --json prints the
-agent's screen as it is now, and asmai chat --json Coordination's.
+agent's screen as it is now, and asmai chat --json Coordination's. Every command accepts --toon
+too, to print the same data as TOON (Token-Oriented Object Notation), which takes fewer tokens
+than JSON for an agent to read; give one of --json and --toon, not both.
 `
 
 // groups are the commands that are grouped by noun, with their subcommands.
@@ -235,6 +238,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("asmai "+name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")
+	toonOutput := flags.Bool("toon", false, "print TOON instead of tables: the data --json prints, in fewer tokens")
 	foreground, follow, repoName, assumeYes := new(bool), new(bool), new(string), new(bool)
 	var message string
 	var reading, mandate, repository string
@@ -355,7 +359,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "asmai %s: unexpected argument %q\n\n%s", name, flags.Arg(0), usage)
 		return 2
 	}
-	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
+	if *jsonOutput && *toonOutput {
+		fmt.Fprintf(stderr, "asmai %s: --json and --toon are two encodings of the same output: give one\n\n%s", name, usage)
+		return 1
+	}
+	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput || *toonOutput, toon: *toonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
@@ -744,21 +752,29 @@ func runningRows(st daemon.Status, paths statedir.Paths) [][]string {
 
 // printLog prints the daemon's log from its files, so that it can be read
 // when the daemon is not running, such as after a failed start. With --json
-// it prints the log's own JSON lines.
+// it prints the log's own JSON lines; with --toon each record as a TOON
+// document, the documents separated by an empty line.
 func printLog(o *output, paths statedir.Paths, follow bool) int {
 	line := func(l []byte) error {
 		if !o.json {
 			_, err := fmt.Fprintln(o.stdout, logfile.Format(l))
 			return err
 		}
-		if json.Valid(l) && bytes.HasPrefix(bytes.TrimSpace(l), []byte("{")) {
-			_, err := fmt.Fprintf(o.stdout, "%s\n", l)
+		record := json.RawMessage(l)
+		if !json.Valid(l) || !bytes.HasPrefix(bytes.TrimSpace(l), []byte("{")) {
+			// Output the daemon wrote that is not a log record, such as a
+			// crash report.
+			record, _ = json.Marshal(map[string]string{"text": string(l)})
+		}
+		if !o.toon {
+			_, err := fmt.Fprintf(o.stdout, "%s\n", record)
 			return err
 		}
-		// Output the daemon wrote that is not a log record, such as a crash
-		// report.
-		encoded, _ := json.Marshal(map[string]string{"text": string(l)})
-		_, err := fmt.Fprintf(o.stdout, "%s\n", encoded)
+		encoded, err := toon.Marshal(record)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(o.stdout, "%s\n", encoded)
 		return err
 	}
 	var err error
@@ -1006,13 +1022,26 @@ func details(data json.RawMessage) string {
 }
 
 // output prints a command's result: readable tables for the user, or JSON
-// with --json.
+// with --json, or TOON with --toon. json is set by either flag: the command
+// prints its data, not tables, and toon says to encode that data as TOON.
 type output struct {
 	stdout, stderr io.Writer
 	json           bool
+	toon           bool
 }
 
+// printJSON prints v as JSON, or with --toon as TOON encoded from the same
+// value.
 func (o *output) printJSON(v any) int {
+	if o.toon {
+		encoded, err := toon.Marshal(v)
+		if err != nil {
+			fmt.Fprintf(o.stderr, "asmai: %v\n", err)
+			return 1
+		}
+		o.stdout.Write(encoded)
+		return 0
+	}
 	enc := json.NewEncoder(o.stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
@@ -1041,7 +1070,7 @@ func writeTable(out io.Writer, rows [][]string) {
 }
 
 // fail reports err and returns the exit code for it: with --json as a JSON
-// object on stdout, otherwise on stderr.
+// object on stdout, with --toon as a TOON one, otherwise on stderr.
 func (o *output) fail(err error) int {
 	if o.json {
 		o.printJSON(map[string]string{"error": err.Error()})

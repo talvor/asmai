@@ -6,8 +6,8 @@ Cells marked **not yet recorded** have not been run. Nothing here is filled in u
 
 | | |
 |---|---|
-| Commit | **not yet recorded** |
-| Provider | **not yet recorded** (Claude Code, pinned; the installed copy's reported version on each host) |
+| Commit | `672388386e9571167cf1cb595d3f41167d88bb99` (main), with the C2 fix `0378a7d13a687944da65ab4fdb7895e3cd54f444` from this pull request applied on top for C2 (built as `3a467a3` on the Mac) |
+| Provider | Claude Code 2.1.292, pinned |
 | Hosts | `asmai-vm` and the qualification Mac, each as its harness user `phillip` ([qualification hosts](qualification-hosts.md)) |
 | Harness | `./bin/qualify --cases C1,C2,C33,C34`, built with `make qualify` from the commit ([the qualification harness](qualification-harness.md)) |
 
@@ -15,21 +15,23 @@ Cells marked **not yet recorded** have not been run. Nothing here is filled in u
 
 | Case | `asmai-vm` (linux/amd64) | Mac (darwin/arm64) |
 |---|---|---|
-| C1 | not yet recorded | not yet recorded |
-| C2 | not yet recorded | not yet recorded |
-| C33 | not yet recorded | not yet recorded |
-| C34 | not yet recorded | not yet recorded |
+| C1 | passed | passed |
+| C2 | passed, with the fix | passed, with the fix |
+| C33 | passed | passed |
+| C34 | passed | passed |
 
-Run summary line and exit status: **not yet recorded** (`asmai-vm`), **not yet recorded** (Mac).
+C2 failed on both hosts at main: the harness removed only its own `qualification-handoff` table from the disposable copy of the configuration file, so any other `[repositories.*]` table the host's file held was in the file but not registered in the fresh store, and `asmai setup` refused the copy. The fix removes every repository table from the copy. With it, C2 passed on both hosts.
 
-A macOS failure is not fixed in M2. It is filed as a ticket for the next milestone and listed here: **none recorded yet**.
+On the Mac, a stale unregistered `[repositories.asmai-fixture]` table in the host's own configuration file, rejected by [#88](https://github.com/talvor/asmai/issues/88)'s stricter check, was removed first (a host fix; the harness only reads that file).
+
+No case failed on the Mac after that, so no ticket for the next milestone is needed.
 
 ## Development tests
 
 | | Result at the commit |
 |---|---|
-| `asmai-vm`, `make test` | not yet recorded |
-| Mac, `make test` | not yet recorded |
+| `asmai-vm`, `make test` | passed |
+| Mac, `make test` | passed |
 | Hosted CI, the pull request that merges the commit | not yet recorded |
 
 ## The demo path

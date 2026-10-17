@@ -21,7 +21,7 @@
  worker-24@engineering ○ Idle                 -
  worker-25@engineering ○ Idle                 -
  worker-26@engineering ○ Idle                 -
- 1/2/3 tab · ↑/↓ move · q quit
+ 1/2/3 tab · ↑/↓ move · enter attach · q quit
 --- attributes
 1 1-80: reverse
 2 2-11: reverse

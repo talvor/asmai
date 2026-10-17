@@ -38,7 +38,7 @@ type FakeDaemon struct {
 	// the subscriptions open.
 	head     int64
 	watchers map[net.Conn]bool
-	snapshot     daemon.DashboardSnapshot
+	snapshot daemon.DashboardSnapshot
 }
 
 // NewFakeDaemon starts a fake daemon that answers status and an empty

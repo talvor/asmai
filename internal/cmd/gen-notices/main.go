@@ -32,7 +32,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "gen-notices:", err)
 		os.Exit(1)
 	}
-	notices, err := licenses.NoticesWithEmbedded(".", "./cmd/asmai", licenses.Targets, goDist, []licenses.Embedded{{Name: skills.LicenseName(), License: skills.License()}})
+	notices, err := licenses.NoticesWithEmbedded(".", licenses.Packages, licenses.Targets, goDist, []licenses.Embedded{{Name: skills.LicenseName(), License: skills.License()}})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen-notices:", err)
 		os.Exit(1)

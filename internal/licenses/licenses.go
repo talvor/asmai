@@ -37,6 +37,12 @@ var Allowed = []string{
 // known license texts for its licenses to count as determined.
 const minCoverage = 75
 
+// Packages are the packages whose compiled-in modules are checked and
+// noticed: asmai and the throwaway terminal hand-over spike (issue #115),
+// which brings Bubble Tea and Lip Gloss into the module before the Dashboard
+// compiles them into asmai. Drop the spike once it is gone.
+const Packages = "./cmd/asmai ./internal/cmd/spike-handover"
+
 // Targets are asmai's target platforms: Linux x86_64 and macOS on Apple
 // silicon.
 var Targets = []Platform{
@@ -95,7 +101,7 @@ func (m Module) Problem() string {
 	}
 }
 
-// Check lists to w the modules compiled into pkg, a package pattern resolved
+// Check lists to w the modules compiled into pkg, space-separated package patterns resolved
 // in the main module at dir, for each platform with their licenses, then names
 // each module whose licenses are not acceptable. It reports whether there were
 // none. Modules used only by tests are not compiled in, so are not checked.
@@ -274,7 +280,7 @@ func NoticesWithEmbedded(dir, pkg string, platforms []Platform, goDist Toolchain
 // CompiledIn returns the modules compiled into pkg for platform p, with CGo
 // disabled, the main module first and the rest by path.
 func CompiledIn(dir, pkg string, p Platform) ([]Module, error) {
-	cmd := exec.Command("go", "list", "-deps", "-json=Module", pkg)
+	cmd := exec.Command("go", append([]string{"list", "-deps", "-json=Module"}, strings.Fields(pkg)...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOOS="+p.GOOS, "GOARCH="+p.GOARCH, "CGO_ENABLED=0")
 	var stderr bytes.Buffer

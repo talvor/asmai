@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	ok, err := licenses.Check(os.Stdout, ".", "./cmd/asmai", licenses.Targets)
+	ok, err := licenses.Check(os.Stdout, ".", licenses.Packages, licenses.Targets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "check-licenses:", err)
 		os.Exit(1)

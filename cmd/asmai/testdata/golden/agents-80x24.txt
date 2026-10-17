@@ -1,0 +1,41 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ AGENT                STATUS                 JOB    DOING
+ leader@coordination  ▲ Waiting on you       -      you hold its input in /dev/…
+ leader@engineering   ● Working              #12    handoff: Add the Agents tab…
+ leader@planning      ○ Idle                 -
+ leader@quality       ○ Idle (unknown)       -      dispatch state unknown
+ leader@research      ■ Stopped              -      session ended: exit 1
+ worker-2@quality     ▲ Waiting on you       #12    native prompt: Bash `gh pr …
+ worker-3@engineering ● Working              #12    assignment 32: add --after …
+ worker-4@engineering ◆ Needs reconciliation #14    assignment 27: its dispatch…
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · ↑/↓ move · q quit
+--- attributes
+1 1-80: reverse
+2 2-11: reverse
+2 13-20: faint
+2 22-28: faint
+4 1-6: faint
+4 23-28: faint
+4 46-57: faint
+5 1-80: reverse
+6 23-31: fg=0x1000004
+7 23-28: faint
+8 23-44: faint
+9 23-31: faint
+10 23-44: fg=0x1000003
+11 23-44: fg=0x1000004
+12 23-44: fg=0x1000005
+24 1-80: reverse

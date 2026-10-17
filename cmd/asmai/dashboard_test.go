@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -133,7 +134,7 @@ func TestDashboardQuitsOnQ(t *testing.T) {
 	}
 }
 
-// The Dashboard only reads: whatever it sends the daemon asks for status.
+// The Dashboard only reads: whatever it sends the daemon is the snapshot.
 func TestDashboardNeverActsOnTheFactory(t *testing.T) {
 	fake := dashtest.NewFakeDaemon(t)
 	d := dashboardIn(t, fake, 100, 30)
@@ -143,8 +144,8 @@ func TestDashboardNeverActsOnTheFactory(t *testing.T) {
 	}
 	d.WaitForText("factory running")
 	for _, call := range fake.Calls() {
-		if call.Command != daemon.CommandStatus {
-			t.Errorf("the Dashboard sent the daemon %q, want only status", call.Command)
+		if !slices.Contains(daemon.DashboardCommands, call.Command) {
+			t.Errorf("the Dashboard sent the daemon %q, want only the Dashboard's commands", call.Command)
 		}
 	}
 }

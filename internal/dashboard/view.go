@@ -28,7 +28,7 @@ var (
 	dimStyle      = lipgloss.NewStyle().Faint(true)
 )
 
-const footerKeys = "1/2/3 tab · q quit"
+const footerKeys = "1/2/3 tab · ↑/↓ move · q quit"
 
 // render draws the whole screen: exactly height lines of at most width cells.
 func (m model) render() string {
@@ -80,6 +80,9 @@ func (m model) stopped() []string {
 // the tabs, the Waiting on you banner and the footer of keys.
 func (m model) shell() string {
 	body := []string{m.header(), m.tabs(), m.banner()}
+	if m.tab == tabAgents {
+		body = append(body, m.agentsBody()...)
+	}
 	return m.frame(body)
 }
 

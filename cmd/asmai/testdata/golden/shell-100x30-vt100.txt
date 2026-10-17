@@ -2,6 +2,7 @@
   1 Agents   2 Jobs   3 Log
 
 
+ No agents.
 
 
 
@@ -26,8 +27,7 @@
 
 
 
-
- 1/2/3 tab · q quit
+ 1/2/3 tab · ↑/↓ move · q quit
 --- attributes
 1 1-100: reverse
 2 2-11: reverse

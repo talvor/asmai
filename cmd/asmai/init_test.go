@@ -889,10 +889,9 @@ func TestInitYesAsksNeitherToInstallNorToOpenClaudeCode(t *testing.T) {
 
 func TestInitYesAcceptsClaudeDefaultModelFlagWithoutPrompts(t *testing.T) {
 	stateDir, _ := setupFactory(t, nil)
-	trustFactory(t, stateDir)
 	stdout, stderr, code := runIn(t, "", "init", "--yes", "--claude-default-model", "sonnet")
-	if code != 0 {
-		t.Fatalf("init --yes with Sonnet exited %d printing %q", code, stdout+stderr)
+	if code != 1 || !strings.Contains(stdout+stderr, "needs you at a terminal") {
+		t.Fatalf("init --yes with an untrusted folder exited %d printing %q", code, stdout+stderr)
 	}
 	if strings.Contains(stdout+stderr, "Claude default model (opus or sonnet)") {
 		t.Errorf("init --yes asked for a model: %q", stdout+stderr)
@@ -901,9 +900,14 @@ func TestInitYesAcceptsClaudeDefaultModelFlagWithoutPrompts(t *testing.T) {
 	if err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "sonnet" {
 		t.Fatalf("init saved model %q with problems %v and error %v, want sonnet", cfg.Providers["claude"].DefaultModel, problems, err)
 	}
+	trustFactory(t, stateDir)
+	stdout, stderr, code = runIn(t, "", "init", "--yes", "--claude-default-model", "sonnet")
+	if code != 0 || !strings.Contains(stdout, "Init is done") {
+		t.Errorf("init retry with the saved Sonnet model exited %d printing %q", code, stdout+stderr)
+	}
 	stdout, stderr, code = runIn(t, "", "init", "--yes", "--claude-default-model", "opus")
-	if code != 1 || !strings.Contains(stdout+stderr, "already exists") {
-		t.Errorf("init with a model flag for an existing config exited %d printing %q", code, stdout+stderr)
+	if code != 1 || !strings.Contains(stdout+stderr, `has Claude default model "sonnet"`) || !strings.Contains(stdout+stderr, `requests "opus"`) {
+		t.Errorf("init with a conflicting model flag exited %d printing %q", code, stdout+stderr)
 	}
 	cfg, problems, err = config.Load(configPath())
 	if err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "sonnet" {

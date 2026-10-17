@@ -128,11 +128,8 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return fail(fmt.Errorf("checking %s: %w", configFile, statErr))
 	}
-	if statErr == nil && requestedModel != "" {
-		return fail(fmt.Errorf("%s already exists; edit [providers.claude].default_model there to change it", configFile))
-	}
 	model := "opus"
-	if errors.Is(statErr, os.ErrNotExist) {
+	if requestedModel != "" || errors.Is(statErr, os.ErrNotExist) {
 		model, err = chooseClaudeDefaultModel(w, stdin, assumeYes, requestedModel)
 		if err != nil {
 			return fail(err)
@@ -142,9 +139,12 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	if err != nil {
 		return fail(err)
 	}
-	_, problems, err := fileProblems(configFile)
+	cfg, problems, err := fileProblems(configFile)
 	if err != nil {
 		return fail(err)
+	}
+	if !created && requestedModel != "" && len(problems) == 0 && cfg.Providers[config.Claude].DefaultModel != model {
+		return fail(fmt.Errorf("%s has Claude default model %q, but --claude-default-model requests %q; edit [providers.claude].default_model to change it", configFile, cfg.Providers[config.Claude].DefaultModel, model))
 	}
 	if created {
 		report("config", stepDone, fmt.Sprintf("Wrote %s, staffing %s and setting Claude's default model to %s", configFile, staffedRoles(), model))

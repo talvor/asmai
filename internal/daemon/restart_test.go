@@ -416,3 +416,13 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 		t.Errorf("Engineering's restorations are %+v (%v), want one for job 1 only", restorations, err)
 	}
 }
+
+func TestACancelledWorkersResumptionTellsItToPushAsASinglePlainCall(t *testing.T) {
+	a := store.Assignment{ID: 8, Job: 1, Workspace: store.Workspace{Branch: "asmai/job-1/w"}}
+
+	body := cancellationResumption(a, 10)
+
+	if !strings.Contains(body, "`git push origin asmai/job-1/w` if it is not pushed (as its own single Bash call, never chained, piped or after a `cd`)") {
+		t.Errorf("the resumption says %q, want the push as a single plain call", body)
+	}
+}

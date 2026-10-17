@@ -95,9 +95,7 @@ func (d *daemon) resumeWorker(w store.WorkerDispatch) {
 		"Load `asmai brief %d`, look at your workspace and at the effects you have recorded, and continue the assignment from where you stopped. Never repeat an effect you already made.",
 		a.ID, a.Job, w.Dispatch.ID, a.Job)
 	if a.State == store.AssignmentCancelling {
-		body = fmt.Sprintf("The factory was stopped and started again, and your session resumes where it was. Your owning leader has cancelled assignment %d of job %d: your dispatch %d stopped at a boundary before the cancellation was complete, and this dispatch resumes it.\n"+
-			"Do not submit a result. Look at your workspace and at the effects you have recorded, commit whatever you have, push your assignment branch with `git push origin %s` if it is not pushed, record the push with `asmai effect push`, and stop. Never repeat an effect you already made.",
-			a.ID, a.Job, w.Dispatch.ID, a.Workspace.Branch)
+		body = cancellationResumption(a, w.Dispatch.ID)
 	}
 	dispatch, err := d.store.AssignmentResumed(a.ID, w.Dispatch.ID, native.ID, body, time.Now())
 	if err != nil {
@@ -213,4 +211,12 @@ func (d *daemon) restoreLeaders() {
 		}
 		d.mu.Unlock()
 	}
+}
+
+// cancellationResumption is the message that resumes a worker whose
+// assignment was cancelled before its dispatch finished the cancellation.
+func cancellationResumption(a store.Assignment, dispatch int64) string {
+	return fmt.Sprintf("The factory was stopped and started again, and your session resumes where it was. Your owning leader has cancelled assignment %d of job %d: your dispatch %d stopped at a boundary before the cancellation was complete, and this dispatch resumes it.\n"+
+		"Do not submit a result. Look at your workspace and at the effects you have recorded, commit whatever you have, push your assignment branch with `git push origin %s` if it is not pushed (as its own single Bash call, never chained, piped or after a `cd`), record the push with `asmai effect push`, and stop. Never repeat an effect you already made.",
+		a.ID, a.Job, dispatch, a.Workspace.Branch)
 }

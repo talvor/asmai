@@ -61,7 +61,7 @@ func writeConfig(t *testing.T, text string) {
 
 // trustFactory records in the test's home that the user trusts the folders
 // agents start in, in the state directory stateDir, as Claude Code records
-// their answer to the question `asmai setup` has it ask.
+// their answer to the question `asmai init` has it ask.
 func trustFactory(t *testing.T, stateDir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".claude.json"), []byte(trustRecord(stateDir)), 0o600); err != nil {
@@ -287,7 +287,7 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		Leaders []leaderJSON `json:"leaders"`
 	}
 	asmaiJSON(t, &started, "start")
-	if started.Started || len(started.Checks) != 6 || slices.ContainsFunc(started.Checks, func(c checkJSON) bool { return !c.OK }) {
+	if started.Started || len(started.Checks) != 7 || slices.ContainsFunc(started.Checks, func(c checkJSON) bool { return !c.OK }) {
 		t.Errorf("asmai start printed %+v, want the running daemon with every check passed", started)
 	}
 	if len(started.Leaders) != 3 || started.Leaders[0].Agent != "leader@coordination" || started.Leaders[0].State != "running" || started.Leaders[0].Generation != 1 {

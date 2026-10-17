@@ -198,6 +198,30 @@ func TestProvidersInstallPutsThePinnedCopyBackWhereItWasReplaced(t *testing.T) {
 	}
 }
 
+func TestProvidersInstallRestoresNonExecutablePinnedCopy(t *testing.T) {
+	stateDir := factoryHome(t)
+	fetches := standInChannel(t, standInClaude)
+	startUnready(t)
+	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
+	if _, stderr, code := install(t, "y\n"); code != 0 {
+		t.Fatalf("first install exited %d printing %s", code, stderr)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := install(t, "y\n")
+	if code != 0 || strings.Contains(stdout, "already installed") {
+		t.Fatalf("repair install exited %d printing %s%s", code, stdout, stderr)
+	}
+	if !providers.Executable(path) {
+		t.Errorf("providers install left the pinned copy at %s nonexecutable", path)
+	}
+	if n := fetches.Load(); n != 2 {
+		t.Errorf("channel served %d downloads, want two", n)
+	}
+}
+
 func TestProvidersInstallFetchesNothingWithoutConfirmation(t *testing.T) {
 	stateDir := factoryHome(t)
 	fetches := standInChannel(t, standInClaude)

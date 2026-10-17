@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,12 +11,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
 
 	"golang.org/x/term"
 
+	"github.com/talvor/asmai/internal/certify"
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/providers"
@@ -31,23 +34,24 @@ const (
 	stepStopped     = "stopped"
 )
 
-// setupStages is how many stages `asmai setup` runs: config, folders,
-// Claude Code and trust.
-const setupStages = 4
+// setupStages is how many stages `asmai init` runs: platform, config,
+// folders, Claude Code and trust.
+const setupStages = 5
 
 // trustPrompt starts the line on which setup or repo add asks the user to go
 // on to Claude Code's question about trusting a folder; the folder follows
 // it.
 const trustPrompt = "Press Enter to open Claude Code in "
 
-// setupStep is one step of `asmai setup`, as it reported it.
+// setupStep is one step of `asmai init`, as it reported it.
 type setupStep struct {
 	Step   string `json:"step"`
 	State  string `json:"state"`
 	Detail string `json:"detail"`
 }
 
-// setup is the first run: it writes a configuration file staffing every role
+// initFactory is `asmai init`, the first run: it checks that this platform
+// is certified, writes a configuration file staffing every role
 // when there is none, makes the state directory's folders, installs the
 // pinned Claude Code once the user confirms, and opens it in the agents and
 // workspaces folders and in each registered repository's clone, in the
@@ -60,7 +64,7 @@ type setupStep struct {
 // configuration file is never changed: its problems are only reported.
 // Claude Code records the trust itself; setup only reads its record, and
 // never writes ~/.claude.json or ~/.claude.
-func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
+func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes bool, requestedModel string) int {
 	// With --json, stdout carries only the result, and Claude Code draws on
 	// stderr.
 	w := o.stdout
@@ -95,7 +99,20 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 		}
 		return o.fail(err)
 	}
-	fmt.Fprintf(w, "asmai setup readies this account to run the factory, in %d stages: config, folders, Claude Code and trust. A stage already done is skipped.\n", setupStages)
+	fmt.Fprintf(w, "asmai init readies this account to run the factory, in %d stages: platform, config, folders, Claude Code and trust. A stage already done is skipped.\n", setupStages)
+
+	current = "platform"
+	pinList, err := providers.ParsePins(pins)
+	if err != nil {
+		return fail(err)
+	}
+	stage(1, "Platform", "Init checks that this platform is one this asmai is certified on, since AsmAI starts no agent on any other.")
+	if check := certify.Platform(runtime.GOOS, runtime.GOARCH, pinList); check.OK {
+		report("platform", stepAlreadyDone, fmt.Sprintf("%s/%s is certified", runtime.GOOS, runtime.GOARCH))
+	} else {
+		report("platform", stepFailed, check.Problem)
+		return fail(fmt.Errorf("%s: %s; fix: %s", check.Name, check.Problem, check.Fix))
+	}
 
 	current = "config"
 	home, err := os.UserHomeDir()
@@ -106,35 +123,45 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if err != nil {
 		return fail(err)
 	}
-	stage(1, "Config", fmt.Sprintf("Setup writes the configuration file, %s, if it is missing. An existing one is never changed.", configFile))
-	created, err := config.CreateDefault(configFile)
+	stage(2, "Config", fmt.Sprintf("Setup writes the configuration file, %s, if it is missing. An existing one is never changed.", configFile))
+	_, statErr := os.Stat(configFile)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return fail(fmt.Errorf("checking %s: %w", configFile, statErr))
+	}
+	model := "opus"
+	if requestedModel != "" || errors.Is(statErr, os.ErrNotExist) {
+		model, err = chooseClaudeDefaultModel(w, stdin, assumeYes, requestedModel)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	created, err := config.CreateDefault(configFile, model)
 	if err != nil {
 		return fail(err)
 	}
-	var problems []config.Problem
+	cfg, problems, err := fileProblems(configFile)
+	if err != nil {
+		return fail(err)
+	}
+	if !created && requestedModel != "" && len(problems) == 0 && cfg.Providers[config.Claude].DefaultModel != model {
+		return fail(fmt.Errorf("%s has Claude default model %q, but --claude-default-model requests %q; edit [providers.claude].default_model to change it", configFile, cfg.Providers[config.Claude].DefaultModel, model))
+	}
 	if created {
-		report("config", stepDone, fmt.Sprintf("Wrote %s, staffing %s", configFile, staffedRoles()))
+		report("config", stepDone, fmt.Sprintf("Wrote %s, staffing %s and setting Claude's default model to %s", configFile, staffedRoles(), model))
 	} else {
-		cfg, found, err := config.Load(configFile)
-		if err != nil {
-			return fail(fmt.Errorf("reading %s: %w", configFile, err))
-		}
-		if problems = found; len(problems) == 0 {
-			problems = cfg.MissingStaffing(roles.Staffed)
-		}
 		report("config", stepAlreadyDone, fmt.Sprintf("%s exists, and setup leaves it as it is", configFile))
-		for _, p := range problems {
-			where := configFile
-			if p.Line > 0 {
-				where = fmt.Sprintf("%s, line %d", configFile, p.Line)
-			}
-			fmt.Fprintf(w, "  problem  %s: %s\n", where, p.Problem)
-			fmt.Fprintf(w, "      fix  %s\n", strings.ReplaceAll(p.Fix, "\n", "\n           "))
+	}
+	for _, p := range problems {
+		where := configFile
+		if p.Line > 0 {
+			where = fmt.Sprintf("%s, line %d", configFile, p.Line)
 		}
+		fmt.Fprintf(w, "  problem  %s: %s\n", where, p.Problem)
+		fmt.Fprintf(w, "      fix  %s\n", strings.ReplaceAll(p.Fix, "\n", "\n           "))
 	}
 
 	current = "folders"
-	stage(2, "Folders", fmt.Sprintf("Setup makes the folders the factory keeps its state in, in %s.", paths.Dir))
+	stage(3, "Folders", fmt.Sprintf("Setup makes the folders the factory keeps its state in, in %s.", paths.Dir))
 	made, err := paths.MakeFolders()
 	if err != nil {
 		return fail(err)
@@ -150,7 +177,7 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 		return fail(err)
 	}
 	current = plan.Title
-	stage(3, plan.Title, fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already, then asks it whether this account lets AsmAI's own permission rules take effect.", plan.Title, plan.Version))
+	stage(4, plan.Title, fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already, then checks its version, subscription sign-in and permission rules.", plan.Title, plan.Version))
 	// A running daemon records the install now, and a pin it records is
 	// installed, as `asmai providers install` takes it; a stopped one finds
 	// the pinned copy at its path when it next starts.
@@ -159,56 +186,68 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if err != nil && !errors.Is(err, daemon.ErrNotRunning) {
 		return fail(err)
 	}
+	present := providers.Executable(plan.Path)
+	_, pathErr := os.Lstat(plan.Path)
+	unusable := !present && !errors.Is(pathErr, os.ErrNotExist)
 	recorded := false
 	for _, installed := range resp.Providers {
-		recorded = recorded || installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && exists(plan.Path)
+		recorded = recorded || installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && present
 	}
-	present := recorded
-	if !present {
-		if present, err = providers.Present(plan); err != nil {
-			return fail(err)
-		}
-	}
-	if present && (recorded || !running) {
-		report(plan.Title, stepAlreadyDone, fmt.Sprintf("The pinned %s %s is at %s", plan.Title, plan.Version, plan.Path))
-	} else {
-		if !present {
-			if err := fetchPinned(w, stdin, plan); err != nil {
-				return fail(err)
+	if !unusable {
+		if present && (recorded || !running) {
+			report(plan.Title, stepAlreadyDone, fmt.Sprintf("The pinned %s %s is at %s", plan.Title, plan.Version, plan.Path))
+		} else {
+			if !present {
+				if err := fetchPinnedAs(w, stdin, plan, assumeYes); err != nil {
+					return fail(err)
+				}
 			}
-		}
-		if running {
-			if _, err := recordInstall(paths, plan); err != nil {
-				return fail(err)
+			if running {
+				if _, err := recordInstall(paths, plan); err != nil {
+					return fail(err)
+				}
 			}
+			report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 		}
-		report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 	}
 
-	// The pinned Claude Code is there now: ask it whether this account lets
-	// AsmAI's own permission rules take effect. A policy that does not is
-	// reported with the fix, and fails setup once the trust stage is done.
-	current = "permission rules"
-	var policyProblem error
-	if check := daemon.PermissionRulesCheck(plan.Path, paths.Dir); check.OK {
-		report(check.Name, stepAlreadyDone, fmt.Sprintf("%s applies the permission rules AsmAI gives its agents", plan.Title))
-	} else {
+	// The pinned Claude Code is there now: check that it reports the pinned
+	// version, sign-in and permission rules. A failed check stops before trust.
+	current = "Claude Code checks"
+	for _, check := range daemon.ClaudeCodeChecks(pinList.ClaudeCode.Version, plan.Path, nil,
+		func(path string) daemon.Check {
+			return daemon.Check(certify.Version(context.Background(), path, pinList.ClaudeCode.Version, providers.ClaudeCodeVersion))
+		}, daemon.SignInCheck,
+		func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir) }) {
+		if check.Name == "Claude Code "+plan.Version && check.OK {
+			continue // The install, reported above.
+		}
+		if check.OK {
+			report(check.Name, stepAlreadyDone, fmt.Sprintf("%s passes", check.Name))
+			continue
+		}
 		report(check.Name, stepFailed, check.Problem)
 		fmt.Fprintf(w, "      fix  %s\n", check.Fix)
-		policyProblem = fmt.Errorf("%s: %s; fix: %s", check.Name, check.Problem, check.Fix)
+		return fail(fmt.Errorf("%s: %s; fix: %s", check.Name, check.Problem, check.Fix))
 	}
 
-	stage(4, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
+	stage(5, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
 	record := providers.ClaudeCodeRecord(home, os.Getenv)
 	current = "trust"
-	clones, err := paths.Clones()
+	registered, err := registeredRepositories(paths)
 	if err != nil {
 		return fail(err)
+	}
+	var clones []string
+	for _, r := range registered {
+		if _, err := os.Stat(r.Clone); err == nil {
+			clones = append(clones, r.Clone)
+		}
 	}
 	for _, dir := range append([]string{paths.Agents, paths.Workspaces}, clones...) {
 		step := "trust " + trustStep(paths, dir)
 		current = step
-		state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, dir, slices.Contains(clones, dir), "setup")
+		state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, dir, slices.Contains(clones, dir), "init", assumeYes)
 		if state != "" {
 			report(step, state, detail)
 		}
@@ -218,17 +257,32 @@ func setup(o *output, paths statedir.Paths, stdin io.Reader) int {
 	}
 
 	fmt.Fprintln(w)
-	if policyProblem != nil {
-		return fail(policyProblem)
-	}
 	if len(problems) > 0 {
 		return fail(fmt.Errorf("%s has %s; fix %s, then run `asmai start`", configFile, plural(len(problems), "a problem", "problems"), plural(len(problems), "it", "them")))
 	}
 	if o.json {
 		return o.printJSON(map[string]any{"steps": steps})
 	}
-	fmt.Fprintln(w, "Setup is done: `asmai start` starts the factory.")
+	fmt.Fprintln(w, "Init is done: `asmai start` starts the factory, and `asmai repo add` registers a repository for it to work on.")
 	return 0
+}
+
+func chooseClaudeDefaultModel(w io.Writer, stdin io.Reader, assumeYes bool, requested string) (string, error) {
+	if requested != "" {
+		if strings.TrimSpace(requested) == "" {
+			return "", fmt.Errorf("Claude's default model must not be empty")
+		}
+		return requested, nil
+	}
+	if in, ok := stdin.(*os.File); !ok || !term.IsTerminal(int(in.Fd())) || assumeYes {
+		return "opus", nil
+	}
+	fmt.Fprint(w, "Claude default model [opus]: ")
+	answer := strings.TrimSpace(readLine(stdin))
+	if answer == "" {
+		return "opus", nil
+	}
+	return answer, nil
 }
 
 // errNoTerminal is why trustFolder could not have the user trust a folder:
@@ -244,7 +298,7 @@ var errNoTerminal = errors.New("needs you at a terminal")
 // terminal it opens none, and its error wraps errNoTerminal. It returns the
 // state the step reached and its detail: done or already done, or stopped
 // when the user declined, which comes with an error.
-func trustFolder(w, stderr io.Writer, stdin io.Reader, plan providers.Plan, record, dir string, clone bool, command string) (state, detail string, err error) {
+func trustFolder(w, stderr io.Writer, stdin io.Reader, plan providers.Plan, record, dir string, clone bool, command string, assumeYes bool) (state, detail string, err error) {
 	trusted, err := providers.Trusted(record, dir)
 	if err != nil {
 		return "", "", err
@@ -253,12 +307,12 @@ func trustFolder(w, stderr io.Writer, stdin io.Reader, plan providers.Plan, reco
 		return stepAlreadyDone, fmt.Sprintf("%s trusts %s", plan.Title, dir), nil
 	}
 	if in, ok := stdin.(*os.File); !ok || !term.IsTerminal(int(in.Fd())) {
-		return "", "", fmt.Errorf("trusting %s %w, to answer %s's question there; %s did not open %s. Run `asmai setup` in a terminal", dir, errNoTerminal, plan.Title, command, plan.Title)
+		return "", "", fmt.Errorf("trusting %s %w, to answer %s's question there; %s did not open %s. Run `asmai init` in a terminal", dir, errNoTerminal, plan.Title, command, plan.Title)
 	}
 	explainTrust(w, plan, dir, clone, command)
-	if !agreeToTrust(w, stdin, dir, command) {
+	if !assumeYes && !agreeToTrust(w, stdin, dir, command) {
 		return stepStopped, fmt.Sprintf("You stopped %s before %s opened, so %s is still untrusted", command, plan.Title, dir),
-			fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai setup` again when you are ready to answer its question", plan.Title, dir)
+			fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai init` again when you are ready to answer its question", plan.Title, dir)
 	}
 	if err := openForTrust(plan.Path, dir, stdin, w, stderr); err != nil {
 		return "", "", err
@@ -269,7 +323,7 @@ func trustFolder(w, stderr io.Writer, stdin io.Reader, plan providers.Plan, reco
 		return "", "", err
 	}
 	if !trusted {
-		return "", "", fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai setup` again to answer its question", plan.Title, dir)
+		return "", "", fmt.Errorf("%s does not trust %s, so no agent can start there; run `asmai init` again to answer its question", plan.Title, dir)
 	}
 	return stepDone, fmt.Sprintf("%s trusts %s", plan.Title, dir), nil
 }
@@ -304,7 +358,7 @@ func explainTrust(w io.Writer, plan providers.Plan, dir string, clone bool, comm
 		fmt.Sprintf("%s%s then goes on.", strings.ToUpper(command[:1]), command[1:]),
 		"",
 		fmt.Sprintf(`If you choose "No, exit", %s stops with exit status 1, naming this folder`, command),
-		"as untrusted. Running `asmai setup` again asks only about the folders still",
+		"as untrusted. Running `asmai init` again asks only about the folders still",
 		"untrusted.",
 	)
 	fmt.Fprintf(w, "\n%s\n", rule)

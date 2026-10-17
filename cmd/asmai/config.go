@@ -36,25 +36,12 @@ func configCheck(o *output) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	cfg, found, err := config.Load(path)
+	_, problems, err := fileProblems(path)
 	if errors.Is(err, config.ErrMissing) {
-		return o.fail(fmt.Errorf("%s does not exist; run `asmai setup`, which writes it with every role staffed, or print an example to start from with `asmai config example`", path))
+		return o.fail(fmt.Errorf("%s does not exist; run `asmai init`, which writes it with every role staffed, or print an example to start from with `asmai config example`", path))
 	}
 	if err != nil {
-		return o.fail(fmt.Errorf("reading %s: %w", path, err))
-	}
-	// A role the factory runs that is not staffed keeps it from starting, as
-	// a problem in the file does.
-	problems := found
-	if len(found) == 0 {
-		problems = cfg.MissingStaffing(roles.Staffed)
-	}
-	if len(found) == 0 {
-		repositoryProblems, err := registeredRepositoryProblems(cfg)
-		if err != nil {
-			return o.fail(err)
-		}
-		problems = append(problems, repositoryProblems...)
+		return o.fail(err)
 	}
 	if o.json {
 		list := make([]configProblem, 0, len(problems))
@@ -85,6 +72,31 @@ func configCheck(o *output) int {
 		fmt.Fprintf(o.stderr, "      fix: %s\n", strings.ReplaceAll(p.Fix, "\n", "\n           "))
 	}
 	return 1
+}
+
+// fileProblems reads the configuration file at path and returns it with
+// every problem `asmai config check`, `asmai doctor` and the start of the
+// factory count: those in the file, a role the factory runs that is not
+// staffed, and those of the registered repositories. An error wraps
+// config.ErrMissing for a file that does not exist.
+func fileProblems(path string) (config.Config, []config.Problem, error) {
+	cfg, found, err := config.Load(path)
+	if errors.Is(err, config.ErrMissing) {
+		return cfg, nil, err
+	}
+	if err != nil {
+		return cfg, nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	problems := found
+	if len(found) == 0 {
+		problems = cfg.MissingStaffing(roles.Staffed)
+		repositoryProblems, err := registeredRepositoryProblems(cfg)
+		if err != nil {
+			return cfg, nil, err
+		}
+		problems = append(problems, repositoryProblems...)
+	}
+	return cfg, problems, nil
 }
 
 func registeredRepositoryProblems(cfg config.Config) ([]config.Problem, error) {

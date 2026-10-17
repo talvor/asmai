@@ -10,6 +10,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -971,7 +972,7 @@ func (c Config) MissingStaffing(need []string) []Problem {
 }
 
 // exampleStaffing is the staffing a missing role's fix suggests, and the
-// staffing of each role in the file `asmai setup` writes.
+// staffing of each role in the file `asmai init` writes.
 func exampleStaffing() Staffing {
 	return Staffing{LeaderProvider: Claude, LeaderModel: "opus", WorkerProvider: Claude, WorkerModel: "opus"}
 }
@@ -995,20 +996,22 @@ func Example(role string) string {
 	return "[roles." + role + "]\n" + strings.Join(exampleStaffing().assignments(), "\n")
 }
 
-// defaultHeader opens the file `asmai setup` writes.
-const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` + "`asmai setup`" + ` wrote it
+// defaultHeader opens the file `asmai init` writes.
+const defaultHeader = `# AsmAI's configuration file, which you edit by hand. ` + "`asmai init`" + ` wrote it
 # once, with each role staffed, and never changes it. What each table and
 # field means is in the README's section on the configuration file:
 # https://github.com/talvor/asmai#the-configuration-file
 `
 
-// Default returns the configuration file `asmai setup` writes when there is
+// Default returns the configuration file `asmai init` writes when there is
 // none: a header pointing to the README's section on the file, and a table
-// staffing each role M1 runs as exampleStaffing does. It registers no
-// repository.
-func Default() []byte {
+// staffing each role M1 runs as exampleStaffing does, with Claude's default
+// fallback model. It registers no repository.
+func Default(claudeModel string) []byte {
 	var b strings.Builder
 	b.WriteString(defaultHeader)
+	model, _ := json.Marshal(claudeModel)
+	b.WriteString("\n[providers.claude]\ndefault_model = " + string(model) + "\n")
 	for _, role := range roles.Staffed {
 		b.WriteString("\n" + Example(role) + "\n")
 	}
@@ -1089,7 +1092,7 @@ func ExampleConfiguration() []byte {
 // CreateDefault writes Default to path, making its directory, unless a file
 // is already there, which it leaves exactly as it is. It reports whether it
 // wrote the file.
-func CreateDefault(path string) (created bool, err error) {
+func CreateDefault(path, claudeModel string) (created bool, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return false, fmt.Errorf("creating the configuration file's directory: %w", err)
 	}
@@ -1100,7 +1103,7 @@ func CreateDefault(path string) (created bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("creating the configuration file: %w", err)
 	}
-	_, err = f.Write(Default())
+	_, err = f.Write(Default(claudeModel))
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}

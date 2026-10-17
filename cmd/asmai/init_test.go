@@ -16,7 +16,9 @@ import (
 
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/fakeprovider"
 	"github.com/talvor/asmai/internal/providers"
+	"github.com/talvor/asmai/internal/skills"
 	"github.com/talvor/asmai/internal/vt"
 )
 
@@ -74,8 +76,8 @@ func setupFactory(t *testing.T, scripts map[string][]string) (stateDir, testDir 
 	t.Setenv("ASMAI_FAKE_PROVIDER_SCRIPT", leader)
 	claude := []byte(`#!/bin/sh
 folder=$(basename "$PWD")
-# The permission rules probe and the version check are not a folder the user opens Claude Code in.
-if [ "$1" = -p ] || [ "$1" = --version ]; then exec ` + providers.ShellQuote(fakeProvider) + ` "$@"; fi
+# The permission rules probe, sign-in check and version check are not a folder the user opens Claude Code in.
+if [ "$1" = -p ] || [ "$1" = --version ] || [ "$1" = auth ]; then exec ` + providers.ShellQuote(fakeProvider) + ` "$@"; fi
 echo "$folder" >> "$ASMAI_TEST_DIR/opened"
 echo "$folder DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER-}" >> "$ASMAI_TEST_DIR/environments"
 if [ -e "$ASMAI_TEST_DIR/script-$folder.jsonl" ]; then
@@ -104,7 +106,7 @@ func opened(testDir string) []string {
 	return strings.Fields(string(data))
 }
 
-// setupTerminal is `asmai setup`, or another asmai command, run in this
+// setupTerminal is `asmai init`, or another asmai command, run in this
 // process, with a terminal of its own as its stdin, stdout and stderr, as a
 // user runs it.
 type setupTerminal struct {
@@ -118,11 +120,11 @@ type setupTerminal struct {
 
 // setupReturned is what the test writes on setup's terminal once setup
 // returns.
-const setupReturned = "(asmai setup returned)"
+const setupReturned = "(asmai init returned)"
 
 func setupInTerminal(t *testing.T, args ...string) *setupTerminal {
 	t.Helper()
-	return inProcessTerminal(t, append([]string{"setup"}, args...)...)
+	return inProcessTerminal(t, append([]string{"init"}, args...)...)
 }
 
 // inProcessTerminal runs asmai with args as setupInTerminal runs `asmai
@@ -214,6 +216,12 @@ func (s *setupTerminal) confirmInstall(t *testing.T) {
 	s.typeKeys(t, "y\r")
 }
 
+func (s *setupTerminal) chooseModel(t *testing.T, model string) {
+	t.Helper()
+	waitFor(t, "init to ask for Claude's default model", s.shows("Claude default model [opus]:"))
+	s.typeKeys(t, model+"\r")
+}
+
 // agree waits for setup to explain trusting dir and ask to open Claude Code
 // there, and agrees with Enter.
 func (s *setupTerminal) agree(t *testing.T, dir string) {
@@ -270,11 +278,12 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 
 	agents, workspaces := filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces")
 	s := setupInTerminal(t)
+	s.chooseModel(t, "haiku")
 	s.confirmInstall(t)
 	s.trust(t, agents)
 	s.trust(t, workspaces)
 	if code := s.exited(t); code != 0 {
-		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+		t.Fatalf("asmai init exited %d, printing\n%s", code, s.printed())
 	}
 
 	out := s.printed()
@@ -291,7 +300,7 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	}
 	// Each stage is headed, in order.
 	at := 0
-	for _, heading := range []string{"== 1/4 Config ", "== 2/4 Folders ", "== 3/4 Claude Code ", "== 4/4 Trust "} {
+	for _, heading := range []string{"== 1/5 Platform ", "== 2/5 Config ", "== 3/5 Folders ", "== 4/5 Claude Code ", "== 5/5 Trust "} {
 		i := strings.Index(out[at:], heading)
 		if i < 0 {
 			t.Errorf("setup printed no heading %q after the one before it:\n%s", heading, out)
@@ -309,7 +318,7 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 		`"Yes, I trust this folder"   <- choose this one`,
 		`"No, exit"`,
 		"type /exit and press Enter",
-		`If you choose "No, exit", setup stops with exit status 1, naming this folder`,
+		`If you choose "No, exit", init stops with exit status 1, naming this folder`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("setup printed\n%s\nwant it to say %q", out, want)
@@ -326,8 +335,11 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(testDir, "environments")); string(got) != "agents DISABLE_AUTOUPDATER=1\nworkspaces DISABLE_AUTOUPDATER=1\n" {
 		t.Errorf("setup opened Claude Code with\n%swant DISABLE_AUTOUPDATER=1 in agents and workspaces", got)
 	}
-	if got, _ := os.ReadFile(configFile); string(got) != string(config.Default()) {
+	if got, _ := os.ReadFile(configFile); string(got) != string(config.Default("haiku")) {
 		t.Errorf("the configuration file holds\n%s\nwant the default", got)
+	}
+	if cfg, problems, err := config.Load(configFile); err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "haiku" {
+		t.Errorf("init's Claude default model is %q with problems %v and error %v, want haiku", cfg.Providers["claude"].DefaultModel, problems, err)
 	}
 	for _, dir := range []string{"providers", "bin", "githooks", "agents", "repositories", "workspaces", "views"} {
 		if info, err := os.Stat(filepath.Join(stateDir, dir)); err != nil || !info.IsDir() {
@@ -359,7 +371,7 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 
 	again := setupInTerminal(t)
 	if code := again.exited(t); code != 0 {
-		t.Fatalf("asmai setup again exited %d, printing\n%s", code, again.printed())
+		t.Fatalf("asmai init again exited %d, printing\n%s", code, again.printed())
 	}
 	for _, prefix := range []string{"config:", "folders:", "Claude Code:", "trust agents/:", "trust workspaces/:"} {
 		if got := lineSaying(again.printed(), prefix); !strings.HasPrefix(got, prefix+" already done.") {
@@ -375,17 +387,17 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"setup", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
-		t.Fatalf("asmai setup --json exited %d: %s%s", code, stdout.String(), stderr.String())
+	if code := run([]string{"init", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("asmai init --json exited %d: %s%s", code, stdout.String(), stderr.String())
 	}
 	var result struct {
 		Steps []setupStep `json:"steps"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
+		t.Fatalf("asmai init --json printed %q: %v", stdout.String(), err)
 	}
-	if len(result.Steps) != 6 || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
-		t.Errorf("asmai setup --json reported %+v, want six steps already done", result.Steps)
+	if len(result.Steps) != 9 || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+		t.Errorf("asmai init --json reported %+v, want six steps already done", result.Steps)
 	}
 }
 
@@ -405,7 +417,7 @@ func fixtureOrigin(t *testing.T) string {
 // A registered repository's clone is trusted at setup too: a worker starts
 // in a git worktree of it, which on the pinned Claude Code only the clone's
 // own trust covers. `asmai repo add` with no terminal registers the
-// repository, exiting 0, and says to trust the clone with `asmai setup` in a
+// repository, exiting 0, and says to trust the clone with `asmai init` in a
 // terminal; with --json, stdout holds only the result. Setup then asks only
 // about the new clone, explaining why, and run again finds every folder
 // trusted.
@@ -413,11 +425,12 @@ func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
 	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting, "fixture": trusting})
 	startUnready(t)
 	s := setupInTerminal(t)
+	s.chooseModel(t, "")
 	s.confirmInstall(t)
 	s.trust(t, filepath.Join(stateDir, "agents"))
 	s.trust(t, filepath.Join(stateDir, "workspaces"))
 	if code := s.exited(t); code != 0 {
-		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+		t.Fatalf("asmai init exited %d, printing\n%s", code, s.printed())
 	}
 
 	clone := filepath.Join(stateDir, "repositories", "fixture")
@@ -432,7 +445,7 @@ func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &added); err != nil || !added.Registered || added.Repository.Clone != clone {
 		t.Errorf("asmai repo add --json printed %q (%v), want only fixture registered", stdout.String(), err)
 	}
-	if want := "Claude Code does not trust the clone yet, so no worker can start in a workspace of fixture, and trusting it needs you at a terminal: run `asmai setup` in a terminal, which opens Claude Code in " + clone; !strings.Contains(stderr.String(), want) {
+	if want := "Claude Code does not trust the clone yet, so no worker can start in a workspace of fixture, and trusting it needs you at a terminal: run `asmai init` in a terminal, which opens Claude Code in " + clone; !strings.Contains(stderr.String(), want) {
 		t.Errorf("asmai repo add with no terminal printed %q, want it to say %q", stderr.String(), want)
 	}
 	if got := opened(testDir); !slices.Equal(got, []string{"agents", "workspaces"}) {
@@ -442,7 +455,7 @@ func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
 	again := setupInTerminal(t)
 	again.trust(t, clone)
 	if code := again.exited(t); code != 0 {
-		t.Fatalf("asmai setup after repo add exited %d, printing\n%s", code, again.printed())
+		t.Fatalf("asmai init after repo add exited %d, printing\n%s", code, again.printed())
 	}
 	out := again.printed()
 	for prefix, want := range map[string]string{
@@ -468,17 +481,138 @@ func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if code := run([]string{"setup", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
-		t.Fatalf("asmai setup --json exited %d: %s%s", code, stdout.String(), stderr.String())
+	if code := run([]string{"init", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("asmai init --json exited %d: %s%s", code, stdout.String(), stderr.String())
 	}
 	var result struct {
 		Steps []setupStep `json:"steps"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
+		t.Fatalf("asmai init --json printed %q: %v", stdout.String(), err)
 	}
-	if len(result.Steps) != 7 || result.Steps[6].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
-		t.Errorf("asmai setup --json reported %+v, want seven steps already done, the clone's last", result.Steps)
+	if len(result.Steps) != 10 || result.Steps[9].Step != "trust repositories/fixture/" || slices.ContainsFunc(result.Steps, func(s setupStep) bool { return s.State != stepAlreadyDone }) {
+		t.Errorf("asmai init --json reported %+v, want ten steps already done, the clone's last", result.Steps)
+	}
+	configFile := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := added.Repository.Origin
+	changed := strings.Replace(string(data), origin, origin+"-conflict", 1)
+	if changed == string(data) {
+		t.Fatalf("the registered origin %q was absent from the configuration", origin)
+	}
+	if err := os.WriteFile(configFile, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"init"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "problem") || !strings.Contains(stdout.String(), "origin") {
+		t.Errorf("init with a conflicting registered origin exited %d printing %q", code, stdout.String()+stderr.String())
+	}
+}
+
+func TestInitSkipsAnUnregisteredClone(t *testing.T) {
+	stateDir, _ := setupFactory(t, nil)
+	trustFactory(t, stateDir)
+	if err := os.MkdirAll(filepath.Join(stateDir, "repositories", "orphan"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runIn(t, "", "init", "--yes", "--json")
+	if code != 0 {
+		t.Fatalf("init with an unregistered clone exited %d printing %q", code, stdout+stderr)
+	}
+	var result struct {
+		Steps []setupStep `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("init --json printed %q: %v", stdout, err)
+	}
+	if slices.ContainsFunc(result.Steps, func(step setupStep) bool { return strings.Contains(step.Step, "orphan") }) {
+		t.Errorf("init attempted to trust an unregistered clone: %+v", result.Steps)
+	}
+}
+
+func TestInitDoctorAndStartAgreeOnInstalledProvider(t *testing.T) {
+	stateDir := readyFactory(t, idleLeader)
+	fakeUpstream(t, skills.Version(), nil)
+	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
+	program := "#!/bin/sh\nexec " + providers.ShellQuote(fakeProvider) + " \"$@\"\n"
+	if err := os.WriteFile(path, []byte(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runIn(t, "", "init", "--yes", "--json")
+	if code != 0 {
+		t.Fatalf("init rejected the executable at the recorded path: %d, %s%s", code, stdout, stderr)
+	}
+	var setup struct {
+		Steps []setupStep `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(setup.Steps, func(s setupStep) bool { return s.Step == "Claude Code" && s.State == stepAlreadyDone }) {
+		t.Errorf("init did not accept the installed provider: %+v", setup.Steps)
+	}
+
+	stdout, stderr, code = doctorIn(t, "--json")
+	if code != 0 {
+		t.Fatalf("doctor rejected the executable at the recorded path: %d, %s%s", code, stdout, stderr)
+	}
+	var diagnosis struct {
+		Checks []daemon.Check `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &diagnosis); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code = runAsmai(t, "start", "--json")
+	if code != 0 {
+		t.Fatalf("start rejected the executable at the recorded path: %d, %s%s", code, stdout, stderr)
+	}
+	var started struct {
+		Checks []daemon.Check `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &started); err != nil {
+		t.Fatal(err)
+	}
+	for _, checks := range [][]daemon.Check{diagnosis.Checks, started.Checks} {
+		for _, name := range []string{"Claude Code 2.1.292", "Claude Code version", "Claude Code sign-in", "permission rules"} {
+			if !slices.ContainsFunc(checks, func(c daemon.Check) bool { return c.Name == name && c.OK }) {
+				t.Errorf("%s did not pass in %+v", name, checks)
+			}
+		}
+	}
+}
+
+func TestInitRejectsNonExecutablePinnedProvider(t *testing.T) {
+	stateDir := readyFactory(t, idleLeader)
+	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runIn(t, "", "init", "--yes")
+	if code != 1 || !strings.Contains(stdout+stderr, "Claude Code 2.1.292: failed.") || !strings.Contains(stdout+stderr, "asmai providers install") {
+		t.Fatalf("init with a nonexecutable pinned copy exited %d printing %q", code, stdout+stderr)
+	}
+	if providers.Executable(path) {
+		t.Errorf("init changed the nonexecutable pinned copy at %s", path)
+	}
+}
+
+func TestInitStopsBeforeTrustWhenPinnedClaudeReportsAnotherVersion(t *testing.T) {
+	t.Setenv(fakeprovider.VersionEnv, "2.1.293")
+	_, testDir := setupFactory(t, map[string][]string{"agents": trusting})
+	stdout, stderr, code := runIn(t, "", "init", "--yes")
+	if code != 1 || !strings.Contains(stdout+stderr, "Claude Code version: failed.") {
+		t.Errorf("init with the wrong CLI version exited %d printing %q", code, stdout+stderr)
+	}
+	if got := opened(testDir); len(got) != 0 {
+		t.Errorf("init opened Claude Code in %v after its version failed", got)
 	}
 }
 
@@ -491,11 +625,12 @@ func TestRepoAddHasTheUserTrustTheNewClone(t *testing.T) {
 	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting, "fixture": trusting})
 	startUnready(t)
 	s := setupInTerminal(t)
+	s.chooseModel(t, "")
 	s.confirmInstall(t)
 	s.trust(t, filepath.Join(stateDir, "agents"))
 	s.trust(t, filepath.Join(stateDir, "workspaces"))
 	if code := s.exited(t); code != 0 {
-		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+		t.Fatalf("asmai init exited %d, printing\n%s", code, s.printed())
 	}
 	if _, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 {
 		t.Fatalf("applying setup's configuration exited %d: %s", code, stderr)
@@ -519,7 +654,7 @@ func TestRepoAddHasTheUserTrustTheNewClone(t *testing.T) {
 		"Claude Code trusts a worktree only when it trusts the clone itself.",
 		`"Yes, I trust this folder"   <- choose this one`,
 		`If you choose "No, exit", repo add stops with exit status 1, naming this folder`,
-		"Running `asmai setup` again asks only about the folders still",
+		"Running `asmai init` again asks only about the folders still",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("repo add printed\n%s\nwant it to say %q", out, want)
@@ -550,16 +685,17 @@ func TestRepoAddHasTheUserTrustTheNewClone(t *testing.T) {
 
 // Declining at repo add's question, or answering "No, exit" in Claude Code,
 // leaves the repository registered and its clone untrusted: repo add exits
-// 1 naming the clone and `asmai setup`, and `asmai start` refuses.
+// 1 naming the clone and `asmai init`, and `asmai start` refuses.
 func TestRepoAddStopsNamingTheCloneTheUserDidNotTrust(t *testing.T) {
 	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting, "fixture": refusing})
 	startUnready(t)
 	s := setupInTerminal(t)
+	s.chooseModel(t, "")
 	s.confirmInstall(t)
 	s.trust(t, filepath.Join(stateDir, "agents"))
 	s.trust(t, filepath.Join(stateDir, "workspaces"))
 	if code := s.exited(t); code != 0 {
-		t.Fatalf("asmai setup exited %d, printing\n%s", code, s.printed())
+		t.Fatalf("asmai init exited %d, printing\n%s", code, s.printed())
 	}
 
 	origin := fixtureOrigin(t)
@@ -569,8 +705,8 @@ func TestRepoAddStopsNamingTheCloneTheUserDidNotTrust(t *testing.T) {
 	if code := a.exited(t); code != 1 {
 		t.Fatalf("asmai repo add exited %d after No, want 1; it printed\n%s", code, a.printed())
 	}
-	if out := a.printed(); !strings.Contains(out, "Claude Code does not trust "+clone) || !strings.Contains(out, "run `asmai setup` again") {
-		t.Errorf("after No, repo add printed\n%s\nwant it to name %s and `asmai setup`", out, clone)
+	if out := a.printed(); !strings.Contains(out, "Claude Code does not trust "+clone) || !strings.Contains(out, "run `asmai init` again") {
+		t.Errorf("after No, repo add printed\n%s\nwant it to name %s and `asmai init`", out, clone)
 	}
 
 	other := filepath.Join(stateDir, "repositories", "other")
@@ -590,8 +726,8 @@ func TestRepoAddStopsNamingTheCloneTheUserDidNotTrust(t *testing.T) {
 	if got := repositoriesListed(t); len(got) != 2 {
 		t.Errorf("after the clones went untrusted, asmai repo list shows %+v, want both registered", got)
 	}
-	if _, stderr, code := runAsmai(t, "start"); code != 1 || !strings.Contains(stderr, "Claude Code does not trust "+clone) || !strings.Contains(stderr, "asmai setup") {
-		t.Errorf("asmai start with the clone untrusted exited %d printing %q, want it refused naming the clone and `asmai setup`", code, stderr)
+	if _, stderr, code := runAsmai(t, "start"); code != 1 || !strings.Contains(stderr, "Claude Code does not trust "+clone) || !strings.Contains(stderr, "asmai init") {
+		t.Errorf("asmai start with the clone untrusted exited %d printing %q, want it refused naming the clone and `asmai init`", code, stderr)
 	}
 }
 
@@ -603,13 +739,14 @@ func TestAnsweringNoMakesSetupNameTheUntrustedFolderAndTheNextRunAsksOnlyAboutIt
 	workspaces := filepath.Join(stateDir, "workspaces")
 
 	s := setupInTerminal(t)
+	s.chooseModel(t, "")
 	s.confirmInstall(t)
 	s.trust(t, filepath.Join(stateDir, "agents"))
 	s.refuse(t, workspaces)
 	if code := s.exited(t); code != 1 {
-		t.Fatalf("asmai setup exited %d after No, want 1; it printed\n%s", code, s.printed())
+		t.Fatalf("asmai init exited %d after No, want 1; it printed\n%s", code, s.printed())
 	}
-	if out := s.printed(); !strings.Contains(out, "Claude Code does not trust "+workspaces) || !strings.Contains(out, "asmai setup") {
+	if out := s.printed(); !strings.Contains(out, "Claude Code does not trust "+workspaces) || !strings.Contains(out, "asmai init") {
 		t.Errorf("after No, setup printed\n%s\nwant it to name %s, still untrusted", out, workspaces)
 	}
 	var status struct {
@@ -625,7 +762,7 @@ func TestAnsweringNoMakesSetupNameTheUntrustedFolderAndTheNextRunAsksOnlyAboutIt
 	again := setupInTerminal(t)
 	again.trust(t, workspaces)
 	if code := again.exited(t); code != 0 {
-		t.Fatalf("asmai setup again exited %d, printing\n%s", code, again.printed())
+		t.Fatalf("asmai init again exited %d, printing\n%s", code, again.printed())
 	}
 	if got := lineSaying(again.printed(), "trust agents/:"); !strings.HasPrefix(got, "trust agents/: already done.") {
 		t.Errorf("setup again reported %q, want agents/ already done", got)
@@ -647,10 +784,10 @@ func TestSetupLeavesAnExistingConfigurationFileAsItIsAndReportsItsProblems(t *te
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"setup"}, strings.NewReader(""), &stdout, &stderr)
+	code := run([]string{"init"}, strings.NewReader(""), &stdout, &stderr)
 
 	if code != 1 {
-		t.Errorf("asmai setup exited %d, want 1 for a file with problems", code)
+		t.Errorf("asmai init exited %d, want 1 for a file with problems", code)
 	}
 	out := stdout.String()
 	for _, want := range []string{
@@ -680,6 +817,7 @@ func TestSetupOpensClaudeCodeOnlyOnceTheUserAgrees(t *testing.T) {
 	agents := filepath.Join(stateDir, "agents")
 
 	s := setupInTerminal(t)
+	s.chooseModel(t, "")
 	s.confirmInstall(t)
 	waitFor(t, "setup to ask to open Claude Code in agents/", s.shows(trustPrompt+agents))
 	if got := opened(testDir); len(got) != 0 {
@@ -687,14 +825,14 @@ func TestSetupOpensClaudeCodeOnlyOnceTheUserAgrees(t *testing.T) {
 	}
 	s.typeKeys(t, "n\r")
 	if code := s.exited(t); code != 1 {
-		t.Fatalf("asmai setup exited %d after the user declined, want 1; it printed\n%s", code, s.printed())
+		t.Fatalf("asmai init exited %d after the user declined, want 1; it printed\n%s", code, s.printed())
 	}
 	out := s.printed()
-	if got := lineSaying(out, "trust agents/:"); !strings.HasPrefix(got, "trust agents/: stopped. You stopped setup before Claude Code opened, so "+agents+" is still untrusted") {
+	if got := lineSaying(out, "trust agents/:"); !strings.HasPrefix(got, "trust agents/: stopped. You stopped init before Claude Code opened, so "+agents+" is still untrusted") {
 		t.Errorf("after the user declined, setup reported %q", got)
 	}
-	if !strings.Contains(out, "Claude Code does not trust "+agents) || !strings.Contains(out, "run `asmai setup` again") {
-		t.Errorf("after the user declined, setup printed\n%s\nwant it to name %s and `asmai setup`", out, agents)
+	if !strings.Contains(out, "Claude Code does not trust "+agents) || !strings.Contains(out, "run `asmai init` again") {
+		t.Errorf("after the user declined, setup printed\n%s\nwant it to name %s and `asmai init`", out, agents)
 	}
 	if got := opened(testDir); len(got) != 0 {
 		t.Errorf("after the user declined, setup had opened Claude Code in %q", got)
@@ -707,7 +845,7 @@ func TestSetupOpensClaudeCodeOnlyOnceTheUserAgrees(t *testing.T) {
 	again.trust(t, agents)
 	again.trust(t, filepath.Join(stateDir, "workspaces"))
 	if code := again.exited(t); code != 0 {
-		t.Fatalf("asmai setup again exited %d, printing\n%s", code, again.printed())
+		t.Fatalf("asmai init again exited %d, printing\n%s", code, again.printed())
 	}
 }
 
@@ -717,16 +855,16 @@ func TestSetupNeedsATerminalToTrustAFolder(t *testing.T) {
 	stateDir, testDir := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting})
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"setup"}, strings.NewReader("y\n\n\n"), &stdout, &stderr)
+	code := run([]string{"init"}, strings.NewReader("y\n\n\n"), &stdout, &stderr)
 
 	if code != 1 {
-		t.Errorf("asmai setup with no terminal exited %d, want 1", code)
+		t.Errorf("asmai init with no terminal exited %d, want 1", code)
 	}
 	agents := filepath.Join(stateDir, "agents")
 	if got := lineSaying(stdout.String(), "trust agents/:"); !strings.HasPrefix(got, "trust agents/: failed.") {
 		t.Errorf("setup with no terminal reported %q, want trust agents/ failed", got)
 	}
-	if want := "trusting " + agents + " needs you at a terminal"; !strings.Contains(stderr.String(), want) || !strings.Contains(stderr.String(), "Run `asmai setup` in a terminal") {
+	if want := "trusting " + agents + " needs you at a terminal"; !strings.Contains(stderr.String(), want) || !strings.Contains(stderr.String(), "Run `asmai init` in a terminal") {
 		t.Errorf("setup's error is %q, want it to say %q", stderr.String(), want)
 	}
 	if strings.Contains(stdout.String(), "\x1b") {
@@ -741,12 +879,12 @@ func TestSetupNeedsATerminalToTrustAFolder(t *testing.T) {
 		Steps []setupStep `json:"steps"`
 	}
 	stdout.Reset()
-	run([]string{"setup", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	run([]string{"init", "--json"}, strings.NewReader(""), &stdout, &stderr)
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		t.Fatalf("asmai setup --json printed %q: %v", stdout.String(), err)
+		t.Fatalf("asmai init --json printed %q: %v", stdout.String(), err)
 	}
 	if last := result.Steps[len(result.Steps)-1]; last.Step != "trust agents/" || last.State != stepFailed || !strings.Contains(last.Detail, "needs you at a terminal") {
-		t.Errorf("asmai setup --json reported its last step %+v, want trust agents/ failed for want of a terminal", last)
+		t.Errorf("asmai init --json reported its last step %+v, want trust agents/ failed for want of a terminal", last)
 	}
 }
 
@@ -762,8 +900,8 @@ func TestStartFailsNamingSetupWhileAFolderAgentsStartInIsUntrusted(t *testing.T)
 
 	_, stderr, code := runAsmai(t, "start")
 
-	if code != 1 || !strings.Contains(stderr, "failed  directory trust: Claude Code does not trust "+filepath.Join(stateDir, "workspaces")) || !strings.Contains(stderr, "fix: run `asmai setup`") {
-		t.Errorf("asmai start exited %d printing\n%s\nwant 1 and the directory trust check failed, naming `asmai setup`", code, stderr)
+	if code != 1 || !strings.Contains(stderr, "failed  directory trust: Claude Code does not trust "+filepath.Join(stateDir, "workspaces")) || !strings.Contains(stderr, "fix: run `asmai init`") {
+		t.Errorf("asmai start exited %d printing\n%s\nwant 1 and the directory trust check failed, naming `asmai init`", code, stderr)
 	}
 	if got, _ := os.ReadFile(record); string(got) != only {
 		t.Errorf("asmai start changed Claude Code's record to %s", got)
@@ -776,8 +914,8 @@ func TestStartFailsNamingSetupWhileAFolderAgentsStartInIsUntrusted(t *testing.T)
 func TestAnAgentCannotRunSetup(t *testing.T) {
 	t.Setenv(daemon.SessionCredential, "a-session")
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"setup"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "ask the user to run `asmai setup`") {
-		t.Errorf("an agent's asmai setup exited %d printing %q, want it refused", code, stderr.String())
+	if code := run([]string{"init"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "ask the user to run `asmai init`") {
+		t.Errorf("an agent's asmai init exited %d printing %q, want it refused", code, stderr.String())
 	}
 }
 
@@ -807,5 +945,75 @@ func TestSetupAsksAgainUntilTheUserPressesEnterOrTypesN(t *testing.T) {
 		if got := strings.Count(out.String(), prompt); got != c.asked {
 			t.Errorf("answering %q, setup asked %d times, want %d; it printed %q", c.input, got, c.asked, out.String())
 		}
+	}
+}
+
+// With --yes, init installs the pinned Claude Code and opens Claude Code in
+// each folder without asking either question, so that the only thing left
+// for the user is Claude Code's own question about trusting the folder.
+func TestInitYesAsksNeitherToInstallNorToOpenClaudeCode(t *testing.T) {
+	stateDir, _ := setupFactory(t, map[string][]string{"agents": trusting, "workspaces": trusting})
+	startUnready(t)
+
+	s := setupInTerminal(t, "--yes")
+	for _, dir := range []string{"agents", "workspaces"} {
+		waitFor(t, "Claude Code to ask about trusting "+dir, s.shows("❯ No, exit"))
+		s.typeKeys(t, "\x1b[B")
+		waitFor(t, "Yes to be selected", s.shows("❯ Yes, I trust this folder"))
+		s.typeKeys(t, "\r")
+		waitFor(t, "Claude Code to come up", s.shows("Claude Code is ready"))
+		s.typeKeys(t, "/exit\r")
+	}
+	if code := s.exited(t); code != 0 {
+		t.Fatalf("asmai init --yes exited %d, printing\n%s", code, s.printed())
+	}
+	out := s.printed()
+	if strings.Contains(out, "Claude default model [opus]") || strings.Contains(out, "Install it? [y/N]") || strings.Contains(out, trustPrompt) {
+		t.Errorf("asmai init --yes asked a question:\n%s", out)
+	}
+	for _, want := range []string{"Installing it: --yes confirms.", "Claude Code version: already done.", "permission rules: already done.", "trust workspaces/: done. Claude Code trusts " + filepath.Join(stateDir, "workspaces")} {
+		if !strings.Contains(out, want) {
+			t.Errorf("asmai init --yes printed\n%s\nwant it to say %q", out, want)
+		}
+	}
+}
+
+func TestInitYesAcceptsClaudeDefaultModelFlagWithoutPrompts(t *testing.T) {
+	stateDir, _ := setupFactory(t, nil)
+	stdout, stderr, code := runIn(t, "", "init", "--yes", "--claude-default-model", "sonnet")
+	if code != 1 || !strings.Contains(stdout+stderr, "needs you at a terminal") {
+		t.Fatalf("init --yes with an untrusted folder exited %d printing %q", code, stdout+stderr)
+	}
+	if strings.Contains(stdout+stderr, "Claude default model [opus]") {
+		t.Errorf("init --yes asked for a model: %q", stdout+stderr)
+	}
+	cfg, problems, err := config.Load(configPath())
+	if err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "sonnet" {
+		t.Fatalf("init saved model %q with problems %v and error %v, want sonnet", cfg.Providers["claude"].DefaultModel, problems, err)
+	}
+	trustFactory(t, stateDir)
+	stdout, stderr, code = runIn(t, "", "init", "--yes", "--claude-default-model", "sonnet")
+	if code != 0 || !strings.Contains(stdout, "Init is done") {
+		t.Errorf("init retry with the saved Sonnet model exited %d printing %q", code, stdout+stderr)
+	}
+	stdout, stderr, code = runIn(t, "", "init", "--yes", "--claude-default-model", "opus")
+	if code != 1 || !strings.Contains(stdout+stderr, `has Claude default model "sonnet"`) || !strings.Contains(stdout+stderr, `requests "opus"`) {
+		t.Errorf("init with a conflicting model flag exited %d printing %q", code, stdout+stderr)
+	}
+	cfg, problems, err = config.Load(configPath())
+	if err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "sonnet" {
+		t.Errorf("the existing model became %q with problems %v and error %v", cfg.Providers["claude"].DefaultModel, problems, err)
+	}
+}
+
+func TestInitAcceptsCustomClaudeDefaultModel(t *testing.T) {
+	setupFactory(t, nil)
+	stdout, stderr, code := runIn(t, "", "init", "--yes", "--claude-default-model", "haiku")
+	if code != 1 || !strings.Contains(stdout+stderr, "needs you at a terminal") {
+		t.Errorf("init with a custom model exited %d printing %q", code, stdout+stderr)
+	}
+	cfg, problems, err := config.Load(configPath())
+	if err != nil || len(problems) != 0 || cfg.Providers["claude"].DefaultModel != "haiku" {
+		t.Errorf("init saved model %q with problems %v and error %v, want haiku", cfg.Providers["claude"].DefaultModel, problems, err)
 	}
 }

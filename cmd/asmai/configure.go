@@ -32,7 +32,7 @@ func configFile() (path string, data []byte, err error) {
 	}
 	data, err = os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return path, nil, fmt.Errorf("%s does not exist; run `asmai setup`, which writes it with every role staffed, or print an example to start from with `asmai config example`", path)
+		return path, nil, fmt.Errorf("%s does not exist; run `asmai init`, which writes it with every role staffed, or print an example to start from with `asmai config example`", path)
 	}
 	if err != nil {
 		return path, nil, fmt.Errorf("reading %s: %w", path, err)
@@ -98,7 +98,7 @@ func configEdit(o *output, stdin io.Reader) int {
 	}
 	original, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return o.fail(fmt.Errorf("%s does not exist; run `asmai setup` to create it before editing", path))
+		return o.fail(fmt.Errorf("%s does not exist; run `asmai init` to create it before editing", path))
 	}
 	if err != nil {
 		return o.fail(fmt.Errorf("reading %s: %w", path, err))

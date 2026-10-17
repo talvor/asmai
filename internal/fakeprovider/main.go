@@ -56,6 +56,9 @@ const (
 // updated itself.
 const VersionEnv = "ASMAI_FAKE_PROVIDER_VERSION"
 
+// AuthMethodEnv selects the sign-in method reported to development tests.
+const AuthMethodEnv = "ASMAI_FAKE_PROVIDER_AUTH_METHOD"
+
 const usage = "usage: fake-provider [--script FILE] [--settings FILE|JSON] [--setting-sources SOURCES] [--strict-mcp-config] [--plugin-dir DIR] [--model MODEL] [--append-system-prompt TEXT] [--resume SESSION]"
 
 // reportedVersion is the version the fake reports: $VersionEnv, else the
@@ -81,6 +84,14 @@ var settingSources = []string{"user", "project", "local"}
 func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v") {
 		fmt.Fprintf(stdout, "%s (Claude Code)\n", reportedVersion())
+		return 0
+	}
+	if slices.Equal(args, []string{"auth", "status", "--json"}) {
+		method := os.Getenv(AuthMethodEnv)
+		if method == "" {
+			method = "claude.ai"
+		}
+		json.NewEncoder(stdout).Encode(map[string]any{"loggedIn": true, "authMethod": method})
 		return 0
 	}
 	flags := flag.NewFlagSet("fake-provider", flag.ContinueOnError)

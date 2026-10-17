@@ -19,6 +19,7 @@ import (
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/fakeprovider"
 	"github.com/talvor/asmai/internal/providers"
+	"github.com/talvor/asmai/internal/skills"
 	"github.com/talvor/asmai/internal/vt"
 )
 
@@ -532,6 +533,59 @@ func TestInitSkipsAnUnregisteredClone(t *testing.T) {
 	}
 	if slices.ContainsFunc(result.Steps, func(step setupStep) bool { return strings.Contains(step.Step, "orphan") }) {
 		t.Errorf("init attempted to trust an unregistered clone: %+v", result.Steps)
+	}
+}
+
+func TestInitDoctorAndStartAgreeOnInstalledProvider(t *testing.T) {
+	stateDir := readyFactory(t, idleLeader)
+	fakeUpstream(t, skills.Version(), nil)
+	path := filepath.Join(stateDir, "providers", "claude-code", "2.1.292", "claude")
+	program := "#!/bin/sh\nexec " + providers.ShellQuote(fakeProvider) + " \"$@\"\n"
+	if err := os.WriteFile(path, []byte(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runIn(t, "", "init", "--yes", "--json")
+	if code != 0 {
+		t.Fatalf("init rejected the executable at the recorded path: %d, %s%s", code, stdout, stderr)
+	}
+	var setup struct {
+		Steps []setupStep `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(setup.Steps, func(s setupStep) bool { return s.Step == "Claude Code" && s.State == stepAlreadyDone }) {
+		t.Errorf("init did not accept the installed provider: %+v", setup.Steps)
+	}
+
+	stdout, stderr, code = doctorIn(t, "--json")
+	if code != 0 {
+		t.Fatalf("doctor rejected the executable at the recorded path: %d, %s%s", code, stdout, stderr)
+	}
+	var diagnosis struct {
+		Checks []daemon.Check `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &diagnosis); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code = runAsmai(t, "start", "--json")
+	if code != 0 {
+		t.Fatalf("start rejected the executable at the recorded path: %d, %s%s", code, stdout, stderr)
+	}
+	var started struct {
+		Checks []daemon.Check `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &started); err != nil {
+		t.Fatal(err)
+	}
+	for _, checks := range [][]daemon.Check{diagnosis.Checks, started.Checks} {
+		for _, name := range []string{"Claude Code 2.1.292", "Claude Code version", "Claude Code sign-in", "permission rules"} {
+			if !slices.ContainsFunc(checks, func(c daemon.Check) bool { return c.Name == name && c.OK }) {
+				t.Errorf("%s did not pass in %+v", name, checks)
+			}
+		}
 	}
 }
 

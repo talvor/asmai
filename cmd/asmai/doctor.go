@@ -104,15 +104,7 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
 	if ok {
 		plan, planErr := p.ClaudeCodePlan(platform, paths.Providers)
-		var installErr error
-		if planErr != nil {
-			installErr = planErr
-		} else if present, err := providers.Present(plan); err != nil {
-			installErr = err
-		} else if !present {
-			installErr = fmt.Errorf("the pinned Claude Code %s is not installed at %s", plan.Version, plan.Path)
-		}
-		checks = append(checks, daemon.ClaudeCodeChecks(p.ClaudeCode.Version, plan.Path, installErr,
+		checks = append(checks, daemon.ClaudeCodeChecks(p.ClaudeCode.Version, plan.Path, planErr,
 			func(path string) daemon.Check {
 				return daemon.Check(certify.Version(context.Background(), path, p.ClaudeCode.Version, providers.ClaudeCodeVersion))
 			}, daemon.SignInCheck,

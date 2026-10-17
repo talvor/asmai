@@ -162,6 +162,12 @@ func Present(plan Plan) (bool, error) {
 	return n == plan.Download.Size && hex.EncodeToString(h.Sum(nil)) == plan.Download.SHA256, nil
 }
 
+// Executable reports whether path names a regular file its owner can execute.
+func Executable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o100 != 0
+}
+
 // Fetch downloads plan.URL with client, checks its size and SHA-256 against
 // the pin, and makes it plan.Path's executable. A download that fails or does
 // not match leaves nothing at plan.Path.

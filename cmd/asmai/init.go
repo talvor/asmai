@@ -186,15 +186,10 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	if err != nil && !errors.Is(err, daemon.ErrNotRunning) {
 		return fail(err)
 	}
+	present := providers.Executable(plan.Path)
 	recorded := false
 	for _, installed := range resp.Providers {
-		recorded = recorded || installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && exists(plan.Path)
-	}
-	present := recorded
-	if !present {
-		if present, err = providers.Present(plan); err != nil {
-			return fail(err)
-		}
+		recorded = recorded || installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && present
 	}
 	if present && (recorded || !running) {
 		report(plan.Title, stepAlreadyDone, fmt.Sprintf("The pinned %s %s is at %s", plan.Title, plan.Version, plan.Path))

@@ -288,6 +288,8 @@ func ClaudeCodeChecks(pinned, path string, installErr error, version, signIn, ru
 		return []Check{{Name: "Claude Code", Problem: "this asmai pins no Claude Code", Fix: "run an asmai built with its pins file"}}
 	case installErr != nil:
 		return []Check{{Name: name, Problem: installErr.Error(), Fix: "run `asmai providers install`"}}
+	case !providers.Executable(path):
+		return []Check{{Name: name, Problem: fmt.Sprintf("the pinned Claude Code %s is not installed at %s", pinned, path), Fix: "run `asmai providers install`"}}
 	}
 	checks := []Check{{Name: name, OK: true}}
 	v := version(path)
@@ -545,8 +547,7 @@ func (d *daemon) claudeCode(version string) (store.ProviderInstall, error) {
 		if p.Name != providers.ClaudeCode || p.Version != version {
 			continue
 		}
-		info, err := os.Stat(p.Path)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o100 == 0 {
+		if !providers.Executable(p.Path) {
 			return p, fmt.Errorf("the pinned Claude Code %s is not at %s, where it was installed", version, p.Path)
 		}
 		return p, nil
@@ -569,7 +570,7 @@ func (d *daemon) pinnedCopy() (store.ProviderInstall, bool) {
 	if err != nil {
 		return store.ProviderInstall{}, false
 	}
-	if present, err := providers.Present(plan); err != nil || !present {
+	if !providers.Executable(plan.Path) {
 		return store.ProviderInstall{}, false
 	}
 	install := store.ProviderInstall{Name: plan.Name, Version: plan.Version, Path: plan.Path, SHA256: plan.Download.SHA256, InstalledAt: time.Now()}

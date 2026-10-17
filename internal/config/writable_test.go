@@ -84,6 +84,32 @@ func TestAWritableFolderThisAsmaiCannotHonourNamesTheLineAndTheFix(t *testing.T)
 	}
 }
 
+func TestWritableTableReportsIndependentPathAndEnvErrors(t *testing.T) {
+	file := "[repositories.otman]\norigin = \"o\"\n[[repositories.otman.writable]]\npath = \"relative\"\nenv = \"\"\n"
+	_, problems := Parse([]byte(file))
+	if len(problems) != 2 {
+		t.Fatalf("Parse found %+v, want path and env problems", problems)
+	}
+	if problems[0].Line != 4 || !strings.Contains(problems[0].Problem, `"relative" is not an absolute path`) {
+		t.Errorf("path problem: %+v", problems[0])
+	}
+	if problems[1].Line != 5 || !strings.Contains(problems[1].Problem, `exports "", which is not an environment variable name`) {
+		t.Errorf("env problem: %+v", problems[1])
+	}
+}
+
+func TestWritableListReportsBothProtectedPathAndReservedEnv(t *testing.T) {
+	bounds := NewBounds("/home/me", "/home/me/.local/state/asmai", "/home/me/.local/state/asmai/repositories", []string{"otman"})
+	err := CheckWritable("otman", []Writable{{Path: "~/.ssh", Env: "PATH"}}, bounds)
+	problems, ok := err.(*EntryProblemsError)
+	if !ok || len(problems.Problems) != 2 {
+		t.Fatalf("CheckWritable returned %v, want two reasons", err)
+	}
+	if !strings.Contains(problems.Problems[0].Problem, `exports "PATH"`) || !strings.Contains(problems.Problems[1].Problem, `is ~/.ssh`) {
+		t.Errorf("CheckWritable returned %+v", problems.Problems)
+	}
+}
+
 func TestTheFoldersARepositoryOpensAreResolvedAndListed(t *testing.T) {
 	cfg, _ := Parse([]byte(goEntry + "\n[repositories.plain]\norigin = \"o\"\n"))
 	open := cfg.OpenFolders("/home/me")

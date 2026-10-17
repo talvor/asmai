@@ -25,7 +25,8 @@ type Writable struct {
 	Path string `json:"path"`
 	// Env is the variable the workers' environment carries the folder's
 	// absolute path in; empty for none.
-	Env string `json:"env,omitempty"`
+	Env      string `json:"env,omitempty"`
+	emptyEnv bool
 }
 
 // Folder is a writable folder resolved: Path as declared, Resolved the
@@ -160,7 +161,7 @@ func checkWritablePath(path string) (why, fix string) {
 
 func checkWritableEnv(w Writable) (why, fix string) {
 	switch env := w.Env; {
-	case env == "":
+	case env == "" && !w.emptyEnv:
 	case !envNamePattern.MatchString(env):
 		return fmt.Sprintf("%q exports %q, which is not an environment variable name: letters, digits and \"_\", not starting with a digit", w.Path, env),
 			`name the variable the folder's tools read, such as env = "GOCACHE", or remove env`
@@ -300,15 +301,20 @@ func pathForms(path string) []string {
 func writableProblems(subject string, list []Writable, bounds *Bounds) []Problem {
 	var problems []Problem
 	for i, w := range list {
-		why, fix := checkWritable(w)
-		if why == "" {
-			why, fix = checkWritableExports(list, i)
+		add := func(why, fix string) {
+			if why != "" {
+				problems = append(problems, Problem{Problem: fmt.Sprintf("%s writable folder %s", subject, why), Fix: fix})
+			}
 		}
-		if why == "" && bounds != nil {
+		pathWhy, pathFix := checkWritablePath(w.Path)
+		add(pathWhy, pathFix)
+		why, fix := checkWritableEnv(w)
+		add(why, fix)
+		why, fix = checkWritableExports(list, i)
+		add(why, fix)
+		if pathWhy == "" && bounds != nil {
 			why, fix = bounds.check(w)
-		}
-		if why != "" {
-			problems = append(problems, Problem{Problem: fmt.Sprintf("%s writable folder %s", subject, why), Fix: fix})
+			add(why, fix)
 		}
 	}
 	return problems
@@ -380,6 +386,7 @@ func (st *state) writableField(d *writableDraft, path []string, value *unstable.
 		d.w.Path, d.hasPath, d.pathLine = string(value.Data), true, line
 	case "env":
 		d.w.Env, d.envLine = string(value.Data), line
+		d.w.emptyEnv = d.w.Env == ""
 	}
 }
 
@@ -402,12 +409,16 @@ func (st *state) finishWritable() {
 		problem := func(line int, why, fix string) {
 			st.problems = append(st.problems, Problem{Line: line, Problem: fmt.Sprintf("%s writable folder %s", table, why), Fix: fix})
 		}
+		invalid := false
 		if why, fix := checkWritablePath(d.w.Path); why != "" {
 			problem(d.pathLine, why, fix)
-			continue
+			invalid = true
 		}
 		if why, fix := checkWritableEnv(d.w); why != "" {
 			problem(d.envLine, why, fix)
+			invalid = true
+		}
+		if invalid {
 			continue
 		}
 		options.Writable = append(options.Writable, d.w)

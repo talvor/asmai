@@ -69,6 +69,12 @@ path = "/var/cache/tools"
 	if _, stderr, code := runAsmai(t, "config", "check"); code != 1 || !strings.Contains(stderr, `exports "PATH"`) {
 		t.Errorf("asmai config check of a PATH folder exited %d printing %q", code, stderr)
 	}
+	writeConfig(t, staffing+"\n[repositories.otman]\norigin = \"o\"\ndefault_branch = \"main\"\n\n[[repositories.otman.writable]]\npath = \"~/.cache/x\"\nenv = \"\"\n")
+	for _, args := range [][]string{{"config", "check"}, {"config", "apply"}} {
+		if _, stderr, code := runAsmai(t, args...); code != 1 || !strings.Contains(stderr, `exports "", which is not an environment variable name`) {
+			t.Errorf("asmai %v exited %d printing %q, want empty env refused", args, code, stderr)
+		}
+	}
 }
 
 func TestRepoAddSuggestsAGoRepositorysBuildCacheAndTakesFoldersByHand(t *testing.T) {
@@ -111,6 +117,7 @@ func TestRepoAddSuggestsAGoRepositorysBuildCacheAndTakesFoldersByHand(t *testing
 		{[]string{"--writable", "~/.cache/x=A", "--writable", "~/.cache/y=A"}, `already exports`},
 		{[]string{"--writable", "relative"}, "not an absolute path"},
 		{[]string{"--writable", ""}, "--writable: a writable folder is empty"},
+		{[]string{"--writable", "~/.cache/x="}, `ends in "=" with no variable name`},
 	} {
 		_, stderr, code := runAsmai(t, append([]string{"repo", "add", origin, "--name", "fixture"}, tc.args...)...)
 		if code != 1 || !strings.Contains(stderr, tc.want) {

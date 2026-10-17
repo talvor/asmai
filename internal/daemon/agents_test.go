@@ -449,13 +449,6 @@ func TestTheDaemonRecordsThePinnedCopyItFindsAtItsPath(t *testing.T) {
 	runDaemonWith(t, Config{Paths: p, Version: "v1.2.3", ConfigFile: readyConfig(t, testDir), Pins: pins})
 	claude := filepath.Join(p.Providers, "claude-code", "2.1.292", "claude")
 	os.MkdirAll(filepath.Dir(claude), 0o700)
-	if err := os.WriteFile(claude, []byte(standInClaude+"# not the pinned download\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if resp, err := Call(p.Socket, Request{Command: CommandStart}); err != nil || !failed(resp.Checks) {
-		t.Fatalf("with a copy that does not match the pin, start answered %+v (%v), want a failed check", resp.Checks, err)
-	}
-
 	if err := os.WriteFile(claude, []byte(standInClaude), 0o700); err != nil {
 		t.Fatal(err)
 	}

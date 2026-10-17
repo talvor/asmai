@@ -102,7 +102,7 @@ const (
 	// WaitingDecision is a pending decision request. Its place is reserved:
 	// the decision request record is not daemon state yet, so none is listed.
 	WaitingDecision = "decision"
-	// WaitingFinding is a needs-you finding of a job not yet delivered.
+	// WaitingFinding is a needs-you finding of a job not yet ended.
 	WaitingFinding = "finding"
 )
 
@@ -325,8 +325,8 @@ func (d *daemon) subscribe(conn *net.UnixConn, r io.Reader) {
 }
 
 // waitingOnYou derives the Waiting on you set: the agents the snapshot derived
-// as waiting, with a native prompt before held input, then the pending
-// decision requests, then the needs-you findings.
+// as waiting, with a native prompt before held input, then the needs-you
+// findings. Pending decision requests have a reserved, empty position.
 func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings []store.NeedsYouFinding) []WaitingItem {
 	var items []WaitingItem
 	for _, kind := range []string{WaitingNativePrompt, WaitingInput} {

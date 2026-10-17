@@ -513,6 +513,28 @@ func TestSetupHasTheUserTrustEachRegisteredClone(t *testing.T) {
 	}
 }
 
+func TestInitSkipsAnUnregisteredClone(t *testing.T) {
+	stateDir, _ := setupFactory(t, nil)
+	trustFactory(t, stateDir)
+	if err := os.MkdirAll(filepath.Join(stateDir, "repositories", "orphan"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runIn(t, "", "init", "--yes", "--json")
+	if code != 0 {
+		t.Fatalf("init with an unregistered clone exited %d printing %q", code, stdout+stderr)
+	}
+	var result struct {
+		Steps []setupStep `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("init --json printed %q: %v", stdout, err)
+	}
+	if slices.ContainsFunc(result.Steps, func(step setupStep) bool { return strings.Contains(step.Step, "orphan") }) {
+		t.Errorf("init attempted to trust an unregistered clone: %+v", result.Steps)
+	}
+}
+
 func TestInitStopsBeforeTrustWhenPinnedClaudeReportsAnotherVersion(t *testing.T) {
 	t.Setenv(fakeprovider.VersionEnv, "2.1.293")
 	_, testDir := setupFactory(t, map[string][]string{"agents": trusting})

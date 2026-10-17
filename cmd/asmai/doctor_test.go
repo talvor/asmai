@@ -178,6 +178,39 @@ func TestDoctorMarksAddedAndRepositorySkillsUnqualified(t *testing.T) {
 	}
 }
 
+func TestDoctorSuggestsEditingConfigurationForInvalidRepositorySkill(t *testing.T) {
+	stateDir := readyFactory(t, idleLeader)
+	fakeUpstream(t, skills.Version(), nil)
+	stdout, stderr, code := runIn(t, "", "repo", "add", fixtureOrigin(t), "--repository-skills", "engineering")
+	if code != 0 {
+		t.Fatalf("repo add exited %d printing %q", code, stdout+stderr)
+	}
+	skill := addedSkill(t, filepath.Join(stateDir, "repositories", "fixture", ".claude", "skills"), "house-rules", "Follow the fixture's rules.")
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte(skillFile("another-name", "Follow the fixture's rules.")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code = doctorIn(t, "--json")
+	if code != 1 {
+		t.Fatalf("doctor with an invalid repository skill exited %d printing %q", code, stdout+stderr)
+	}
+	var report struct {
+		Checks []daemon.Check `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("doctor --json printed %q: %v", stdout, err)
+	}
+	for _, check := range report.Checks {
+		if check.Name == "repository skills" {
+			if check.OK || !strings.Contains(check.Fix, "`repository_skills`") || !strings.Contains(check.Fix, "`asmai config apply`") || strings.Contains(check.Fix, "repo add") {
+				t.Errorf("doctor gave an unusable repository skill fix: %+v", check)
+			}
+			return
+		}
+	}
+	t.Errorf("doctor omitted the invalid repository skill check: %+v", report.Checks)
+}
+
 func quoteTOML(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

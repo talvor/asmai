@@ -191,7 +191,7 @@ func unqualifiedSkills(cfg config.Config, registered []store.Repository) ([]unqu
 		}
 		own, err := skills.RepositorySkills(r.Clone)
 		if err != nil {
-			failed = append(failed, daemon.Check{Name: "repository skills", Problem: fmt.Sprintf("repository %s: %v", r.Name, err), Fix: "fix the skill in the repository, or switch its repository skills off with `asmai repo add --repository-skills`"})
+			failed = append(failed, daemon.Check{Name: "repository skills", Problem: fmt.Sprintf("repository %s: %v", r.Name, err), Fix: "fix the skill in the repository, or remove its roles from the repository's `repository_skills` setting in the configuration file and run `asmai config apply`"})
 			continue
 		}
 		for _, role := range options.RepositorySkills {

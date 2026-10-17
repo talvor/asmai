@@ -235,9 +235,15 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	stage(5, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
 	record := providers.ClaudeCodeRecord(home, os.Getenv)
 	current = "trust"
-	clones, err := paths.Clones()
+	registered, err := registeredRepositories(paths)
 	if err != nil {
 		return fail(err)
+	}
+	var clones []string
+	for _, r := range registered {
+		if _, err := os.Stat(r.Clone); err == nil {
+			clones = append(clones, r.Clone)
+		}
 	}
 	for _, dir := range append([]string{paths.Agents, paths.Workspaces}, clones...) {
 		step := "trust " + trustStep(paths, dir)

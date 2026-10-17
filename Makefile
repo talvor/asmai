@@ -31,7 +31,7 @@ dist: ## Build asmai for each CI platform into dist/<os>-<arch>/asmai
 test: ## Run the development tests
 	$(GO) test ./...
 
-notices: ## Generate THIRD_PARTY_NOTICES from the Go modules compiled into asmai
+notices: ## Regenerate THIRD_PARTY_NOTICES
 	$(GO) run ./internal/cmd/gen-notices
 
 fmt: ## Format the Go sources

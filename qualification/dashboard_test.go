@@ -156,13 +156,40 @@ func TestTheChildrenOfAProcessAreFoundInPsOutput(t *testing.T) {
 	}
 }
 
+// Claude Code echoes the user's message above its permission menu with the
+// marker that shows the selected choice, so the selected choice is the numbered
+// one, not the first marker on the screen.
+func TestTheSelectedChoiceOfAPermissionMenuIsTheNumberedOne(t *testing.T) {
+	screen := []string{
+		"❯ Qualification exercise 1. This is a check of your permission prompts.",
+		"",
+		"Do you want to create qualification-dashboard.txt?",
+		"   1. Yes",
+		" ❯ 2. Yes, and switch to accept edits (shift+tab)",
+		"   3. No",
+	}
+	if got, want := selectedMenuOption(screen), "2. yes, and switch to accept edits (shift+tab)"; got != want {
+		t.Errorf("selected = %q, want %q", got, want)
+	}
+	if isAllowOnce(selectedMenuOption(screen)) {
+		t.Error("the choice that switches to accepting edits was taken for the one-time Yes")
+	}
+	screen[3], screen[4] = " ❯ 1. Yes", "   2. Yes, and switch to accept edits (shift+tab)"
+	if got := selectedMenuOption(screen); !isAllowOnce(got) {
+		t.Errorf("selected = %q, want the one-time Yes", got)
+	}
+	if got := selectedMenuOption(screen[:3]); got != "" {
+		t.Errorf("a screen with only the echoed message has %q selected, want none", got)
+	}
+}
+
 func TestOnlyTheOneTimeYesAllowsOnce(t *testing.T) {
 	for option, want := range map[string]bool{
 		"1. yes": true,
 		"yes":    true,
-		"2. yes, allow all edits during this session (shift+tab)": false,
-		"3. no, and tell claude what to do differently (esc)":     false,
-		"1. yes, and don't ask again for this command":            false,
+		"2. yes, and switch to accept edits (shift+tab)":      false,
+		"3. no, and tell claude what to do differently (esc)": false,
+		"1. yes, and don't ask again for this command":        false,
 		"": false,
 	} {
 		if got := isAllowOnce(option); got != want {
@@ -329,9 +356,11 @@ func c53Scripts(t *testing.T, h *Harness, scripts string, noPrompt bool) {
 	exercise := h.exercisePrompt()
 	number = 0
 	menu := func(selected int) string {
-		options := []string{"1. Yes", "2. Yes, allow all edits during this session (shift+tab)", "3. No, and tell Claude what to do differently (esc)"}
+		options := []string{"1. Yes", "2. Yes, and switch to accept edits (shift+tab)", "3. No"}
 		var b strings.Builder
-		b.WriteString("\\u001b[2J\\u001b[HDo you want to create qualification-dashboard.txt?\\r\\n")
+		// Claude Code echoes the user's message above the menu with the same
+		// marker as the menu's selection, so it is the first ❯ on the screen.
+		b.WriteString("\\u001b[2J\\u001b[H❯ " + write + "\\r\\nDo you want to create qualification-dashboard.txt?\\r\\n")
 		for i, option := range options {
 			if i+1 == selected {
 				b.WriteString(" ❯ " + option + "\\r\\n")

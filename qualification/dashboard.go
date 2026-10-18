@@ -685,6 +685,25 @@ func nativePromptWrite(number int64) string {
 	return fmt.Sprintf("Qualification exercise %d. This is a check of your permission prompts, not a job: do not open one or hand anything to another role. With the Write tool, and no other tool, create the file qualification-dashboard.txt in your working directory, holding the single line ok. If it is refused, do nothing else. Then reply with the single word done.", number)
 }
 
+// menuOption is a numbered choice of a Claude Code menu with the ❯ marker on it.
+var menuOption = regexp.MustCompile(`❯\s*(\d+\.\s.*)$`)
+
+// selectedMenuOption returns, in lower case, the numbered choice a Claude Code
+// permission menu has selected, such as "1. yes". Unlike selectedOption it
+// ignores a ❯ that is not on a numbered choice: Claude Code echoes the user's
+// message above the menu with the same marker, which is the first ❯ on the
+// screen. It returns empty when no choice is selected, and the last one if the
+// screen shows more than one.
+func selectedMenuOption(lines []string) string {
+	selected := ""
+	for _, line := range lines {
+		if m := menuOption.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			selected = strings.ToLower(strings.TrimSpace(m[1]))
+		}
+	}
+	return selected
+}
+
 // isAllowOnce reports whether option, the line a Claude Code permission menu
 // has selected, is the choice that allows the tool once: "Yes", whatever its
 // number, and not "Yes, allow all edits during this session" or any choice that
@@ -711,7 +730,7 @@ func (h *Harness) allowOnce(ctx context.Context, f *Factory) error {
 		if lines, err = f.Screen(); err != nil {
 			return err
 		}
-		switch option := selectedOption(lines); {
+		switch option := selectedMenuOption(lines); {
 		case isAllowOnce(option):
 			return f.Keys("\r")
 		case option == "":

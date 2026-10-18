@@ -182,6 +182,9 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if status, err := Call(p.Socket, Request{Command: CommandStatus}); err != nil || len(status.Prompts) != 0 {
 		t.Errorf("the status shows the prompts %+v (%v), want none for Coordination's", status.Prompts, err)
 	}
+	if snapshot, err := Call(p.Socket, Request{Command: CommandDashboardSnapshot}); err != nil || snapshot.Dashboard == nil || len(snapshot.Dashboard.Waiting) != 1 || snapshot.Dashboard.Waiting[0].Kind != WaitingNativePrompt || snapshot.Dashboard.Waiting[0].Agent != "leader@coordination" {
+		t.Errorf("the snapshot missed Coordination's native prompt: %+v (%v)", snapshot.Dashboard, err)
+	}
 	for name, req := range map[string]Request{
 		"another credential": {Command: CommandHook, Session: "not-a-session", Payload: json.RawMessage(`{"hook_event_name": "Stop"}`)},
 		"no event":           {Command: CommandHook, Session: string(credential), Payload: json.RawMessage(`{}`)},

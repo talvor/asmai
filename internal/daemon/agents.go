@@ -176,8 +176,7 @@ type leader struct {
 	currentPromptID string
 	pendingPrompt   string
 	transcript      string
-	// prompt is the native permission prompt the session waits at that
-	// nobody can answer, if it waits at one.
+	// prompt is the native permission prompt the session waits at, if any.
 	prompt *WaitingPrompt
 }
 

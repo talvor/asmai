@@ -21,10 +21,9 @@ const permissionRequested = "PermissionRequest"
 // prompts agents wait at.
 const promptCheck = time.Second
 
-// WaitingPrompt is a native permission prompt an agent's session waits at
-// that nobody can answer: in M1 only Coordination's terminal takes the user's
-// keys. Every other session runs so that it is denied rather than prompted,
-// so a prompt there is something its rules did not foresee.
+// WaitingPrompt is a native permission prompt an agent's session waits at.
+// In M1 only Coordination's terminal takes the user's keys. A prompt in any
+// other session is something its rules did not foresee.
 type WaitingPrompt struct {
 	Agent      string `json:"agent"`
 	Generation int    `json:"generation"`
@@ -63,8 +62,7 @@ func promptAbout(payload json.RawMessage) string {
 }
 
 // promptObserved notes what an event ref's session reported says of the
-// native prompts it waits at: a permission request from any session but
-// Coordination's leader's waits at one nobody can answer, and any later
+// native prompts it waits at: a permission request starts one, and any later
 // event of the session shows it is past it. d.mu is not held.
 func (d *daemon) promptObserved(ref sessionRef, event string, payload json.RawMessage) {
 	d.mu.Lock()
@@ -73,12 +71,14 @@ func (d *daemon) promptObserved(ref sessionRef, event string, payload json.RawMe
 	if l == nil || l.session == nil || l.generation != ref.generation {
 		return
 	}
-	if event != permissionRequested || ref.address.Role == roles.Coordination {
+	if event != permissionRequested {
 		l.prompt = nil
 		return
 	}
 	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now()}
-	d.log.Warn("an agent waits at a native permission prompt nobody can answer", "agent", l.prompt.Agent, "generation", l.prompt.Generation, "about", l.prompt.About)
+	if ref.address.Role != roles.Coordination {
+		d.log.Warn("an agent waits at a native permission prompt nobody can answer", "agent", l.prompt.Agent, "generation", l.prompt.Generation, "about", l.prompt.About)
+	}
 }
 
 // waitingPrompts returns the native prompts running sessions wait at that
@@ -88,7 +88,7 @@ func (d *daemon) waitingPrompts() []WaitingPrompt {
 	defer d.mu.Unlock()
 	var prompts []WaitingPrompt
 	for _, l := range d.leaders {
-		if l.session != nil && l.prompt != nil && l.prompt.Generation == l.generation {
+		if l.session != nil && l.address.Role != roles.Coordination && l.prompt != nil && l.prompt.Generation == l.generation {
 			prompts = append(prompts, *l.prompt)
 		}
 	}

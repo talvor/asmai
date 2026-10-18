@@ -183,6 +183,8 @@ A folder is refused, by `asmai config check`, `asmai config apply`, `asmai repo 
 
 A variable name is refused when it is not an identifier, is `HOME`, `PATH` or `TMPDIR`, or starts `GIT_` or `ASMAI_`, which covers the slot variable `ASMAI_SLOT`; two folders of one repository may not export the same name. `asmai config check` and `asmai config apply` name every folder each repository opens outside its workspaces, and `asmai repo show` names the repository's.
 
+An entry refused for more than one reason reports one reason at a time; fixing it may reveal the next.
+
 ### Agents
 
 Coordination's leader runs the pinned Claude Code in a pseudo-terminal the daemon owns. Everything the session is given is on its command line: `--settings` with a hook for each lifecycle event (session start, prompt submission, permission request and stop), the permission rules for `asmai` and selected git and gh operations, and the [write guard](#the-write-guard-commits-and-repository-files); an empty `--setting-sources`, `--strict-mcp-config` and `--plugin-dir` with the plugin its [skills](#skills) are delivered in; its model; and Coordination's instructions, appended to its system prompt. AsmAI never writes `~/.claude`, and never skips Claude Code's permission checks or hook review: it passes no flag that skips them, and the settings disable bypassing permissions, whatever your own settings say. Each session's settings set its permission mode, which depends on whether anyone can answer a native prompt in its terminal ([ADR 0012](docs/adr/0012-agents-without-the-users-terminal-are-denied-instead-of-prompted.md)):

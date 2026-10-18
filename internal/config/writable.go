@@ -301,20 +301,15 @@ func pathForms(path string) []string {
 func writableProblems(subject string, list []Writable, bounds *Bounds) []Problem {
 	var problems []Problem
 	for i, w := range list {
-		add := func(why, fix string) {
-			if why != "" {
-				problems = append(problems, Problem{Problem: fmt.Sprintf("%s writable folder %s", subject, why), Fix: fix})
-			}
+		why, fix := checkWritable(w)
+		if why == "" {
+			why, fix = checkWritableExports(list, i)
 		}
-		pathWhy, pathFix := checkWritablePath(w.Path)
-		add(pathWhy, pathFix)
-		why, fix := checkWritableEnv(w)
-		add(why, fix)
-		why, fix = checkWritableExports(list, i)
-		add(why, fix)
-		if pathWhy == "" && bounds != nil {
+		if why == "" && bounds != nil {
 			why, fix = bounds.check(w)
-			add(why, fix)
+		}
+		if why != "" {
+			problems = append(problems, Problem{Problem: fmt.Sprintf("%s writable folder %s", subject, why), Fix: fix})
 		}
 	}
 	return problems
@@ -415,25 +410,12 @@ func (st *state) finishWritable() {
 		problem := func(line int, why, fix string) {
 			st.problems = append(st.problems, Problem{Line: line, Problem: fmt.Sprintf("%s writable folder %s", table, why), Fix: fix})
 		}
-		invalid := false
-		pathWhy, pathFix := checkWritablePath(d.w.Path)
-		if pathWhy != "" {
-			problem(d.pathLine, pathWhy, pathFix)
-			invalid = true
+		if why, fix := checkWritablePath(d.w.Path); why != "" {
+			problem(d.pathLine, why, fix)
+			continue
 		}
-		envWhy, envFix := checkWritableEnv(d.w)
-		if envWhy != "" {
-			problem(d.envLine, envWhy, envFix)
-			invalid = true
-			if pathWhy == "" {
-				if home, err := os.UserHomeDir(); err == nil {
-					if why, fix := (Bounds{Home: home}).check(d.w); why != "" {
-						problem(d.pathLine, why, fix)
-					}
-				}
-			}
-		}
-		if invalid {
+		if why, fix := checkWritableEnv(d.w); why != "" {
+			problem(d.envLine, why, fix)
 			continue
 		}
 		options.Writable = append(options.Writable, d.w)

@@ -327,7 +327,7 @@ func TestConfigApplyNamesTheFoldersARepositoryOpensAndRefusesTheOnesTheBoundsClo
 	if err != nil || preview.ConfigApply == nil || len(preview.ConfigApply.Changes) != 1 {
 		t.Fatalf("applying a second folder answered %+v, %v", preview.ConfigApply, err)
 	}
-	if c := preview.ConfigApply.Changes[0]; c.Setting != "repositories.gopher.writable" || !c.Folders || !slices.Equal(c.Gained, []string{"~/.cache/other"}) || len(c.Lost) != 0 {
+	if c := preview.ConfigApply.Changes[0]; c.Setting != "repositories.gopher.writable" || !c.Folders || !slices.Equal(c.Gained, []string{`{ path = "~/.cache/other" }`}) || len(c.Lost) != 0 {
 		t.Errorf("the change is %+v, want the second folder gained", c)
 	}
 	if got := preview.ConfigApply.Writable; len(got) != 1 || len(got[0].Folders) != 2 {

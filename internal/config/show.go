@@ -22,14 +22,14 @@ type Entry struct {
 	// roles.engineering.
 	Table string
 	Name  string
-	// Text is the value as the file writes it.
+	// Text is the setting's displayed value.
 	Text string
 	// List is the value of a list setting, and IsList says it is one.
 	List   []string
 	IsList bool
 	// Folders are the writable folders of a repository's "writable" entry,
 	// which the file writes as a [[repositories.<name>.writable]] table
-	// each; its List has them as `asmai repo add --writable` does.
+	// each; its List shows each folder's path and optional env.
 	Folders []Writable
 }
 
@@ -108,15 +108,20 @@ func Entries(c Config) []Entry {
 		if len(o.Writable) > 0 {
 			items := make([]string, len(o.Writable))
 			for i, w := range o.Writable {
-				items[i] = w.Path
-				if w.Env != "" {
-					items[i] += "=" + w.Env
-				}
+				items[i] = writableText(w)
 			}
-			out = append(out, Entry{Table: table, Name: "writable", Text: list(items), List: items, IsList: true, Folders: slices.Clone(o.Writable)})
+			out = append(out, Entry{Table: table, Name: "writable", Text: "[" + strings.Join(items, ", ") + "]", List: items, IsList: true, Folders: slices.Clone(o.Writable)})
 		}
 	}
 	return out
+}
+
+func writableText(w Writable) string {
+	text := "{ path = " + quote(w.Path)
+	if w.Env != "" {
+		text += ", env = " + quote(w.Env)
+	}
+	return text + " }"
 }
 
 // Render returns c as a configuration file with every setting written out,

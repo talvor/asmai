@@ -3,7 +3,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -62,6 +61,7 @@ func TestAWritableFolderThisAsmaiCannotHonourNamesTheLineAndTheFix(t *testing.T)
 		"a relative path":              {entry + "[[repositories.otman.writable]]\npath = \"cache\"\n", 4, `writable folder "cache" is not an absolute path`, "absolute path"},
 		"a user's home":                {entry + "[[repositories.otman.writable]]\npath = \"~me/cache\"\n", 4, "is not an absolute path", "~/"},
 		"an empty path":                {entry + "[[repositories.otman.writable]]\npath = \"\"\n", 4, `"" is not a path`, "path"},
+		"an explicitly empty variable": {entry + "[[repositories.otman.writable]]\npath = \"/a\"\nenv = \"\"\n", 5, `exports "", which is not an environment variable name`, "GOCACHE"},
 		"a variable that is no name":   {entry + "[[repositories.otman.writable]]\npath = \"/a\"\nenv = \"1X\"\n", 5, `exports "1X", which is not an environment variable name`, "GOCACHE"},
 		"HOME":                         {entry + "[[repositories.otman.writable]]\npath = \"/a\"\nenv = \"HOME\"\n", 5, `exports "HOME"`, "remove env"},
 		"PATH":                         {entry + "[[repositories.otman.writable]]\npath = \"/a\"\nenv = \"PATH\"\n", 5, `exports "PATH"`, "remove env"},
@@ -88,61 +88,30 @@ func TestAWritableFolderThisAsmaiCannotHonourNamesTheLineAndTheFix(t *testing.T)
 	}
 }
 
-func TestWritableTableReportsIndependentPathAndEnvErrors(t *testing.T) {
+func TestWritableTableReportsItsFirstReason(t *testing.T) {
 	file := "[repositories.otman]\norigin = \"o\"\n[[repositories.otman.writable]]\npath = \"relative\"\nenv = \"\"\n"
 	_, problems := Parse([]byte(file))
-	if len(problems) != 2 {
-		t.Fatalf("Parse found %+v, want path and env problems", problems)
+	if len(problems) != 1 {
+		t.Fatalf("Parse found %+v, want one path problem", problems)
 	}
 	if problems[0].Line != 4 || !strings.Contains(problems[0].Problem, `"relative" is not an absolute path`) {
 		t.Errorf("path problem: %+v", problems[0])
 	}
-	if problems[1].Line != 5 || !strings.Contains(problems[1].Problem, `exports "", which is not an environment variable name`) {
-		t.Errorf("env problem: %+v", problems[1])
-	}
 }
 
-func TestWritableTableReportsProtectedPathWithInvalidEnv(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
-	for _, tc := range []struct {
-		path, env, reason string
-	}{
-		{"~", "PATH", "your home directory or one of its ancestors"},
-		{filepath.Dir(home), "PATH", "your home directory or one of its ancestors"},
-		{"~/.ssh", "PATH", "~/.ssh, where your SSH keys are"},
-		{"~/.claude", "PATH", "~/.claude, where Claude Code keeps its settings"},
-		{"~/.claude.json", "PATH", "~/.claude.json, where Claude Code records your trust"},
-		{"~/.ssh", "", "~/.ssh, where your SSH keys are"},
-	} {
-		t.Run(tc.path+"_"+tc.env, func(t *testing.T) {
-			file := fmt.Sprintf("[repositories.otman]\norigin = \"o\"\n[[repositories.otman.writable]]\npath = %q\nenv = %q\n", tc.path, tc.env)
-			cfg, problems := Parse([]byte(file))
-			if len(problems) != 2 {
-				t.Fatalf("Parse found %+v, want env and protected path reasons", problems)
-			}
-			if problems[0].Line != 5 || !strings.Contains(problems[0].Problem, fmt.Sprintf("exports %q", tc.env)) {
-				t.Errorf("env problem: %+v", problems[0])
-			}
-			if problems[1].Line != 4 || !strings.Contains(problems[1].Problem, tc.reason) {
-				t.Errorf("path problem: %+v", problems[1])
-			}
-			if len(cfg.Options["otman"].Writable) != 0 {
-				t.Errorf("refused folder entered the repository: %+v", cfg.Options["otman"].Writable)
-			}
-		})
-	}
-}
-
-func TestWritableListReportsBothProtectedPathAndReservedEnv(t *testing.T) {
+func TestWritableListReportsOneReasonPerEntry(t *testing.T) {
 	bounds := NewBounds("/home/me", "/home/me/.local/state/asmai", "/home/me/.local/state/asmai/repositories", []string{"otman"})
 	err := CheckWritable("otman", []Writable{{Path: "~/.ssh", Env: "PATH"}}, bounds)
 	problems, ok := err.(*EntryProblemsError)
-	if !ok || len(problems.Problems) != 2 {
-		t.Fatalf("CheckWritable returned %v, want two reasons", err)
+	if !ok || len(problems.Problems) != 1 {
+		t.Fatalf("CheckWritable returned %v, want one reason", err)
 	}
-	if !strings.Contains(problems.Problems[0].Problem, `exports "PATH"`) || !strings.Contains(problems.Problems[1].Problem, `is ~/.ssh`) {
+	if !strings.Contains(problems.Problems[0].Problem, `exports "PATH"`) {
 		t.Errorf("CheckWritable returned %+v", problems.Problems)
+	}
+	err = CheckWritable("otman", []Writable{{Path: "~/.ssh"}}, bounds)
+	if err == nil || !strings.Contains(err.Error(), `is ~/.ssh`) {
+		t.Errorf("CheckWritable after fixing env returned %v", err)
 	}
 }
 
@@ -334,17 +303,39 @@ func TestWritableFoldersAreRenderedAndDiffed(t *testing.T) {
 	none, _ := Parse([]byte("[repositories.otman]\norigin = \"o\"\ndefault_branch = \"main\"\n"))
 	changes := Diff(none, cfg)
 	if len(changes) != 1 || changes[0].Setting != "repositories.otman.writable" || !changes[0].Folders || changes[0].Repository != "otman" ||
-		!slices.Equal(changes[0].Gained, []string{"~/.cache/go-build=GOCACHE", "/var/cache/tools"}) {
+		!slices.Equal(changes[0].Gained, []string{`{ path = "~/.cache/go-build", env = "GOCACHE" }`, `{ path = "/var/cache/tools" }`}) {
 		t.Errorf("opening folders is %+v", changes)
 	}
 	changes = Diff(cfg, none)
-	if len(changes) != 1 || !changes[0].Folders || !slices.Equal(changes[0].Lost, []string{"~/.cache/go-build=GOCACHE", "/var/cache/tools"}) {
+	if len(changes) != 1 || !changes[0].Folders || !slices.Equal(changes[0].Lost, []string{`{ path = "~/.cache/go-build", env = "GOCACHE" }`, `{ path = "/var/cache/tools" }`}) {
 		t.Errorf("closing folders is %+v", changes)
 	}
 	// A repository that is new with folders is a change of its folders too.
 	changes = Diff(Config{Options: map[string]RepositoryOptions{}, Repositories: map[string]Repository{}}, cfg)
 	if !slices.ContainsFunc(changes, func(c Change) bool { return c.Folders && len(c.Gained) == 2 }) {
 		t.Errorf("a new repository with folders is %+v", changes)
+	}
+}
+
+func TestWritableDiffDistinguishesEqualsInPathFromEnv(t *testing.T) {
+	const entry = "[repositories.otman]\norigin = \"o\"\n"
+	pathOnly, pathProblems := Parse([]byte(entry + "[[repositories.otman.writable]]\npath = \"/a=B\"\n"))
+	withEnv, envProblems := Parse([]byte(entry + "[[repositories.otman.writable]]\npath = \"/a\"\nenv = \"B\"\n"))
+	if len(pathProblems) != 0 || len(envProblems) != 0 {
+		t.Fatalf("Parse found %v and %v", pathProblems, envProblems)
+	}
+	for _, tc := range []struct {
+		before, after Config
+		gained, lost  string
+	}{
+		{pathOnly, withEnv, `{ path = "/a", env = "B" }`, `{ path = "/a=B" }`},
+		{withEnv, pathOnly, `{ path = "/a=B" }`, `{ path = "/a", env = "B" }`},
+	} {
+		changes := Diff(tc.before, tc.after)
+		if len(changes) != 1 || !changes[0].Folders || changes[0].Before == changes[0].After ||
+			!slices.Equal(changes[0].Gained, []string{tc.gained}) || !slices.Equal(changes[0].Lost, []string{tc.lost}) {
+			t.Errorf("writable change is %+v, want gained %q and lost %q", changes, tc.gained, tc.lost)
+		}
 	}
 }
 

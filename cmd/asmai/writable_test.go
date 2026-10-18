@@ -175,7 +175,7 @@ func TestRepoAddSuggestsAGoRepositorysBuildCacheAndTakesFoldersByHand(t *testing
 	cfg.Options["plain"] = o
 	writeConfig(t, string(config.Render(cfg)))
 	stdout, stderr, code := runIn(t, "n\n", "config", "apply")
-	if code != 1 || !strings.Contains(stdout, "repositories.plain.writable") || !strings.Contains(stdout, "opens for plain's workers to write: ~/.cache/three") ||
+	if code != 1 || !strings.Contains(stdout, "repositories.plain.writable") || !strings.Contains(stdout, `opens for plain's workers to write: { path = "~/.cache/three" }`) ||
 		!strings.Contains(stdout, "plain: "+filepath.Join(home, ".cache", "three")) || !strings.Contains(stderr, "not confirmed") {
 		t.Errorf("applying a third folder exited %d printing %q, %q", code, stdout, stderr)
 	}

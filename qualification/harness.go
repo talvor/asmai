@@ -28,8 +28,8 @@ type Harness struct {
 	Provider Provider
 	// Paths is the configured state directory used by C3 and C4.
 	Paths statedir.Paths
-	// QualificationPaths is the disposable state directory used by C7, C11,
-	// C19 and C48.
+	// QualificationPaths is the disposable state directory used by C2, C7,
+	// C11, C19, C48, C52, C53 and C54.
 	QualificationPaths statedir.Paths
 	// ConfigFile is the active configuration file. Each case in the
 	// disposable state directory runs with a copy of it there, so that what
@@ -109,6 +109,9 @@ var Cases = []Case{
 	{ID: "C49", Title: "An agent with no user terminal never waits at a native prompt: a worker's Write tool writes in its workspace, and a shell write it cannot be prompted for is denied, with the agent told", Env: signedInOnly, Run: (*Harness).c49},
 	{ID: "C50", Title: "Engineering's leader opens and updates the job's pull request in its real session and sandbox", Env: signedInOnly, Run: (*Harness).c50},
 	{ID: "C51", Title: "An Engineering worker commits and pushes its assignment branch in its real session and sandbox", Env: signedInOnly, Run: (*Harness).c51},
+	{ID: "C52", Title: "The Dashboard hands the terminal to attach and gets it back: raw mode, the alternate screen and the size are restored, and attach still only observes", Env: signedInOnly, Run: (*Harness).c52},
+	{ID: "C53", Title: "The Dashboard's agent statuses and Waiting on you set match a real factory: idle, stopped, working, and a native prompt or held input waiting", Env: signedInOnly, Run: (*Harness).c53},
+	{ID: "C54", Title: "The Dashboard shows only the stopped message while the factory is stopped, and clears it and reads everything again when the factory is restored", Env: signedInOnly, Run: (*Harness).c54},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in
@@ -228,7 +231,7 @@ func (h *Harness) resetDisposableState() error {
 // disposableState reports whether the case id runs in the disposable state
 // directory, which the harness has `asmai setup` prepare.
 func disposableState(id string) bool {
-	return slices.Contains([]string{"C2", "C7", "C11", "C19", "C48"}, id)
+	return slices.Contains([]string{"C2", "C7", "C11", "C19", "C48", "C52", "C53", "C54"}, id)
 }
 
 // withoutAPIKeys returns environ less any provider API-key variable, and the

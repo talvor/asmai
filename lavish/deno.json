@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "lavish-axi/": "npm:/lavish-axi@0.1.89/"
+  },
+  "nodeModulesDir": "manual"
+}

@@ -216,3 +216,164 @@ func TestClaudeCodeVersionIsWhatTheExecutableReports(t *testing.T) {
 		t.Error("a missing program was read as a version")
 	}
 }
+
+const lavishPins = `{"claude-code": {"version": "1.2.3", "channel": "https://example.com/releases", "platforms": {"linux-x64": {"sha256": "` + "%[1]s" + `", "size": 10}}},
+	"lavish": {"version": "0.1.89", "deno": "2.9.6", "releases": "%[2]s", "platforms": {"linux-x64": {"sha256": "%[3]s", "size": %[4]d}}}}`
+
+// lavishPlan is the plan to install a Lavish build serving download from a
+// stand-in for the release, pinning want.
+func lavishPlan(t *testing.T, download, want []byte) Plan {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/releases/lavish-v0.1.89-deno2.9.6/lavish-linux-x64" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(download)
+	}))
+	t.Cleanup(srv.Close)
+	sum := sha256.Sum256(want)
+	p, err := ParsePins(fmt.Appendf(nil, lavishPins, strings.Repeat("a", 64), srv.URL+"/releases", hex.EncodeToString(sum[:]), len(want)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := p.LavishPlan("linux-x64", filepath.Join(t.TempDir(), "providers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func TestTheEmbeddedPinsFilePinsALavishBuildPublishedAsAReleaseOfThisRepository(t *testing.T) {
+	p, err := ParsePins(asmai.Pins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Lavish == nil {
+		t.Fatal("the pins file pins no Lavish")
+	}
+	if got, want := p.Lavish.Releases, "https://github.com/talvor/asmai/releases/download"; got != want {
+		t.Errorf("Lavish builds are fetched from %q, want %q", got, want)
+	}
+	if got, want := p.Lavish.Tag(), "lavish-v"+p.Lavish.Version+"-deno"+p.Lavish.Deno; got != want {
+		t.Errorf("the Lavish build's tag is %q, want %q", got, want)
+	}
+	// A platform with a digest is one the Lavish build was published for,
+	// and only the platforms the pins file certifies are published.
+	for platform, d := range p.Lavish.Platforms {
+		if _, certified := p.ClaudeCode.Platforms[platform]; !certified {
+			t.Errorf("the Lavish build is pinned for %s, which is not certified", platform)
+		}
+		plan, err := p.LavishPlan(platform, t.TempDir())
+		if err != nil || plan.Download != d || !strings.HasSuffix(plan.URL, "/"+p.Lavish.Tag()+"/lavish-"+platform) {
+			t.Errorf("%s: plan %+v (%v), want its digest and its executable on the build's release", platform, plan, err)
+		}
+	}
+	// The pins file is kept as MarshalPins writes it.
+	if out, err := MarshalPins(p); err != nil || string(out) != string(asmai.Pins) {
+		t.Errorf("pins.json is not as MarshalPins writes it (%v):\n%s", err, out)
+	}
+}
+
+func TestParsePinsRefusesALavishPinItCannotInstallFrom(t *testing.T) {
+	claude := `"claude-code": {"version": "1.2.3", "channel": "https://example.com/releases", "platforms": {"linux-x64": {"sha256": "` + strings.Repeat("a", 64) + `", "size": 10}}}`
+	good := `{"version": "0.1.89", "deno": "2.9.6", "releases": "https://example.com/releases"}`
+	if _, err := ParsePins([]byte(`{` + claude + `, "lavish": ` + good + `}`)); err != nil {
+		t.Fatalf("a Lavish pin with no platform published yet is refused: %v", err)
+	}
+	for name, lavish := range map[string]string{
+		"a bad version":         strings.Replace(good, "0.1.89", "latest", 1),
+		"a bad deno version":    strings.Replace(good, "2.9.6", "2", 1),
+		"no releases":           `{"version": "0.1.89", "deno": "2.9.6", "releases": ""}`,
+		"an unknown field":      strings.Replace(good, "}", `, "node": "22"}`, 1),
+		"a bad digest":          strings.Replace(good, "}", `, "platforms": {"linux-x64": {"sha256": "abc", "size": 10}}}`, 1),
+		"a bad size":            strings.Replace(good, "}", `, "platforms": {"linux-x64": {"sha256": "`+strings.Repeat("a", 64)+`", "size": 0}}}`, 1),
+		"a releases url of ftp": strings.Replace(good, "https://example.com/releases", "ftp://example.com", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParsePins([]byte(`{` + claude + `, "lavish": ` + lavish + `}`)); err == nil {
+				t.Errorf("ParsePins accepted a Lavish pin with %s", name)
+			}
+		})
+	}
+}
+
+func TestALavishBuildIsFetchedFromItsReleaseAndKeptBesideTheOtherProviders(t *testing.T) {
+	pinned := []byte("#!/bin/sh\necho lavish\n")
+	plan := lavishPlan(t, pinned, pinned)
+	if !strings.HasSuffix(plan.URL, "/releases/lavish-v0.1.89-deno2.9.6/lavish-linux-x64") {
+		t.Errorf("the plan fetches %s, want the executable on the Lavish build's release", plan.URL)
+	}
+	if plan.Name != "lavish" || plan.Version != "0.1.89+deno2.9.6" || !strings.HasSuffix(plan.Path, filepath.Join("providers", "lavish", "0.1.89+deno2.9.6", "lavish")) {
+		t.Errorf("the plan is %+v, want lavish 0.1.89+deno2.9.6 kept in the providers directory", plan)
+	}
+
+	if err := Fetch(context.Background(), http.DefaultClient, plan); err != nil {
+		t.Fatal(err)
+	}
+
+	if present, err := Present(plan); err != nil || !present {
+		t.Errorf("Present after fetching is %v (%v), want true", present, err)
+	}
+	if state, err := plan.Standing("0.1.89+deno2.9.6"); err != nil || state != StatePinned {
+		t.Errorf("the fetched build stands as %q (%v), want pinned", state, err)
+	}
+}
+
+func TestAMismatchedLavishBuildIsRefusedAndLeavesNothing(t *testing.T) {
+	pinned := []byte("#!/bin/sh\necho lavish\n")
+	plan := lavishPlan(t, []byte("#!/bin/sh\necho the user's own lavish\n"), pinned)
+
+	err := Fetch(context.Background(), http.DefaultClient, plan)
+
+	if err == nil || !strings.Contains(err.Error(), "SHA-256") && !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("fetching a build that is not the pinned one gave %v, want it refused for not matching the pin", err)
+	}
+	if left := files(t, filepath.Dir(plan.Path)); len(left) != 0 {
+		t.Errorf("a refused build left %v", left)
+	}
+}
+
+func TestLavishPlanSaysWhenNoBuildIsPinnedForThePlatform(t *testing.T) {
+	good := `"claude-code": {"version": "1.2.3", "channel": "https://example.com/releases", "platforms": {"linux-x64": {"sha256": "` + strings.Repeat("a", 64) + `", "size": 10}}}`
+	for name, pins := range map[string]string{
+		"no Lavish":         `{` + good + `}`,
+		"not yet published": `{` + good + `, "lavish": {"version": "0.1.89", "deno": "2.9.6", "releases": "https://example.com/releases"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := ParsePins([]byte(pins))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.LavishPlan("linux-x64", t.TempDir()); !errors.Is(err, ErrNoLavishBuild) {
+				t.Errorf("LavishPlan gave %v, want ErrNoLavishBuild", err)
+			}
+		})
+	}
+}
+
+func TestAnInstallStandsAgainstThePinAsPinnedSupersededMissingOrMismatched(t *testing.T) {
+	pinned := []byte("#!/bin/sh\necho lavish\n")
+	plan := lavishPlan(t, pinned, pinned)
+	if state, err := plan.Standing(plan.Version); err != nil || state != StateMissing {
+		t.Errorf("a build that is not there stands as %q (%v), want missing", state, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(plan.Path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.Path, []byte("#!/bin/sh\necho changed\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := plan.Standing(plan.Version); err != nil || state != StateMismatch {
+		t.Errorf("a build that is not the pinned bytes stands as %q (%v), want mismatch", state, err)
+	}
+	if state, err := plan.Standing("0.1.80+deno2.9.0"); err != nil || state != StateSuperseded {
+		t.Errorf("an older build stands as %q (%v), want superseded", state, err)
+	}
+	if err := os.WriteFile(plan.Path, pinned, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := plan.Standing(plan.Version); err != nil || state != StatePinned {
+		t.Errorf("the pinned build stands as %q (%v), want pinned", state, err)
+	}
+}

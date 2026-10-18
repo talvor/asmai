@@ -37,6 +37,10 @@ type Paths struct {
 	// Executable is the daemon's copy of the asmai executable, at one fixed
 	// path: every agent session runs it, and its hooks name it.
 	Executable string
+	// Lavish is the state directory of the factory's own Lavish server,
+	// which holds its review pages and so keeps them across its restarts. It
+	// is never the user's own, ~/.lavish-axi.
+	Lavish string
 	// GitHooks holds the git hooks every worker's git runs, which add the
 	// commit trailers and then run the repository's own hooks.
 	GitHooks string
@@ -91,6 +95,7 @@ func At(dir string) Paths {
 		Providers:    filepath.Join(dir, "providers"),
 		Bin:          filepath.Join(dir, "bin"),
 		Executable:   filepath.Join(dir, "bin", "asmai"),
+		Lavish:       filepath.Join(dir, "lavish"),
 		GitHooks:     filepath.Join(dir, "githooks"),
 		Agents:       filepath.Join(dir, "agents"),
 		Plugins:      filepath.Join(dir, "plugins"),

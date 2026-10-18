@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Makes a Lavish build: AsmAI's pinned lavish-axi compiled with the pinned Deno
+# into one executable for each certified platform, published with its notices
+# as a release of this repository that is never marked latest (ADR 0010, 10
+# rule 10). It runs when the pins file moves lavish-axi or Deno, and when a
+# platform is newly certified under the same pin. Every AsmAI release that
+# keeps the pin reuses the build: a build whose release already holds every
+# certified platform is not made again.
+#
+# `asmai providers install` fetches the executable for its platform from the
+# release and checks it against the digest in the pins file, which the last
+# job proposes as a pull request once the build is published.
+
+name: Lavish build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - pins.json
+      - lavish/**
+      - internal/lavishbuild/**
+      - internal/cmd/lavish-notices/**
+      - internal/cmd/pin-lavish/**
+      - .github/workflows/lavish-build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lavish-build
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Does the pinned Lavish build exist?
+    runs-on: ubuntu-latest
+    outputs:
+      axi: ${{ steps.pins.outputs.axi }}
+      deno: ${{ steps.pins.outputs.deno }}
+      tag: ${{ steps.pins.outputs.tag }}
+      platforms: ${{ steps.pins.outputs.platforms }}
+      build: ${{ steps.release.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the pins
+        id: pins
+        run: |
+          axi="$(jq -r .lavish.version pins.json)"
+          deno="$(jq -r .lavish.deno pins.json)"
+          # Every platform the pins file certifies has a Lavish build.
+          platforms="$(jq -c '[."claude-code".platforms | keys[]]' pins.json)"
+          [ "$axi" != null ] && [ "$deno" != null ] || { echo "pins.json pins no Lavish"; exit 1; }
+          {
+            echo "axi=$axi"
+            echo "deno=$deno"
+            echo "tag=lavish-v$axi-deno$deno"
+            echo "platforms=$platforms"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: A build is made unless its release holds every certified platform
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.pins.outputs.tag }}
+          PLATFORMS: ${{ steps.pins.outputs.platforms }}
+        run: |
+          assets="$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          build=false
+          for name in lavish-checksums.txt LAVISH_NOTICES $(jq -r '.[] | "lavish-" + .' <<< "$PLATFORMS"); do
+            grep -qx "$name" <<< "$assets" || build=true
+          done
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          if [ "$build" = false ]; then
+            echo "The Lavish build $TAG already holds every certified platform; releases keep reusing it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build:
+    name: Build and publish ${{ needs.plan.outputs.tag }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      AXI: ${{ needs.plan.outputs.axi }}
+      DENO: ${{ needs.plan.outputs.deno }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PLATFORMS: ${{ needs.plan.outputs.platforms }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install the pinned Deno
+        run: |
+          mkdir -p "$RUNNER_TEMP/deno" && cd "$RUNNER_TEMP/deno"
+          gh release download "v$DENO" --repo denoland/deno \
+            --pattern deno-x86_64-unknown-linux-gnu.zip --pattern deno-x86_64-unknown-linux-gnu.zip.sha256sum
+          # Deno's own checksum for its own download.
+          echo "$(cut -d' ' -f1 deno-x86_64-unknown-linux-gnu.zip.sha256sum)  deno-x86_64-unknown-linux-gnu.zip" | sha256sum -c -
+          unzip -q deno-x86_64-unknown-linux-gnu.zip
+          echo "$PWD" >> "$GITHUB_PATH"
+          ./deno --version
+          [ "$(./deno --version | head -1 | cut -d' ' -f2)" = "$DENO" ]
+
+      - name: lavish-axi in the build is the pinned one
+        run: |
+          grep -F "\"npm:/lavish-axi@$AXI/\"" lavish/deno.json
+          grep -F "\"npm:lavish-axi@$AXI\"" lavish/deno.lock
+
+      - name: Install the locked npm dependencies
+        working-directory: lavish
+        run: deno install --frozen --minimum-dependency-age 0
+
+      - name: The Deno runtime's source, for the licenses of what is compiled into it
+        run: |
+          git clone --quiet --depth 1 --branch "v$DENO" https://github.com/denoland/deno.git "$RUNNER_TEMP/deno-src"
+          cd "$RUNNER_TEMP/deno-src"
+          cargo fetch --locked
+          for triple in x86_64-unknown-linux-gnu aarch64-apple-darwin; do
+            cargo metadata --format-version 1 --locked --filter-platform "$triple" > "$RUNNER_TEMP/cargo-$triple.json"
+          done
+
+      - name: License allow-list for everything compiled into the build, and its notices
+        run: |
+          go run ./internal/cmd/lavish-notices -dir lavish -axi "$AXI" -deno "$DENO" \
+            -deno-license "$RUNNER_TEMP/deno-src/LICENSE.md" \
+            -cargo-metadata "$RUNNER_TEMP/cargo-x86_64-unknown-linux-gnu.json" \
+            -cargo-metadata "$RUNNER_TEMP/cargo-aarch64-apple-darwin.json" \
+            -out lavish/LAVISH_NOTICES
+
+      - name: Compile Lavish for each certified platform
+        working-directory: lavish
+        run: |
+          mkdir -p ../dist
+          for platform in $(jq -r '.[]' <<< "$PLATFORMS"); do
+            case "$platform" in
+              linux-x64) target=x86_64-unknown-linux-gnu ;;
+              darwin-arm64) target=aarch64-apple-darwin ;;
+              *) echo "no Deno target is known for $platform"; exit 1 ;;
+            esac
+            # The output name is embedded in the executable, so every
+            # platform is built under the same name for a reproducible build.
+            deno compile --no-check --frozen --minimum-dependency-age 0 --no-code-cache -A \
+              --include LAVISH_NOTICES --target "$target" --output "$RUNNER_TEMP/$platform/lavish" main.ts
+            cp "$RUNNER_TEMP/$platform/lavish" "../dist/lavish-$platform"
+          done
+          cp LAVISH_NOTICES ../dist/LAVISH_NOTICES
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * | tee lavish-checksums.txt
+
+      - name: Attest every file
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Publish the Lavish build, never as the latest release
+        run: |
+          notes="AsmAI's Lavish build: lavish-axi $AXI compiled with Deno $DENO, one executable for each certified platform, with its notices (LAVISH_NOTICES), checksums and attestations. \`asmai providers install\` fetches it. This is not an AsmAI release."
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A platform newly certified under the same pin: the same bytes are
+            # built again for the platforms already there.
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "Lavish $AXI (Deno $DENO)" --notes "$notes" --latest=false --target "$GITHUB_SHA"
+          fi
+
+  pin:
+    name: Propose the digests for the pins file
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: The pins file records each platform's digest
+        run: |
+          mkdir build
+          gh release download "$TAG" --dir build --pattern 'lavish-*' --pattern LAVISH_NOTICES
+          gh attestation verify build/lavish-checksums.txt --repo "$GITHUB_REPOSITORY"
+          (cd build && sha256sum -c lavish-checksums.txt)
+          for f in build/lavish-*-*; do
+            gh attestation verify "$f" --repo "$GITHUB_REPOSITORY"
+          done
+          go run ./internal/cmd/pin-lavish -dir build
+          git diff --stat pins.json
+
+      - name: Open a pull request when the digests changed
+        run: |
+          if git diff --quiet pins.json; then
+            echo "pins.json already records the digests of $TAG." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch="lavish-pins-$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit --quiet -am "Record the digests of the Lavish build $TAG"
+          git push --force origin "$branch"
+          gh pr create --base main --head "$branch" --title "Record the digests of the Lavish build $TAG" \
+            --body "The Lavish build workflow published $TAG and checked its attestations. This records each platform's SHA-256 and size in pins.json, which \`asmai providers install\` checks every download against." \
+            || gh pr view "$branch" --json url --jq .url

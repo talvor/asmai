@@ -339,13 +339,27 @@ After an unclean stop, which is reconciled in full in a later milestone, the lea
 
 ## Pinned providers
 
-Agents never run your own Claude Code. [`pins.json`](pins.json), the pins file, names the Claude Code version AsmAI runs, Claude Code's official release channel, and the size and SHA-256 of the download for each certified platform; `asmai` embeds it. Codex and Lavish join it in later milestones.
+Agents never run your own Claude Code. [`pins.json`](pins.json), the pins file, names the Claude Code version AsmAI runs, Claude Code's official release channel, and the size and SHA-256 of the download for each certified platform; `asmai` embeds it. It also names the Lavish build (below). Codex joins it in a later milestone.
 
 `asmai init` installs the pinned Claude Code as `asmai providers install` does; with the factory stopped, the daemon records the install when it next starts, finding the pinned copy at its path. With the factory running, `asmai providers install` shows what it will fetch, from where, how it checks it and where it keeps it, and asks before it fetches anything. Once you confirm, it downloads the pinned Claude Code from `https://downloads.claude.ai/claude-code-releases`, refuses a download whose size or SHA-256 differs from the pins file, and keeps it in `providers/` in the state directory. The store records the install, with a `provider.installed` journal entry, and `asmai providers list` shows it. Installing a pin that is already installed does nothing.
 
 Only the pinned version runs. Before any agent starts, the daemon asks the copy at its path for its version and sign-in method. It refuses a version that is not the pin, naming both versions and `asmai providers install`, which puts the pinned copy back; it also refuses a signed-out, API-key or unknown sign-in method and names the CLI's `auth login` command. A copy that updated itself under a running agent does not stop that agent, but the agent is held at its next restart: the daemon does not start it on a version outside the qualification record, and `asmai status` names the check, until the pinned copy is back.
 
 AsmAI never redistributes Claude Code, and never runs, changes or replaces your own copy or touches `~/.claude`.
+
+### Lavish
+
+Lavish, the review pages where decisions are answered, is the one provider AsmAI builds itself, so the host needs no Node ([ADR 0010](docs/adr/0010-lavish-is-a-deno-compiled-executable-built-per-pin.md)). The pins file's `lavish` entry names the lavish-axi release and the Deno version it is compiled with, where Lavish builds are published (releases of talvor/asmai), and, once a build is published, the size and SHA-256 of the executable for each certified platform. The [Lavish build workflow](.github/workflows/lavish-build.yml) compiles the pinned lavish-axi for every certified platform when the pins file moves lavish-axi or Deno, and publishes the executables, their notices, checksums and attestations as a release with its own tag (`lavish-v<lavish-axi>-deno<deno>`) that is never marked latest. Every asmai release that keeps the pin reuses that build. Once a build is published, the workflow proposes a pull request that records the digests in `pins.json`; see [`CONTRIBUTING.md`](CONTRIBUTING.md#the-lavish-build).
+
+`asmai providers install` installs the pinned Lavish build beside the pinned Claude Code, after the one confirmation: it downloads the executable for this platform from the build's release and refuses a download whose size or SHA-256 differs from the pins file. It never installs, runs or changes your own Lavish or `~/.lavish-axi`. `asmai providers list` marks each install `pinned`, `superseded`, `missing` or `mismatch`; the daemon runs only a Lavish that is the pinned download, and `asmai notices` prints the installed build's notices after asmai's own.
+
+The daemon runs the factory's Lavish server itself, in the foreground, so that review pages outlive any agent. It has its own state directory, `lavish/` in the state directory, and its own port, 14387, never Lavish's defaults, which your personal Lavish uses. It binds `127.0.0.1` only, so it never also listens on a Tailscale address, and has telemetry and the browser launch off. The daemon starts it with the factory, restarts it whenever it exits, and checks it every 30 seconds, restarting it when it does not answer, listens on another address, or serves another state directory. Review pages are kept in the state directory, so they survive a restart of the server and of the daemon. No agent runs Lavish and no Lavish skill is shipped.
+
+`asmai lavish` lists the review links waiting for you and the command that forwards the server's port over SSH, for when the factory runs on another machine:
+
+```sh
+asmai lavish
+```
 
 ## Building
 

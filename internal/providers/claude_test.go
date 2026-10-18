@@ -530,3 +530,15 @@ func TestWhatClaudeCodeCannotHideIsRecordedForDoctor(t *testing.T) {
 		t.Error("the record is shared with its callers")
 	}
 }
+
+// No agent runs Lavish (04 rule 22): no permission rule lets a session run
+// it or the user's own lavish-axi without a prompt, and no excluded command
+// of the write guard names it.
+func TestNoPermissionRuleLetsAnAgentRunLavish(t *testing.T) {
+	allow, excluded := commandRules()
+	for _, rule := range append(allow, excluded...) {
+		if strings.Contains(strings.ToLower(rule), "lavish") {
+			t.Errorf("the rule %q covers Lavish", rule)
+		}
+	}
+}

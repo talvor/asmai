@@ -76,12 +76,18 @@ func (m Module) String() string {
 // Problem says why m's licenses are not acceptable, or returns "" when every
 // one of them is on the allow-list.
 func (m Module) Problem() string {
+	return m.ProblemWith(Allowed)
+}
+
+// ProblemWith is Problem against the allow-list allowed, which is Allowed
+// and the identifiers a particular kind of material is also accepted under.
+func (m Module) ProblemWith(allowed []string) string {
 	if len(m.Licenses) == 0 {
 		return "license cannot be determined"
 	}
 	var off []string
 	for _, id := range m.Licenses {
-		if !slices.Contains(Allowed, id) {
+		if !slices.Contains(allowed, id) {
 			off = append(off, id)
 		}
 	}
@@ -383,4 +389,16 @@ func isLicenseFile(name string) bool {
 		}
 	}
 	return strings.HasPrefix(upper, "MIT-LICENSE") || strings.HasPrefix(upper, "MIT-LICENCE")
+}
+
+// ReadLicenseFiles returns the license files at the root of the directory
+// dir, by name.
+func ReadLicenseFiles(dir string) ([]LicenseFile, error) {
+	return readLicenseFiles(dir)
+}
+
+// Detect returns the sorted licenses found in license files, or none when
+// there is no license file or one is not mostly known license text.
+func Detect(files []LicenseFile) []string {
+	return detect(files)
 }

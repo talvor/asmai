@@ -1,0 +1,32 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ Entry #12 · result.accepted
+ 2026-10-08 09:12:00 · job #7 · leader@engineering → worker-3@engineering
+
+ Both directions page and no entry is read twice.
+ The cursor test covers a page boundary.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · ↑/↓ scroll · esc back · q quit
+--- attributes
+1 1-80: reverse
+2 2-11: faint
+2 13-20: faint
+2 22-28: reverse
+4 1-28: faint
+5 1-73: faint
+24 1-80: reverse

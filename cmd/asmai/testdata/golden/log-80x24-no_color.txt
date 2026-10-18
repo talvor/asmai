@@ -1,0 +1,33 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ FROM                     SUMMARY (agent traffic)
+ leader@coordination      handoff: Add the log tab to the dashboard
+ leader@engineering       assignment 21: Read the journal with a cursor in both…
+ worker-3@engineering     blocked on assignment 21: the store has no index on t…
+ leader@engineering       assignment 22: Read the journal with a cursor, indexe…
+ worker-3@engineering     result of assignment 22
+ leader@engineering       rejected assignment 22: the cursor skips an entry at …
+ worker-3@engineering     result of assignment 22
+ leader@engineering       accepted assignment 22: both directions page and no e…
+ leader@engineering       handoff: Validate the log read at the job branch's tip
+ reviewer-12@quality-ass… assignment 23: Validate the log read
+ worker-5@quality-assura… result of assignment 23
+ reviewer-12@quality-ass… accepted assignment 23: no blocking findings
+ leader@coordination      handoff: Fix the stopped message wrapping at 80 colum…
+ leader@engineering       assignment 24: Wrap the stopped message
+ worker-3@engineering     blocked on assignment 24: the fixture repository is n…
+
+
+
+
+ 1/2/3 tab · ↑/↓ move · enter open · t journal · f filter · q quit
+--- attributes
+1 1-80: reverse
+2 2-11: faint
+2 13-20: faint
+2 22-28: reverse
+4 1-5: faint
+4 27-49: faint
+19 1-80: reverse
+24 1-80: reverse

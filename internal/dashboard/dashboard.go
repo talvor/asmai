@@ -2,7 +2,8 @@
 
 // Package dashboard is the Dashboard (ADR 0015): a read-only terminal view of
 // the factory, built on Bubble Tea and Lip Gloss. It never sends the daemon an
-// action; it reads snapshots and change notifications from the daemon.
+// action; it reads snapshots, log pages, entry bodies and change notifications
+// from the daemon.
 package dashboard
 
 import (
@@ -109,6 +110,10 @@ type model struct {
 	cursor, offset int
 	// jobCursor and jobOffset are the same for the Jobs tab.
 	jobCursor, jobOffset int
+	// log is the Log tab.
+	log logState
+	// detail is the job detail, open over the Jobs tab.
+	detail jobDetail
 	// read is false until the first answer, so the first frame does not claim
 	// the factory is stopped before the daemon has been asked.
 	read              bool
@@ -138,9 +143,8 @@ func newModel(socket string, o Options) model {
 // terminal again.
 type attachedMsg struct{}
 
-// readMsg is the daemon's answer to a read of everything the Dashboard shows:
-// the factory, or why it could not be read. A daemon that is not running is
-// the stopped factory.
+// readMsg is the daemon's answer to a factory snapshot read, or why it could
+// not be read. A daemon that is not running is the stopped factory.
 type readMsg struct {
 	factory    factory
 	err        error
@@ -168,7 +172,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(read(m.socket, m.generation, m.readNumber), subscribe(m.socket, m.watch))
 }
 
-// read asks the daemon for everything the Dashboard shows.
+// read asks the daemon for a factory snapshot.
 func read(socket string, generation, number int) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := daemon.Call(socket, daemon.Request{Command: daemon.CommandDashboardSnapshot})
@@ -312,6 +316,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.read, m.failed = true, false
 		selected, selectedJob := m.selected(), m.selectedJob()
 		m.factory = msg.factory
+		if !m.factory.running {
+			// Nothing outlives the daemon, the log included.
+			m.log = logState{full: m.log.full, job: m.log.job, agent: m.log.agent, view: m.log.view + 1}
+			m = m.closeDetail()
+		}
 		m.cursor, m.jobCursor = 0, 0
 		for i, a := range m.factory.agents {
 			if a.Agent == selected {
@@ -331,7 +340,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.round++
 		round := m.round
 		generation := m.generation
-		return m, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} })
+		m, detailCmd := m.refreshDetail()
+		return m, tea.Batch(m.refreshLog(), detailCmd, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} }))
 	case retryMsg:
 		if msg.generation != m.generation || msg.round != m.round {
 			return m, nil
@@ -345,18 +355,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wait = false
 		fresh, cmd := m.reading(time.Now())
 		return fresh, tea.Batch(tea.RequestWindowSize, tea.ClearScreen, cmd)
+	case logMsg:
+		return m.logPage(msg)
+	case jobMsg:
+		return m.jobRead(msg), nil
+	case entryMsg:
+		if m.tab != tabLog || msg.view != m.log.view || msg.id != m.log.want || m.log.open {
+			return m, nil
+		}
+		m.log.open, m.log.id, m.log.entry, m.log.failure, m.log.scroll = true, msg.id, nil, "", 0
+		if msg.err != nil {
+			m.log.failure = msg.err.Error()
+		} else {
+			m.log.entry = &msg.entry
+		}
+		return m, nil
 	case tea.KeyPressMsg:
-		switch msg.String() {
+		key := msg.String()
+		if m.detail.open && m.usable() {
+			var cmd tea.Cmd
+			var handled bool
+			if m, cmd, handled = m.detailKey(key); handled {
+				return m, cmd
+			}
+		}
+		if m.tab == tabLog && m.factory.running && m.width >= MinColumns && m.height >= MinRows {
+			if m.log.open {
+				if key != "q" && key != "ctrl+c" && key != "1" && key != "2" && key != "3" {
+					return m.entryKey(key), nil
+				}
+			} else if m, cmd, handled := m.logKey(key); handled {
+				return m, cmd
+			}
+		}
+		switch key {
 		case "enter":
+			if m.tab == tabJobs {
+				return m.openDetail()
+			}
 			return m, m.attach()
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "1":
-			m.tab = tabAgents
+			m.tab, m.log.open, m.log.want = tabAgents, false, 0
 		case "2":
-			m.tab = tabJobs
+			m.tab, m.log.open, m.log.want = tabJobs, false, 0
 		case "3":
 			m.tab = tabLog
+			return m, m.refreshLog()
 		case "up", "k":
 			m = m.moved(-1)
 		case "down", "j":
@@ -370,6 +416,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end", "G":
 			m = m.moved(m.listLen())
 		}
+		return m.pageOlder()
 	}
 	return m, nil
 }
@@ -378,8 +425,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // child process (ADR 0015): Bubble Tea releases the terminal first and takes
 // it back when attach exits. Attach is unchanged and only observes.
 func (m model) attach() tea.Cmd {
-	agent := m.selected()
-	if m.tab != tabAgents || !m.read || !m.factory.running || agent == "" || m.width < MinColumns || m.height < MinRows {
+	if m.tab != tabAgents {
+		return nil
+	}
+	return m.attachTo(m.selected())
+}
+
+// attachTo is the hand-over to `asmai attach` for agent, which the Agents tab
+// and the job detail's assignments share.
+func (m model) attachTo(agent string) tea.Cmd {
+	if !m.usable() || agent == "" {
 		return nil
 	}
 	exe, err := os.Executable()
@@ -420,6 +475,8 @@ func (m model) listLen() int {
 		return len(m.factory.agents)
 	case tabJobs:
 		return len(m.factory.jobs)
+	case tabLog:
+		return len(m.log.entries)
 	}
 	return 0
 }
@@ -437,8 +494,11 @@ func (m model) moved(delta int) model {
 
 // position is where the selected tab's cursor and window are.
 func (m *model) position() (cursor, offset *int) {
-	if m.tab == tabJobs {
+	switch m.tab {
+	case tabJobs:
 		return &m.jobCursor, &m.jobOffset
+	case tabLog:
+		return &m.log.cursor, &m.log.offset
 	}
 	return &m.cursor, &m.offset
 }
@@ -449,10 +509,10 @@ func (m model) scrolled() model {
 	for _, l := range []struct {
 		cursor, offset *int
 		n              int
-	}{{&m.cursor, &m.offset, len(m.factory.agents)}, {&m.jobCursor, &m.jobOffset, len(m.factory.jobs)}} {
+	}{{&m.cursor, &m.offset, len(m.factory.agents)}, {&m.jobCursor, &m.jobOffset, len(m.factory.jobs)}, {&m.log.cursor, &m.log.offset, len(m.log.entries)}} {
 		*l.cursor = min(max(*l.cursor, 0), max(l.n-1, 0))
 		*l.offset = min(max(*l.offset, *l.cursor-rows+1), *l.cursor)
 		*l.offset = max(min(*l.offset, l.n-rows), 0)
 	}
-	return m
+	return m.detailScrolled()
 }

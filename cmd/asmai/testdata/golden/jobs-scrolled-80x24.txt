@@ -21,7 +21,7 @@
  #24   ● Working      job title 24
  #25   ● Working      job title 25
  #26   ● Working      job title 26
- 1/2/3 tab · ↑/↓ move · q quit
+ 1/2/3 tab · ↑/↓ move · enter open · q quit
 --- attributes
 1 1-80: reverse
 2 2-11: faint

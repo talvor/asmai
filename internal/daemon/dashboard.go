@@ -27,10 +27,19 @@ const (
 	// grows or a waiting prompt or an input owner changes, which are not
 	// journaled. The Dashboard re-reads on a tick and derives nothing from it.
 	CommandDashboardSubscribe = "dashboard.subscribe"
+	// CommandDashboardLog reads a page of the journal as one-line entries,
+	// from a cursor in either direction, narrowed by job, agent and kind.
+	CommandDashboardLog = "dashboard.log"
+	// CommandDashboardEntry reads one journal entry with the body of the
+	// message or decision it records.
+	CommandDashboardEntry = "dashboard.entry"
+	// CommandDashboardJob reads one job's detail: its header, findings,
+	// assignments and handoffs, each with the time it last changed.
+	CommandDashboardJob = "dashboard.job"
 )
 
 // DashboardCommands are the commands only the Dashboard sends.
-var DashboardCommands = []string{CommandDashboardSnapshot, CommandDashboardSubscribe}
+var DashboardCommands = []string{CommandDashboardSnapshot, CommandDashboardSubscribe, CommandDashboardLog, CommandDashboardEntry, CommandDashboardJob}
 
 // DashboardChange is one tick of the change subscription.
 type DashboardChange struct {
@@ -444,6 +453,363 @@ func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings 
 	})
 	if items == nil {
 		items = []WaitingItem{}
+	}
+	return items
+}
+
+// TrafficKinds are the journal kinds of agent traffic: handoffs, assignments,
+// results, blocked reports, and acceptances and rejections. The Log tab shows
+// them by default and the whole journal on request.
+var TrafficKinds = []string{
+	store.KindHandoffSent, store.KindAssignmentCreated, store.KindResultSubmitted,
+	store.KindBlockedReported, store.KindResultAccepted, store.KindResultRejected,
+}
+
+// The least and most entries a log read returns, and what it returns when the
+// request does not say.
+const (
+	logLimitDefault = 300
+	logLimitMax     = 1000
+)
+
+// LogQuery is a log read. With neither Before nor After it reads the latest
+// entries; with Before, the entries older than that journal ID; with After,
+// the entries newer than it. Kinds, Job and Agent narrow it when set.
+type LogQuery struct {
+	Kinds  []string `json:"kinds,omitempty"`
+	Job    int64    `json:"job,omitempty"`
+	Agent  string   `json:"agent,omitempty"`
+	Before int64    `json:"before,omitempty"`
+	After  int64    `json:"after,omitempty"`
+	Limit  int      `json:"limit,omitempty"`
+}
+
+// LogEntry is one journal entry as a one-line summary.
+type LogEntry struct {
+	ID   int64     `json:"id"`
+	At   time.Time `json:"at"`
+	Kind string    `json:"kind"`
+	// Job is the job the entry is about, zero for none.
+	Job int64 `json:"job,omitempty"`
+	// From and To are the agents the entry runs between, either may be empty.
+	From    string `json:"from,omitempty"`
+	To      string `json:"to,omitempty"`
+	Summary string `json:"summary"`
+}
+
+// DashboardLog is a page of the journal, oldest first. Older and Newer say
+// whether entries that match the query lie beyond the page in each direction.
+type DashboardLog struct {
+	Entries []LogEntry `json:"entries"`
+	Older   bool       `json:"older"`
+	Newer   bool       `json:"newer"`
+}
+
+// DashboardEntry is one journal entry with its summary and message body.
+type DashboardEntry struct {
+	LogEntry
+	Body string `json:"body"`
+}
+
+// entryFields are the fields of a journal entry's data that a summary reads.
+type entryFields struct {
+	ID         int64    `json:"id"`
+	Job        int64    `json:"job"`
+	Number     int64    `json:"number"`
+	Assignment int64    `json:"assignment"`
+	Sender     string   `json:"sender"`
+	Receiver   string   `json:"receiver"`
+	Recipient  string   `json:"recipient"`
+	Owner      string   `json:"owner"`
+	Worker     string   `json:"worker"`
+	Leader     string   `json:"leader"`
+	Agent      string   `json:"agent"`
+	Kind       string   `json:"kind"`
+	Outcome    string   `json:"outcome"`
+	Reason     string   `json:"reason"`
+	Reasons    []string `json:"reasons"`
+}
+
+// firstLine is the first non-blank line of s.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// logEntry summarises e in a line. The summary is the one derivation of the
+// log's words; the Dashboard only shows it.
+func (d *daemon) logEntry(e store.Entry) LogEntry {
+	var f entryFields
+	json.Unmarshal(e.Data, &f)
+	out := LogEntry{ID: e.ID, At: e.At, Kind: e.Kind, Job: f.Job, Summary: e.Kind}
+	if e.Kind == store.KindJobOpened {
+		out.Job = f.Number
+	}
+	out.From = cmpFirst(f.Sender, f.Owner, f.Leader, f.Agent)
+	out.To = cmpFirst(f.Receiver, f.Recipient, f.Worker)
+	with := func(prefix, detail string) string {
+		if detail = firstLine(detail); detail != "" {
+			return prefix + ": " + detail
+		}
+		return prefix
+	}
+	// The assignment a report or a decision is about says who the other end is.
+	other := func() store.Assignment {
+		a, _ := d.store.Assignment(f.Assignment)
+		return a
+	}
+	switch e.Kind {
+	case store.KindHandoffSent:
+		out.Summary = with("handoff", f.Outcome)
+	case store.KindAssignmentCreated:
+		out.Summary = with(fmt.Sprintf("assignment %d", f.ID), f.Outcome)
+	case store.KindResultSubmitted:
+		out.To = other().Owner
+		out.Summary = fmt.Sprintf("result of assignment %d", f.Assignment)
+	case store.KindBlockedReported:
+		out.To = other().Owner
+		out.Summary = with(fmt.Sprintf("blocked on assignment %d", f.Assignment), f.Reason)
+	case store.KindResultAccepted:
+		out.To = other().Worker
+		out.Summary = with(fmt.Sprintf("accepted assignment %d", f.Assignment), strings.Join(f.Reasons, " "))
+	case store.KindResultRejected:
+		out.To = other().Worker
+		out.Summary = with(fmt.Sprintf("rejected assignment %d", f.Assignment), strings.Join(f.Reasons, " "))
+	case store.KindMessageCreated:
+		out.Summary = f.Kind + " message"
+	}
+	return out
+}
+
+// cmpFirst is the first of names that is not empty.
+func cmpFirst(names ...string) string {
+	for _, n := range names {
+		if n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+// dashboardLog reads a page of the journal for the Log tab.
+func (d *daemon) dashboardLog(q LogQuery) (DashboardLog, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = logLimitDefault
+	}
+	entries, older, newer, err := d.store.JournalPage(store.JournalQuery{Kinds: q.Kinds, Job: q.Job, Agent: q.Agent, Before: q.Before, After: q.After, Limit: min(limit, logLimitMax)})
+	if err != nil {
+		return DashboardLog{}, fmt.Errorf("reading the journal: %w", err)
+	}
+	page := DashboardLog{Entries: []LogEntry{}, Older: older, Newer: newer}
+	for _, e := range entries {
+		page.Entries = append(page.Entries, d.logEntry(e))
+	}
+	return page, nil
+}
+
+// dashboardEntry reads one journal entry with its body.
+func (d *daemon) dashboardEntry(id int64) (DashboardEntry, error) {
+	entries, _, _, err := d.store.JournalPage(store.JournalQuery{Before: id + 1, Limit: 1})
+	if err != nil {
+		return DashboardEntry{}, fmt.Errorf("reading the journal entry: %w", err)
+	}
+	if len(entries) == 0 || entries[0].ID != id {
+		return DashboardEntry{}, fmt.Errorf("journal entry %d does not exist", id)
+	}
+	body, err := d.store.MessageBodyOf(entries[0])
+	if err != nil {
+		return DashboardEntry{}, fmt.Errorf("reading the body of journal entry %d: %w", id, err)
+	}
+	return DashboardEntry{LogEntry: d.logEntry(entries[0]), Body: body}, nil
+}
+
+// DashboardJobDetail is one job as the Dashboard's job detail shows it: the
+// header, and the job's work with the time each item last changed.
+type DashboardJobDetail struct {
+	Job             int64    `json:"job"`
+	Title           string   `json:"title"`
+	Stage           JobStage `json:"stage"`
+	HandoffComplete bool     `json:"handoff_complete"`
+	// Branch and Head are the job branch and its tip, empty for a job with no
+	// repository.
+	Branch string `json:"branch,omitempty"`
+	Head   string `json:"head,omitempty"`
+	// PullRequest is the pull request's number, zero for none, and
+	// PullRequestState says where it is in words.
+	PullRequest      int    `json:"pull_request,omitempty"`
+	PullRequestState string `json:"pull_request_state,omitempty"`
+	// CI and Validation say in words how the checks on the pull request's
+	// head and Quality's validation stand.
+	CI         string `json:"ci"`
+	Validation string `json:"validation"`
+	// Work is the job's findings, needs-you first, then its assignments, then
+	// its handoffs, each oldest first. The Dashboard lists it in this order.
+	Work []JobItem `json:"work"`
+}
+
+// The kinds of item in a job's work.
+const (
+	ItemFinding    = "finding"
+	ItemAssignment = "assignment"
+	ItemHandoff    = "handoff"
+)
+
+// JobItem is one finding, assignment or handoff of a job.
+type JobItem struct {
+	Kind string `json:"kind"`
+	ID   int64  `json:"id"`
+	// Label says which sort of the kind it is: a finding's kind, or the state
+	// of an assignment or a handoff, in words.
+	Label string `json:"label"`
+	// Text is what the item says in full: a finding's text, or the outcome of
+	// an assignment or a handoff.
+	Text string `json:"text"`
+	// From and To are a handoff's sender and receiver; Worker is an
+	// assignment's worker, whom Enter attaches to.
+	From   string `json:"from,omitempty"`
+	To     string `json:"to,omitempty"`
+	Worker string `json:"worker,omitempty"`
+	// Criteria are acceptance criteria; Dispatch is an assignment's worker
+	// dispatch, and the other fields describe a handoff.
+	Criteria    []string  `json:"criteria,omitempty"`
+	Dispatch    string    `json:"dispatch,omitempty"`
+	Answer      string    `json:"answer,omitempty"`
+	Decisions   string    `json:"decisions,omitempty"`
+	Evidence    string    `json:"evidence,omitempty"`
+	Constraints string    `json:"constraints,omitempty"`
+	Permissions string    `json:"permissions,omitempty"`
+	Head        string    `json:"head,omitempty"`
+	Commit      string    `json:"commit,omitempty"`
+	Assignment  int64     `json:"assignment,omitempty"`
+	Report      int64     `json:"report,omitempty"`
+	ClearedBy   int64     `json:"cleared_by,omitempty"`
+	ReadOnly    bool      `json:"read_only,omitempty"`
+	Skill       string    `json:"skill,omitempty"`
+	Skills      []string  `json:"skills,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitzero"`
+	ClearedAt   time.Time `json:"cleared_at,omitzero"`
+	// Needs marks a needs-you finding.
+	Needs bool `json:"needs,omitempty"`
+	// At is when the item last changed.
+	At time.Time `json:"at"`
+}
+
+// stateWords reads a stored state as words.
+func stateWords(s string) string { return strings.ReplaceAll(s, "_", " ") }
+
+// pullRequestWords says where a pull request is.
+func pullRequestWords(p store.PullRequest) string {
+	switch {
+	case p.State == "MERGED":
+		return "merged"
+	case p.State == "CLOSED":
+		return "closed"
+	case p.NotReady:
+		return "not ready"
+	case p.Draft:
+		return "draft"
+	default:
+		return "ready"
+	}
+}
+
+// checksWords says how the checks on a pull request's head stand.
+func checksWords(o *store.ChecksObservation) string {
+	if o == nil {
+		return "not observed"
+	}
+	var passed, failed, pending int
+	for _, c := range o.Checks {
+		switch c.State {
+		case "passed":
+			passed++
+		case "failed":
+			failed++
+		default:
+			pending++
+		}
+	}
+	words := fmt.Sprintf("%s: %d of %d passed", o.Verdict, passed, len(o.Checks))
+	if failed > 0 {
+		words += fmt.Sprintf(", %d failed", failed)
+	}
+	if pending > 0 {
+		words += fmt.Sprintf(", %d pending", pending)
+	}
+	return words
+}
+
+// validationWords says how Quality's validation of the job stands.
+func validationWords(w store.JobWork, head string) string {
+	short := head[:min(len(head), 7)]
+	var words string
+	switch {
+	case w.Validating:
+		words = "validating"
+	case w.Validated:
+		words = "accepted at " + short
+	default:
+		words = "not started"
+	}
+	if w.OpenBlocking > 0 {
+		words += fmt.Sprintf(", %d blocking open", w.OpenBlocking)
+	}
+	return words
+}
+
+// dashboardJob reads one job for the Dashboard's job detail. The stage, the
+// order of the work and the words are the daemon's; the Dashboard only shows
+// them.
+func (d *daemon) dashboardJob(number int64) (DashboardJobDetail, error) {
+	work, detail, err := d.store.JobWorkDetail(number)
+	if err != nil {
+		return DashboardJobDetail{}, fmt.Errorf("reading job %d: %w", number, err)
+	}
+	job := deriveJob(work)
+	out := DashboardJobDetail{
+		Job: number, Title: job.Title, Stage: job.Stage, Branch: detail.Branch, Head: detail.Head,
+		PullRequest: job.PullRequest, CI: "no pull request", Validation: validationWords(work, detail.Head),
+		HandoffComplete: slices.ContainsFunc(detail.Handoffs, func(h store.HandoffWork) bool { return h.State == store.HandoffAccepted }),
+	}
+	if detail.PullRequest != nil {
+		out.PullRequestState = pullRequestWords(*detail.PullRequest)
+		out.CI = checksWords(detail.Checks)
+	}
+	out.Work = jobItems(detail, work.Ended)
+	return out, nil
+}
+
+// jobItems lists a job's work: needs-you findings first, then the remaining
+// findings in record order, then assignments and handoffs.
+func jobItems(detail store.JobDetail, ended bool) []JobItem {
+	items := []JobItem{}
+	findings := slices.Clone(detail.Findings)
+	slices.SortStableFunc(findings, func(a, b store.FindingWork) int {
+		if a.Kind == store.FindingNeedsYou && b.Kind != store.FindingNeedsYou {
+			return -1
+		}
+		if b.Kind == store.FindingNeedsYou && a.Kind != store.FindingNeedsYou {
+			return 1
+		}
+		return 0
+	})
+	for _, f := range findings {
+		label := f.Kind
+		if f.Cleared {
+			label += " (cleared)"
+		}
+		items = append(items, JobItem{Kind: ItemFinding, ID: f.ID, Label: label, Text: f.Text, Commit: f.Commit, Assignment: f.Assignment, Report: f.Report, ClearedBy: f.ClearedBy, CreatedAt: f.CreatedAt, ClearedAt: f.ClearedAt, Needs: !ended && f.Kind == store.FindingNeedsYou, At: f.At})
+	}
+	for _, a := range detail.Assignments {
+		items = append(items, JobItem{Kind: ItemAssignment, ID: a.ID, Label: stateWords(a.State), Text: a.Outcome, From: a.Owner, Worker: a.Worker, Criteria: a.Criteria, Dispatch: a.Dispatch, ReadOnly: a.ReadOnly, Commit: a.Commit, Skill: a.Skill, Skills: a.Skills, CreatedAt: a.CreatedAt, At: a.At})
+	}
+	for _, h := range detail.Handoffs {
+		items = append(items, JobItem{Kind: ItemHandoff, ID: h.ID, Label: stateWords(h.State), Text: h.Outcome, From: h.Sender, To: h.Receiver, Criteria: h.Criteria, Answer: h.Answer, Decisions: h.Decisions, Evidence: h.Evidence, Constraints: h.Constraints, Permissions: h.Permissions, Head: h.Head, CreatedAt: h.CreatedAt, At: h.At})
 	}
 	return items
 }

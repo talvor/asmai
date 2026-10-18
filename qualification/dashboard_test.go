@@ -53,6 +53,34 @@ func TestARowWaitingOnYouIsNotTheBanner(t *testing.T) {
 	}
 }
 
+func TestAttachedScreenInFailuresRequiresShowScreen(t *testing.T) {
+	h := &Harness{}
+	d := &dashboardTerminal{h: h}
+	v := parseDashboard([]string{"asmai dashboard private account", "PRIVATE_ACCOUNT_MARKER"}, vt.State{})
+	if note := d.screenOf(v); strings.Contains(note, "PRIVATE_ACCOUNT_MARKER") || !strings.Contains(note, "--show-screen") {
+		t.Errorf("screen note without consent = %q", note)
+	}
+	h.ShowScreen = true
+	if note := d.screenOf(v); !strings.Contains(note, "PRIVATE_ACCOUNT_MARKER") {
+		t.Errorf("screen note with consent = %q", note)
+	}
+}
+
+func TestRunningFactoryRequiresEachLeaderOnce(t *testing.T) {
+	valid := parseDashboard(strings.Split(dashboardSample, "\n"), vt.State{})
+	if !showsRunningLeaders(valid) {
+		t.Error("the running factory's three leaders were rejected")
+	}
+	duplicate := parseDashboard(strings.Split(strings.Replace(dashboardSample, "leader@engineering", "leader@quality", 1), "\n"), vt.State{})
+	if showsRunningLeaders(duplicate) {
+		t.Error("two Quality rows without Engineering were accepted")
+	}
+	missing := parseDashboard([]string{" asmai dashboard  factory running", " leader@coordination  ○ Idle", " leader@quality  ■ Stopped"}, vt.State{})
+	if showsRunningLeaders(missing) {
+		t.Error("a running view without Engineering was accepted")
+	}
+}
+
 func TestTheStoppedScreenIsRecognisedAndHoldsNothingOfTheFactory(t *testing.T) {
 	stopped := parseDashboard([]string{" asmai dashboard  factory stopped", "", "The factory is not running.", "Nothing is shown. Start it with `asmai start`."}, vt.State{})
 	if !stopped.stopped || stopped.running || leftOnStoppedScreen(stopped) != "" {
@@ -63,8 +91,8 @@ func TestTheStoppedScreenIsRecognisedAndHoldsNothingOfTheFactory(t *testing.T) {
 		t.Error("a screen of agents and a banner was taken for a clean stopped screen")
 	}
 	banner := parseDashboard([]string{" asmai dashboard  factory stopped", " ▲ Waiting on you: a finding"}, vt.State{})
-	if !strings.Contains(leftOnStoppedScreen(banner), "banner") {
-		t.Errorf("left = %q, want the banner named", leftOnStoppedScreen(banner))
+	if leftOnStoppedScreen(banner) == "" {
+		t.Error("a stopped view with a stale banner was accepted")
 	}
 	for _, lines := range [][]string{
 		{" asmai dashboard  factory stopped"},
@@ -79,6 +107,16 @@ func TestTheStoppedScreenIsRecognisedAndHoldsNothingOfTheFactory(t *testing.T) {
 	withStaleRow := parseDashboard([]string{" asmai dashboard  factory stopped", "The factory is not running.", " leader@coordination  ■ Stopped"}, vt.State{})
 	if leftOnStoppedScreen(withStaleRow) == "" {
 		t.Error("a stopped message with a stale agent row was taken for a clean stopped screen")
+	}
+	for _, stale := range []string{
+		" AGENT                STATUS                 JOB    INPUT      SINCE DOING",
+		" JOB                  STAGE                  TITLE",
+		" #1                   ● Working             A job",
+	} {
+		v := parseDashboard([]string{" asmai dashboard  factory stopped", "The factory is not running.", stale}, vt.State{})
+		if leftOnStoppedScreen(v) == "" {
+			t.Errorf("stopped message with stale table content %q was accepted", stale)
+		}
 	}
 }
 

@@ -172,13 +172,7 @@ func (v dashboardView) selectedTab() string {
 	return ""
 }
 
-// screenOf describes the terminal for a failure: the Dashboard's own screen
-// shows nothing of the signed-in account, but the screen of an agent that
-// attach draws may, so that one is the operator's choice.
 func (d *dashboardTerminal) screenOf(v dashboardView) string {
-	if strings.Contains(v.header, "asmai dashboard") {
-		return "\nthe dashboard's screen:\n" + strings.Join(v.lines, "\n")
-	}
 	return d.h.screenNote(v.lines)
 }
 
@@ -953,6 +947,15 @@ func (h *Harness) c53(ctx context.Context, f *Factory, r *Result) error {
 	return nil
 }
 
+func showsRunningLeaders(v dashboardView) bool {
+	return v.running && !v.stopped && !v.shows("The factory is not running.") &&
+		len(v.order) == len(roles.Staffed) &&
+		slices.Contains(v.order, coordinationLeader) &&
+		slices.Contains(v.order, engineeringLeader) &&
+		slices.Contains(v.order, qualityLeader) &&
+		v.agents[coordinationLeader].Status != "Stopped"
+}
+
 // c54 qualifies the Dashboard's factory-stopped state: when the factory stops
 // the Dashboard clears everything it showed and shows only the stopped
 // message, still running, and when the factory is restored it clears that
@@ -981,10 +984,7 @@ func (h *Harness) c54(ctx context.Context, f *Factory, r *Result) error {
 		return err
 	}
 	defer d.stop()
-	running := func(v dashboardView) bool {
-		return v.running && !v.stopped && !v.shows("The factory is not running.") && len(v.order) == len(roles.Staffed) && v.agents[coordinationLeader].Status != "Stopped"
-	}
-	v, err := d.waitFor(ctx, "the running factory's agents", running)
+	v, err := d.waitFor(ctx, "the running factory's agents", showsRunningLeaders)
 	if err != nil {
 		return err
 	}
@@ -1034,7 +1034,7 @@ func (h *Harness) c54(ctx context.Context, f *Factory, r *Result) error {
 			return fmt.Errorf("round %d: asmai start failed its checks: %s", round, failedChecks(res.Checks))
 		}
 		startedAt := time.Now()
-		if _, err := d.waitFor(ctx, "the stopped message cleared and the factory read again", running); err != nil {
+		if _, err := d.waitFor(ctx, "the stopped message cleared and the factory read again", showsRunningLeaders); err != nil {
 			return fmt.Errorf("round %d: %w", round, err)
 		}
 		restored, ok, err := f.Leader()
@@ -1053,22 +1053,21 @@ func (h *Harness) c54(ctx context.Context, f *Factory, r *Result) error {
 	return nil
 }
 
-// leftOnStoppedScreen names what a terminal shows of the factory that the
-// stopped screen must not: an agent's row, a tab, a banner, or a job, and
-// returns empty when there is none.
 func leftOnStoppedScreen(v dashboardView) string {
-	switch {
-	case !v.stopped:
+	if !v.stopped {
 		return "no stopped header"
-	case len(v.order) > 0:
-		return "the agent " + v.order[0]
-	case v.banner != "":
-		return "the banner " + strconv.Quote(v.banner)
-	case v.shows("1 Agents"):
-		return "the tabs"
-	case v.shows("leader@") || v.shows("worker"):
-		return "an agent's name"
-	case !v.shows("The factory is not running."):
+	}
+	for _, line := range v.lines {
+		trimmed := strings.TrimSpace(line)
+		switch trimmed {
+		case "", "asmai dashboard  factory stopped", "The factory is not running.",
+			"Nothing is shown. Start it with `asmai start`.", "Looking again every few seconds.",
+			"1/2/3 tab · ↑/↓ move · enter attach · q quit":
+		default:
+			return "unexpected content " + strconv.Quote(trimmed)
+		}
+	}
+	if !v.shows("The factory is not running.") {
 		return "no stopped message"
 	}
 	return ""

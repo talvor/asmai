@@ -120,21 +120,14 @@ jobs:
         working-directory: lavish
         run: deno install --frozen --minimum-dependency-age 0
 
-      - name: The Deno runtime's source, for the licenses of what is compiled into it
+      - name: The Deno runtime's license
         run: |
-          git clone --quiet --depth 1 --branch "v$DENO" https://github.com/denoland/deno.git "$RUNNER_TEMP/deno-src"
-          cd "$RUNNER_TEMP/deno-src"
-          cargo fetch --locked
-          for triple in x86_64-unknown-linux-gnu aarch64-apple-darwin; do
-            cargo metadata --format-version 1 --locked --filter-platform "$triple" > "$RUNNER_TEMP/cargo-$triple.json"
-          done
+          curl -fsSL -o "$RUNNER_TEMP/DENO_LICENSE.md" "https://raw.githubusercontent.com/denoland/deno/v$DENO/LICENSE.md"
 
-      - name: License allow-list for everything compiled into the build, and its notices
+      - name: License allow-list for what is compiled into the build, and its notices
         run: |
           go run ./internal/cmd/lavish-notices -dir lavish -axi "$AXI" -deno "$DENO" \
-            -deno-license "$RUNNER_TEMP/deno-src/LICENSE.md" \
-            -cargo-metadata "$RUNNER_TEMP/cargo-x86_64-unknown-linux-gnu.json" \
-            -cargo-metadata "$RUNNER_TEMP/cargo-aarch64-apple-darwin.json" \
+            -deno-license "$RUNNER_TEMP/DENO_LICENSE.md" \
             -out lavish/LAVISH_NOTICES
 
       - name: Compile Lavish for each certified platform

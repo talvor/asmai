@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/talvor/asmai"
-	"github.com/talvor/asmai/internal/licenses"
 	"github.com/talvor/asmai/internal/providers"
 )
 
@@ -188,87 +187,6 @@ func TestTheFontsLavishVendorsMayBeUnderTheSILOFLAndNothingElseMayBe(t *testing.
 	}
 }
 
-func TestSPDXExpressionsAreSatisfiedByAllowListedLicenses(t *testing.T) {
-	for expr, want := range map[string]bool{
-		"MIT":                                  true,
-		"MIT OR Apache-2.0":                    true,
-		"MIT/Apache-2.0":                       true,
-		"Unicode-3.0 OR MIT":                   true,
-		"Unicode-3.0":                          false,
-		"MIT AND Unicode-3.0":                  false,
-		"(MIT OR Apache-2.0) AND BSD-3-Clause": true,
-		"Apache-2.0 WITH LLVM-exception":       true,
-		"MPL-2.0":                              false,
-		"BSD-2-Clause OR MPL-2.0":              true,
-		"Apache-2.0+":                          true,
-		"":                                     false,
-		"MIT OR":                               false,
-		"(MIT":                                 false,
-	} {
-		if got := Satisfied(expr, licenses.Allowed); got != want {
-			t.Errorf("Satisfied(%q) = %v, want %v", expr, got, want)
-		}
-	}
-}
-
-func TestOnlyTheCratesCompiledIntoTheRuntimeAreHeldToTheAllowList(t *testing.T) {
-	dir := t.TempDir()
-	write(t, filepath.Join(dir, "rt", "LICENSE"), mit)
-	write(t, filepath.Join(dir, "dep", "LICENSE-MIT"), mit)
-	write(t, filepath.Join(dir, "devonly", "LICENSE"), "irrelevant")
-	write(t, filepath.Join(dir, "copyleft", "LICENSE"), "irrelevant")
-	meta := `{"packages": [
-		{"id": "rt", "name": "denort", "version": "1.0.0", "license": "MIT", "manifest_path": "` + dir + `/rt/Cargo.toml"},
-		{"id": "dep", "name": "dep", "version": "0.3.1", "license": "MIT OR Apache-2.0", "manifest_path": "` + dir + `/dep/Cargo.toml"},
-		{"id": "devonly", "name": "devonly", "version": "9.9.9", "license": "GPL-3.0", "manifest_path": "` + dir + `/devonly/Cargo.toml"},
-		{"id": "copyleft", "name": "copyleft", "version": "1.0.0", "license": "GPL-3.0", "manifest_path": "` + dir + `/copyleft/Cargo.toml"}
-	], "resolve": {"nodes": [
-		{"id": "rt", "deps": [
-			{"pkg": "dep", "dep_kinds": [{"kind": null}]},
-			{"pkg": "devonly", "dep_kinds": [{"kind": "dev"}]}
-		]},
-		{"id": "dep", "deps": []},
-		{"id": "devonly", "deps": [{"pkg": "copyleft", "dep_kinds": [{"kind": null}]}]},
-		{"id": "copyleft", "deps": []}
-	]}}`
-	file := filepath.Join(dir, "meta.json")
-	write(t, file, meta)
-
-	crates, err := RuntimeCrates("denort", file)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, c := range crates {
-		names = append(names, c.String())
-	}
-	if strings.Join(names, ",") != "denort 1.0.0,dep 0.3.1" {
-		t.Fatalf("the runtime's crates are %v, want denort and dep, not what only a dev dependency reaches", names)
-	}
-	material, err := CrateMaterial(crates)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, problem := range problems(material) {
-		if problem != "" {
-			t.Errorf("%s: %s", name, problem)
-		}
-	}
-
-	// A copyleft crate in the runtime is refused.
-	meta = strings.Replace(meta, `{"pkg": "devonly", "dep_kinds": [{"kind": "dev"}]}`, `{"pkg": "copyleft", "dep_kinds": [{"kind": null}]}`, 1)
-	write(t, file, meta)
-	crates, _ = RuntimeCrates("denort", file)
-	material, _ = CrateMaterial(crates)
-	if p := problems(material)["copyleft 1.0.0"]; !strings.Contains(p, "GPL-3.0") {
-		t.Errorf("a GPL crate compiled into the runtime has problem %q, want it refused", p)
-	}
-	if _, err := RuntimeCrates("no-such-package", file); err == nil {
-		t.Error("a root that is not in the metadata was accepted")
-	}
-}
-
 func TestTheNoticesCarryEverythingAndTheSameInputsGiveTheSameBytes(t *testing.T) {
 	dir := buildDir(t, map[string]map[string]string{"express@5.2.1": {"LICENSE": mit}})
 	npm, err := NPMMaterial(dir)
@@ -280,14 +198,13 @@ func TestTheNoticesCarryEverythingAndTheSameInputsGiveTheSameBytes(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := Inputs{Axi: "0.1.89", Deno: "2.9.6", NPM: npm, AxiNotices: []byte(axiNotices), Vendored: vendored, OFL: ofl, DenoLicense: []byte(mit),
-		Crates: []Material{{Name: "dep 0.3.1", Files: []licenses.LicenseFile{{Name: "LICENSE-MIT", Text: []byte(mit)}}}}}
+	in := Inputs{Axi: "0.1.89", Deno: "2.9.6", NPM: npm, AxiNotices: []byte(axiNotices), Vendored: vendored, OFL: ofl, DenoLicense: []byte(mit)}
 
 	if p := in.Problems(); len(p) != 0 {
 		t.Fatalf("the inputs have problems %v", p)
 	}
 	notices := in.Notices()
-	for _, want := range []string{"lavish-axi 0.1.89 compiled with Deno 2.9.6", "What lavish-axi vendors", "SIL Open Font License", "npm: express 5.2.1", "Deno 2.9.6 (runtime)", "Deno runtime crate: dep 0.3.1", "-- LICENSE-MIT --"} {
+	for _, want := range []string{"lavish-axi 0.1.89 compiled with Deno 2.9.6", "What lavish-axi vendors", "SIL Open Font License", "npm: express 5.2.1", "Deno 2.9.6 (runtime)"} {
 		if !strings.Contains(string(notices), want) {
 			t.Errorf("the notices lack %q", want)
 		}

@@ -54,9 +54,8 @@ func progressAt(stage daemon.JobStage) int {
 type jobDetail struct {
 	open bool
 	job  int64
-	// view numbers the openings and seq the reads, so an answer for an
-	// earlier opening, or older than one already shown, is dropped.
-	view, seq, applied int
+	// view numbers openings, seq reads, applied answers, and loaded good reads.
+	view, seq, applied, loaded int
 	// data is the daemon's answer, nil until it arrives; failure says why a
 	// read failed.
 	data    *daemon.DashboardJobDetail
@@ -125,21 +124,30 @@ func (m model) closeDetail() model {
 // on its item.
 func (m model) jobRead(msg jobMsg) model {
 	d := &m.detail
-	if !d.open || msg.view != d.view || msg.seq <= d.applied {
+	if !d.open || msg.view != d.view {
 		return m
 	}
-	d.applied = msg.seq
 	if msg.err != nil {
-		// What was read stays on screen, as the Jobs tab's does.
+		if msg.seq <= d.applied {
+			return m
+		}
+		d.applied = msg.seq
 		d.failure = msg.err.Error()
 		return m
+	}
+	if msg.seq <= d.loaded {
+		return m
+	}
+	d.loaded = msg.seq
+	if msg.seq >= d.applied {
+		d.applied = msg.seq
+		d.failure = ""
 	}
 	var kind string
 	var id int64
 	if item, ok := m.selectedItem(); ok {
 		kind, id = item.Kind, item.ID
 	}
-	d.failure = ""
 	detail := msg.detail
 	d.data, d.readAt = &detail, time.Now()
 	for i, item := range detail.Work {

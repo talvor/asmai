@@ -303,21 +303,6 @@ var assignmentChanges = []string{
 	KindCancellationRequested, KindAssignmentCancelled, KindAssignmentResumed, KindAssignmentNeedsReconciliation,
 }
 
-// JobDetail returns what the records say of job, which must exist. It only
-// reads.
-func (s *Store) JobDetail(job int64) (JobDetail, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return JobDetail{}, err
-	}
-	defer tx.Rollback()
-	d, err := jobDetail(tx, job)
-	if err != nil {
-		return JobDetail{}, err
-	}
-	return d, tx.Commit()
-}
-
 // JobWorkDetail reads the job's stage inputs and detail in one snapshot.
 func (s *Store) JobWorkDetail(job int64) (JobWork, JobDetail, error) {
 	tx, err := s.db.Begin()
@@ -394,10 +379,9 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 
 	changes := "'" + strings.Join(assignmentChanges, "','") + "'"
 	arows, err := tx.Query(`SELECT a.id, a.owner, a.worker, a.outcome, a.criteria, a.state, a.read_only,
-			COALESCE(x.state, ''),
-			MAX(a.created_at,
-				COALESCE((SELECT j.at FROM journal j WHERE j.kind IN (`+changes+`) AND json_extract(j.data, '$.assignment') = a.id ORDER BY j.id DESC LIMIT 1), a.created_at),
-				COALESCE(x.updated_at, a.created_at))
+			COALESCE(x.state, ''), a.created_at,
+			COALESCE((SELECT j.at FROM journal j WHERE j.kind IN (`+changes+`) AND json_extract(j.data, '$.assignment') = a.id ORDER BY j.id DESC LIMIT 1), a.created_at),
+			COALESCE(x.updated_at, a.created_at)
 		FROM assignments a
 		LEFT JOIN dispatches x ON x.id = (SELECT d.id FROM dispatches d JOIN messages m ON m.id = d.message
 			WHERE m.assignment = a.id AND m.recipient = a.worker AND d.agent = a.worker ORDER BY d.id DESC LIMIT 1)
@@ -408,15 +392,21 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	defer arows.Close()
 	for arows.Next() {
 		var a AssignmentWork
-		var criteria, at string
-		if err := arows.Scan(&a.ID, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &a.ReadOnly, &a.Dispatch, &at); err != nil {
+		var criteria, created, changed, dispatched string
+		if err := arows.Scan(&a.ID, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &a.ReadOnly, &a.Dispatch, &created, &changed, &dispatched); err != nil {
 			return JobDetail{}, err
 		}
 		if err := json.Unmarshal([]byte(criteria), &a.Criteria); err != nil {
 			return JobDetail{}, err
 		}
-		if a.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
-			return JobDetail{}, err
+		for _, stamp := range []string{created, changed, dispatched} {
+			at, err := time.Parse(time.RFC3339Nano, stamp)
+			if err != nil {
+				return JobDetail{}, err
+			}
+			if at.After(a.At) {
+				a.At = at
+			}
 		}
 		d.Assignments = append(d.Assignments, a)
 	}

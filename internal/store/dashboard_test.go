@@ -149,7 +149,7 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 	}
 	a, _ := newAssignment(t, s, job)
 
-	got, err := s.JobDetail(job)
+	_, got, err := s.JobWorkDetail(job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 	if n := got.Assignments[1]; n.ID != a.ID || n.State != AssignmentActive || !n.At.Equal(assignmentsAt) || n.Worker != a.Worker || n.Dispatch != DispatchCreated {
 		t.Errorf("the new assignment is %+v, want it active since it was made, with its dispatch created", n)
 	}
-	if _, err := s.JobDetail(job + 1); err == nil {
+	if _, _, err := s.JobWorkDetail(job + 1); err == nil {
 		t.Error("the detail of a job that does not exist was read")
 	}
 }
@@ -182,7 +182,7 @@ func TestJobDetailChecksFollowTheCurrentPullRequestAndHead(t *testing.T) {
 	green := []CheckState{{Name: "CI / test", State: "passed"}}
 	read := func() *ChecksObservation {
 		t.Helper()
-		detail, err := s.JobDetail(job)
+		_, detail, err := s.JobWorkDetail(job)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,11 +235,11 @@ func TestJobDetailAssignmentAgeFollowsItsWorkerDispatch(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	job := jobWithBranch(t, s)
 	a, dispatch := newAssignment(t, s, job)
-	later := assignmentsAt.Add(time.Minute)
+	later := assignmentsAt.Add(500 * time.Millisecond)
 	if err := s.ChangeDispatch(dispatch.ID, 1, DispatchCreated, DispatchWorking, "", later); err != nil {
 		t.Fatal(err)
 	}
-	detail, err := s.JobDetail(job)
+	_, detail, err := s.JobWorkDetail(job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,14 +252,15 @@ func TestJobDetailAssignmentDispatchIsAddressedToItsWorker(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	job := jobWithBranch(t, s)
 	a, dispatch := newValidation(t, s, job)
-	if _, _, err := s.ReportSubmitted(validationOf(a, dispatch, tipCommit, ValidationInput{Findings: []FindingInput{}}), assignmentsAt.Add(time.Minute)); err != nil {
+	later := assignmentsAt.Add(500 * time.Millisecond)
+	if _, _, err := s.ReportSubmitted(validationOf(a, dispatch, tipCommit, ValidationInput{Findings: []FindingInput{}}), later); err != nil {
 		t.Fatal(err)
 	}
-	detail, err := s.JobDetail(job)
+	_, detail, err := s.JobWorkDetail(job)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Assignments) != 1 || detail.Assignments[0].ID != a.ID || detail.Assignments[0].Dispatch != DispatchWorking {
+	if len(detail.Assignments) != 1 || detail.Assignments[0].ID != a.ID || detail.Assignments[0].Dispatch != DispatchWorking || !detail.Assignments[0].At.Equal(later) {
 		t.Errorf("the submitted assignment's worker dispatch is %+v", detail.Assignments)
 	}
 }

@@ -18,6 +18,7 @@ const Line = "SPDX-License-Identifier: Apache-2.0"
 // commentMarkers maps each source file extension to its line comment marker.
 var commentMarkers = map[string]string{
 	".go":   "//",
+	".ts":   "//",
 	".sh":   "#",
 	".yml":  "#",
 	".yaml": "#",
@@ -30,6 +31,8 @@ var skippedDirs = map[string]bool{
 	"dist": true,
 	// Upstream-licensed skills, including the patches listed in the bundle manifest.
 	"internal/skills/bundle": true,
+	// The npm packages `deno install` puts in the Lavish build's directory.
+	"lavish/node_modules": true,
 }
 
 // Missing returns, in lexical order, the source files in fsys that do not

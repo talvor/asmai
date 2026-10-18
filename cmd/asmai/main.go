@@ -76,8 +76,12 @@ commands you type:
                               is stopped. It needs a terminal of at least 80 columns by 24 rows
   asmai log [--follow]        print the daemon's log; --follow waits for more
   asmai export                write the journal out for inspection
-  asmai providers install     fetch the pinned provider CLIs, after you confirm
-  asmai providers list        show the provider CLIs AsmAI has installed
+  asmai providers install     fetch the pinned provider CLIs, Claude Code from its official channel and
+                              AsmAI's own Lavish build from its release, after you confirm; never your
+                              own copies, and Lavish needs no Node
+  asmai providers list        show the provider CLIs AsmAI has installed, each marked pinned or not
+  asmai lavish                list the review links waiting for you in the factory's Lavish server and the
+                              SSH command that forwards its port, as it listens on this host only
   asmai repo add <path-or-url> [--name <name>]
                               register a repository: record its location, origin and default
                               branch in the store and the configuration file, and make AsmAI's
@@ -331,7 +335,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "dashboard", "doctor", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
+	case "chat", "dashboard", "doctor", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -361,7 +365,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
-		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
+		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -375,12 +379,29 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "asmai %s\n", version)
 		return 0
 	case "notices":
+		// The installed Lavish build carries notices of its own, which are
+		// printed after AsmAI's when it is installed.
+		var lavishNotices []byte
+		if paths, err := statedir.Default(); err == nil {
+			var err error
+			if lavishNotices, err = installedLavishNotices(paths); err != nil {
+				return o.fail(fmt.Errorf("reading the installed Lavish build's notices: %w", err))
+			}
+		}
 		if o.json {
-			return o.printJSON(map[string]string{"license": string(asmai.License), "third_party_notices": string(asmai.ThirdPartyNotices)})
+			notices := map[string]string{"license": string(asmai.License), "third_party_notices": string(asmai.ThirdPartyNotices)}
+			if lavishNotices != nil {
+				notices["lavish_notices"] = string(lavishNotices)
+			}
+			return o.printJSON(notices)
 		}
 		stdout.Write(asmai.License)
 		fmt.Fprintln(stdout)
 		stdout.Write(asmai.ThirdPartyNotices)
+		if lavishNotices != nil {
+			fmt.Fprintln(stdout)
+			stdout.Write(lavishNotices)
+		}
 		return 0
 	case "config check":
 		return configCheck(o)
@@ -460,6 +481,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return providersInstall(o, paths, stdin)
 	case "providers list":
 		return providersList(o, paths)
+	case "lavish":
+		return lavishCommand(o, paths)
 	case "repo add":
 		return repoAdd(o, paths, arg, *repoName, repoOptions, stdin)
 	case "config apply":
@@ -799,14 +822,15 @@ func export(o *output, paths statedir.Paths) int {
 	return 0
 }
 
-// providersInstall installs the pinned Claude Code: it shows what it will
-// fetch and from where, and once the user confirms, fetches it from Claude
-// Code's official channel, checks it against the pins file, keeps it in the
-// state directory and has the daemon record it. A pin already installed is
-// left as it is. It never runs or changes the user's own Claude Code, and
-// never touches ~/.claude.
+// providersInstall installs the pinned providers: Claude Code from its
+// official channel, and AsmAI's own Lavish build from the release of
+// talvor/asmai that publishes it. It shows what it will fetch and from where,
+// and once the user confirms, fetches each, checks it against the pins file,
+// keeps it in the state directory and has the daemon record it. A pin already
+// installed is left as it is. It never runs or changes the user's own Claude
+// Code or Lavish, and never touches ~/.claude or ~/.lavish-axi.
 func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
-	plan, err := pinnedPlan(paths)
+	plans, notes, err := pinnedPlans(paths)
 	if err != nil {
 		return o.fail(err)
 	}
@@ -816,18 +840,20 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 	}
 	// A copy at its path that no longer matches the pin, as one that updated
 	// itself does not, is fetched again.
-	present, err := providers.Present(plan)
-	if err != nil {
-		return o.fail(err)
-	}
-	for _, installed := range resp.Providers {
-		if installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && present {
-			if o.json {
-				return o.printJSON(map[string]any{"installed": false, "provider": installed})
-			}
-			fmt.Fprintf(o.stdout, "%s %s is already installed; nothing to do.\n", plan.Title, plan.Version)
-			o.table(installRows(installed))
-			return 0
+	var todo []providers.Plan
+	var installs []store.ProviderInstall
+	for _, plan := range plans {
+		present, err := providers.Present(plan)
+		if err != nil {
+			return o.fail(err)
+		}
+		i := slices.IndexFunc(resp.Providers, func(installed store.ProviderInstall) bool {
+			return installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path && present
+		})
+		if i < 0 {
+			todo = append(todo, plan)
+		} else {
+			installs = append(installs, resp.Providers[i])
 		}
 	}
 
@@ -836,19 +862,68 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if o.json {
 		w = o.stderr
 	}
-	if err := fetchPinned(w, stdin, plan); err != nil {
+	for _, note := range notes {
+		fmt.Fprintln(w, note)
+	}
+	for _, installed := range installs {
+		fmt.Fprintf(w, "%s %s is already installed; nothing to do.\n", providerTitle(installed.Name), installed.Version)
+		if !o.json {
+			o.table(installRows(installed))
+		}
+	}
+	if len(todo) == 0 {
+		return o.printInstalls(false, installs)
+	}
+	if err := confirmInstall(w, stdin, todo, false); err != nil {
 		return o.fail(err)
 	}
-	installed, err := recordInstall(paths, plan)
-	if err != nil {
-		return o.fail(err)
+	done := 0
+	for _, plan := range todo {
+		if err := fetchOne(w, plan); err != nil {
+			if done == 0 {
+				return o.fail(fmt.Errorf("%w; nothing was installed", err))
+			}
+			return o.fail(fmt.Errorf("%w; %s was not installed", err, plan.Title))
+		}
+		installed, err := recordInstall(paths, plan)
+		if err != nil {
+			return o.fail(err)
+		}
+		done++
+		installs = append(installs, installed)
+		if !o.json {
+			fmt.Fprintf(o.stdout, "Installed %s %s.\n", plan.Title, plan.Version)
+			o.table(installRows(installed))
+		}
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"installed": true, "provider": installed})
+	return o.printInstalls(true, installs)
+}
+
+// printInstalls prints the result of `asmai providers install` as JSON when
+// asked: whether it installed anything, Claude Code's install as provider,
+// and every install as providers. It prints nothing otherwise.
+func (o *output) printInstalls(installed bool, installs []store.ProviderInstall) int {
+	if !o.json {
+		return 0
 	}
-	fmt.Fprintf(o.stdout, "Installed %s %s.\n", plan.Title, plan.Version)
-	o.table(installRows(installed))
-	return 0
+	result := map[string]any{"installed": installed, "providers": installs}
+	for _, i := range installs {
+		if i.Name == providers.ClaudeCode {
+			result["provider"] = i
+		}
+	}
+	return o.printJSON(result)
+}
+
+// providerTitle is a provider's name for people.
+func providerTitle(name string) string {
+	switch name {
+	case providers.ClaudeCode:
+		return "Claude Code"
+	case providers.Lavish:
+		return "Lavish"
+	}
+	return name
 }
 
 // pinnedPlan plans installing the pinned Claude Code for this platform in
@@ -865,6 +940,65 @@ func pinnedPlan(paths statedir.Paths) (providers.Plan, error) {
 	return p.ClaudeCodePlan(platform, paths.Providers)
 }
 
+// pinnedPlans plans installing every provider the pins file pins for this
+// platform in the state directory paths: Claude Code, then the Lavish build
+// when the pins file has one published for the platform. A Lavish build
+// pinned but not yet published for the platform is not an error: notes says
+// so.
+func pinnedPlans(paths statedir.Paths) (plans []providers.Plan, notes []string, err error) {
+	plan, err := pinnedPlan(paths)
+	if err != nil {
+		return nil, nil, err
+	}
+	plans = []providers.Plan{plan}
+	lavish, note, err := pinnedLavishPlan(paths)
+	if err != nil {
+		return nil, nil, err
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
+	if lavish != nil {
+		plans = append(plans, *lavish)
+	}
+	return plans, notes, nil
+}
+
+// pinnedLavishPlan plans installing the pinned Lavish build for this
+// platform. It returns no plan, and says why in note, when the pins file pins
+// no Lavish, or the Lavish build is not yet published for this platform.
+func pinnedLavishPlan(paths statedir.Paths) (plan *providers.Plan, note string, err error) {
+	p, err := providers.ParsePins(pins)
+	if err != nil {
+		return nil, "", err
+	}
+	if p.Lavish == nil {
+		return nil, "", nil
+	}
+	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		return nil, fmt.Sprintf("Lavish is not built for %s/%s.", runtime.GOOS, runtime.GOARCH), nil
+	}
+	lavish, err := p.LavishPlan(platform, paths.Providers)
+	if errors.Is(err, providers.ErrNoLavishBuild) {
+		return nil, fmt.Sprintf("Lavish %s is pinned, but its build is not published for %s yet, so it is not installed.", p.Lavish.Build(), platform), nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return &lavish, "", nil
+}
+
+// ownCopy says what installing plan leaves alone.
+func ownCopy(plan providers.Plan) string {
+	switch plan.Name {
+	case providers.Lavish:
+		return "It is AsmAI's own copy: your own Lavish and ~/.lavish-axi are not touched, and it needs no Node."
+	default:
+		return fmt.Sprintf("It is AsmAI's own copy: your own %s and ~/.claude are not touched.", plan.Title)
+	}
+}
+
 // fetchPinned shows on w what installing plan fetches, from where, how it is
 // checked and where it is kept, and once the user confirms on stdin fetches
 // it, unless the pinned download is already at its path.
@@ -875,26 +1009,51 @@ func fetchPinned(w io.Writer, stdin io.Reader, plan providers.Plan) error {
 // fetchPinnedAs is fetchPinned, except that assumeYes confirms the install
 // without asking.
 func fetchPinnedAs(w io.Writer, stdin io.Reader, plan providers.Plan, assumeYes bool) error {
-	fmt.Fprintf(w, "asmai will install %s %s, as pinned in this asmai:\n", plan.Title, plan.Version)
-	writeTable(w, [][]string{
-		{"  fetch", plan.URL},
-		{"  from", fmt.Sprintf("%s's official channel (%d MB)", plan.Title, (plan.Download.Size+1<<20-1)>>20)},
-		{"  check", "SHA-256 " + plan.Download.SHA256},
-		{"  keep at", plan.Path},
-	})
-	fmt.Fprintf(w, "It is AsmAI's own copy: your own %s and ~/.claude are not touched.\n", plan.Title)
-	if assumeYes {
-		fmt.Fprintln(w, "Installing it: --yes confirms.")
-	} else {
-		fmt.Fprint(w, "Install it? [y/N] ")
-		answer := readLine(stdin)
-		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-			if !strings.HasSuffix(answer, "\n") {
-				fmt.Fprintln(w)
-			}
-			return errors.New("not confirmed; nothing was fetched or installed")
-		}
+	if err := confirmInstall(w, stdin, []providers.Plan{plan}, assumeYes); err != nil {
+		return err
 	}
+	if err := fetchOne(w, plan); err != nil {
+		return fmt.Errorf("%w; nothing was installed", err)
+	}
+	return nil
+}
+
+// confirmInstall shows on w what installing plans fetches, from where, how
+// each is checked and where it is kept, and asks the user on stdin to
+// confirm, unless assumeYes confirms without asking.
+func confirmInstall(w io.Writer, stdin io.Reader, plans []providers.Plan, assumeYes bool) error {
+	for _, plan := range plans {
+		fmt.Fprintf(w, "asmai will install %s %s, as pinned in this asmai:\n", plan.Title, plan.Version)
+		writeTable(w, [][]string{
+			{"  fetch", plan.URL},
+			{"  from", fmt.Sprintf("%s (%d MB)", plan.Source, (plan.Download.Size+1<<20-1)>>20)},
+			{"  check", "SHA-256 " + plan.Download.SHA256},
+			{"  keep at", plan.Path},
+		})
+		fmt.Fprintln(w, ownCopy(plan))
+	}
+	it := "it"
+	if len(plans) > 1 {
+		it = "them"
+	}
+	if assumeYes {
+		fmt.Fprintf(w, "Installing %s: --yes confirms.\n", it)
+		return nil
+	}
+	fmt.Fprintf(w, "Install %s? [y/N] ", it)
+	answer := readLine(stdin)
+	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+		if !strings.HasSuffix(answer, "\n") {
+			fmt.Fprintln(w)
+		}
+		return errors.New("not confirmed; nothing was fetched or installed")
+	}
+	return nil
+}
+
+// fetchOne fetches plan's pinned download, checks it against the pins file
+// and keeps it at its path, unless it is there already.
+func fetchOne(w io.Writer, plan providers.Plan) error {
 	present, err := providers.Present(plan)
 	if err != nil {
 		return err
@@ -905,10 +1064,7 @@ func fetchPinnedAs(w io.Writer, stdin io.Reader, plan providers.Plan, assumeYes 
 	fmt.Fprintf(w, "Fetching %s...\n", plan.URL)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := providers.Fetch(ctx, http.DefaultClient, plan); err != nil {
-		return fmt.Errorf("%w; nothing was installed", err)
-	}
-	return nil
+	return providers.Fetch(ctx, http.DefaultClient, plan)
 }
 
 // readLine reads one line from r, newline included, a byte at a time, so
@@ -957,28 +1113,85 @@ func installRows(p store.ProviderInstall) [][]string {
 	}
 }
 
-// providersList shows the provider installs the store records.
+// listedProvider is an install as `asmai providers list` shows it: what the
+// store recorded, and how it stands against the pins file.
+type listedProvider struct {
+	store.ProviderInstall
+	// State is pinned, superseded, missing or a mismatch with the pinned
+	// download.
+	State string `json:"state"`
+}
+
+// pendingProvider is a provider the pins file pins that is not installed.
+type pendingProvider struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// providersList shows the provider installs the store records, each with how
+// it stands against the pins file: only the pinned download is one AsmAI
+// runs, so a copy that is not, because it is of an older pin, is missing or
+// is not the pinned bytes, is marked, and so is each pinned provider that is
+// not installed.
 func providersList(o *output, paths statedir.Paths) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandProviders})
 	if err != nil {
 		return o.fail(err)
 	}
-	installs := resp.Providers
-	if installs == nil {
-		installs = []store.ProviderInstall{}
+	plans, notes, err := pinnedPlans(paths)
+	if err != nil {
+		return o.fail(err)
+	}
+	installs := []listedProvider{}
+	for _, p := range resp.Providers {
+		state := providers.StateSuperseded
+		for _, plan := range plans {
+			if plan.Name != p.Name {
+				continue
+			}
+			if state, err = plan.Standing(p.Version); err != nil {
+				return o.fail(err)
+			}
+		}
+		installs = append(installs, listedProvider{ProviderInstall: p, State: state})
+	}
+	notInstalled := []pendingProvider{}
+	for _, plan := range plans {
+		if !slices.ContainsFunc(installs, func(i listedProvider) bool { return i.Name == plan.Name && i.Version == plan.Version }) {
+			notInstalled = append(notInstalled, pendingProvider{Name: plan.Name, Version: plan.Version})
+		}
 	}
 	if o.json {
-		return o.printJSON(map[string]any{"providers": installs})
+		return o.printJSON(map[string]any{"providers": installs, "not_installed": notInstalled})
 	}
 	if len(installs) == 0 {
 		fmt.Fprintln(o.stdout, "No providers are installed; install the pinned ones with `asmai providers install`.")
+		for _, note := range notes {
+			fmt.Fprintln(o.stdout, note)
+		}
 		return 0
 	}
-	rows := [][]string{{"NAME", "VERSION", "PATH", "INSTALLED"}}
+	rows := [][]string{{"NAME", "VERSION", "STATE", "PATH", "INSTALLED"}}
 	for _, p := range installs {
-		rows = append(rows, []string{p.Name, p.Version, p.Path, p.InstalledAt.Local().Format(time.RFC3339)})
+		rows = append(rows, []string{p.Name, p.Version, p.State, p.Path, p.InstalledAt.Local().Format(time.RFC3339)})
 	}
 	o.table(rows)
+	for _, p := range installs {
+		switch p.State {
+		case providers.StateMismatch:
+			fmt.Fprintf(o.stdout, "%s %s is not the pinned download, so AsmAI does not run it; `asmai providers install` puts the pinned copy back.\n", providerTitle(p.Name), p.Version)
+		case providers.StateMissing:
+			fmt.Fprintf(o.stdout, "%s %s is not at %s any more; `asmai providers install` installs it again.\n", providerTitle(p.Name), p.Version, p.Path)
+		case providers.StateSuperseded:
+			fmt.Fprintf(o.stdout, "%s %s is not the version this asmai pins, so AsmAI does not run it.\n", providerTitle(p.Name), p.Version)
+		}
+	}
+	for _, p := range notInstalled {
+		fmt.Fprintf(o.stdout, "%s %s is pinned but not installed; install it with `asmai providers install`.\n", providerTitle(p.Name), p.Version)
+	}
+	for _, note := range notes {
+		fmt.Fprintln(o.stdout, note)
+	}
 	return 0
 }
 

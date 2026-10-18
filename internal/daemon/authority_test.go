@@ -74,6 +74,11 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"current", CommandDecisionRecord, "only leader@engineering, judging a red head's checks"},
 		{"worker", CommandDecisionRecord, "only leader@engineering, judging a red head's checks"},
 		{"", CommandDecisionRecord, "asmai decision record is an agent command"},
+		// No agent runs Lavish or asks about its server (04 rule 22).
+		{"current", CommandLavish, "ask the user to run `asmai lavish`"},
+		{"engineering", CommandLavish, "ask the user to run `asmai lavish`"},
+		{"worker", CommandLavish, "ask the user to run `asmai lavish`"},
+		{"", CommandLavish, ""},
 	} {
 		err := d.authorize(Request{Command: tt.command, Session: tt.credential})
 		if tt.want == "" && err != nil {

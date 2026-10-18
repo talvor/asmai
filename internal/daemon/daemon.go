@@ -25,6 +25,7 @@ import (
 
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/githooks"
+	"github.com/talvor/asmai/internal/lavish"
 	"github.com/talvor/asmai/internal/logfile"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/statedir"
@@ -46,6 +47,9 @@ const (
 	// CommandProviderInstalled records the provider install in the request,
 	// which `asmai providers install` has fetched and checked.
 	CommandProviderInstalled = "provider.installed"
+	// CommandLavish answers with the factory's Lavish server and the review
+	// pages waiting for the user.
+	CommandLavish = "lavish"
 	// CommandStart runs the checks and, if they pass, starts Coordination's
 	// leader unless it is running.
 	CommandStart = "start"
@@ -193,6 +197,8 @@ type Response struct {
 	Status    *Status                 `json:"status,omitempty"`
 	Journal   []store.Entry           `json:"journal,omitempty"`
 	Providers []store.ProviderInstall `json:"providers,omitempty"`
+	// Lavish is the factory's Lavish server and its pending pages.
+	Lavish *LavishStatus `json:"lavish,omitempty"`
 	// Checks are the checks the last start ran.
 	Checks  []Check  `json:"checks,omitempty"`
 	Leaders []Leader `json:"leaders,omitempty"`
@@ -283,6 +289,9 @@ type Config struct {
 	// GOOS and GOARCH name the platform the checks certify; with none, the
 	// platform this daemon runs on.
 	GOOS, GOARCH string
+	// Lavish tunes the supervision of the factory's Lavish server; its zero
+	// value is how the daemon runs it.
+	Lavish LavishConfig
 }
 
 // Run runs the daemon until `asmai stop` asks it to stop or ctx is done. It
@@ -368,6 +377,7 @@ func Run(ctx context.Context, cfg Config) error {
 		stop:    make(chan *net.UnixConn, 1),
 		lookNow: make(chan struct{}, 1),
 	}
+	d.lavish = d.newLavish()
 	d.applied = readApplied(cfg.ConfigFile)
 	registered, err := st.Repositories()
 	if err != nil {
@@ -403,6 +413,13 @@ func Run(ctx context.Context, cfg Config) error {
 	d.removeEndedJobsLocal()
 	d.wg.Add(1)
 	go d.watchCI()
+	// The daemon runs the factory's Lavish server itself, so that review
+	// pages outlive any agent; it stops with the work.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.lavish.Run(d.work)
+	}()
 
 	var by string
 	var asker *net.UnixConn
@@ -453,6 +470,8 @@ type daemon struct {
 	// answered once it has.
 	stop chan *net.UnixConn
 	wg   sync.WaitGroup
+	// lavish supervises the factory's Lavish server.
+	lavish *lavish.Server
 	// lookNow has the CI watch look at every job's checks at once, as after
 	// a push or a re-run.
 	lookNow chan struct{}
@@ -614,6 +633,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			return false
 		}
 		reply(conn, Response{Providers: installs})
+	case CommandLavish:
+		reply(conn, Response{Lavish: d.lavishStatus()})
 	case CommandProviderInstalled:
 		p := req.Provider
 		if p == nil || p.Name == "" || p.Version == "" || p.SHA256 == "" || !filepath.IsAbs(p.Path) {

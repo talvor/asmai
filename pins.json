@@ -12,5 +12,10 @@
         "size": 251456696
       }
     }
+  },
+  "lavish": {
+    "version": "0.1.89",
+    "deno": "2.9.6",
+    "releases": "https://github.com/talvor/asmai/releases/download"
   }
 }

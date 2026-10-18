@@ -404,7 +404,7 @@ func TestStartForegroundKeepsTheDaemonAttachedUntilItIsStopped(t *testing.T) {
 
 func TestEveryCommandAcceptsJSON(t *testing.T) {
 	readyFactory(t, idleLeader)
-	for _, args := range [][]string{{"version"}, {"notices"}, {"status"}, {"start"}, {"agents"}, {"attach", "coordination"}, {"export"}, {"providers", "list"}, {"stop"}} {
+	for _, args := range [][]string{{"version"}, {"notices"}, {"status"}, {"start"}, {"agents"}, {"attach", "coordination"}, {"export"}, {"providers", "list"}, {"lavish"}, {"stop"}} {
 		var v map[string]any
 		asmaiJSON(t, &v, args...)
 		if len(v) == 0 {

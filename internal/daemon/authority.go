@@ -106,6 +106,8 @@ func commandName(command string) string {
 		return "config apply"
 	case CommandProviders, CommandProviderInstalled:
 		return "providers install"
+	case CommandLavish:
+		return "lavish"
 	case CommandJobOpen:
 		return "job open"
 	case CommandJob:

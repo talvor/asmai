@@ -36,7 +36,10 @@ var progress = []string{"Handoff", "Working", "Validating", "Delivering", "Deliv
 
 // progressAt is the index in progress of the stage a job is at. A job that
 // needs the user is still being worked on.
-func progressAt(stage daemon.JobStage) int {
+func progressAt(stage daemon.JobStage, handoffComplete bool) int {
+	if !handoffComplete {
+		return 0
+	}
 	switch stage {
 	case daemon.StageValidating:
 		return 2
@@ -336,7 +339,7 @@ func (m model) detailHeader() []string {
 	}
 	return []string{
 		boldStyle.Render(pad(fmt.Sprintf(" #%d  %s", d.Job, d.Title), width)),
-		pad(" "+m.progressWords(d.Stage), width),
+		pad(" "+m.progressWords(d.Stage, d.HandoffComplete), width),
 		pad(fmt.Sprintf(" Stage %s %s · Branch %s · Head %s", stageGlyphs[d.Stage], d.Stage.Word(), none(d.Branch), none(head)), width),
 		pad(fmt.Sprintf(" Pull request %s · CI %s", pr, d.CI), width),
 		pad(" Validation "+d.Validation, width),
@@ -348,8 +351,8 @@ var boldStyle = lipgloss.NewStyle().Bold(true)
 // progressWords is the stage progress indicator: a mark for each stage a job
 // has passed, the one it is at and those to come. With no colour the marks and
 // the words still tell them apart.
-func (m model) progressWords(stage daemon.JobStage) string {
-	at := progressAt(stage)
+func (m model) progressWords(stage daemon.JobStage, handoffComplete bool) string {
+	at := progressAt(stage, handoffComplete)
 	var parts []string
 	for i, name := range progress {
 		switch {
@@ -357,7 +360,7 @@ func (m model) progressWords(stage daemon.JobStage) string {
 			parts = append(parts, "✓ "+name)
 		case i == at:
 			mark := "●"
-			if stage == daemon.StageNeedsYou {
+			if stage == daemon.StageNeedsYou && at > 0 {
 				mark = stageGlyphs[stage]
 			}
 			parts = append(parts, stageStyles[stage].Render(mark+" "+name))
@@ -453,7 +456,18 @@ func (m model) itemLines() []string {
 		}
 	case daemon.ItemHandoff:
 		meta = append(meta, item.From+arrow+item.To)
+		if item.Head != "" {
+			meta = append(meta, "head "+item.Head)
+		}
 		sections = append(sections, [2]string{"Request", item.Text})
+		for _, field := range [][2]string{{"Decisions", item.Decisions}, {"Evidence", item.Evidence}, {"Constraints", item.Constraints}, {"Permissions", item.Permissions}} {
+			if field[1] != "" {
+				sections = append(sections, field)
+			}
+		}
+		if len(item.Criteria) > 0 {
+			sections = append(sections, [2]string{"Acceptance", "- " + strings.Join(item.Criteria, "\n- ")})
+		}
 		if item.Answer != "" {
 			sections = append(sections, [2]string{"Answer", item.Answer})
 		}

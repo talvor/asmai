@@ -286,13 +286,19 @@ type AssignmentWork struct {
 
 // HandoffWork is a handoff with when it was sent or answered.
 type HandoffWork struct {
-	ID       int64
-	Sender   string
-	Receiver string
-	Outcome  string
-	State    string
-	Answer   string
-	At       time.Time
+	ID          int64
+	Sender      string
+	Receiver    string
+	Outcome     string
+	Decisions   string
+	Evidence    string
+	Constraints string
+	Permissions string
+	Criteria    []string
+	State       string
+	Answer      string
+	Head        string
+	At          time.Time
 }
 
 // assignmentChanges are the journal kinds that change an assignment: they
@@ -415,7 +421,7 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	}
 	arows.Close()
 
-	hrows, err := tx.Query(`SELECT h.id, h.sender, h.receiver, h.outcome, h.state, h.answer,
+	hrows, err := tx.Query(`SELECT h.id, h.sender, h.receiver, h.outcome, h.decisions, h.evidence, h.constraints, h.permissions, h.criteria, h.state, h.answer, h.head,
 			COALESCE((SELECT j.at FROM journal j WHERE j.kind IN (?, ?) AND json_extract(j.data, '$.id') = h.id ORDER BY j.id DESC LIMIT 1), h.created_at)
 		FROM handoffs h WHERE h.job = ? ORDER BY h.id`, KindHandoffSent, KindHandoffAnswered, job)
 	if err != nil {
@@ -424,8 +430,11 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	defer hrows.Close()
 	for hrows.Next() {
 		var h HandoffWork
-		var at string
-		if err := hrows.Scan(&h.ID, &h.Sender, &h.Receiver, &h.Outcome, &h.State, &h.Answer, &at); err != nil {
+		var criteria, at string
+		if err := hrows.Scan(&h.ID, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head, &at); err != nil {
+			return JobDetail{}, err
+		}
+		if err := json.Unmarshal([]byte(criteria), &h.Criteria); err != nil {
 			return JobDetail{}, err
 		}
 		if h.At, err = time.Parse(time.RFC3339Nano, at); err != nil {

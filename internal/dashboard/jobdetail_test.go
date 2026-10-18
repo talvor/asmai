@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/talvor/asmai/internal/daemon"
 )
@@ -74,5 +75,27 @@ func TestJobDetailKeepsLateSuccessfulReadsAfterNewerFailures(t *testing.T) {
 	m = m.jobRead(jobMsg{view: 1, seq: 6, detail: good("current read")})
 	if m.detail.data.Title != "current read" || m.detail.failure != "" {
 		t.Errorf("the current read did not clear the failure: %+v", m.detail)
+	}
+}
+
+func TestSelectedHandoffShowsItsStoredRecord(t *testing.T) {
+	m := newModel("", Options{Columns: 160, Rows: 40})
+	item := daemon.JobItem{
+		Kind: daemon.ItemHandoff, ID: 7, Label: "accepted", Text: "Build the feature",
+		From: "leader@coordination", To: "leader@engineering", Head: "1111111111111111111111111111111111111111",
+		Decisions: "Use the fixture", Evidence: "The user asked for it", Constraints: "Stay on the branch",
+		Permissions: "Read the repository", Criteria: []string{"tests pass", "no side effects"}, Answer: "Accepted",
+	}
+	m.detail = jobDetail{open: true, data: &daemon.DashboardJobDetail{Work: []daemon.JobItem{item}}, readAt: time.Now()}
+	lines := strings.Join(m.itemLines(), "\n")
+	for _, want := range []string{
+		"leader@coordination", "leader@engineering", "1111111111111111111111111111111111111111",
+		"Request:", "Build the feature", "Decisions:", "Use the fixture", "Evidence:", "The user asked for it",
+		"Constraints:", "Stay on the branch", "Permissions:", "Read the repository", "Acceptance:",
+		"- tests pass", "- no side effects", "Answer:", "Accepted",
+	} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("the selected handoff omitted %q:\n%s", want, lines)
+		}
 	}
 }

@@ -631,9 +631,10 @@ func (d *daemon) dashboardEntry(id int64) (DashboardEntry, error) {
 // DashboardJobDetail is one job as the Dashboard's job detail shows it: the
 // header, and the job's work with the time each item last changed.
 type DashboardJobDetail struct {
-	Job   int64    `json:"job"`
-	Title string   `json:"title"`
-	Stage JobStage `json:"stage"`
+	Job             int64    `json:"job"`
+	Title           string   `json:"title"`
+	Stage           JobStage `json:"stage"`
+	HandoffComplete bool     `json:"handoff_complete"`
 	// Branch and Head are the job branch and its tip, empty for a job with no
 	// repository.
 	Branch string `json:"branch,omitempty"`
@@ -673,11 +674,16 @@ type JobItem struct {
 	From   string `json:"from,omitempty"`
 	To     string `json:"to,omitempty"`
 	Worker string `json:"worker,omitempty"`
-	// Criteria are an assignment's acceptance criteria, Dispatch the state of
-	// the dispatch that carried it, and Answer a handoff's answer.
-	Criteria []string `json:"criteria,omitempty"`
-	Dispatch string   `json:"dispatch,omitempty"`
-	Answer   string   `json:"answer,omitempty"`
+	// Criteria are acceptance criteria; Dispatch is an assignment's worker
+	// dispatch, and the other fields describe a handoff.
+	Criteria    []string `json:"criteria,omitempty"`
+	Dispatch    string   `json:"dispatch,omitempty"`
+	Answer      string   `json:"answer,omitempty"`
+	Decisions   string   `json:"decisions,omitempty"`
+	Evidence    string   `json:"evidence,omitempty"`
+	Constraints string   `json:"constraints,omitempty"`
+	Permissions string   `json:"permissions,omitempty"`
+	Head        string   `json:"head,omitempty"`
 	// Needs marks a needs-you finding.
 	Needs bool `json:"needs,omitempty"`
 	// At is when the item last changed.
@@ -759,48 +765,42 @@ func (d *daemon) dashboardJob(number int64) (DashboardJobDetail, error) {
 	out := DashboardJobDetail{
 		Job: number, Title: job.Title, Stage: job.Stage, Branch: detail.Branch, Head: detail.Head,
 		PullRequest: job.PullRequest, CI: "no pull request", Validation: validationWords(work, detail.Head),
+		HandoffComplete: slices.ContainsFunc(detail.Handoffs, func(h store.HandoffWork) bool { return h.State == store.HandoffAccepted }),
 	}
 	if detail.PullRequest != nil {
 		out.PullRequestState = pullRequestWords(*detail.PullRequest)
 		out.CI = checksWords(detail.Checks)
 	}
-	out.Work = jobItems(detail)
+	out.Work = jobItems(detail, work.Ended)
 	return out, nil
 }
 
-// jobItems lists a job's work: the findings, needs-you first because the
-// factory waits on the user for them and open before cleared within a kind,
-// then the assignments, then the handoffs.
-func jobItems(detail store.JobDetail) []JobItem {
+// jobItems lists a job's work: needs-you findings first, then the remaining
+// findings in record order, then assignments and handoffs.
+func jobItems(detail store.JobDetail, ended bool) []JobItem {
 	items := []JobItem{}
-	rank := func(kind string) int {
-		return slices.Index([]string{store.FindingNeedsYou, store.FindingBlocking, store.FindingAdvisory}, kind)
-	}
 	findings := slices.Clone(detail.Findings)
-	cleared := func(f store.FindingWork) int {
-		if f.Cleared {
+	slices.SortStableFunc(findings, func(a, b store.FindingWork) int {
+		if a.Kind == store.FindingNeedsYou && b.Kind != store.FindingNeedsYou {
+			return -1
+		}
+		if b.Kind == store.FindingNeedsYou && a.Kind != store.FindingNeedsYou {
 			return 1
 		}
 		return 0
-	}
-	slices.SortStableFunc(findings, func(a, b store.FindingWork) int {
-		if c := rank(a.Kind) - rank(b.Kind); c != 0 {
-			return c
-		}
-		return cleared(a) - cleared(b)
 	})
 	for _, f := range findings {
 		label := f.Kind
 		if f.Cleared {
 			label += " (cleared)"
 		}
-		items = append(items, JobItem{Kind: ItemFinding, ID: f.ID, Label: label, Text: f.Text, Needs: f.Kind == store.FindingNeedsYou, At: f.At})
+		items = append(items, JobItem{Kind: ItemFinding, ID: f.ID, Label: label, Text: f.Text, Needs: !ended && f.Kind == store.FindingNeedsYou, At: f.At})
 	}
 	for _, a := range detail.Assignments {
 		items = append(items, JobItem{Kind: ItemAssignment, ID: a.ID, Label: stateWords(a.State), Text: a.Outcome, From: a.Owner, Worker: a.Worker, Criteria: a.Criteria, Dispatch: a.Dispatch, At: a.At})
 	}
 	for _, h := range detail.Handoffs {
-		items = append(items, JobItem{Kind: ItemHandoff, ID: h.ID, Label: stateWords(h.State), Text: h.Outcome, From: h.Sender, To: h.Receiver, Answer: h.Answer, At: h.At})
+		items = append(items, JobItem{Kind: ItemHandoff, ID: h.ID, Label: stateWords(h.State), Text: h.Outcome, From: h.Sender, To: h.Receiver, Criteria: h.Criteria, Answer: h.Answer, Decisions: h.Decisions, Evidence: h.Evidence, Constraints: h.Constraints, Permissions: h.Permissions, Head: h.Head, At: h.At})
 	}
 	return items
 }

@@ -5,6 +5,7 @@ package store
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -131,7 +132,7 @@ func TestJobWorksValidationFollowsTheHead(t *testing.T) {
 func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	job := jobWithBranch(t, s)
-	h := Handoff{Job: job, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "Add a greeting", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"c"}}
+	h := Handoff{Job: job, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "Add a greeting", Decisions: "Use the fixture", Evidence: "The request says hello", Constraints: "Stay on the job branch", Permissions: "Read the repository", Criteria: []string{"prints hello", "tests pass"}, Head: tipCommit}
 	sent, _, err := s.SendHandoff(h, assignmentsAt.Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -158,6 +159,8 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 	}
 	if len(got.Handoffs) != 1 || got.Handoffs[0].ID != sent.ID || !got.Handoffs[0].At.Equal(assignmentsAt.Add(-time.Hour)) {
 		t.Errorf("the handoffs are %+v, want the one sent an hour before", got.Handoffs)
+	} else if actual := got.Handoffs[0]; actual.Decisions != h.Decisions || actual.Evidence != h.Evidence || actual.Constraints != h.Constraints || actual.Permissions != h.Permissions || actual.Head != h.Head || !slices.Equal(actual.Criteria, h.Criteria) {
+		t.Errorf("the handoff lost its stored record: %+v", actual)
 	}
 	if len(got.Findings) != 2 || !got.Findings[0].At.Equal(later) || got.Findings[1].Kind != FindingNeedsYou {
 		t.Errorf("the findings are %+v, want both recorded when the validation was accepted", got.Findings)

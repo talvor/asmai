@@ -18,7 +18,7 @@ import (
 func jobDetailAt(now time.Time) daemon.DashboardJobDetail {
 	ago := func(d time.Duration) time.Time { return now.Add(-d - 30*time.Second) }
 	return daemon.DashboardJobDetail{
-		Job: 12, Title: "Add a cursor read to the journal for the dashboard", Stage: daemon.StageNeedsYou,
+		Job: 12, Title: "Add a cursor read to the journal for the dashboard", Stage: daemon.StageNeedsYou, HandoffComplete: true,
 		Branch: "asmai/job-12-journal-cursor-read", Head: "4f1c9a2b7d0e", PullRequest: 101, PullRequestState: "not ready",
 		CI: "waiting: 3 of 5 passed, 2 pending", Validation: "accepted at 4f1c9a2, 1 blocking open",
 		Work: []daemon.JobItem{
@@ -28,8 +28,8 @@ func jobDetailAt(now time.Time) daemon.DashboardJobDetail {
 			{Kind: daemon.ItemAssignment, ID: 31, Label: "accepted", Text: "Add the cursor read behind the dashboard's command set", From: "leader@engineering", Worker: "worker-3@engineering", Criteria: []string{"tests pass", "no CLI exposure"}, Dispatch: "stopped", At: ago(2 * time.Hour)},
 			{Kind: daemon.ItemAssignment, ID: 32, Label: "active", Text: "Add --after to the journal read", From: "leader@engineering", Worker: "worker-3@engineering", Criteria: []string{"filters by job, agent and kind", "pages in both directions without reading an entry twice"}, Dispatch: "working", At: ago(14 * time.Minute)},
 			{Kind: daemon.ItemAssignment, ID: 33, Label: "active", Text: "Validate 4f1c9a2 against the mandate and the repository's instructions", From: "leader@quality", Worker: "worker-2@quality", Criteria: []string{"blocking findings reported"}, Dispatch: "delivered", At: ago(4 * time.Minute)},
-			{Kind: daemon.ItemHandoff, ID: 7, Label: "accepted", Text: "Add a cursor read to the journal for the dashboard", From: "leader@coordination", To: "leader@engineering", At: ago(3 * time.Hour)},
-			{Kind: daemon.ItemHandoff, ID: 9, Label: "accepted", Text: "Validate the job branch at 4f1c9a2", From: "leader@engineering", To: "leader@quality", At: ago(26 * time.Minute)},
+			{Kind: daemon.ItemHandoff, ID: 7, Label: "accepted", Text: "Add a cursor read to the journal for the dashboard", From: "leader@coordination", To: "leader@engineering", Decisions: "Use the journal", Evidence: "The log needs a cursor", Constraints: "Keep reads bounded", Permissions: "Read the repository", Criteria: []string{"No repeated entries"}, Answer: "Accepted", At: ago(3 * time.Hour)},
+			{Kind: daemon.ItemHandoff, ID: 9, Label: "accepted", Text: "Validate the job branch at 4f1c9a2", From: "leader@engineering", To: "leader@quality", Head: "4f1c9a2b7d0e", At: ago(26 * time.Minute)},
 		},
 	}
 }
@@ -65,6 +65,20 @@ func TestDashboardJobDetailGoldenScreens(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestDashboardJobDetailNoHandoffGolden(t *testing.T) {
+	fake := jobDetailFake(t)
+	d := dashboardIn(t, fake, 100, 30, "NO_COLOR=1")
+	d.WaitForText("factory running")
+	d.Send("2")
+	d.WaitForText("Make the log read take a cursor")
+	d.Send("j\r")
+	screen := d.WaitForText("Nothing recorded for this job yet.")
+	if !strings.Contains(screen, "● Handoff ── ○ Working") || strings.Contains(screen, "✓ Handoff") {
+		t.Errorf("an unhanded job has the wrong progress:\n%s", screen)
+	}
+	dashtest.Golden(t, "jobdetail-no-handoff-100x30-no_color", d.Snapshot())
 }
 
 // The selected item shows beside the Work list from 100 columns, and stacked
@@ -166,8 +180,8 @@ func TestDashboardJobDetailMovesThroughTheWorkAndShowsEachItemInFull(t *testing.
 	}{
 		{"jjj", []string{"Assignment 31", "worker worker-3@engineering", "owner leader@engineering", "Acceptance:", "- no CLI exposure"}},
 		{"j", []string{"Assignment 32", "dispatch working", "enter attach"}},
-		{"jj", []string{"Handoff 7", "leader@coordination → leader@engineering", "Request:"}},
-		{"G", []string{"Handoff 9"}},
+		{"jj", []string{"Handoff 7", "leader@coordination → leader@engineering", "Request:", "Decisions:", "Use the journal"}},
+		{"G", []string{"Handoff 9", "head 4f1c9a2b7d0e"}},
 		{"g", []string{"Finding 3"}},
 	} {
 		d.Send(step.keys)

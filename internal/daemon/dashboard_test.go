@@ -444,7 +444,7 @@ func TestJobOpeningSummaryUsesItsNumber(t *testing.T) {
 // assignments and the handoffs, each with the time it last changed.
 func TestAJobsWorkListsNeedsYouFindingsFirst(t *testing.T) {
 	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
-	items := jobItems(store.JobDetail{
+	detail := store.JobDetail{
 		Findings: []store.FindingWork{
 			{ID: 1, Kind: store.FindingAdvisory, Text: "no doc line", At: at},
 			{ID: 2, Kind: store.FindingBlocking, Text: "flaky", Cleared: true, At: at.Add(time.Minute)},
@@ -452,13 +452,14 @@ func TestAJobsWorkListsNeedsYouFindingsFirst(t *testing.T) {
 			{ID: 4, Kind: store.FindingBlocking, Text: "wrong order", At: at.Add(3 * time.Minute)},
 		},
 		Assignments: []store.AssignmentWork{{ID: 5, Worker: "worker-1@engineering", Owner: "leader@engineering", State: store.AssignmentNeedsReconciliation, Outcome: "Add it", Dispatch: store.DispatchUnknown, At: at.Add(4 * time.Minute)}},
-		Handoffs:    []store.HandoffWork{{ID: 6, Sender: "leader@coordination", Receiver: "leader@engineering", State: store.HandoffAccepted, Outcome: "Add a cursor read", At: at.Add(5 * time.Minute)}},
-	})
+		Handoffs:    []store.HandoffWork{{ID: 6, Sender: "leader@coordination", Receiver: "leader@engineering", State: store.HandoffAccepted, Outcome: "Add a cursor read", Decisions: "Use the journal", Evidence: "The log needs a cursor", Constraints: "Read only", Permissions: "Read the repository", Criteria: []string{"No repeated entries"}, Head: "abc123", Answer: "Accepted", At: at.Add(5 * time.Minute)}},
+	}
+	items := jobItems(detail, false)
 	var got []string
 	for _, it := range items {
 		got = append(got, fmt.Sprintf("%s %d %s", it.Kind, it.ID, it.Label))
 	}
-	want := []string{"finding 3 needs-you", "finding 4 blocking", "finding 2 blocking (cleared)", "finding 1 advisory", "assignment 5 needs reconciliation", "handoff 6 accepted"}
+	want := []string{"finding 3 needs-you", "finding 1 advisory", "finding 2 blocking (cleared)", "finding 4 blocking", "assignment 5 needs reconciliation", "handoff 6 accepted"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the work is %q, want %q", got, want)
 	}
@@ -470,6 +471,57 @@ func TestAJobsWorkListsNeedsYouFindingsFirst(t *testing.T) {
 	}
 	if items[4].Worker != "worker-1@engineering" || items[5].From != "leader@coordination" || items[5].To != "leader@engineering" {
 		t.Errorf("the parties are wrong: %+v", items[4:])
+	}
+	if h := items[5]; h.Decisions != "Use the journal" || h.Evidence != "The log needs a cursor" || h.Constraints != "Read only" || h.Permissions != "Read the repository" || h.Head != "abc123" || h.Answer != "Accepted" || !slices.Equal(h.Criteria, []string{"No repeated entries"}) {
+		t.Errorf("the handoff lost its stored record: %+v", h)
+	}
+	if delivered := jobItems(detail, true); delivered[0].Needs || delivered[0].Label != store.FindingNeedsYou {
+		t.Errorf("a delivered job still calls its historic finding active: %+v", delivered[0])
+	}
+}
+
+func TestJobDetailReportsHandoffCompletionFromAcceptedHandoffs(t *testing.T) {
+	p := stateDir(t)
+	if err := os.MkdirAll(filepath.Dir(p.Store), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	if err := st.RepositoryAdded(store.Repository{Name: "fixture", Origin: "https://example.test/fixture", DefaultBranch: "main", Clone: "/fixture", AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	openJob(t, p, "fixture", store.JobOpen)
+	d := &daemon{store: st}
+	read := func() DashboardJobDetail {
+		t.Helper()
+		got, err := d.dashboardJob(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := read(); got.Stage != StageWorking || got.HandoffComplete {
+		t.Errorf("the unhanded job is %+v", got)
+	}
+	h, inbound, err := st.SendHandoff(store.Handoff{Job: 1, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "Build it", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"done"}}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.HandoffComplete {
+		t.Errorf("a pending handoff completed the stage: %+v", got)
+	}
+	if _, err := st.Inbox(h.Receiver, inbound.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.AnswerHandoff(h.ID, h.Receiver, inbound.ID, 0, store.HandoffAccepted, "Accepted", at); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); !got.HandoffComplete {
+		t.Errorf("the accepted handoff left the stage incomplete: %+v", got)
 	}
 }
 

@@ -321,3 +321,31 @@ func TestAHandoffToQualityNamesTheFinishedJobBranchsTipAndOnlyWhileNothingIsLive
 		t.Errorf("a handoff without a head returned %+v (%v)", plain, err)
 	}
 }
+
+func TestNeedsYouFindingsAreThoseOfJobsThatHaveNotEnded(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	a, d := newValidation(t, s, job)
+	if _, _, err := s.ReportSubmitted(validationOf(a, d, tipCommit, ValidationInput{Findings: []FindingInput{
+		{Kind: FindingBlocking, Text: "greeting.txt does not say hello"},
+		{Kind: FindingNeedsYou, Text: "greet the user or the world?\nthe criterion and the request differ"},
+	}}), assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.NeedsYouFindings(); err != nil || len(got) != 0 {
+		t.Fatalf("a finding no leader accepted yet is waiting: %+v (%v)", got, err)
+	}
+	if _, _, err := s.ValidationAccepted(Acceptance{Assignment: a.ID, Leader: qualityOwner, Reasons: []string{"x"}}, owner, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.NeedsYouFindings()
+	if err != nil || len(got) != 1 || got[0].Job != job || !strings.HasPrefix(got[0].Text, "greet the user") || !got[0].At.Equal(assignmentsAt) {
+		t.Fatalf("the needs-you findings are %+v (%v), want the one needs-you finding only", got, err)
+	}
+	if _, err := s.db.Exec(`UPDATE jobs SET state = ? WHERE number = ?`, JobEnded, job); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.NeedsYouFindings(); err != nil || len(got) != 0 {
+		t.Errorf("a finding of an ended job is waiting: %+v (%v)", got, err)
+	}
+}

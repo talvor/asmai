@@ -1,0 +1,48 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+ ▲ Waiting on you: leader@quality native prompt: Bash `gh pr diff 98`
+ AGENT                STATUS                 JOB    INPUT      SINCE DOING
+ leader@coordination  ○ Idle                 -      automation 12m
+ leader@engineering   ● Working              #12    automation 2m    handoff: Add the Agents tab to…
+ leader@planning      ○ Idle                 -      automation 3h
+ leader@quality       ▲ Waiting on you       #12    automation 4m    native prompt: Bash `gh pr dif…
+ leader@research      ■ Stopped              -      -          5h    session ended: exit 1
+ worker-2@quality     ○ Idle                 -      automation 4m
+ worker-3@engineering ● Working              #12    automation 9m    assignment 32: add --after to …
+ worker-4@engineering ◆ Needs reconciliation #14    automation 1h    assignment 27: its dispatch's …
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · ↑/↓ move · enter attach · q quit
+--- attributes
+1 1-100: reverse
+2 2-11: reverse
+2 13-20: faint
+2 22-28: faint
+3 1-69: bold, fg=0x1000003
+4 1-6: faint
+4 23-28: faint
+4 46-74: faint
+5 1-100: reverse
+6 23-31: fg=0x1000004
+7 23-28: faint
+8 23-44: fg=0x1000003
+9 23-31: faint
+10 23-28: faint
+11 23-44: fg=0x1000004
+12 23-44: fg=0x1000005
+30 1-100: reverse

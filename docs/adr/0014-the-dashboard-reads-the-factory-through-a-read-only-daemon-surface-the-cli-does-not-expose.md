@@ -15,7 +15,7 @@
 - The calls are separate command constants with no CLI subcommand, so the existing agent allow list denies them to every agent session. A guard test asserts, for every command in the set, that it has no CLI subcommand, that it is denied with an agent credential, and that it changes no store state.
 - Because the calls are read-only, `inbox` and `brief`, which change state or are written for agents, stay out of the dashboard.
 - The status and stage vocabulary lives in one place, the daemon, so the dashboard and any later client agree.
-- Pending decisions and holds have no daemon state, so the snapshot has no source for them yet: the decision request record is a separate prerequisite, and the dashboard reserves its place in the waiting-on-you set.
+- Pending decisions have no daemon state, so the snapshot has no source for them yet: the decision request record is a separate prerequisite, and the dashboard reserves its place in the waiting-on-you set.
 - ADR 0004 assumes the daemon is the source of truth for what waits on the user, so the snapshot's waiting-on-you set is also the natural source for the attach client's status line.
 
 Decided in [Map: asmai dashboard TUI](https://github.com/talvor/asmai/issues/100), in [Grilling: how the dashboard stays current](https://github.com/talvor/asmai/issues/105) and [Grilling: the set of TUI-only daemon calls the dashboard needs](https://github.com/talvor/asmai/issues/107).

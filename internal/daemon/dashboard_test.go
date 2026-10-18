@@ -297,3 +297,57 @@ func TestEveryStageHasItsOwnWord(t *testing.T) {
 		seen[word] = s
 	}
 }
+
+// The Waiting on you set holds native prompts, then held input, then
+// needs-you findings; reconciliation and the working agents are statuses
+// only.
+func TestTheWaitingSetHoldsPromptsHeldInputAndFindingsAndNothingElse(t *testing.T) {
+	now := time.Now()
+	run := func(address roles.Address) store.Agent {
+		return store.Agent{Agent: address.String(), Role: address.Role, State: store.AgentRunning, StartedAt: now.Add(-time.Hour)}
+	}
+	held, prompted, olderPrompt := run(roles.LeaderOf(roles.Coordination)), run(roles.LeaderOf(roles.Quality)), run(roles.LeaderOf(roles.Engineering))
+	workerPrompt, reconciling, working := run(roles.WorkerOf(roles.Engineering, 1)), run(roles.WorkerOf(roles.Engineering, 3)), run(roles.WorkerOf(roles.Engineering, 4))
+	lives := map[string]agentLive{
+		held.Agent:         {input: InputUser, conversation: "/dev/pts/3"},
+		prompted.Agent:     {input: InputAutomation, prompt: &WaitingPrompt{Agent: prompted.Agent, About: "Bash `ls`", Since: now.Add(-2 * time.Minute)}},
+		olderPrompt.Agent:  {input: InputAutomation, prompt: &WaitingPrompt{Agent: olderPrompt.Agent, About: "Edit", Since: now.Add(-9 * time.Minute)}},
+		workerPrompt.Agent: {input: InputAutomation, prompt: &WaitingPrompt{Agent: workerPrompt.Agent, About: "Bash `pwd`", Since: now.Add(-12 * time.Minute)}},
+		reconciling.Agent:  {input: InputAutomation},
+		working.Agent:      {input: InputAutomation},
+	}
+	works := map[string]store.AgentWork{
+		reconciling.Agent: {Reconciling: 7, ReconcilingJob: 3, ReconcilingAt: now},
+		working.Agent:     {Dispatch: store.DispatchWorking, Job: 3},
+	}
+	var agents []DashboardAgent
+	for _, a := range []store.Agent{working, reconciling, held, prompted, olderPrompt, workerPrompt} {
+		agents = append(agents, deriveAgent(a, lives[a.Agent], works[a.Agent]))
+	}
+	if agents[len(agents)-1].Status != StatusWaitingOnYou {
+		t.Fatal("the worker's prompt is missing from its agent status")
+	}
+	findings := []store.NeedsYouFinding{{ID: 7, Job: 3, Text: "greet whom?\nmore", At: now.Add(-time.Hour)}}
+
+	got := waitingOnYou(agents, lives, findings)
+	var kinds, who []string
+	for _, item := range got {
+		kinds = append(kinds, item.Kind)
+		who = append(who, item.Agent)
+	}
+	if want := []string{WaitingNativePrompt, WaitingNativePrompt, WaitingInput, WaitingFinding}; !slices.Equal(kinds, want) {
+		t.Fatalf("the set is %v, want %v: %+v", kinds, want, got)
+	}
+	if want := []string{olderPrompt.Agent, prompted.Agent, held.Agent, ""}; !slices.Equal(who, want) {
+		t.Errorf("the set is in the order of %v, want %v (oldest prompt first)", who, want)
+	}
+	if got[3].Finding != 7 || got[3].Job != 3 || got[3].Text != "job 3 finding 7: greet whom?" {
+		t.Errorf("the finding is %+v", got[3])
+	}
+	if got[2].Text != "leader@coordination you hold its input in /dev/pts/3" {
+		t.Errorf("the held input reads %q", got[2].Text)
+	}
+	if empty := waitingOnYou(nil, nil, nil); empty == nil || len(empty) != 0 {
+		t.Errorf("nothing waiting is %#v, want an empty set", empty)
+	}
+}

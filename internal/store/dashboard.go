@@ -188,3 +188,37 @@ func (s *Store) JobWorks() ([]JobWork, error) {
 	}
 	return works, nil
 }
+
+// NeedsYouFinding is a needs-you finding of a job that has not ended, for the Dashboard to say the factory waits on the user for it.
+type NeedsYouFinding struct {
+	ID   int64
+	Job  int64
+	Text string
+	At   time.Time
+}
+
+// NeedsYouFindings returns the needs-you findings of the jobs that have not
+// ended, oldest first. A finding has no state of its own, so the end of its
+// job ends its wait. It only reads.
+func (s *Store) NeedsYouFindings() ([]NeedsYouFinding, error) {
+	rows, err := s.db.Query(`SELECT f.id, f.job, f.text, f.created_at FROM findings f
+		JOIN jobs j ON j.number = f.job
+		WHERE f.kind = ? AND j.state <> ? ORDER BY f.id`, FindingNeedsYou, JobEnded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []NeedsYouFinding{}
+	for rows.Next() {
+		var f NeedsYouFinding
+		var at string
+		if err := rows.Scan(&f.ID, &f.Job, &f.Text, &at); err != nil {
+			return nil, err
+		}
+		if f.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return nil, err
+		}
+		list = append(list, f)
+	}
+	return list, rows.Err()
+}

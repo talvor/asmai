@@ -91,6 +91,8 @@ type factory struct {
 	agents []daemon.DashboardAgent
 	// jobs are the jobs with the stage the daemon derived for each.
 	jobs []daemon.DashboardJob
+	// waiting is the Waiting on you set, in the daemon's order.
+	waiting []daemon.WaitingItem
 	// readAt is when the daemon last answered a read, which "since" is counted
 	// from and "last updated" names.
 	readAt time.Time
@@ -176,7 +178,7 @@ func read(socket string, generation, number int) tea.Cmd {
 		if err != nil {
 			return readMsg{err: err, generation: generation, number: number}
 		}
-		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, jobs: resp.Dashboard.Jobs, readAt: time.Now()}, generation: generation, number: number}
+		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, jobs: resp.Dashboard.Jobs, waiting: resp.Dashboard.Waiting, readAt: time.Now()}, generation: generation, number: number}
 	}
 }
 

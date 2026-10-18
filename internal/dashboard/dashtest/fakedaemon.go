@@ -58,6 +58,7 @@ func NewFakeDaemon(t *testing.T) *FakeDaemon {
 	})
 	f.SetAgents()
 	f.SetJobs()
+	f.SetWaiting()
 	f.Start()
 	t.Cleanup(f.Stop)
 	return f
@@ -77,6 +78,15 @@ func (f *FakeDaemon) SetAgents(agents ...daemon.DashboardAgent) {
 func (f *FakeDaemon) SetJobs(jobs ...daemon.DashboardJob) {
 	f.mu.Lock()
 	f.snapshot.Jobs = append([]daemon.DashboardJob{}, jobs...)
+	f.mu.Unlock()
+	f.serveSnapshot()
+}
+
+// SetWaiting sets the Waiting on you set the snapshot carries, in the order
+// given: the fake daemon orders nothing.
+func (f *FakeDaemon) SetWaiting(items ...daemon.WaitingItem) {
+	f.mu.Lock()
+	f.snapshot.Waiting = append([]daemon.WaitingItem{}, items...)
 	f.mu.Unlock()
 	f.serveSnapshot()
 }

@@ -309,6 +309,32 @@ var assignmentChanges = []string{
 	KindCancellationRequested, KindAssignmentCancelled, KindAssignmentResumed, KindAssignmentNeedsReconciliation,
 }
 
+func jobChangeTimes(tx *sql.Tx, job int64) (map[int64]string, map[int64]string, error) {
+	changes := "'" + strings.Join(assignmentChanges, "','") + "'"
+	rows, err := tx.Query(`SELECT kind, json_extract(data, '$.assignment'), json_extract(data, '$.id'), at
+		FROM journal WHERE json_extract(data, '$.job') = ? AND kind IN (`+changes+`, ?, ?) ORDER BY id`, job, KindHandoffSent, KindHandoffAnswered)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	assignments, handoffs := map[int64]string{}, map[int64]string{}
+	for rows.Next() {
+		var kind, at string
+		var assignment, handoff sql.NullInt64
+		if err := rows.Scan(&kind, &assignment, &handoff, &at); err != nil {
+			return nil, nil, err
+		}
+		if kind == KindHandoffSent || kind == KindHandoffAnswered {
+			if handoff.Valid {
+				handoffs[handoff.Int64] = at
+			}
+		} else if assignment.Valid {
+			assignments[assignment.Int64] = at
+		}
+	}
+	return assignments, handoffs, rows.Err()
+}
+
 // JobWorkDetail reads the job's stage inputs and detail in one snapshot.
 func (s *Store) JobWorkDetail(job int64) (JobWork, JobDetail, error) {
 	tx, err := s.db.Begin()
@@ -383,10 +409,12 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	}
 	rows.Close()
 
-	changes := "'" + strings.Join(assignmentChanges, "','") + "'"
+	assignmentTimes, handoffTimes, err := jobChangeTimes(tx, job)
+	if err != nil {
+		return JobDetail{}, err
+	}
 	arows, err := tx.Query(`SELECT a.id, a.owner, a.worker, a.outcome, a.criteria, a.state, a.read_only,
 			COALESCE(x.state, ''), a.created_at,
-			COALESCE((SELECT j.at FROM journal j WHERE j.kind IN (`+changes+`) AND json_extract(j.data, '$.assignment') = a.id ORDER BY j.id DESC LIMIT 1), a.created_at),
 			COALESCE(x.updated_at, a.created_at)
 		FROM assignments a
 		LEFT JOIN dispatches x ON x.id = (SELECT d.id FROM dispatches d JOIN messages m ON m.id = d.message
@@ -398,14 +426,18 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	defer arows.Close()
 	for arows.Next() {
 		var a AssignmentWork
-		var criteria, created, changed, dispatched string
-		if err := arows.Scan(&a.ID, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &a.ReadOnly, &a.Dispatch, &created, &changed, &dispatched); err != nil {
+		var criteria, created, dispatched string
+		if err := arows.Scan(&a.ID, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &a.ReadOnly, &a.Dispatch, &created, &dispatched); err != nil {
 			return JobDetail{}, err
 		}
 		if err := json.Unmarshal([]byte(criteria), &a.Criteria); err != nil {
 			return JobDetail{}, err
 		}
-		for _, stamp := range []string{created, changed, dispatched} {
+		stamps := []string{created, dispatched}
+		if changed, ok := assignmentTimes[a.ID]; ok {
+			stamps = append(stamps, changed)
+		}
+		for _, stamp := range stamps {
 			at, err := time.Parse(time.RFC3339Nano, stamp)
 			if err != nil {
 				return JobDetail{}, err
@@ -421,9 +453,8 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	}
 	arows.Close()
 
-	hrows, err := tx.Query(`SELECT h.id, h.sender, h.receiver, h.outcome, h.decisions, h.evidence, h.constraints, h.permissions, h.criteria, h.state, h.answer, h.head,
-			COALESCE((SELECT j.at FROM journal j WHERE j.kind IN (?, ?) AND json_extract(j.data, '$.id') = h.id ORDER BY j.id DESC LIMIT 1), h.created_at)
-		FROM handoffs h WHERE h.job = ? ORDER BY h.id`, KindHandoffSent, KindHandoffAnswered, job)
+	hrows, err := tx.Query(`SELECT h.id, h.sender, h.receiver, h.outcome, h.decisions, h.evidence, h.constraints, h.permissions, h.criteria, h.state, h.answer, h.head, h.created_at
+		FROM handoffs h WHERE h.job = ? ORDER BY h.id`, job)
 	if err != nil {
 		return JobDetail{}, err
 	}
@@ -436,6 +467,9 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 		}
 		if err := json.Unmarshal([]byte(criteria), &h.Criteria); err != nil {
 			return JobDetail{}, err
+		}
+		if changed, ok := handoffTimes[h.ID]; ok {
+			at = changed
 		}
 		if h.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
 			return JobDetail{}, err

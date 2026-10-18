@@ -133,8 +133,15 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	job := jobWithBranch(t, s)
 	h := Handoff{Job: job, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "Add a greeting", Decisions: "Use the fixture", Evidence: "The request says hello", Constraints: "Stay on the job branch", Permissions: "Read the repository", Criteria: []string{"prints hello", "tests pass"}, Head: tipCommit}
-	sent, _, err := s.SendHandoff(h, assignmentsAt.Add(-time.Hour))
+	sent, inbound, err := s.SendHandoff(h, assignmentsAt.Add(-time.Hour))
 	if err != nil {
+		t.Fatal(err)
+	}
+	answered := assignmentsAt.Add(-time.Hour + 2*time.Second)
+	if _, err := s.Inbox(h.Receiver, inbound.ID, answered.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AnswerHandoff(sent.ID, h.Receiver, inbound.ID, 0, HandoffAccepted, "Accepted", answered); err != nil {
 		t.Fatal(err)
 	}
 	v, d := newValidation(t, s, job)
@@ -157,8 +164,8 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 	if got.Branch != "asmai/job-1-add-a-greeting" || got.Head != tipCommit || got.PullRequest != nil || got.Checks != nil {
 		t.Errorf("the header is %+v", got)
 	}
-	if len(got.Handoffs) != 1 || got.Handoffs[0].ID != sent.ID || !got.Handoffs[0].At.Equal(assignmentsAt.Add(-time.Hour)) {
-		t.Errorf("the handoffs are %+v, want the one sent an hour before", got.Handoffs)
+	if len(got.Handoffs) != 1 || got.Handoffs[0].ID != sent.ID || !got.Handoffs[0].At.Equal(answered) {
+		t.Errorf("the handoffs are %+v, want the one last changed when answered", got.Handoffs)
 	} else if actual := got.Handoffs[0]; actual.Decisions != h.Decisions || actual.Evidence != h.Evidence || actual.Constraints != h.Constraints || actual.Permissions != h.Permissions || actual.Head != h.Head || !slices.Equal(actual.Criteria, h.Criteria) {
 		t.Errorf("the handoff lost its stored record: %+v", actual)
 	}

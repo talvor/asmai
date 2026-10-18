@@ -2,13 +2,7 @@
 
 The Dashboard's three real-host qualification cases ([#124](https://github.com/talvor/asmai/issues/124), part of [#112](https://github.com/talvor/asmai/issues/112); [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md), [ADR 0015](adr/0015-the-dashboard-is-built-on-bubble-tea-and-lip-gloss-and-hands-the-terminal-to-attach.md)) are run on a development build of the commit under test, on each certified platform. These are the results of those runs. They are not a qualification record ([ADR 0009](adr/0009-a-release-is-the-qualified-commit-plus-its-record.md)). Each framework bump is a re-qualification event for these cases.
 
-The cases are in [the qualification harness](qualification-harness.md):
-
-| Case | What it qualifies |
-|---|---|
-| C52 | Hand-over to attach and return restores the terminal |
-| C53 | The agent states and the Waiting on you set match a real factory: working, idle, stopped and a native prompt waiting |
-| C54 | Factory stopped and restored shows and clears the stopped message |
+The [qualification harness guide](qualification-harness.md) describes C52, C53 and C54 and what each case checks.
 
 ## Status
 

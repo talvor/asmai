@@ -172,7 +172,7 @@ C52 starts the factory and runs `asmai dashboard` of the commit under test in a 
 - Enter runs `asmai attach leader@coordination` as a child process of the dashboard, which `ps` shows, and attach draws the leader's session with its status line, `leader@coordination · observing · Ctrl-] detaches`, and the leader's input prompt.
 - The first time, the case resizes the terminal to 120 by 36 while attach has it, and requires attach to follow: its status line is on the new last row.
 - It types `zqobserve`, which attach must not send on, and then Ctrl-].
-- The dashboard must be back, on the alternate screen, on the Agents tab, at the terminal's new size (the header and footer bars reach the last column of the 120-column terminal), with no trace of attach's screen, and the attach child gone.
+- The dashboard must be back, on the alternate screen, on the Agents tab, at the terminal's new size (the header and footer bars reach the last column of the 120-column terminal), with attach's observing status line gone and the attach child gone.
 - Raw mode must be back: the keys `2` and then `1`, typed with no Enter, must switch to the Jobs tab and back.
 - The leader must be the session it was (the same generation and process), `zqobserve` must not be on its screen, and no witnessed user message may have been journaled: attach only observes.
 
@@ -180,7 +180,7 @@ It then leaves with `q` and requires exit status 0 and the terminal as it found 
 
 ### C53: the Dashboard's statuses and Waiting on you set match a real factory
 
-C53 starts the factory, registers the fixture repository as C7 does, and runs `asmai dashboard` in a terminal of its own, 140 columns by 40 rows. Throughout, about four times a second, it reads the Dashboard's Agents tab and, independently, the journal and the agent records through the daemon's export, and works out what the journal says each leader is: Stopped when its session is not running, Waiting on you when its session's latest event is a `PermissionRequest`, Working when its latest dispatch is being worked on, else Idle. It requires the Dashboard to show each leader as the journal says, allowing three seconds for a change to arrive (it reads again within a quarter of a second of a change, and every five seconds without one). It remembers each status they agreed on, and requires, in order:
+C53 starts the factory, registers the fixture repository as C7 does, and runs `asmai dashboard` in a terminal of its own, 140 columns by 40 rows. Throughout, about four times a second, it reads the Dashboard's Agents tab and, independently, the journal through the daemon's export and agent records through its agents call, and works out what they say each leader is: Stopped when its session is not running, Waiting on you when its session's latest event is a `PermissionRequest`, Working when its latest dispatch is being worked on, else Idle. It requires the Dashboard to show each leader as the journal and records say, allowing three seconds for a change to arrive (it reads again within a quarter of a second of a change, and every five seconds without one). It remembers each status they agreed on, and requires, in order:
 
 1. At rest: Coordination's leader Idle, the leaders of Engineering and Quality, which have not run, Stopped, and an empty banner.
 2. The user holding the leader's input: the case opens a conversation, types a key and takes it back with Backspace, and holds the conversation open. It requires the leader Waiting on you, with "you hold its input", the banner naming it, and the daemon's snapshot holding that one item, a held input, as the Waiting on you set. Leaving the conversation must clear the banner and return the leader to Idle. The journal does not hold the user's input, so this is the one step in which the Dashboard is not compared with it.
@@ -196,7 +196,7 @@ The one status it does not show is Needs reconciliation, which takes an assignme
 
 C54 starts the factory and runs `asmai dashboard` in a terminal of its own. It requires the running factory's three leaders on the Agents tab, then twice:
 
-- `asmai stop` must have the Dashboard clear to the stopped message alone: its header says "factory stopped", and "The factory is not running." is the body. No agent's row, tab, banner or agent name may remain, for at least eight seconds, in which the Dashboard looks again for the daemon two or three times, and the Dashboard must still be running.
+- `asmai stop` must have the Dashboard clear to the stopped message alone: its header says "factory stopped", and "The factory is not running." is the body. No agent row, tab bar, banner or agent name may remain, for at least eight seconds, in which the Dashboard looks again for the daemon two or three times, and the Dashboard must still be running.
 - `asmai start` must have the Dashboard clear the message and show the running factory read again from the new daemon: the three leaders' rows and the header saying "factory running". The case also requires Coordination's leader to be in a new session (a higher generation) that reports `SessionStart`, and records how soon after `asmai start` returned the Dashboard had cleared the message.
 
 It does not depend on what the model does.

@@ -218,3 +218,70 @@ func (f *Factory) Submit(prompt string) error {
 	}
 	return nil
 }
+
+// Keys types keys into Coordination's leader as the user would, in one
+// conversation, each as an input event of its own, a moment apart: Claude
+// Code's menus take a key as a key, where one long write may be read as a
+// paste.
+func (f *Factory) Keys(keys ...string) error {
+	conn, r, _, err := daemon.Open(f.paths.Socket, daemon.Request{Command: daemon.CommandConversation, Terminal: "the qualification harness"})
+	if conn != nil {
+		defer conn.Close()
+	}
+	if err != nil {
+		return err
+	}
+	closed := make(chan struct{})
+	go func() { io.Copy(io.Discard, r); close(closed) }()
+	enc := json.NewEncoder(conn)
+	for _, key := range keys {
+		if err = enc.Encode(daemon.ClientMessage{Keys: []byte(key)}); err != nil {
+			return err
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if err = enc.Encode(daemon.ClientMessage{Leave: true}); err != nil {
+		return err
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+	}
+	return nil
+}
+
+// HoldInput opens a conversation with Coordination's leader and keeps it open,
+// holding the leader's input as a user does who has started a message: it
+// types a key and takes it back with Backspace, which leaves the leader's
+// prompt empty but the input the user's, until the returned function leaves
+// the conversation.
+func (f *Factory) HoldInput() (leave func() error, err error) {
+	conn, r, _, err := daemon.Open(f.paths.Socket, daemon.Request{Command: daemon.CommandConversation, Terminal: "the qualification harness"})
+	if err != nil {
+		if conn != nil {
+			conn.Close()
+		}
+		return nil, err
+	}
+	closed := make(chan struct{})
+	go func() { io.Copy(io.Discard, r); close(closed) }()
+	enc := json.NewEncoder(conn)
+	for _, key := range []string{"x", "\x7f"} {
+		if err = enc.Encode(daemon.ClientMessage{Keys: []byte(key)}); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return func() error {
+		defer conn.Close()
+		if err := enc.Encode(daemon.ClientMessage{Leave: true}); err != nil {
+			return err
+		}
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+		}
+		return nil
+	}, nil
+}

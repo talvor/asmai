@@ -114,6 +114,55 @@ func TestJournalPageFiltersByJobAgentAndKind(t *testing.T) {
 	}
 }
 
+func TestJournalPageFiltersJobOpeningAndAssignmentParticipants(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	if _, err := s.db.Exec(`INSERT INTO jobs(repository,state) VALUES('fixture',?)`, JobOpen); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO assignments(job,owner,worker,outcome,criteria,state,created_at) VALUES(1,'leader@engineering','worker@engineering','work','[]',?,?)`, AssignmentActive, timestamp(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	opened, err := appendEntry(tx, at, KindJobOpened, map[string]any{"number": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var traffic []int64
+	for _, kind := range []string{KindResultSubmitted, KindBlockedReported, KindResultAccepted, KindResultRejected} {
+		id, err := appendEntry(tx, at, kind, map[string]any{"job": 1, "assignment": 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		traffic = append(traffic, id)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name string
+		q    JournalQuery
+		want []int64
+	}{
+		{"job", JournalQuery{Job: 1, Limit: 10}, append([]int64{opened}, traffic...)},
+		{"owner", JournalQuery{Agent: "leader@engineering", Limit: 10}, traffic},
+		{"worker", JournalQuery{Agent: "worker@engineering", Limit: 10}, traffic},
+		{"owner before", JournalQuery{Agent: "leader@engineering", Before: traffic[3], Limit: 10}, traffic[:3]},
+		{"worker after", JournalQuery{Agent: "worker@engineering", After: traffic[0], Limit: 10}, traffic[1:]},
+		{"kind and owner", JournalQuery{Kinds: []string{KindBlockedReported}, Agent: "leader@engineering", Limit: 10}, traffic[1:2]},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _, _, err := s.JournalPage(tt.q)
+			if err != nil || !slices.Equal(ids(got), tt.want) {
+				t.Errorf("page is %v (%v), want %v", ids(got), err, tt.want)
+			}
+		})
+	}
+}
+
 func TestMessageBodyOfReadsTheMessageAnEntryCaused(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	sent := sendHandoffs(t, s, 1)

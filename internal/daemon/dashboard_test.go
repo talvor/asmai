@@ -413,7 +413,26 @@ func TestLogReadPagesAndEntryReadReturnsTheBody(t *testing.T) {
 	if err != nil || entry.Body != "outcome\nmore" || entry.Kind != store.KindHandoffSent {
 		t.Errorf("entry is %+v (%v), want the handoff with its outcome as the body", entry, err)
 	}
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["data"]; ok {
+		t.Errorf("entry detail exposes raw journal data: %s", encoded)
+	}
 	if _, err := d.dashboardEntry(1 << 40); err == nil {
 		t.Error("an entry that does not exist was read")
+	}
+}
+
+func TestJobOpeningSummaryUsesItsNumber(t *testing.T) {
+	d := &daemon{}
+	e := d.logEntry(store.Entry{Kind: store.KindJobOpened, Data: []byte(`{"number":7}`)})
+	if e.Job != 7 {
+		t.Errorf("job opening belongs to job %d, want 7", e.Job)
 	}
 }

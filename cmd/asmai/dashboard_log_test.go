@@ -92,6 +92,14 @@ func TestDashboardLogGoldenScreens(t *testing.T) {
 				d.Send("\r")
 				d.WaitForText("Entry #12")
 				dashtest.Golden(t, fmt.Sprintf("log-entry-%dx%d%s", size[0], size[1], suffix), d.Snapshot())
+				d.Send("\x1b")
+				d.WaitFor("the log list", func(s string) bool { return strings.Contains(s, "SUMMARY") && !strings.Contains(s, "Entry #") })
+				for range 4 {
+					d.Send("j")
+				}
+				d.Send("\r")
+				d.WaitForText("(this entry has no message body)")
+				dashtest.Golden(t, fmt.Sprintf("log-entry-empty-%dx%d%s", size[0], size[1], suffix), d.Snapshot())
 			})
 		}
 	}

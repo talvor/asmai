@@ -128,7 +128,7 @@ func (f *FakeDaemon) SetLog(entries []daemon.LogEntry, bodies map[int64]string) 
 	f.Handle(daemon.CommandDashboardEntry, func(req daemon.Request) daemon.Response {
 		for _, e := range entries {
 			if e.ID == req.Entry {
-				return daemon.Response{LogEntry: &daemon.DashboardEntry{LogEntry: e, Body: bodies[e.ID], Data: json.RawMessage(`{}`)}}
+				return daemon.Response{LogEntry: &daemon.DashboardEntry{LogEntry: e, Body: bodies[e.ID]}}
 			}
 		}
 		return daemon.Response{Error: "journal entry does not exist"}

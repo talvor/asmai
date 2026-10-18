@@ -502,18 +502,17 @@ type DashboardLog struct {
 	Newer   bool       `json:"newer"`
 }
 
-// DashboardEntry is one journal entry in full: its summary, the body of the
-// message or decision it records, and the entry's data.
+// DashboardEntry is one journal entry with its summary and message body.
 type DashboardEntry struct {
 	LogEntry
-	Body string          `json:"body"`
-	Data json.RawMessage `json:"data"`
+	Body string `json:"body"`
 }
 
 // entryFields are the fields of a journal entry's data that a summary reads.
 type entryFields struct {
 	ID         int64    `json:"id"`
 	Job        int64    `json:"job"`
+	Number     int64    `json:"number"`
 	Assignment int64    `json:"assignment"`
 	Sender     string   `json:"sender"`
 	Receiver   string   `json:"receiver"`
@@ -544,6 +543,9 @@ func (d *daemon) logEntry(e store.Entry) LogEntry {
 	var f entryFields
 	json.Unmarshal(e.Data, &f)
 	out := LogEntry{ID: e.ID, At: e.At, Kind: e.Kind, Job: f.Job, Summary: e.Kind}
+	if e.Kind == store.KindJobOpened {
+		out.Job = f.Number
+	}
 	out.From = cmpFirst(f.Sender, f.Owner, f.Leader, f.Agent)
 	out.To = cmpFirst(f.Receiver, f.Recipient, f.Worker)
 	with := func(prefix, detail string) string {
@@ -620,5 +622,5 @@ func (d *daemon) dashboardEntry(id int64) (DashboardEntry, error) {
 	if err != nil {
 		return DashboardEntry{}, fmt.Errorf("reading the body of journal entry %d: %w", id, err)
 	}
-	return DashboardEntry{LogEntry: d.logEntry(entries[0]), Body: body, Data: entries[0].Data}, nil
+	return DashboardEntry{LogEntry: d.logEntry(entries[0]), Body: body}, nil
 }

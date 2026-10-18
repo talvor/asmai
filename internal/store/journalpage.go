@@ -42,8 +42,8 @@ func (q JournalQuery) where() (string, []any) {
 		}
 	}
 	if q.Job != 0 {
-		conds = append(conds, "json_extract(data, '$.job') = ?")
-		args = append(args, q.Job)
+		conds = append(conds, "(json_extract(data, '$.job') = ? OR (kind = 'job.opened' AND json_extract(data, '$.number') = ?))")
+		args = append(args, q.Job, q.Job)
 	}
 	if q.Agent != "" {
 		var names []string
@@ -51,6 +51,8 @@ func (q JournalQuery) where() (string, []any) {
 			names = append(names, "json_extract(data, '$."+f+"') = ?")
 			args = append(args, q.Agent)
 		}
+		names = append(names, "EXISTS (SELECT 1 FROM assignments WHERE assignments.id = json_extract(journal.data, '$.assignment') AND (assignments.owner = ? OR assignments.worker = ?))")
+		args = append(args, q.Agent, q.Agent)
 		conds = append(conds, "("+strings.Join(names, " OR ")+")")
 	}
 	return strings.Join(conds, " AND "), args

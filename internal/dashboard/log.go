@@ -3,9 +3,7 @@
 package dashboard
 
 import (
-	"encoding/json"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -179,6 +177,9 @@ func (m model) logPage(msg logMsg) (model, tea.Cmd) {
 	page := msg.page
 	switch msg.mode {
 	case pageLatest:
+		if l.loaded && len(l.entries) > 0 {
+			return m, nil
+		}
 		l.entries, l.older, l.newer, l.loaded = page.Entries, page.Older, page.Newer, true
 		l.cursor = max(len(l.entries)-1, 0)
 	case pageOlder:
@@ -274,6 +275,7 @@ func (m model) entryKey(key string) model {
 	switch key {
 	case "esc":
 		m.log.open = false
+		m.log.want = 0
 	case "up", "k":
 		m.log.scroll--
 	case "down", "j":
@@ -417,27 +419,10 @@ func (m model) entryLines() []string {
 	}
 	text := m.log.entry.Body
 	if strings.TrimSpace(text) == "" {
-		text = "(this entry has no message body)\n\n" + dataLines(m.log.entry.Data)
+		text = "(this entry has no message body)"
 	}
 	wrapped := lipgloss.NewStyle().Width(max(min(m.width, maxWidth)-2, 1)).Render(text)
 	return strings.Split(strings.TrimRight(wrapped, "\n"), "\n")
-}
-
-// dataLines shows an entry's data as one key and value to a line.
-func dataLines(data json.RawMessage) string {
-	var fields map[string]any
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return string(data)
-	}
-	var b strings.Builder
-	for _, k := range slices.Sorted(maps.Keys(fields)) {
-		encoded, _ := json.Marshal(fields[k])
-		if s, ok := fields[k].(string); ok {
-			encoded = []byte(s)
-		}
-		fmt.Fprintf(&b, "%s: %s\n", k, encoded)
-	}
-	return b.String()
 }
 
 // entryBody draws the open entry: what it is, who it runs between, and its

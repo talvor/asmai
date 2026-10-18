@@ -354,7 +354,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logMsg:
 		return m.logPage(msg)
 	case entryMsg:
-		if msg.view != m.log.view || msg.id != m.log.want || m.log.open {
+		if m.tab != tabLog || msg.view != m.log.view || msg.id != m.log.want || m.log.open {
 			return m, nil
 		}
 		m.log.open, m.log.id, m.log.entry, m.log.failure, m.log.scroll = true, msg.id, nil, "", 0
@@ -381,9 +381,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "1":
-			m.tab, m.log.open = tabAgents, false
+			m.tab, m.log.open, m.log.want = tabAgents, false, 0
 		case "2":
-			m.tab, m.log.open = tabJobs, false
+			m.tab, m.log.open, m.log.want = tabJobs, false, 0
 		case "3":
 			m.tab = tabLog
 			return m, m.refreshLog()

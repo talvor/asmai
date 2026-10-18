@@ -5,7 +5,8 @@
 // entries `asmai repo add` and `remove` own. It reads every field of the
 // file's schema except the ones that name Codex, which arrives later:
 // [limits], [logs], [providers.claude], [roles.<role>] and
-// [repositories.<name>]. A file it cannot honour is refused with the line and
+// [repositories.<name>] with its [[repositories.<name>.writable]] tables. A
+// file it cannot honour is refused with the line and
 // the fix.
 package config
 
@@ -140,6 +141,10 @@ type RepositoryOptions struct {
 	// RepositorySkills are the roles for which the repository's own skills
 	// are switched on in its jobs.
 	RepositorySkills []string `json:"repository_skills"`
+	// Writable are the folders outside a workspace that the workers of the
+	// repository's jobs may write, as [[repositories.<name>.writable]]
+	// tables declare them.
+	Writable []Writable `json:"writable"`
 }
 
 // DefaultRepositoryOptions are the settings of a repository whose entry
@@ -291,8 +296,10 @@ func Parse(data []byte) (Config, []Problem) {
 	p.Reset(data)
 	var table []string
 	// skipping is set in a table already refused, whose fields are not
-	// looked at.
+	// looked at, and writable in a [[repositories.<name>.writable]] table,
+	// whose fields are its own.
 	skipping := false
+	var writable *writableDraft
 	for p.NextExpression() {
 		e := p.Expression()
 		// A key's position is the line: an expression's own range is not
@@ -304,7 +311,7 @@ func Parse(data []byte) (Config, []Problem) {
 		}
 		switch e.Kind {
 		case unstable.Table:
-			table, skipping = keyPath(e.Key()), false
+			table, skipping, writable = keyPath(e.Key()), false, nil
 			if problem, ok := checkTable(table, line); !ok {
 				st.problems = append(st.problems, problem)
 				skipping = true
@@ -312,12 +319,28 @@ func Parse(data []byte) (Config, []Problem) {
 			}
 			st.declare(table)
 		case unstable.ArrayTable:
+			writable = nil
+			if path := keyPath(e.Key()); len(path) == 3 && path[0] == "repositories" && path[2] == "writable" {
+				if problem, ok := checkTable(path[:2], line); !ok {
+					st.problems = append(st.problems, problem)
+					skipping = true
+					continue
+				}
+				writable = &writableDraft{repo: path[1], line: line}
+				st.drafts = append(st.drafts, writable)
+				skipping = false
+				continue
+			}
 			st.problems = append(st.problems, Problem{Line: line,
-				Problem: fmt.Sprintf("[[%s]] is an array of tables, which this asmai does not read", strings.Join(keyPath(e.Key()), ".")),
+				Problem: fmt.Sprintf("[[%s]] is an array of tables, which this asmai reads only as [[repositories.<name>.writable]]", strings.Join(keyPath(e.Key()), ".")),
 				Fix:     "write each role or repository as its own table, such as [roles.coordination]"})
 			skipping = true
 		case unstable.KeyValue:
 			if skipping {
+				continue
+			}
+			if writable != nil {
+				st.writableField(writable, keyPath(e.Key()), e.Value(), line)
 				continue
 			}
 			st.keyValue(p, append(append([]string(nil), table...), keyPath(e.Key())...), e.Value(), line)
@@ -339,10 +362,14 @@ type state struct {
 	problems []Problem
 	// lines is the line of each setting written, by its dotted path.
 	lines map[string]int
+	// drafts are the [[repositories.<name>.writable]] tables read, in the
+	// order written.
+	drafts []*writableDraft
 }
 
 // crossCheck finds the problems between settings that are each fine alone.
 func (st *state) crossCheck() {
+	st.finishWritable()
 	l := st.cfg.Limits
 	if l.ProviderErrorWaitMax < l.ProviderErrorWait {
 		line, ok := st.lines["limits.provider_error_wait_max"]
@@ -410,7 +437,7 @@ func CheckRepositoryName(name string) error {
 }
 
 // tablesRead is what the file's tables are, as problems name them.
-const tablesRead = "[limits], [logs], [providers.claude], [roles.<role>] and [repositories.<name>]"
+const tablesRead = "[limits], [logs], [providers.claude], [roles.<role>], [repositories.<name>] and [[repositories.<name>.writable]]"
 
 // checkTable checks a table header of path on line.
 func checkTable(path []string, line int) (Problem, bool) {
@@ -541,6 +568,12 @@ func (st *state) setField(table []string, name string, value *unstable.Node, lin
 		commit = func() { st.cfg.Repositories[table[1]], st.cfg.Options[table[1]] = repo, options }
 	}
 	i := slices.IndexFunc(settings, func(s setting) bool { return s.name == name })
+	if i < 0 && table[0] == "repositories" && name == "writable" {
+		st.problems = append(st.problems, Problem{Line: line,
+			Problem: fmt.Sprintf("writable in %s is not written as a list; each writable folder is a table of its own", header),
+			Fix:     fmt.Sprintf("write each folder as [[repositories.%s.writable]] with path = \"~/.cache/go-build\" and, optionally, env = \"GOCACHE\"", table[1])})
+		return
+	}
 	if i < 0 {
 		names := make([]string, len(settings))
 		for j, s := range settings {
@@ -1081,6 +1114,10 @@ checks_one_at_a_time = false
 no_ci = false
 commit_trailers = true
 repository_skills = []
+
+[[repositories.otman.writable]]
+path = "~/.cache/go-build"
+env = "GOCACHE"
 `
 
 // ExampleConfiguration returns the example configuration file, which passes

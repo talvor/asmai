@@ -106,6 +106,13 @@ func AddRepositoryWithOptions(path, name string, r Repository, o RepositoryOptio
 	}
 	fmt.Fprintf(&b, "[repositories.%s]\n", name)
 	b.Write(encoded)
+	// Each writable folder is a table of its own, after the entry's fields.
+	for _, w := range o.Writable {
+		fmt.Fprintf(&b, "\n[[repositories.%s.writable]]\npath = %s\n", name, quote(w.Path))
+		if w.Env != "" {
+			fmt.Fprintf(&b, "env = %s\n", quote(w.Env))
+		}
+	}
 	// What is written is what was meant.
 	written, problems := Parse(b.Bytes())
 	if len(problems) > 0 {
@@ -134,11 +141,13 @@ func (e *EntryProblemsError) Error() string {
 
 func sameOptions(a, b RepositoryOptions) bool {
 	return a.Notes == b.Notes && a.ChecksOneAtATime == b.ChecksOneAtATime && a.NoCI == b.NoCI &&
-		a.CommitTrailers == b.CommitTrailers && slices.Equal(a.RepositorySkills, b.RepositorySkills)
+		a.CommitTrailers == b.CommitTrailers && slices.Equal(a.RepositorySkills, b.RepositorySkills) &&
+		slices.Equal(a.Writable, b.Writable)
 }
 
 // CheckRepositoryOptions returns why the file would not honour o as a
-// repository's settings, or nil.
+// repository's settings, or nil. It checks the form of its writable folders,
+// not the places they open, which only CheckWritable on the host knows.
 func CheckRepositoryOptions(o RepositoryOptions) error {
 	var problems []Problem
 	for _, s := range optionSettings(&RepositoryOptions{}) {
@@ -149,6 +158,7 @@ func CheckRepositoryOptions(o RepositoryOptions) error {
 			problems = append(problems, Problem{Problem: "repository_skills " + why, Fix: fix})
 		}
 	}
+	problems = append(problems, writableProblems("the repository's", o.Writable, nil)...)
 	if len(problems) > 0 {
 		return &EntryProblemsError{Problems: problems}
 	}
@@ -308,9 +318,10 @@ func setInTable(data []byte, role string, fields map[string]string) ([]byte, err
 }
 
 // RemoveRepository removes the entry [repositories.<name>] from the
-// configuration file at path, and reports whether the file had it. The rest
-// of the file stays as it is. It refuses a file with problems, and an entry
-// not written as a [repositories.<name>] table.
+// configuration file at path, with its [[repositories.<name>.writable]]
+// tables, and reports whether the file had it. The rest of the file stays as
+// it is. It refuses a file with problems, and an entry not written as a
+// [repositories.<name>] table.
 func RemoveRepository(path, name string) (removed bool, err error) {
 	data, mode, err := read(path)
 	if err != nil {
@@ -323,8 +334,34 @@ func RemoveRepository(path, name string) (removed bool, err error) {
 	if _, ok := cfg.Repositories[name]; !ok {
 		return false, nil
 	}
-	lines := strings.SplitAfter(string(data), "\n")
-	start, next := -1, len(lines)
+	// The entry is its table and its writable folders' tables, which can lie
+	// apart: take them out one at a time, each from the file as it then is.
+	text, found := string(data), false
+	for {
+		lines := strings.SplitAfter(text, "\n")
+		start, next := entryRegion(data, lines, name)
+		if start < 0 {
+			break
+		}
+		found = true
+		text = strings.Join(removeRegion(lines, start, next), "")
+		data = []byte(text)
+	}
+	if !found {
+		return false, ErrRepositoryEntryNotATable
+	}
+	if after, _ := Parse(data); len(after.Repositories) != len(cfg.Repositories)-1 {
+		return false, ErrRepositoryEntryNotATable
+	}
+	return true, write(path, data, mode)
+}
+
+// entryRegion returns the first line of the first table of the entry name in
+// data, and the line of the table after it, or the number of lines; with no
+// such table, a start of -1. Lines count from 0. lines is data split after
+// each line.
+func entryRegion(data []byte, lines []string, name string) (start, next int) {
+	start, next = -1, len(lines)
 	p := &unstable.Parser{}
 	p.Reset(data)
 	for p.NextExpression() {
@@ -334,16 +371,20 @@ func RemoveRepository(path, name string) (removed bool, err error) {
 		}
 		line := keyLine(p, e.Key()) - 1
 		if start >= 0 {
-			next = line
-			break
+			return start, line
 		}
-		if e.Kind == unstable.Table && slices.Equal(keyPath(e.Key()), []string{"repositories", name}) {
+		key := keyPath(e.Key())
+		if e.Kind == unstable.Table && slices.Equal(key, []string{"repositories", name}) ||
+			e.Kind == unstable.ArrayTable && slices.Equal(key, []string{"repositories", name, "writable"}) {
 			start = line
 		}
 	}
-	if start < 0 {
-		return false, ErrRepositoryEntryNotATable
-	}
+	return start, len(lines)
+}
+
+// removeRegion returns lines without the table that starts on line start and
+// runs to line next, with the comment lines right above it.
+func removeRegion(lines []string, start, next int) []string {
 	// The comment lines right above the table go with it.
 	for start > 0 && strings.HasPrefix(strings.TrimSpace(lines[start-1]), "#") {
 		start--
@@ -372,7 +413,7 @@ func RemoveRepository(path, name string) (removed bool, err error) {
 			kept = kept[1:]
 		}
 	}
-	return true, write(path, []byte(strings.Join(kept, "")), mode)
+	return kept
 }
 
 // Replace replaces the configuration file at path with data, as a file

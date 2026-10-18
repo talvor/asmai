@@ -16,7 +16,7 @@ type Change struct {
 	// roles.engineering.worker_model, or the table's, such as
 	// repositories.otman, for a table that was added or removed.
 	Setting string `json:"setting"`
-	// Before and After are the values as the file writes them; empty for a
+	// Before and After are the displayed values; empty for a
 	// setting or a table that was not there.
 	Before  string `json:"before"`
 	After   string `json:"after"`
@@ -32,6 +32,10 @@ type Change struct {
 	Skills bool     `json:"skills,omitempty"`
 	Gained []string `json:"gained,omitempty"`
 	Lost   []string `json:"lost,omitempty"`
+	// Folders says the setting is a repository's writable folders, and
+	// Gained and Lost are the folders its workers may now write and may no
+	// longer write.
+	Folders bool `json:"folders,omitempty"`
 	// Repository and Roles identify the repository and roles whose workers
 	// are affected by this setting.
 	Repository string   `json:"repository,omitempty"`
@@ -73,14 +77,20 @@ func Diff(old, new Config) []Change {
 				reported[e.Table] = true
 				changes = append(changes, tableChange(e.Table, true))
 			}
-			if e.IsList && len(e.List) > 0 && (strings.HasPrefix(e.Table, "roles.") || e.Name == "repository_skills") {
+			if e.IsList && len(e.List) > 0 && (strings.HasPrefix(e.Table, "roles.") || e.Name == "repository_skills" || e.Name == "writable") {
 				changes = append(changes, change(e.Table, e.Name, Entry{}, e))
 			}
 			continue
 		}
 		o, ok := oldBy[e.Table+"."+e.Name]
-		if ok && o.Text == e.Text {
-			continue
+		if ok {
+			if e.Name == "writable" && strings.HasPrefix(e.Table, "repositories.") {
+				if slices.EqualFunc(o.Folders, e.Folders, sameWritable) {
+					continue
+				}
+			} else if o.Text == e.Text {
+				continue
+			}
 		}
 		changes = append(changes, change(e.Table, e.Name, o, e))
 	}
@@ -90,7 +100,7 @@ func Diff(old, new Config) []Change {
 				reported[e.Table] = true
 				changes = append(changes, tableChange(e.Table, false))
 			}
-			if e.IsList && len(e.List) > 0 && (strings.HasPrefix(e.Table, "roles.") || e.Name == "repository_skills") {
+			if e.IsList && len(e.List) > 0 && (strings.HasPrefix(e.Table, "roles.") || e.Name == "repository_skills" || e.Name == "writable") {
 				changes = append(changes, change(e.Table, e.Name, e, Entry{}))
 			}
 			continue
@@ -126,6 +136,11 @@ func change(table, name string, from, to Entry) Change {
 	case strings.HasPrefix(table, "repositories.") && (name == "notes" || name == "commit_trailers"):
 		c.Repository = strings.TrimPrefix(table, "repositories.")
 		c.Roles = slices.Clone(roles.All)
+	case strings.HasPrefix(table, "repositories.") && name == "writable":
+		c.Repository = strings.TrimPrefix(table, "repositories.")
+		c.Roles = slices.Clone(roles.All)
+		c.Folders = true
+		c.Gained, c.Lost = folderDifference(from.Folders, to.Folders)
 	case strings.HasPrefix(table, "repositories.") && name == "repository_skills":
 		c.Repository = strings.TrimPrefix(table, "repositories.")
 		gained, lost := listDifference(from.List, to.List)
@@ -134,6 +149,24 @@ func change(table, name string, from, to Entry) Change {
 		slices.SortFunc(c.Roles, func(a, b string) int { return slices.Index(roles.All, a) - slices.Index(roles.All, b) })
 	}
 	return c
+}
+
+func sameWritable(a, b Writable) bool {
+	return a.Path == b.Path && a.Env == b.Env
+}
+
+func folderDifference(before, after []Writable) (gained, lost []string) {
+	for _, folder := range after {
+		if !slices.ContainsFunc(before, func(other Writable) bool { return sameWritable(other, folder) }) {
+			gained = append(gained, writableText(folder))
+		}
+	}
+	for _, folder := range before {
+		if !slices.ContainsFunc(after, func(other Writable) bool { return sameWritable(other, folder) }) {
+			lost = append(lost, writableText(folder))
+		}
+	}
+	return gained, lost
 }
 
 // listDifference returns the items of after that before lacks, and the

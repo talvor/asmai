@@ -34,6 +34,9 @@ type ConfigApply struct {
 	Changes []ConfigChange `json:"changes"`
 	// Applied says the change was applied and journaled.
 	Applied bool `json:"applied"`
+	// Writable are the folders each repository of the file opens outside its
+	// workspaces, whether or not they change.
+	Writable []config.RepositoryFolders `json:"writable,omitempty"`
 }
 
 // ConfigChange is one change and its effect on known agents.
@@ -151,6 +154,14 @@ func (d *daemon) configApply(req Request) (*ConfigApply, error) {
 	if mismatches := RepositoryProblems(cfg, registered); len(mismatches) > 0 {
 		return nil, refuse("%s; %s", mismatches[0].Problem, mismatches[0].Fix)
 	}
+	bounds, err := d.writableBounds(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if problems := cfg.WritableProblems(bounds); len(problems) > 0 {
+		return nil, refuse("%v", &config.ProblemsError{Path: d.cfg.ConfigFile, Problems: problems})
+	}
+	result.Writable = cfg.OpenFolders(bounds.Home)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()

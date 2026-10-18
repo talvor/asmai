@@ -144,6 +144,9 @@ func Clone(ctx context.Context, origin, dest, selectedBranch string) (defaultBra
 		if err := CheckBranch(ctx, dest, selectedBranch); err != nil {
 			return "", err
 		}
+		if _, err := git(ctx, dest, "checkout", "--quiet", "--detach", "refs/remotes/origin/"+selectedBranch); err != nil {
+			return "", fmt.Errorf("checking out origin's branch %q: %w", selectedBranch, err)
+		}
 		return selectedBranch, nil
 	}
 	head, err := git(ctx, dest, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")

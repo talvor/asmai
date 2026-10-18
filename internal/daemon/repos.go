@@ -38,6 +38,7 @@ func (d *daemon) repoCommand(conn *net.UnixConn, req Request) {
 		}
 		if r, err = d.repoAdd(ctx, req.Source, req.Repository, req.DefaultBranch, options); err == nil {
 			resp.Repository = &r
+			resp.Writable = d.appliedFolders(r.Name)
 		}
 	case CommandRepoList:
 		resp.Repositories, err = d.store.Repositories()
@@ -47,6 +48,7 @@ func (d *daemon) repoCommand(conn *net.UnixConn, req Request) {
 			err = notRegistered(req.Repository)
 		} else if err == nil {
 			resp.Repository = &r
+			resp.Writable = d.appliedFolders(r.Name)
 		}
 	case CommandRepoRemove:
 		var r store.Repository
@@ -121,6 +123,15 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 	if _, ok := cfg.Repositories[name]; ok {
 		return store.Repository{}, refuse("the configuration file already has [repositories.%s]; remove it, or choose another name with --name", name)
 	}
+	// The folders the user named are checked before the clone too; the ones
+	// its language suggests, after it.
+	bounds, err := d.writableBounds(cfg, name)
+	if err != nil {
+		return store.Repository{}, err
+	}
+	if err := config.CheckWritable(name, options.Writable, bounds); err != nil {
+		return store.Repository{}, refuse("%v", err)
+	}
 
 	clone := filepath.Join(d.cfg.Paths.Repositories, name)
 	partial := filepath.Join(d.cfg.Paths.Repositories, "."+name+".partial")
@@ -133,6 +144,13 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 		return store.Repository{}, refuse("%v", err)
 	}
 	undo := func() { os.RemoveAll(partial) }
+	if len(options.Writable) == 0 {
+		options.Writable = config.DetectWritable(partial)
+		if err := config.CheckWritable(name, options.Writable, bounds); err != nil {
+			undo()
+			return store.Repository{}, refuse("%v", err)
+		}
+	}
 	entry := config.Repository{Location: src.Location, Origin: src.Origin, DefaultBranch: branch}
 	if err := config.AddRepositoryWithOptions(d.cfg.ConfigFile, name, entry, options); err != nil {
 		undo()

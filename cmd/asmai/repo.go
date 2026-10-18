@@ -32,7 +32,10 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 			return o.fail(err)
 		}
 	}
-	options := settings.options()
+	options, err := settings.options()
+	if err != nil {
+		return o.fail(err)
+	}
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandRepoAdd, Source: source, Repository: name, DefaultBranch: settings.defaultBranch, Options: &options})
 	if err != nil {
 		return o.fail(err)
@@ -48,7 +51,7 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 		w = o.stderr
 	} else {
 		fmt.Fprintf(w, "Registered %s, and made AsmAI's clone of it from its origin.\n", r.Name)
-		o.table(repositoryRows(r))
+		o.table(append(repositoryRows(r), writableRows(resp.Writable)...))
 		if r.Location != "" {
 			fmt.Fprintf(w, "Your own checkout is recorded but never used for work.\n")
 		}
@@ -67,21 +70,21 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 		return o.fail(err)
 	} else if !trusted && !exists(plan.Path) {
 		fmt.Fprintf(w, "%s, and the pinned %s is not installed yet: run `asmai init` in a terminal, which installs it and opens it in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
-		return repoAdded(o, r)
+		return repoAdded(o, r, resp.Writable)
 	}
 	step := "trust " + trustStep(paths, r.Clone)
 	state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, r.Clone, true, "repo add", false)
 	switch {
 	case errors.Is(err, errNoTerminal):
 		fmt.Fprintf(w, "%s, and trusting it needs you at a terminal: run `asmai init` in a terminal, which opens %s in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
-		return repoAdded(o, r)
+		return repoAdded(o, r, resp.Writable)
 	case state != "":
 		fmt.Fprintf(w, "%s: %s. %s\n", step, state, detail)
 	}
 	if err != nil {
 		return o.fail(err)
 	}
-	return repoAdded(o, r)
+	return repoAdded(o, r, resp.Writable)
 }
 
 type repoSettings struct {
@@ -91,21 +94,50 @@ type repoSettings struct {
 	noCI             bool
 	commitTrailers   bool
 	skills           listFlags
+	writable         listFlags
 }
 
-func (s repoSettings) options() config.RepositoryOptions {
-	return config.RepositoryOptions{
+// options returns the entry's settings the flags give. With no --writable,
+// the daemon suggests the folders for the repository's language.
+func (s repoSettings) options() (config.RepositoryOptions, error) {
+	o := config.RepositoryOptions{
 		Notes: s.notes, ChecksOneAtATime: s.checksOneAtATime, NoCI: s.noCI,
 		CommitTrailers: s.commitTrailers, RepositorySkills: []string(s.skills),
 	}
+	for _, text := range s.writable {
+		w, err := config.ParseWritable(text)
+		if err != nil {
+			return config.RepositoryOptions{}, fmt.Errorf("--writable: %w", err)
+		}
+		o.Writable = append(o.Writable, w)
+	}
+	return o, nil
 }
 
-// repoAdded reports, with --json, that r is registered.
-func repoAdded(o *output, r store.Repository) int {
+// repoAdded reports, with --json, that r is registered, and the folders its
+// workers may write.
+func repoAdded(o *output, r store.Repository, writable []config.Folder) int {
 	if o.json {
-		return o.printJSON(map[string]any{"registered": true, "repository": r})
+		if writable == nil {
+			writable = []config.Folder{}
+		}
+		return o.printJSON(map[string]any{"registered": true, "repository": r, "writable": writable})
 	}
 	return 0
+}
+
+// writableRows are the rows of the folders a repository's workers may write
+// outside their workspaces.
+func writableRows(folders []config.Folder) [][]string {
+	var rows [][]string
+	for _, f := range folders {
+		text := f.Resolved
+		if f.Env != "" {
+			text += " (exported as " + f.Env + ")"
+		}
+		rows = append(rows, []string{"writable", text})
+	}
+	return rows
 }
 
 func repoList(o *output, paths statedir.Paths) int {
@@ -141,9 +173,14 @@ func repoShow(o *output, paths statedir.Paths, name string) int {
 		return o.fail(fmt.Errorf("the daemon did not answer with the repository"))
 	}
 	if o.json {
-		return o.printJSON(map[string]any{"repository": resp.Repository})
+		writable := resp.Writable
+		if writable == nil {
+			writable = []config.Folder{}
+		}
+		return o.printJSON(map[string]any{"repository": resp.Repository, "writable": writable})
 	}
-	o.table(append(repositoryRows(*resp.Repository), []string{"registered", resp.Repository.AddedAt.Local().Format(time.RFC3339)}))
+	rows := append(repositoryRows(*resp.Repository), writableRows(resp.Writable)...)
+	o.table(append(rows, []string{"registered", resp.Repository.AddedAt.Local().Format(time.RFC3339)}))
 	return 0
 }
 

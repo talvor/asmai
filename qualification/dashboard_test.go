@@ -66,6 +66,41 @@ func TestTheStoppedScreenIsRecognisedAndHoldsNothingOfTheFactory(t *testing.T) {
 	if !strings.Contains(leftOnStoppedScreen(banner), "banner") {
 		t.Errorf("left = %q, want the banner named", leftOnStoppedScreen(banner))
 	}
+	for _, lines := range [][]string{
+		{" asmai dashboard  factory stopped"},
+		{""},
+		{" asmai dashboard  factory running", "The factory is not running."},
+	} {
+		v := parseDashboard(lines, vt.State{})
+		if leftOnStoppedScreen(v) == "" {
+			t.Errorf("screen %q was taken for a complete stopped screen", lines)
+		}
+	}
+	withStaleRow := parseDashboard([]string{" asmai dashboard  factory stopped", "The factory is not running.", " leader@coordination  ■ Stopped"}, vt.State{})
+	if leftOnStoppedScreen(withStaleRow) == "" {
+		t.Error("a stopped message with a stale agent row was taken for a clean stopped screen")
+	}
+}
+
+func TestSingleWaitingBannerMatchesOnlyTheSnapshotItem(t *testing.T) {
+	short := "leader@coordination you hold its input"
+	long := strings.Repeat("x", dashboardColumns)
+	clipped := strings.Repeat("x", dashboardColumns-len([]rune(" "+bannerLabel))-1) + "…"
+	for _, tc := range []struct {
+		banner, item string
+		want         bool
+	}{
+		{short, short, true},
+		{short + " · +1 more", short, false},
+		{short + " extra", short, false},
+		{clipped, long, true},
+		{clipped + " · +1 more", long, false},
+		{long, long, false},
+	} {
+		if got := matchesSingleWaitingBanner(tc.banner, tc.item); got != tc.want {
+			t.Errorf("banner %q against item %q matched = %v, want %v", tc.banner, tc.item, got, tc.want)
+		}
+	}
 }
 
 func TestTheChildrenOfAProcessAreFoundInPsOutput(t *testing.T) {

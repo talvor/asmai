@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/session"
@@ -637,6 +638,17 @@ func snapshotWaiting(f *Factory) ([]daemon.WaitingItem, error) {
 	return resp.Dashboard.Waiting, nil
 }
 
+func matchesSingleWaitingBanner(banner, text string) bool {
+	if lipgloss.Width(" "+bannerLabel+text) <= dashboardColumns {
+		return banner == text
+	}
+	runes := []rune(text)
+	for lipgloss.Width(" "+bannerLabel+string(runes))+1 > dashboardColumns {
+		runes = runes[:len(runes)-1]
+	}
+	return banner == string(runes)+"…"
+}
+
 // permissionRequestedSince reports whether agent's session in generation
 // reported a permission request in a journal entry after baseline, and
 // whether it has finished a turn (reported Stop) since without one.
@@ -801,7 +813,7 @@ func (h *Harness) c53(ctx context.Context, f *Factory, r *Result) error {
 		leave()
 		return err
 	}
-	if len(set) != 1 || set[0].Kind != daemon.WaitingInput || set[0].Agent != coordinationLeader || !strings.Contains(held.agents[coordinationLeader].Line, "you hold its input") || !strings.HasPrefix(held.banner, set[0].Text) {
+	if len(set) != 1 || set[0].Kind != daemon.WaitingInput || set[0].Agent != coordinationLeader || !strings.Contains(held.agents[coordinationLeader].Line, "you hold its input") || !matchesSingleWaitingBanner(held.banner, set[0].Text) {
 		leave()
 		return fmt.Errorf("with the user holding %s's input, the Waiting on you set is %+v and the banner %q, want that one item, shown as the banner%s", coordinationLeader, set, held.banner, d.screenOf(held))
 	}
@@ -840,20 +852,17 @@ func (h *Harness) c53(ctx context.Context, f *Factory, r *Result) error {
 		if finished {
 			return false, errors.New("inconclusive: the leader finished its turn without raising a native permission prompt, so the harness cannot show how the dashboard shows one")
 		}
-		return requested && v.agents[coordinationLeader].Status == "Waiting on you", nil
+		return requested && v.agents[coordinationLeader].Status == "Waiting on you" && strings.Contains(v.agents[coordinationLeader].Line, "native prompt"), nil
 	})
 	if err != nil {
 		return err
 	}
 	row := prompted.agents[coordinationLeader]
-	if !strings.Contains(row.Line, "native prompt") {
-		return fmt.Errorf("the dashboard shows %s Waiting on you, but not for a native prompt%s", coordinationLeader, d.screenOf(prompted))
-	}
 	set, err = snapshotWaiting(f)
 	if err != nil {
 		return err
 	}
-	if len(set) != 1 || set[0].Kind != daemon.WaitingNativePrompt || set[0].Agent != coordinationLeader || !strings.HasPrefix(prompted.banner, set[0].Text) || strings.Contains(prompted.banner, "more") {
+	if len(set) != 1 || set[0].Kind != daemon.WaitingNativePrompt || set[0].Agent != coordinationLeader || !matchesSingleWaitingBanner(prompted.banner, set[0].Text) {
 		return fmt.Errorf("with %s at a native prompt, the Waiting on you set is %+v and the banner %q, want that one item, shown as the banner%s", coordinationLeader, set, prompted.banner, d.screenOf(prompted))
 	}
 	about := row.Line
@@ -988,24 +997,27 @@ func (h *Harness) c54(ctx context.Context, f *Factory, r *Result) error {
 		if err != nil {
 			return err
 		}
-		stoppedAt := time.Now()
 		v, err := d.waitFor(ctx, "only the stopped message", func(v dashboardView) bool {
-			return v.stopped && v.shows("The factory is not running.")
+			return leftOnStoppedScreen(v) == ""
 		})
 		if err != nil {
 			return fmt.Errorf("round %d: %w", round, err)
 		}
+		stoppedAt := time.Now()
 		// Nothing of the factory outlives its daemon, and the Dashboard keeps
 		// looking, which it does every few seconds, so the screen is read
 		// again after a retry or two.
-		for time.Since(stoppedAt) < 8*time.Second {
-			if v, err = d.view(); err != nil {
-				return err
-			}
+		for {
 			if left := leftOnStoppedScreen(v); left != "" {
 				return fmt.Errorf("round %d: the dashboard shows %s while the factory is stopped%s", round, left, d.screenOf(v))
 			}
+			if time.Since(stoppedAt) >= 8*time.Second {
+				break
+			}
 			time.Sleep(h.Poll)
+			if v, err = d.view(); err != nil {
+				return err
+			}
 		}
 		select {
 		case <-d.s.Done():
@@ -1046,6 +1058,8 @@ func (h *Harness) c54(ctx context.Context, f *Factory, r *Result) error {
 // returns empty when there is none.
 func leftOnStoppedScreen(v dashboardView) string {
 	switch {
+	case !v.stopped:
+		return "no stopped header"
 	case len(v.order) > 0:
 		return "the agent " + v.order[0]
 	case v.banner != "":
@@ -1054,6 +1068,8 @@ func leftOnStoppedScreen(v dashboardView) string {
 		return "the tabs"
 	case v.shows("leader@") || v.shows("worker"):
 		return "an agent's name"
+	case !v.shows("The factory is not running."):
+		return "no stopped message"
 	}
 	return ""
 }

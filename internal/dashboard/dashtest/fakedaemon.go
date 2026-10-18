@@ -57,6 +57,7 @@ func NewFakeDaemon(t *testing.T) *FakeDaemon {
 		return daemon.Response{Status: &daemon.Status{Version: "fake", PID: 1}}
 	})
 	f.SetAgents()
+	f.SetJobs()
 	f.SetWaiting()
 	f.Start()
 	t.Cleanup(f.Stop)
@@ -69,7 +70,16 @@ func (f *FakeDaemon) SetAgents(agents ...daemon.DashboardAgent) {
 	f.mu.Lock()
 	f.snapshot.Agents = append([]daemon.DashboardAgent{}, agents...)
 	f.mu.Unlock()
-	f.answerSnapshot()
+	f.serveSnapshot()
+}
+
+// SetJobs sets the jobs the snapshot lists, each with the stage a test gives
+// it.
+func (f *FakeDaemon) SetJobs(jobs ...daemon.DashboardJob) {
+	f.mu.Lock()
+	f.snapshot.Jobs = append([]daemon.DashboardJob{}, jobs...)
+	f.mu.Unlock()
+	f.serveSnapshot()
 }
 
 // SetWaiting sets the Waiting on you set the snapshot carries, in the order
@@ -78,10 +88,10 @@ func (f *FakeDaemon) SetWaiting(items ...daemon.WaitingItem) {
 	f.mu.Lock()
 	f.snapshot.Waiting = append([]daemon.WaitingItem{}, items...)
 	f.mu.Unlock()
-	f.answerSnapshot()
+	f.serveSnapshot()
 }
 
-func (f *FakeDaemon) answerSnapshot() {
+func (f *FakeDaemon) serveSnapshot() {
 	f.Handle(daemon.CommandDashboardSnapshot, func(daemon.Request) daemon.Response {
 		f.mu.Lock()
 		defer f.mu.Unlock()

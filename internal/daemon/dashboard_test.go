@@ -247,6 +247,57 @@ func TestSubscriptionTicksOnJournalPromptAndInputOwnerChanges(t *testing.T) {
 	}
 }
 
+func TestAJobsStageFollowsTheStatedPrecedence(t *testing.T) {
+	counts := map[string]int{store.AssignmentActive: 2, store.AssignmentAccepted: 3, store.AssignmentNeedsReconciliation: 1}
+	for _, tt := range []struct {
+		name string
+		work store.JobWork
+		want JobStage
+	}{
+		{"delivered beats everything", store.JobWork{Ended: true, NeedsYou: 1, Validating: true, PullRequest: 4}, StageDelivered},
+		{"a needs-you finding beats validation and delivery", store.JobWork{NeedsYou: 1, Validating: true, PullRequest: 4}, StageNeedsYou},
+		{"a live validation is validating", store.JobWork{Validating: true, Validated: true}, StageValidating},
+		{"a current pull request is delivering", store.JobWork{PullRequest: 4, PRCurrent: true}, StageDelivering},
+		{"a push is delivering", store.JobWork{Pushed: true}, StageDelivering},
+		{"an accepted validation with nothing blocking is delivering", store.JobWork{Validated: true}, StageDelivering},
+		{"writing rework beats old delivery", store.JobWork{Writing: true, PRCurrent: true, Pushed: true, Validated: true}, StageWorking},
+		{"an old pull request is working", store.JobWork{PullRequest: 4}, StageWorking},
+		{"an accepted validation with a blocking finding is working", store.JobWork{Validated: true, OpenBlocking: 1}, StageWorking},
+		{"a pushed head with a blocking finding is working", store.JobWork{Pushed: true, OpenBlocking: 1}, StageWorking},
+		{"a current pull request with a blocking finding is working", store.JobWork{PullRequest: 4, PRCurrent: true, OpenBlocking: 1}, StageWorking},
+		{"all delivery evidence with a blocking finding is working", store.JobWork{Validated: true, Pushed: true, PRCurrent: true, OpenBlocking: 1}, StageWorking},
+		{"no validation or pull request is working", store.JobWork{}, StageWorking},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.work.Number, tt.work.Assignments = 7, counts
+			got := deriveJob(tt.work)
+			if got.Stage != tt.want || got.Job != 7 {
+				t.Errorf("derived stage %s, want %s", got.Stage, tt.want)
+			}
+			if got.Assignments != (AssignmentCounts{Active: 2, Accepted: 3, Reconciliation: 1}) {
+				t.Errorf("counted %+v", got.Assignments)
+			}
+		})
+	}
+	if got := deriveJob(store.JobWork{Number: 1, Words: "Add the thing\nin detail", Title: ""}).Title; got != "Add the thing" {
+		t.Errorf("a job with no pull request is titled %q, want the first line of its words", got)
+	}
+	if got := deriveJob(store.JobWork{Number: 1, Words: "Add the thing", PullRequest: 9, Title: "feat: add the thing"}); got.Title != "feat: add the thing" || got.PullRequest != 9 {
+		t.Errorf("a job with a pull request is %+v, want its number and title", got)
+	}
+}
+
+func TestEveryStageHasItsOwnWord(t *testing.T) {
+	seen := map[string]JobStage{}
+	for _, s := range []JobStage{StageWorking, StageValidating, StageDelivering, StageNeedsYou, StageDelivered} {
+		word := s.Word()
+		if other, dup := seen[word]; dup || strings.TrimSpace(word) == "" {
+			t.Errorf("%s reads %q, which %s already does", s, word, other)
+		}
+		seen[word] = s
+	}
+}
+
 // The Waiting on you set holds native prompts, then held input, then
 // needs-you findings; reconciliation and the working agents are statuses
 // only.

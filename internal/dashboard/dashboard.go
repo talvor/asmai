@@ -89,6 +89,8 @@ type factory struct {
 	// agents are the agents with the status the daemon derived for each; the
 	// Dashboard shows them and derives nothing itself.
 	agents []daemon.DashboardAgent
+	// jobs are the jobs with the stage the daemon derived for each.
+	jobs []daemon.DashboardJob
 	// waiting is the Waiting on you set, in the daemon's order.
 	waiting []daemon.WaitingItem
 	// readAt is when the daemon last answered a read, which "since" is counted
@@ -105,6 +107,8 @@ type model struct {
 	factory factory
 	// cursor is the selected agent and offset the first one the list shows.
 	cursor, offset int
+	// jobCursor and jobOffset are the same for the Jobs tab.
+	jobCursor, jobOffset int
 	// read is false until the first answer, so the first frame does not claim
 	// the factory is stopped before the daemon has been asked.
 	read              bool
@@ -174,7 +178,7 @@ func read(socket string, generation, number int) tea.Cmd {
 		if err != nil {
 			return readMsg{err: err, generation: generation, number: number}
 		}
-		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, waiting: resp.Dashboard.Waiting, readAt: time.Now()}, generation: generation, number: number}
+		return readMsg{factory: factory{running: true, agents: resp.Dashboard.Agents, jobs: resp.Dashboard.Jobs, waiting: resp.Dashboard.Waiting, readAt: time.Now()}, generation: generation, number: number}
 	}
 }
 
@@ -306,12 +310,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(m.opts.Refresh, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} })
 		}
 		m.read, m.failed = true, false
-		selected := m.selected()
+		selected, selectedJob := m.selected(), m.selectedJob()
 		m.factory = msg.factory
-		m.cursor = 0
+		m.cursor, m.jobCursor = 0, 0
 		for i, a := range m.factory.agents {
 			if a.Agent == selected {
 				m.cursor = i
+			}
+		}
+		for i, j := range m.factory.jobs {
+			if j.Job == selectedJob {
+				m.jobCursor = i
 			}
 		}
 		m = m.scrolled()
@@ -357,9 +366,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m = m.moved(m.listRows())
 		case "home", "g":
-			m = m.moved(-len(m.factory.agents))
+			m = m.moved(-m.listLen())
 		case "end", "G":
-			m = m.moved(len(m.factory.agents))
+			m = m.moved(m.listLen())
 		}
 	}
 	return m, nil
@@ -396,20 +405,54 @@ func (m model) selected() string {
 	return ""
 }
 
-// moved moves the cursor of the Agents tab by delta, within the list.
+// selectedJob is the job the cursor of the Jobs tab is on, or zero.
+func (m model) selectedJob() int64 {
+	if m.jobCursor < len(m.factory.jobs) {
+		return m.factory.jobs[m.jobCursor].Job
+	}
+	return 0
+}
+
+// listLen is how many rows the selected tab's list has.
+func (m model) listLen() int {
+	switch m.tab {
+	case tabAgents:
+		return len(m.factory.agents)
+	case tabJobs:
+		return len(m.factory.jobs)
+	}
+	return 0
+}
+
+// moved moves the cursor of the selected tab by delta, within its list.
 func (m model) moved(delta int) model {
-	if m.tab != tabAgents || len(m.factory.agents) == 0 {
+	n := m.listLen()
+	if n == 0 {
 		return m
 	}
-	m.cursor = min(max(m.cursor+delta, 0), len(m.factory.agents)-1)
+	cursor, _ := m.position()
+	*cursor = min(max(*cursor+delta, 0), n-1)
 	return m.scrolled()
 }
 
-// scrolled puts the list's window where the cursor is in it.
+// position is where the selected tab's cursor and window are.
+func (m *model) position() (cursor, offset *int) {
+	if m.tab == tabJobs {
+		return &m.jobCursor, &m.jobOffset
+	}
+	return &m.cursor, &m.offset
+}
+
+// scrolled puts the lists' windows where their cursors are in them.
 func (m model) scrolled() model {
 	rows := m.listRows()
-	m.cursor = min(max(m.cursor, 0), max(len(m.factory.agents)-1, 0))
-	m.offset = min(max(m.offset, m.cursor-rows+1), m.cursor)
-	m.offset = max(min(m.offset, len(m.factory.agents)-rows), 0)
+	for _, l := range []struct {
+		cursor, offset *int
+		n              int
+	}{{&m.cursor, &m.offset, len(m.factory.agents)}, {&m.jobCursor, &m.jobOffset, len(m.factory.jobs)}} {
+		*l.cursor = min(max(*l.cursor, 0), max(l.n-1, 0))
+		*l.offset = min(max(*l.offset, *l.cursor-rows+1), *l.cursor)
+		*l.offset = max(min(*l.offset, l.n-rows), 0)
+	}
 	return m
 }

@@ -1,0 +1,44 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ JOB   STAGE          ASSIGNMENTS                      PR      TITLE
+ #9    ✓ Delivered    acc4                             #131    feat(daemon): add the journal cursor…
+ #10   ▲ Needs you    sub1 acc2                        #140    fix(store): clear a blocking finding…
+ #11   ▶ Delivering   acc3                             #149    docs: record the dashboard's daemon …
+ #12   ◐ Validating   act1 acc2                        -       Add the Jobs tab to the dashboard so…
+ #14   ● Working      act2 rec1 acc1 cxl1              -       Make the log read take a cursor in b…
+ #15   ● Working      -                                -       Plan the next release
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · ↑/↓ move · q quit
+--- attributes
+1 1-100: reverse
+2 2-11: faint
+2 13-20: reverse
+2 22-28: faint
+4 1-33: faint
+4 56-68: faint
+5 1-100: reverse
+6 8-21: fg=0x1000003
+7 8-21: fg=0x1000006
+8 8-21: fg=0x1000006
+9 8-21: fg=0x1000004
+10 8-21: fg=0x1000004
+30 1-100: reverse

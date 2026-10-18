@@ -14,7 +14,7 @@ The [qualification harness guide](qualification-harness.md) describes C52, C53 a
 
 | | |
 |---|---|
-| Commit qualified | `f2ad5f6cbe3e9b05664fdb658c94c54b23a0c5c1`, the code under test. It is the head of [#164](https://github.com/talvor/asmai/pull/164) without the commit that adds this page; that commit changes only this page, so the code and the harness the hosts ran are `f2ad5f6`'s |
+| Commit qualified | `f2ad5f6cbe3e9b05664fdb658c94c54b23a0c5c1`, the code under test. It is the head of [#164](https://github.com/talvor/asmai/pull/164) without the commit that adds this page; that commit changes only this page, so the code and the harness the hosts ran are `f2ad5f6`'s. The pipeline rebased the branch onto a newer main after the hosts ran, so `f2ad5f6` is the commit the hosts built; the same code and harness are at `f9793e9` in this branch's history (`git diff f2ad5f6 f9793e9 -- qualification` is empty) |
 | Provider | Claude Code 2.1.292, pinned |
 | Hosts | `asmai-vm` and the qualification Mac, each as its harness user `phillip` ([qualification hosts](qualification-hosts.md)) |
 | Harness | `./bin/qualify --cases C52,C53,C54 --commit f2ad5f6`, built with `make qualify` from the commit |

@@ -11,26 +11,13 @@ import (
 	"github.com/talvor/asmai/internal/config"
 )
 
-// home returns the user's home directory, which ~ in a repository's writable
-// folders means: the daemon's Home, or this process's user's.
-func (d *daemon) home() (string, error) {
-	if d.cfg.Home != "" {
-		return d.cfg.Home, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("finding the home directory: %w", err)
-	}
-	return home, nil
-}
-
 // writableBounds returns the places a repository's writable folders may not
 // open on this host: the clones are those of the repositories cfg has, and of
 // extra.
 func (d *daemon) writableBounds(cfg config.Config, extra ...string) (config.Bounds, error) {
-	home, err := d.home()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return config.Bounds{}, err
+		return config.Bounds{}, fmt.Errorf("finding the home directory: %w", err)
 	}
 	names := append(slices.Collect(maps.Keys(cfg.Repositories)), extra...)
 	return config.NewBounds(home, d.cfg.Paths.Dir, d.cfg.Paths.Repositories, names), nil
@@ -40,7 +27,7 @@ func (d *daemon) writableBounds(cfg config.Config, extra ...string) (config.Boun
 // gives the workers of the repository name, resolved; none when the
 // repository has none or ~ cannot be resolved.
 func (d *daemon) appliedFolders(name string) []config.Folder {
-	home, err := d.home()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}

@@ -266,10 +266,6 @@ type Config struct {
 	// trust in, ~/.claude.json, which the daemon reads and never writes; with
 	// none, no agent starts.
 	ClaudeRecord string
-	// Home is the user's home directory, which ~ in a repository's writable
-	// folders means; with none, it is the home directory of the user this
-	// daemon runs as.
-	Home string
 	// ClaudeVersion reads the version the Claude Code at path reports, which
 	// the checks require to be the pinned one; with none, it is
 	// providers.ClaudeCodeVersion, which runs it with --version.

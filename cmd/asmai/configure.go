@@ -22,22 +22,22 @@ import (
 
 // configFile returns the configuration file the factory would read, and its
 // content.
-func configFile() (path string, data []byte, err error) {
-	home, err := os.UserHomeDir()
+func configFile() (path string, data []byte, home string, err error) {
+	home, err = os.UserHomeDir()
 	if err != nil {
-		return "", nil, fmt.Errorf("finding the configuration file: %w", err)
+		return "", nil, "", fmt.Errorf("finding the configuration file: %w", err)
 	}
 	if path, err = config.ActivePath(home); err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	data, err = os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return path, nil, fmt.Errorf("%s does not exist; run `asmai init`, which writes it with every role staffed, or print an example to start from with `asmai config example`", path)
+		return path, nil, home, fmt.Errorf("%s does not exist; run `asmai init`, which writes it with every role staffed, or print an example to start from with `asmai config example`", path)
 	}
 	if err != nil {
-		return path, nil, fmt.Errorf("reading %s: %w", path, err)
+		return path, nil, home, fmt.Errorf("reading %s: %w", path, err)
 	}
-	return path, data, nil
+	return path, data, home, nil
 }
 
 // printProblems tells the user on w what is wrong with the file at path.
@@ -60,7 +60,7 @@ func printProblems(w io.Writer, path string, problems []config.Problem) {
 // configShow is `asmai config show`: the effective configuration, every
 // setting written out with its default.
 func configShow(o *output) int {
-	path, data, err := configFile()
+	path, data, _, err := configFile()
 	if err != nil {
 		return o.fail(err)
 	}
@@ -266,7 +266,7 @@ func editorCommand(value string) ([]string, error) {
 // and its effect on running agents. Once the user confirms, the daemon
 // applies it and journals it.
 func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
-	path, data, err := configFile()
+	path, data, home, err := configFile()
 	if err != nil {
 		return o.fail(err)
 	}
@@ -287,10 +287,10 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
 	if errors.Is(err, daemon.ErrNotRunning) {
 		if o.json {
-			return o.printJSON(map[string]any{"file": path, "applied": false, "running": false, "writable": openFolders(cfg)})
+			return o.printJSON(map[string]any{"file": path, "applied": false, "running": false, "writable": openFolders(cfg, home)})
 		}
 		fmt.Fprintf(o.stdout, "%s has no problems. The factory is not running, so no agent has anything to pick up: it reads the file when it starts, with `asmai start`.\n", path)
-		printOpenFolders(o.stdout, cfg.OpenFolders(userHome()))
+		printOpenFolders(o.stdout, cfg.OpenFolders(home))
 		return 0
 	}
 	if err != nil {
@@ -389,16 +389,9 @@ func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 	}
 }
 
-// userHome returns the user's home directory, or "" when it cannot be
-// found, in which case no folder resolves.
-func userHome() string {
-	home, _ := os.UserHomeDir()
-	return home
-}
-
 // openFolders returns the folders cfg's repositories open, never nil.
-func openFolders(cfg config.Config) []config.RepositoryFolders {
-	if open := cfg.OpenFolders(userHome()); open != nil {
+func openFolders(cfg config.Config, home string) []config.RepositoryFolders {
+	if open := cfg.OpenFolders(home); open != nil {
 		return open
 	}
 	return []config.RepositoryFolders{}

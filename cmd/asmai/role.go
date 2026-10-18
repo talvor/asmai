@@ -30,7 +30,7 @@ type roleStaffing struct {
 // roleList is `asmai role list`: each role's provider and model for its
 // leader and its workers, and its skill lists, from the configuration file.
 func roleList(o *output) int {
-	path, data, err := configFile()
+	path, data, _, err := configFile()
 	if err != nil {
 		return o.fail(err)
 	}

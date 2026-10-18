@@ -20,7 +20,7 @@ import (
 // the stand-in Claude Code also record the GOCACHE it is started with.
 func declaresWritable(t *testing.T, d *daemon, home string, list ...config.Writable) {
 	t.Helper()
-	d.cfg.Home = home
+	t.Setenv("HOME", home)
 	options := d.applied.Options["fixture"]
 	options.Writable = list
 	d.applied.Options["fixture"] = options
@@ -217,6 +217,51 @@ func TestRegisteringAGoRepositoryWritesItsBuildCacheIntoItsEntry(t *testing.T) {
 	shown, err := Call(p.Socket, Request{Command: CommandRepoShow, Repository: "gopher"})
 	if err != nil || !slices.Equal(shown.Writable, want) {
 		t.Errorf("show answered with the folders %+v, %v; want %+v", shown.Writable, err, want)
+	}
+}
+
+func TestRegisteringDetectsWritableFoldersFromTheSelectedBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p, configFile := repoDaemon(t)
+	plainOrigin := remote(t)
+	plainSeed := filepath.Join(filepath.Dir(plainOrigin), "seed")
+	git(t, plainSeed, "checkout", "-b", "go-cache")
+	if err := os.WriteFile(filepath.Join(plainSeed, "go.mod"), []byte("module example.test/fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, plainSeed, "add", "go.mod")
+	git(t, plainSeed, "commit", "-m", "module")
+	git(t, plainSeed, "push", plainOrigin, "go-cache")
+	withGo, err := Call(p.Socket, Request{Command: CommandRepoAdd, Source: plainOrigin, Repository: "with-go", DefaultBranch: "go-cache"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []config.Writable{{Path: "~/.cache/go-build", Env: "GOCACHE"}}
+	if withGo.Repository == nil || withGo.Repository.DefaultBranch != "go-cache" || len(withGo.Writable) != 1 || withGo.Writable[0].Path != want[0].Path || withGo.Writable[0].Env != want[0].Env {
+		t.Errorf("registration on go-cache answered %+v, want its Go folder", withGo)
+	}
+
+	goOrigin := goRemote(t)
+	goSeed := filepath.Join(filepath.Dir(goOrigin), "seed")
+	git(t, goSeed, "branch", "plain", "trunk~1")
+	git(t, goSeed, "push", goOrigin, "plain")
+	withoutGo, err := Call(p.Socket, Request{Command: CommandRepoAdd, Source: goOrigin, Repository: "without-go", DefaultBranch: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutGo.Repository == nil || withoutGo.Repository.DefaultBranch != "plain" || len(withoutGo.Writable) != 0 {
+		t.Errorf("registration on plain answered %+v, want no Go folder", withoutGo)
+	}
+
+	cfg, problems, err := config.Load(configFile)
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("the configuration file reads as %v, %v", problems, err)
+	}
+	if got := cfg.Options["with-go"].Writable; !slices.Equal(got, want) {
+		t.Errorf("the selected Go branch declares %+v, want %+v", got, want)
+	}
+	if got := cfg.Options["without-go"].Writable; len(got) != 0 {
+		t.Errorf("the selected plain branch declares %+v, want no folders", got)
 	}
 }
 

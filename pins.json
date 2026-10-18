@@ -16,6 +16,16 @@
   "lavish": {
     "version": "0.1.89",
     "deno": "2.9.6",
-    "releases": "https://github.com/talvor/asmai/releases/download"
+    "releases": "https://github.com/talvor/asmai/releases/download",
+    "platforms": {
+      "darwin-arm64": {
+        "sha256": "da328244d0219d27c3bd803ed3e8bce85f9230ceb81fbe417f8d926ce4b9a4a3",
+        "size": 89821058
+      },
+      "linux-x64": {
+        "sha256": "22925dbd5527863fd5e99da350dfe1aa415c87dbde3d0f38b53dbd5352b405c6",
+        "size": 126449952
+      }
+    }
   }
 }

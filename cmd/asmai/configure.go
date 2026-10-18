@@ -361,10 +361,10 @@ func showChanges(w io.Writer, path string, changes []daemon.ConfigChange) {
 		}
 		if c.Folders {
 			if len(c.Gained) > 0 {
-				fmt.Fprintf(w, "      opens for %s's workers to write: %s\n", c.Repository, strings.Join(c.Gained, ", "))
+				fmt.Fprintf(w, "      adds to %s's declared writable entries: %s\n", c.Repository, strings.Join(c.Gained, ", "))
 			}
 			if len(c.Lost) > 0 {
-				fmt.Fprintf(w, "      closes for %s's workers: %s\n", c.Repository, strings.Join(c.Lost, ", "))
+				fmt.Fprintf(w, "      removes from %s's declared writable entries: %s\n", c.Repository, strings.Join(c.Lost, ", "))
 			}
 		} else if c.Repository != "" {
 			if len(c.Gained) > 0 {

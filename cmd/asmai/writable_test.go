@@ -169,14 +169,22 @@ func TestRepoAddSuggestsAGoRepositorysBuildCacheAndTakesFoldersByHand(t *testing
 		t.Errorf("the entry declares %+v, want %+v", got, want)
 	}
 
-	// Another folder is a change to apply, which says what it opens.
 	o := cfg.Options["plain"]
 	o.Writable = append(o.Writable, config.Writable{Path: "~/.cache/three"})
 	cfg.Options["plain"] = o
 	writeConfig(t, string(config.Render(cfg)))
 	stdout, stderr, code := runIn(t, "n\n", "config", "apply")
-	if code != 1 || !strings.Contains(stdout, "repositories.plain.writable") || !strings.Contains(stdout, `opens for plain's workers to write: { path = "~/.cache/three" }`) ||
+	if code != 1 || !strings.Contains(stdout, "repositories.plain.writable") || !strings.Contains(stdout, `adds to plain's declared writable entries: { path = "~/.cache/three" }`) ||
 		!strings.Contains(stdout, "plain: "+filepath.Join(home, ".cache", "three")) || !strings.Contains(stderr, "not confirmed") {
 		t.Errorf("applying a third folder exited %d printing %q, %q", code, stdout, stderr)
+	}
+
+	o.Writable = []config.Writable{{Path: "~/.cache/one", Env: "TWO"}, {Path: filepath.Join(home, "two")}}
+	cfg.Options["plain"] = o
+	writeConfig(t, string(config.Render(cfg)))
+	stdout, stderr, code = runIn(t, "n\n", "config", "apply")
+	if code != 1 || !strings.Contains(stdout, `adds to plain's declared writable entries: { path = "~/.cache/one", env = "TWO" }`) ||
+		!strings.Contains(stdout, `removes from plain's declared writable entries: { path = "~/.cache/one", env = "ONE" }`) || !strings.Contains(stderr, "not confirmed") {
+		t.Errorf("previewing an env change exited %d printing %q, %q", code, stdout, stderr)
 	}
 }

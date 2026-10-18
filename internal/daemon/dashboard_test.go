@@ -52,7 +52,9 @@ func TestDashboardCommandsAreDeniedToAgentsAndChangeNothing(t *testing.T) {
 		if err := d.authorize(Request{Command: command}); err != nil {
 			t.Errorf("%s was denied to the user: %v", command, err)
 		}
-		if _, err := Call(p.Socket, Request{Command: command}); err != nil {
+		// A read of one entry needs an entry to read; the daemon wrote the
+		// first into the journal when it started.
+		if _, err := Call(p.Socket, Request{Command: command, Entry: 1}); err != nil {
 			t.Errorf("%s: %v", command, err)
 		}
 	}
@@ -349,5 +351,88 @@ func TestTheWaitingSetHoldsPromptsHeldInputAndFindingsAndNothingElse(t *testing.
 	}
 	if empty := waitingOnYou(nil, nil, nil); empty == nil || len(empty) != 0 {
 		t.Errorf("nothing waiting is %#v, want an empty set", empty)
+	}
+}
+
+// A log read pages the journal from a cursor in either direction, and an
+// entry read returns the body of the message the entry caused.
+func TestLogReadPagesAndEntryReadReturnsTheBody(t *testing.T) {
+	p := stateDir(t)
+	if err := os.MkdirAll(filepath.Dir(p.Store), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	if err := st.RepositoryAdded(store.Repository{Name: "fixture", Origin: "https://example.test/fixture", DefaultBranch: "main", Clone: "/fixture", AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{store: st}
+	var sent []int64
+	for i := range 5 {
+		openJob(t, p, "fixture", store.JobOpen)
+		h := store.Handoff{Job: int64(i + 1), Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "outcome\nmore", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"c"}}
+		if _, _, err := st.SendHandoff(h, at.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := d.dashboardLog(LogQuery{Kinds: TrafficKinds, Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Entries) != 3 || !page.Older || page.Newer {
+		t.Fatalf("latest page has %d entries older %v newer %v, want 3, true, false", len(page.Entries), page.Older, page.Newer)
+	}
+	for _, e := range page.Entries {
+		sent = append(sent, e.ID)
+		if e.Kind != store.KindHandoffSent || e.From != "leader@coordination" || e.To != "leader@engineering" || e.Summary != "handoff: outcome" {
+			t.Errorf("entry %+v, want a handoff from Coordination to Engineering summarised by its outcome's first line", e)
+		}
+	}
+	older, err := d.dashboardLog(LogQuery{Kinds: TrafficKinds, Before: sent[0], Limit: 3})
+	if err != nil || len(older.Entries) != 2 || older.Older || !older.Newer {
+		t.Fatalf("older page is %+v (%v), want 2 entries with none older and some newer", older, err)
+	}
+	newer, err := d.dashboardLog(LogQuery{Kinds: TrafficKinds, After: older.Entries[1].ID, Limit: 10})
+	if err != nil || len(newer.Entries) != 3 || newer.Entries[0].ID != sent[0] {
+		t.Fatalf("newer page is %+v (%v), want the three latest", newer, err)
+	}
+	job, err := d.dashboardLog(LogQuery{Job: 2})
+	if err != nil || len(job.Entries) == 0 {
+		t.Fatalf("job page is %+v (%v), want entries", job, err)
+	}
+	for _, e := range job.Entries {
+		if e.Job != 2 {
+			t.Errorf("entry %+v is on job %d, want job 2 only", e, e.Job)
+		}
+	}
+	entry, err := d.dashboardEntry(sent[0])
+	if err != nil || entry.Body != "outcome\nmore" || entry.Kind != store.KindHandoffSent {
+		t.Errorf("entry is %+v (%v), want the handoff with its outcome as the body", entry, err)
+	}
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["data"]; ok {
+		t.Errorf("entry detail exposes raw journal data: %s", encoded)
+	}
+	if _, err := d.dashboardEntry(1 << 40); err == nil {
+		t.Error("an entry that does not exist was read")
+	}
+}
+
+func TestJobOpeningSummaryUsesItsNumber(t *testing.T) {
+	d := &daemon{}
+	e := d.logEntry(store.Entry{Kind: store.KindJobOpened, Data: []byte(`{"number":7}`)})
+	if e.Job != 7 {
+		t.Errorf("job opening belongs to job %d, want 7", e.Job)
 	}
 }

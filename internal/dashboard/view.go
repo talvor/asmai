@@ -60,8 +60,15 @@ func (m model) frame(body []string) string {
 
 func (m model) footer() string {
 	keys := footerKeys
-	if m.tab == tabAgents {
+	switch {
+	case m.tab == tabAgents:
 		keys = "1/2/3 tab · ↑/↓ move · enter attach · q quit"
+	case m.tab == tabLog && m.log.open:
+		keys = "1/2/3 tab · ↑/↓ scroll · esc back · q quit"
+	case m.tab == tabLog && m.log.full:
+		keys = "1/2/3 tab · ↑/↓ move · enter open · t traffic · f filter · q quit"
+	case m.tab == tabLog:
+		keys = "1/2/3 tab · ↑/↓ move · enter open · t journal · f filter · q quit"
 	}
 	return bar(" "+keys, m.width)
 }
@@ -91,6 +98,8 @@ func (m model) shell() string {
 		body = append(body, m.agentsBody()...)
 	case tabJobs:
 		body = append(body, m.jobsBody()...)
+	case tabLog:
+		body = append(body, m.logBody()...)
 	}
 	return m.frame(body)
 }

@@ -1,0 +1,48 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ Entry #16 · result.accepted
+ 2026-10-08 09:16:00 · job #7 · reviewer-12@quality-assurance → worker-5@quality-assurance
+
+ (this entry has no message body)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · ↑/↓ scroll · esc back · q quit
+--- attributes
+1 1-160: reverse
+2 2-11: faint
+2 13-20: faint
+2 22-28: reverse
+4 1-28: faint
+5 1-90: faint
+40 1-160: reverse

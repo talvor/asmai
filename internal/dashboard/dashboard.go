@@ -2,7 +2,8 @@
 
 // Package dashboard is the Dashboard (ADR 0015): a read-only terminal view of
 // the factory, built on Bubble Tea and Lip Gloss. It never sends the daemon an
-// action; it reads snapshots and change notifications from the daemon.
+// action; it reads snapshots, log pages, entry bodies and change notifications
+// from the daemon.
 package dashboard
 
 import (
@@ -140,9 +141,8 @@ func newModel(socket string, o Options) model {
 // terminal again.
 type attachedMsg struct{}
 
-// readMsg is the daemon's answer to a read of everything the Dashboard shows:
-// the factory, or why it could not be read. A daemon that is not running is
-// the stopped factory.
+// readMsg is the daemon's answer to a factory snapshot read, or why it could
+// not be read. A daemon that is not running is the stopped factory.
 type readMsg struct {
 	factory    factory
 	err        error
@@ -170,7 +170,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(read(m.socket, m.generation, m.readNumber), subscribe(m.socket, m.watch))
 }
 
-// read asks the daemon for everything the Dashboard shows.
+// read asks the daemon for a factory snapshot.
 func read(socket string, generation, number int) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := daemon.Call(socket, daemon.Request{Command: daemon.CommandDashboardSnapshot})

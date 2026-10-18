@@ -204,8 +204,8 @@ type Response struct {
 	Change *DashboardChange `json:"change,omitempty"`
 	// Dashboard is the Dashboard's snapshot of the factory.
 	Dashboard *DashboardSnapshot `json:"dashboard,omitempty"`
-	// Log is a page of the journal, and LogEntry one entry in full, for the
-	// Dashboard.
+	// Log is a page of journal summaries, and LogEntry one entry with its
+	// message body, for the Dashboard.
 	Log      *DashboardLog   `json:"log,omitempty"`
 	LogEntry *DashboardEntry `json:"log_entry,omitempty"`
 	// Attached is the agent an attach follows, and Screen its screen when

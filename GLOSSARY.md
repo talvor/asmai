@@ -103,7 +103,7 @@ The directory set aside for one assignment, where its worker works: the factory'
 _Avoid_: Worktree, sandbox, checkout (when meaning an assignment's working copy)
 
 **Write guard**:
-Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in the workspace, `asmai`, git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt in Coordination's leader's session and is denied in every other agent's. It guards against mistakes; it is not a security boundary.
+Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in permitted folders, including a worker's repository-declared writable folders when it has them; `asmai`, git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt in Coordination's leader's session and is denied in every other agent's. It guards against mistakes; it is not a security boundary. See the [write guard](README.md#the-write-guard-commits-and-repository-files) for its bounds.
 
 **Writable folder**:
 A folder outside a workspace that a repository's entry declares its workers may write, usually a build cache, optionally with an environment variable that names it for the repository's tools. It opens the write guard for that folder in the workers of the repository's jobs and nowhere else.

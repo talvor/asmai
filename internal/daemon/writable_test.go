@@ -10,9 +10,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/talvor/asmai/internal/config"
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/store"
 )
 
 // declaresWritable gives the repository fixture of a workerFactory the
@@ -82,6 +84,37 @@ func TestAWorkerOfARepositoryWithWritableFoldersMayWriteThemAndGetsTheirVariable
 		if info, err := os.Stat(folder); err != nil || !info.IsDir() {
 			t.Errorf("the writable folder %s is %v (%v), want it made", folder, info, err)
 		}
+	}
+}
+
+func TestAQualityWorkerGetsItsJobsWritableFolders(t *testing.T) {
+	d, engineering, out := workerFactory(t)
+	home := t.TempDir()
+	declaresWritable(t, d, home, config.Writable{Path: "~/.cache/go-build", Env: "GOCACHE"})
+	workspace := filepath.Join(filepath.Dir(filepath.Dir(engineering.Workspace.Path)), "assignment-2", "repo")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	quality, _, err := d.store.AssignmentCreated(store.NewAssignment{
+		ID: 2, Job: engineering.Job, Owner: "leader@quality", Worker: "worker1@quality",
+		Outcome: "validate", Criteria: []string{"checks pass"}, ReadOnly: true,
+		Workspace: store.Workspace{Slot: 4, Path: workspace, Tmp: filepath.Join(filepath.Dir(workspace), "tmp"), Base: engineering.Workspace.Base},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	err = d.ensureAgent(roles.WorkerOf(roles.Quality, 1))
+	d.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(home, ".cache", "go-build")
+	if got := waitForFile(t, filepath.Join(out, "gocache")); got != cache {
+		t.Errorf("Quality worker's GOCACHE is %q, want %q", got, cache)
+	}
+	if got, want := guardOf(t, waitForFile(t, filepath.Join(out, "args"))), []string{quality.Workspace.Tmp, cache}; !slices.Equal(got, want) {
+		t.Errorf("Quality worker's guard lets it write %v, want %v", got, want)
 	}
 }
 

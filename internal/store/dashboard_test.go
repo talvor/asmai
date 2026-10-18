@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAgentWorksReadTheLatestDispatchAndTheAssignmentsNeedingReconciliation(t *testing.T) {
@@ -124,5 +125,53 @@ func TestJobWorksValidationFollowsTheHead(t *testing.T) {
 	works, err = s.JobWorks()
 	if err != nil || len(works) != 1 || works[0].Validated {
 		t.Errorf("the old validation still covers the new head: %+v, %v", works, err)
+	}
+}
+
+func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	h := Handoff{Job: job, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "Add a greeting", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"c"}}
+	sent, _, err := s.SendHandoff(h, assignmentsAt.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, d := newValidation(t, s, job)
+	if _, _, err := s.ReportSubmitted(validationOf(v, d, tipCommit, ValidationInput{Findings: []FindingInput{
+		{Kind: FindingAdvisory, Text: "no doc line"},
+		{Kind: FindingNeedsYou, Text: "greet whom?"},
+	}}), assignmentsAt.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	later := assignmentsAt.Add(2 * time.Minute)
+	if _, _, err := s.ValidationAccepted(Acceptance{Assignment: v.ID, Leader: qualityOwner, Reasons: []string{"passed"}}, owner, later); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newAssignment(t, s, job)
+
+	got, err := s.JobDetail(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Branch != "asmai/job-1-add-a-greeting" || got.Head != tipCommit || got.PullRequest != nil || got.Checks != nil {
+		t.Errorf("the header is %+v", got)
+	}
+	if len(got.Handoffs) != 1 || got.Handoffs[0].ID != sent.ID || !got.Handoffs[0].At.Equal(assignmentsAt.Add(-time.Hour)) {
+		t.Errorf("the handoffs are %+v, want the one sent an hour before", got.Handoffs)
+	}
+	if len(got.Findings) != 2 || !got.Findings[0].At.Equal(later) || got.Findings[1].Kind != FindingNeedsYou {
+		t.Errorf("the findings are %+v, want both recorded when the validation was accepted", got.Findings)
+	}
+	if len(got.Assignments) != 2 {
+		t.Fatalf("the assignments are %+v, want the validation and the new one", got.Assignments)
+	}
+	if v := got.Assignments[0]; v.ID != 1 || v.State != AssignmentAccepted || !v.At.Equal(later) || !v.ReadOnly {
+		t.Errorf("the validation is %+v, want it accepted when its result was", v)
+	}
+	if n := got.Assignments[1]; n.ID != a.ID || n.State != AssignmentActive || !n.At.Equal(assignmentsAt) || n.Worker != a.Worker || n.Dispatch != DispatchCreated {
+		t.Errorf("the new assignment is %+v, want it active since it was made, with its dispatch created", n)
+	}
+	if _, err := s.JobDetail(job + 1); err == nil {
+		t.Error("the detail of a job that does not exist was read")
 	}
 }

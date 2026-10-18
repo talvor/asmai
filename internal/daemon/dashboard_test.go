@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -42,6 +43,8 @@ func TestDashboardCommandsAreDeniedToAgentsAndChangeNothing(t *testing.T) {
 	}
 	p := stateDir(t)
 	runDaemon(t, p)
+	// A job detail needs a job to read.
+	openJob(t, p, "fixture", store.JobOpen)
 	before := journal(t, p)
 	for _, command := range DashboardCommands {
 		for _, credential := range []string{"coordination", "engineering", "worker"} {
@@ -54,7 +57,7 @@ func TestDashboardCommandsAreDeniedToAgentsAndChangeNothing(t *testing.T) {
 		}
 		// A read of one entry needs an entry to read; the daemon wrote the
 		// first into the journal when it started.
-		if _, err := Call(p.Socket, Request{Command: command, Entry: 1}); err != nil {
+		if _, err := Call(p.Socket, Request{Command: command, Entry: 1, Job: 1}); err != nil {
 			t.Errorf("%s: %v", command, err)
 		}
 	}
@@ -434,5 +437,71 @@ func TestJobOpeningSummaryUsesItsNumber(t *testing.T) {
 	e := d.logEntry(store.Entry{Kind: store.KindJobOpened, Data: []byte(`{"number":7}`)})
 	if e.Job != 7 {
 		t.Errorf("job opening belongs to job %d, want 7", e.Job)
+	}
+}
+
+// A job's work lists needs-you findings first, then the other findings, the
+// assignments and the handoffs, each with the time it last changed.
+func TestAJobsWorkListsNeedsYouFindingsFirst(t *testing.T) {
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	items := jobItems(store.JobDetail{
+		Findings: []store.FindingWork{
+			{ID: 1, Kind: store.FindingAdvisory, Text: "no doc line", At: at},
+			{ID: 2, Kind: store.FindingBlocking, Text: "flaky", Cleared: true, At: at.Add(time.Minute)},
+			{ID: 3, Kind: store.FindingNeedsYou, Text: "widens ADR 0012", At: at.Add(2 * time.Minute)},
+			{ID: 4, Kind: store.FindingBlocking, Text: "wrong order", At: at.Add(3 * time.Minute)},
+		},
+		Assignments: []store.AssignmentWork{{ID: 5, Worker: "worker-1@engineering", Owner: "leader@engineering", State: store.AssignmentNeedsReconciliation, Outcome: "Add it", Dispatch: store.DispatchUnknown, At: at.Add(4 * time.Minute)}},
+		Handoffs:    []store.HandoffWork{{ID: 6, Sender: "leader@coordination", Receiver: "leader@engineering", State: store.HandoffAccepted, Outcome: "Add a cursor read", At: at.Add(5 * time.Minute)}},
+	})
+	var got []string
+	for _, it := range items {
+		got = append(got, fmt.Sprintf("%s %d %s", it.Kind, it.ID, it.Label))
+	}
+	want := []string{"finding 3 needs-you", "finding 4 blocking", "finding 2 blocking (cleared)", "finding 1 advisory", "assignment 5 needs reconciliation", "handoff 6 accepted"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the work is %q, want %q", got, want)
+	}
+	if !items[0].Needs || items[1].Needs {
+		t.Errorf("only the needs-you finding is marked: %+v", items[:2])
+	}
+	if !items[0].At.Equal(at.Add(2*time.Minute)) || !items[4].At.Equal(at.Add(4*time.Minute)) || !items[5].At.Equal(at.Add(5*time.Minute)) {
+		t.Errorf("the items lost the time they last changed: %+v", items)
+	}
+	if items[4].Worker != "worker-1@engineering" || items[5].From != "leader@coordination" || items[5].To != "leader@engineering" {
+		t.Errorf("the parties are wrong: %+v", items[4:])
+	}
+}
+
+func TestAJobHeaderSaysHowItsPullRequestChecksAndValidationStand(t *testing.T) {
+	for state, want := range map[string]store.PullRequest{
+		"not ready": {State: "OPEN", NotReady: true, Draft: true},
+		"draft":     {State: "OPEN", Draft: true},
+		"ready":     {State: "OPEN"},
+		"merged":    {State: "MERGED"},
+		"closed":    {State: "CLOSED"},
+	} {
+		if got := pullRequestWords(want); got != state {
+			t.Errorf("%+v reads %q, want %q", want, got, state)
+		}
+	}
+	checks := &store.ChecksObservation{Verdict: "waiting", Checks: []store.CheckState{{State: "passed"}, {State: "passed"}, {State: "pending"}, {State: "failed"}}}
+	if got, want := checksWords(checks), "waiting: 2 of 4 passed, 1 failed, 1 pending"; got != want {
+		t.Errorf("checks read %q, want %q", got, want)
+	}
+	if got := checksWords(nil); got != "not observed" {
+		t.Errorf("no observation reads %q", got)
+	}
+	for _, tt := range []struct {
+		work store.JobWork
+		want string
+	}{
+		{store.JobWork{}, "not started"},
+		{store.JobWork{Validating: true, Validated: true}, "validating"},
+		{store.JobWork{Validated: true, OpenBlocking: 2}, "accepted at 4f1c9a2, 2 blocking open"},
+	} {
+		if got := validationWords(tt.work, "4f1c9a2b0c"); got != tt.want {
+			t.Errorf("%+v reads %q, want %q", tt.work, got, tt.want)
+		}
 	}
 }

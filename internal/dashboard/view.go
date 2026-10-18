@@ -63,6 +63,10 @@ func (m model) footer() string {
 	switch {
 	case m.tab == tabAgents:
 		keys = "1/2/3 tab · ↑/↓ move · enter attach · q quit"
+	case m.tab == tabJobs && m.detail.open:
+		keys = m.detailFooter()
+	case m.tab == tabJobs:
+		keys = "1/2/3 tab · ↑/↓ move · enter open · q quit"
 	case m.tab == tabLog && m.log.open:
 		keys = "1/2/3 tab · ↑/↓ scroll · esc back · q quit"
 	case m.tab == tabLog && m.log.full:
@@ -97,6 +101,10 @@ func (m model) shell() string {
 	case tabAgents:
 		body = append(body, m.agentsBody()...)
 	case tabJobs:
+		if m.detail.open {
+			body = append(body, m.detailBody()...)
+			break
+		}
 		body = append(body, m.jobsBody()...)
 	case tabLog:
 		body = append(body, m.logBody()...)

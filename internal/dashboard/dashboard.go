@@ -112,6 +112,8 @@ type model struct {
 	jobCursor, jobOffset int
 	// log is the Log tab.
 	log logState
+	// detail is the job detail, open over the Jobs tab.
+	detail jobDetail
 	// read is false until the first answer, so the first frame does not claim
 	// the factory is stopped before the daemon has been asked.
 	read              bool
@@ -317,6 +319,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.factory.running {
 			// Nothing outlives the daemon, the log included.
 			m.log = logState{full: m.log.full, job: m.log.job, agent: m.log.agent, view: m.log.view + 1}
+			m = m.closeDetail()
 		}
 		m.cursor, m.jobCursor = 0, 0
 		for i, a := range m.factory.agents {
@@ -337,7 +340,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.round++
 		round := m.round
 		generation := m.generation
-		return m, tea.Batch(m.refreshLog(), tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} }))
+		m, detailCmd := m.refreshDetail()
+		return m, tea.Batch(m.refreshLog(), detailCmd, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} }))
 	case retryMsg:
 		if msg.generation != m.generation || msg.round != m.round {
 			return m, nil
@@ -353,6 +357,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return fresh, tea.Batch(tea.RequestWindowSize, tea.ClearScreen, cmd)
 	case logMsg:
 		return m.logPage(msg)
+	case jobMsg:
+		return m.jobRead(msg), nil
 	case entryMsg:
 		if m.tab != tabLog || msg.view != m.log.view || msg.id != m.log.want || m.log.open {
 			return m, nil
@@ -366,6 +372,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		key := msg.String()
+		if m.detail.open && m.usable() {
+			var cmd tea.Cmd
+			var handled bool
+			if m, cmd, handled = m.detailKey(key); handled {
+				return m, cmd
+			}
+		}
 		if m.tab == tabLog && m.factory.running && m.width >= MinColumns && m.height >= MinRows {
 			if m.log.open {
 				if key != "q" && key != "ctrl+c" && key != "1" && key != "2" && key != "3" {
@@ -377,6 +390,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch key {
 		case "enter":
+			if m.tab == tabJobs {
+				return m.openDetail()
+			}
 			return m, m.attach()
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -409,8 +425,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // child process (ADR 0015): Bubble Tea releases the terminal first and takes
 // it back when attach exits. Attach is unchanged and only observes.
 func (m model) attach() tea.Cmd {
-	agent := m.selected()
-	if m.tab != tabAgents || !m.read || !m.factory.running || agent == "" || m.width < MinColumns || m.height < MinRows {
+	if m.tab != tabAgents {
+		return nil
+	}
+	return m.attachTo(m.selected())
+}
+
+// attachTo is the hand-over to `asmai attach` for agent, which the Agents tab
+// and the job detail's assignments share.
+func (m model) attachTo(agent string) tea.Cmd {
+	if !m.usable() || agent == "" {
 		return nil
 	}
 	exe, err := os.Executable()
@@ -490,5 +514,5 @@ func (m model) scrolled() model {
 		*l.offset = min(max(*l.offset, *l.cursor-rows+1), *l.cursor)
 		*l.offset = max(min(*l.offset, l.n-rows), 0)
 	}
-	return m
+	return m.detailScrolled()
 }

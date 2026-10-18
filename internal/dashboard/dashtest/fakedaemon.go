@@ -135,6 +135,20 @@ func (f *FakeDaemon) SetLog(entries []daemon.LogEntry, bodies map[int64]string) 
 	})
 }
 
+// SetJobDetails sets the job details the job detail read answers with, by
+// job: the fake daemon orders nothing and derives nothing. A job with none
+// has no detail, as one that does not exist has none.
+func (f *FakeDaemon) SetJobDetails(details ...daemon.DashboardJobDetail) {
+	f.Handle(daemon.CommandDashboardJob, func(req daemon.Request) daemon.Response {
+		for _, d := range details {
+			if d.Job == req.Job {
+				return daemon.Response{JobDetail: &d}
+			}
+		}
+		return daemon.Response{Error: "job does not exist"}
+	})
+}
+
 func (f *FakeDaemon) serveSnapshot() {
 	f.Handle(daemon.CommandDashboardSnapshot, func(daemon.Request) daemon.Response {
 		f.mu.Lock()

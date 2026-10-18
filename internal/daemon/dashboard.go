@@ -33,10 +33,13 @@ const (
 	// CommandDashboardEntry reads one journal entry with the body of the
 	// message or decision it records.
 	CommandDashboardEntry = "dashboard.entry"
+	// CommandDashboardJob reads one job's detail: its header, findings,
+	// assignments and handoffs, each with the time it last changed.
+	CommandDashboardJob = "dashboard.job"
 )
 
 // DashboardCommands are the commands only the Dashboard sends.
-var DashboardCommands = []string{CommandDashboardSnapshot, CommandDashboardSubscribe, CommandDashboardLog, CommandDashboardEntry}
+var DashboardCommands = []string{CommandDashboardSnapshot, CommandDashboardSubscribe, CommandDashboardLog, CommandDashboardEntry, CommandDashboardJob}
 
 // DashboardChange is one tick of the change subscription.
 type DashboardChange struct {
@@ -623,4 +626,189 @@ func (d *daemon) dashboardEntry(id int64) (DashboardEntry, error) {
 		return DashboardEntry{}, fmt.Errorf("reading the body of journal entry %d: %w", id, err)
 	}
 	return DashboardEntry{LogEntry: d.logEntry(entries[0]), Body: body}, nil
+}
+
+// DashboardJobDetail is one job as the Dashboard's job detail shows it: the
+// header, and the job's work with the time each item last changed.
+type DashboardJobDetail struct {
+	Job   int64    `json:"job"`
+	Title string   `json:"title"`
+	Stage JobStage `json:"stage"`
+	// Branch and Head are the job branch and its tip, empty for a job with no
+	// repository.
+	Branch string `json:"branch,omitempty"`
+	Head   string `json:"head,omitempty"`
+	// PullRequest is the pull request's number, zero for none, and
+	// PullRequestState says where it is in words.
+	PullRequest      int    `json:"pull_request,omitempty"`
+	PullRequestState string `json:"pull_request_state,omitempty"`
+	// CI and Validation say in words how the checks on the pull request's
+	// head and Quality's validation stand.
+	CI         string `json:"ci"`
+	Validation string `json:"validation"`
+	// Work is the job's findings, needs-you first, then its assignments, then
+	// its handoffs, each oldest first. The Dashboard lists it in this order.
+	Work []JobItem `json:"work"`
+}
+
+// The kinds of item in a job's work.
+const (
+	ItemFinding    = "finding"
+	ItemAssignment = "assignment"
+	ItemHandoff    = "handoff"
+)
+
+// JobItem is one finding, assignment or handoff of a job.
+type JobItem struct {
+	Kind string `json:"kind"`
+	ID   int64  `json:"id"`
+	// Label says which sort of the kind it is: a finding's kind, or the state
+	// of an assignment or a handoff, in words.
+	Label string `json:"label"`
+	// Text is what the item says in full: a finding's text, or the outcome of
+	// an assignment or a handoff.
+	Text string `json:"text"`
+	// From and To are a handoff's sender and receiver; Worker is an
+	// assignment's worker, whom Enter attaches to.
+	From   string `json:"from,omitempty"`
+	To     string `json:"to,omitempty"`
+	Worker string `json:"worker,omitempty"`
+	// Criteria are an assignment's acceptance criteria, Dispatch the state of
+	// the dispatch that carried it, and Answer a handoff's answer.
+	Criteria []string `json:"criteria,omitempty"`
+	Dispatch string   `json:"dispatch,omitempty"`
+	Answer   string   `json:"answer,omitempty"`
+	// Needs marks a needs-you finding.
+	Needs bool `json:"needs,omitempty"`
+	// At is when the item last changed.
+	At time.Time `json:"at"`
+}
+
+// stateWords reads a stored state as words.
+func stateWords(s string) string { return strings.ReplaceAll(s, "_", " ") }
+
+// pullRequestWords says where a pull request is.
+func pullRequestWords(p store.PullRequest) string {
+	switch {
+	case p.State == "MERGED":
+		return "merged"
+	case p.State == "CLOSED":
+		return "closed"
+	case p.NotReady:
+		return "not ready"
+	case p.Draft:
+		return "draft"
+	default:
+		return "ready"
+	}
+}
+
+// checksWords says how the checks on a pull request's head stand.
+func checksWords(o *store.ChecksObservation) string {
+	if o == nil {
+		return "not observed"
+	}
+	var passed, failed, pending int
+	for _, c := range o.Checks {
+		switch c.State {
+		case "passed":
+			passed++
+		case "failed":
+			failed++
+		default:
+			pending++
+		}
+	}
+	words := fmt.Sprintf("%s: %d of %d passed", o.Verdict, passed, len(o.Checks))
+	if failed > 0 {
+		words += fmt.Sprintf(", %d failed", failed)
+	}
+	if pending > 0 {
+		words += fmt.Sprintf(", %d pending", pending)
+	}
+	return words
+}
+
+// validationWords says how Quality's validation of the job stands.
+func validationWords(w store.JobWork, head string) string {
+	short := head[:min(len(head), 7)]
+	var words string
+	switch {
+	case w.Validating:
+		words = "validating"
+	case w.Validated:
+		words = "accepted at " + short
+	default:
+		words = "not started"
+	}
+	if w.OpenBlocking > 0 {
+		words += fmt.Sprintf(", %d blocking open", w.OpenBlocking)
+	}
+	return words
+}
+
+// dashboardJob reads one job for the Dashboard's job detail. The stage, the
+// order of the work and the words are the daemon's; the Dashboard only shows
+// them.
+func (d *daemon) dashboardJob(number int64) (DashboardJobDetail, error) {
+	works, err := d.store.JobWorks()
+	if err != nil {
+		return DashboardJobDetail{}, fmt.Errorf("reading the jobs: %w", err)
+	}
+	i := slices.IndexFunc(works, func(w store.JobWork) bool { return w.Number == number })
+	if i < 0 {
+		return DashboardJobDetail{}, fmt.Errorf("job %d does not exist", number)
+	}
+	detail, err := d.store.JobDetail(number)
+	if err != nil {
+		return DashboardJobDetail{}, fmt.Errorf("reading job %d: %w", number, err)
+	}
+	job := deriveJob(works[i])
+	out := DashboardJobDetail{
+		Job: number, Title: job.Title, Stage: job.Stage, Branch: detail.Branch, Head: detail.Head,
+		PullRequest: job.PullRequest, CI: "no pull request", Validation: validationWords(works[i], detail.Head),
+	}
+	if detail.PullRequest != nil {
+		out.PullRequestState = pullRequestWords(*detail.PullRequest)
+		out.CI = checksWords(detail.Checks)
+	}
+	out.Work = jobItems(detail)
+	return out, nil
+}
+
+// jobItems lists a job's work: the findings, needs-you first because the
+// factory waits on the user for them and open before cleared within a kind,
+// then the assignments, then the handoffs.
+func jobItems(detail store.JobDetail) []JobItem {
+	items := []JobItem{}
+	rank := func(kind string) int {
+		return slices.Index([]string{store.FindingNeedsYou, store.FindingBlocking, store.FindingAdvisory}, kind)
+	}
+	findings := slices.Clone(detail.Findings)
+	cleared := func(f store.FindingWork) int {
+		if f.Cleared {
+			return 1
+		}
+		return 0
+	}
+	slices.SortStableFunc(findings, func(a, b store.FindingWork) int {
+		if c := rank(a.Kind) - rank(b.Kind); c != 0 {
+			return c
+		}
+		return cleared(a) - cleared(b)
+	})
+	for _, f := range findings {
+		label := f.Kind
+		if f.Cleared {
+			label += " (cleared)"
+		}
+		items = append(items, JobItem{Kind: ItemFinding, ID: f.ID, Label: label, Text: f.Text, Needs: f.Kind == store.FindingNeedsYou, At: f.At})
+	}
+	for _, a := range detail.Assignments {
+		items = append(items, JobItem{Kind: ItemAssignment, ID: a.ID, Label: stateWords(a.State), Text: a.Outcome, From: a.Owner, Worker: a.Worker, Criteria: a.Criteria, Dispatch: a.Dispatch, At: a.At})
+	}
+	for _, h := range detail.Handoffs {
+		items = append(items, JobItem{Kind: ItemHandoff, ID: h.ID, Label: stateWords(h.State), Text: h.Outcome, From: h.Sender, To: h.Receiver, Answer: h.Answer, At: h.At})
+	}
+	return items
 }

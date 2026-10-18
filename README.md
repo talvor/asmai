@@ -89,7 +89,7 @@ Every start then runs the checks that exist: this platform is certified (Linux o
 
 In the Dashboard's Jobs tab, an accepted needs-you finding keeps the job at Needs you until it finishes. Tracking the finding's resolution is a follow-up.
 
-Every command prints readable tables, or JSON with `--json`. `asmai attach --json` prints the agent's screen as it is now, and `asmai chat --json` Coordination's, after starting a stopped factory. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
+Every command prints readable tables, or JSON with `--json`, or [TOON](https://github.com/toon-format/spec) with `--toon`: the same data as the JSON, written in fewer tokens, which agents use. `--json` and `--toon` together are a usage error. Under either, a failure prints an object with an `error` key on standard output, with the same exit code. `asmai attach --json` or `--toon` prints the agent's screen as it is now, and `asmai chat --json` or `--toon` Coordination's, after starting a stopped factory. `asmai log --toon` prints each log record, a JSON line under `--json`, as a TOON document of its own, with an empty line between them. `asmai help` prints the commands. `asmai hook` is not for you: agent sessions' hooks run it to report their lifecycle events.
 
 ### The configuration file
 

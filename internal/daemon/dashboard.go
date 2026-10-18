@@ -751,22 +751,14 @@ func validationWords(w store.JobWork, head string) string {
 // order of the work and the words are the daemon's; the Dashboard only shows
 // them.
 func (d *daemon) dashboardJob(number int64) (DashboardJobDetail, error) {
-	works, err := d.store.JobWorks()
-	if err != nil {
-		return DashboardJobDetail{}, fmt.Errorf("reading the jobs: %w", err)
-	}
-	i := slices.IndexFunc(works, func(w store.JobWork) bool { return w.Number == number })
-	if i < 0 {
-		return DashboardJobDetail{}, fmt.Errorf("job %d does not exist", number)
-	}
-	detail, err := d.store.JobDetail(number)
+	work, detail, err := d.store.JobWorkDetail(number)
 	if err != nil {
 		return DashboardJobDetail{}, fmt.Errorf("reading job %d: %w", number, err)
 	}
-	job := deriveJob(works[i])
+	job := deriveJob(work)
 	out := DashboardJobDetail{
 		Job: number, Title: job.Title, Stage: job.Stage, Branch: detail.Branch, Head: detail.Head,
-		PullRequest: job.PullRequest, CI: "no pull request", Validation: validationWords(works[i], detail.Head),
+		PullRequest: job.PullRequest, CI: "no pull request", Validation: validationWords(work, detail.Head),
 	}
 	if detail.PullRequest != nil {
 		out.PullRequestState = pullRequestWords(*detail.PullRequest)

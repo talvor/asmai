@@ -263,3 +263,38 @@ func TestJobDetailAssignmentDispatchIsAddressedToItsWorker(t *testing.T) {
 		t.Errorf("the submitted assignment's worker dispatch is %+v", detail.Assignments)
 	}
 }
+
+func TestJobWorkDetailReturnsMatchingHeaderAndWork(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job, dispatch := pushedAndRecorded(t, s)
+	if _, _, err := s.ChecksObserved(ChecksObservation{Job: job, Number: 7, Head: tipCommit, Verdict: "green", Checks: []CheckState{{Name: "CI", State: "passed"}}}, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE job_branches SET tip = ? WHERE job = ?`, otherCommit, job); err != nil {
+		t.Fatal(err)
+	}
+	p := PullRequest{Job: job, Number: 8, URL: "https://github.com/talvor/asmai-fixture/pull/8", Title: "Updated greeting", Branch: "asmai/job-1-add-a-greeting", Head: otherCommit, State: "OPEN", Leader: owner, Dispatch: dispatch.ID}
+	if _, _, err := s.PullRequestRecorded(p, 1, p.URL, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	work, detail, err := s.JobWorkDetail(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.PullRequest == nil || work.Number != job || work.PullRequest != detail.PullRequest.Number || work.Title != detail.PullRequest.Title || detail.Head != otherCommit || !work.PRCurrent || detail.Checks != nil {
+		t.Errorf("the current job's stage inputs and detail disagree: %+v, %+v", work, detail)
+	}
+	if _, _, err := s.ChecksObserved(ChecksObservation{Job: job, Number: 8, Head: otherCommit, Verdict: "waiting"}, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	work, detail, err = s.JobWorkDetail(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work.PullRequest != 8 || detail.Checks == nil || detail.Checks.Number != 8 || detail.Checks.Head != detail.Head {
+		t.Errorf("the current pull request's checks and detail disagree: %+v, %+v", work, detail)
+	}
+	if _, _, err := s.JobWorkDetail(job + 1); err == nil {
+		t.Error("a nonexistent job returned stage inputs and detail")
+	}
+}

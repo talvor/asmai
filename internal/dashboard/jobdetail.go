@@ -173,7 +173,11 @@ type detailLayout struct {
 
 func (m model) detailLayout() detailLayout {
 	width := min(m.width, maxWidth)
-	area := max(m.height-chromeRows-detailHeaderRows, 1)
+	headerRows := detailHeaderRows
+	if m.detail.data != nil && m.detail.failure != "" {
+		headerRows++
+	}
+	area := max(m.height-chromeRows-headerRows, 1)
 	if m.width >= splitColumns {
 		listWidth := width * 11 / 20
 		return detailLayout{split: true, listRows: max(area-1, 1), itemRows: max(area-1, 1), listWidth: listWidth, itemWidth: max(width-listWidth-1, 0)}
@@ -283,6 +287,9 @@ func (m model) detailBody() []string {
 		return nil
 	}
 	rows := m.detailHeader()
+	if d.failure != "" {
+		rows = append(rows, pad(fmt.Sprintf(" Refresh failed; last updated %s: %s", d.readAt.Format("15:04:05"), d.failure), width))
+	}
 	rows = append(rows, "")
 	l := m.detailLayout()
 	list, item := m.workRows(l), m.itemRows(l)

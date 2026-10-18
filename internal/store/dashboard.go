@@ -123,6 +123,14 @@ func (s *Store) JobWorks() ([]JobWork, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
+	works, err := jobWorks(tx)
+	if err != nil {
+		return nil, err
+	}
+	return works, tx.Commit()
+}
+
+func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 	rows, err := tx.Query(`WITH latest_pr AS (
 			SELECT p.job, p.number, p.title, p.head FROM pull_requests p
 			JOIN (SELECT job, MAX(id) id FROM pull_requests GROUP BY job) last ON last.id = p.id
@@ -303,6 +311,37 @@ func (s *Store) JobDetail(job int64) (JobDetail, error) {
 		return JobDetail{}, err
 	}
 	defer tx.Rollback()
+	d, err := jobDetail(tx, job)
+	if err != nil {
+		return JobDetail{}, err
+	}
+	return d, tx.Commit()
+}
+
+// JobWorkDetail reads the job's stage inputs and detail in one snapshot.
+func (s *Store) JobWorkDetail(job int64) (JobWork, JobDetail, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return JobWork{}, JobDetail{}, err
+	}
+	defer tx.Rollback()
+	works, err := jobWorks(tx)
+	if err != nil {
+		return JobWork{}, JobDetail{}, err
+	}
+	for _, work := range works {
+		if work.Number == job {
+			detail, err := jobDetail(tx, job)
+			if err != nil {
+				return JobWork{}, JobDetail{}, err
+			}
+			return work, detail, tx.Commit()
+		}
+	}
+	return JobWork{}, JobDetail{}, fmt.Errorf("job %d does not exist", job)
+}
+
+func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	var d JobDetail
 	if _, err := jobFor(tx, job); err != nil {
 		return JobDetail{}, err
@@ -407,7 +446,7 @@ func (s *Store) JobDetail(job int64) (JobDetail, error) {
 	if err := hrows.Err(); err != nil {
 		return JobDetail{}, err
 	}
-	return d, tx.Commit()
+	return d, nil
 }
 
 // jobFor returns job, or an error saying it does not exist.

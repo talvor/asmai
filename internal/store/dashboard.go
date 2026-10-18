@@ -325,7 +325,9 @@ func (s *Store) JobDetail(job int64) (JobDetail, error) {
 		return JobDetail{}, err
 	}
 	if o, err := latestChecks(tx, job); err == nil {
-		d.Checks = &o
+		if d.PullRequest != nil && o.Number == d.PullRequest.Number && o.Head == d.PullRequest.Head && o.Head == d.Head {
+			d.Checks = &o
+		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return JobDetail{}, err
 	}
@@ -353,9 +355,14 @@ func (s *Store) JobDetail(job int64) (JobDetail, error) {
 
 	changes := "'" + strings.Join(assignmentChanges, "','") + "'"
 	arows, err := tx.Query(`SELECT a.id, a.owner, a.worker, a.outcome, a.criteria, a.state, a.read_only,
-			COALESCE((SELECT x.state FROM dispatches x JOIN messages m ON m.id = x.message WHERE m.assignment = a.id ORDER BY x.id DESC LIMIT 1), ''),
-			COALESCE((SELECT j.at FROM journal j WHERE j.kind IN (`+changes+`) AND json_extract(j.data, '$.assignment') = a.id ORDER BY j.id DESC LIMIT 1), a.created_at)
-		FROM assignments a WHERE a.job = ? ORDER BY a.id`, job)
+			COALESCE(x.state, ''),
+			MAX(a.created_at,
+				COALESCE((SELECT j.at FROM journal j WHERE j.kind IN (`+changes+`) AND json_extract(j.data, '$.assignment') = a.id ORDER BY j.id DESC LIMIT 1), a.created_at),
+				COALESCE(x.updated_at, a.created_at))
+		FROM assignments a
+		LEFT JOIN dispatches x ON x.id = (SELECT d.id FROM dispatches d JOIN messages m ON m.id = d.message
+			WHERE m.assignment = a.id AND m.recipient = a.worker AND d.agent = a.worker ORDER BY d.id DESC LIMIT 1)
+		WHERE a.job = ? ORDER BY a.id`, job)
 	if err != nil {
 		return JobDetail{}, err
 	}

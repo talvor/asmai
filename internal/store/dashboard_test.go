@@ -175,3 +175,91 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 		t.Error("the detail of a job that does not exist was read")
 	}
 }
+
+func TestJobDetailChecksFollowTheCurrentPullRequestAndHead(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job, dispatch := pushedAndRecorded(t, s)
+	green := []CheckState{{Name: "CI / test", State: "passed"}}
+	read := func() *ChecksObservation {
+		t.Helper()
+		detail, err := s.JobDetail(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return detail.Checks
+	}
+	if got := read(); got != nil {
+		t.Fatalf("an unobserved head has checks %+v", got)
+	}
+	if _, _, err := s.ChecksObserved(ChecksObservation{Job: job, Number: 7, Head: tipCommit, Verdict: "green", Checks: green}, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got == nil || got.Verdict != "green" {
+		t.Fatalf("the observed head has checks %+v", got)
+	}
+	if _, err := s.db.Exec(`UPDATE job_branches SET tip = ? WHERE job = ?`, otherCommit, job); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != nil {
+		t.Errorf("checks for the old branch head are %+v", got)
+	}
+	p := PullRequest{Job: job, Number: 7, URL: "https://github.com/talvor/asmai-fixture/pull/7", Title: "Add a greeting", Branch: "asmai/job-1-add-a-greeting", Head: otherCommit, State: "OPEN", Leader: owner, Dispatch: dispatch.ID}
+	if _, _, err := s.PullRequestRecorded(p, 1, p.URL, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != nil {
+		t.Errorf("checks for the pull request's old head are %+v", got)
+	}
+	if _, _, err := s.ChecksObserved(ChecksObservation{Job: job, Number: 7, Head: otherCommit, Verdict: "waiting"}, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got == nil || got.Head != otherCommit || got.Verdict != "waiting" {
+		t.Errorf("the new head has checks %+v", got)
+	}
+	p.Number, p.URL = 8, "https://github.com/talvor/asmai-fixture/pull/8"
+	if _, _, err := s.PullRequestRecorded(p, 1, p.URL, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != nil {
+		t.Errorf("checks for another pull request are %+v", got)
+	}
+	if _, _, err := s.ChecksObserved(ChecksObservation{Job: job, Number: 8, Head: otherCommit, Verdict: "green", Checks: green}, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got == nil || got.Number != 8 || got.Verdict != "green" {
+		t.Errorf("the current pull request has checks %+v", got)
+	}
+}
+
+func TestJobDetailAssignmentAgeFollowsItsWorkerDispatch(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	a, dispatch := newAssignment(t, s, job)
+	later := assignmentsAt.Add(time.Minute)
+	if err := s.ChangeDispatch(dispatch.ID, 1, DispatchCreated, DispatchWorking, "", later); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := s.JobDetail(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Assignments) != 1 || detail.Assignments[0].ID != a.ID || detail.Assignments[0].Dispatch != DispatchWorking || !detail.Assignments[0].At.Equal(later) {
+		t.Errorf("the working assignment is %+v", detail.Assignments)
+	}
+}
+
+func TestJobDetailAssignmentDispatchIsAddressedToItsWorker(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	a, dispatch := newValidation(t, s, job)
+	if _, _, err := s.ReportSubmitted(validationOf(a, dispatch, tipCommit, ValidationInput{Findings: []FindingInput{}}), assignmentsAt.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := s.JobDetail(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Assignments) != 1 || detail.Assignments[0].ID != a.ID || detail.Assignments[0].Dispatch != DispatchWorking {
+		t.Errorf("the submitted assignment's worker dispatch is %+v", detail.Assignments)
+	}
+}

@@ -113,7 +113,12 @@ type JobWork struct {
 // JobWorks returns what the records say of each job, in job order. It only
 // reads.
 func (s *Store) JobWorks() ([]JobWork, error) {
-	rows, err := s.db.Query(`WITH latest_pr AS (
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`WITH latest_pr AS (
 			SELECT p.job, p.number, p.title, p.head FROM pull_requests p
 			JOIN (SELECT job, MAX(id) id FROM pull_requests GROUP BY job) last ON last.id = p.id
 		), assignment_state AS (
@@ -160,7 +165,7 @@ func (s *Store) JobWorks() ([]JobWork, error) {
 		return nil, err
 	}
 	rows.Close()
-	counts, err := s.db.Query(`SELECT job, state, count(*) FROM assignments GROUP BY job, state`)
+	counts, err := tx.Query(`SELECT job, state, count(*) FROM assignments GROUP BY job, state`)
 	if err != nil {
 		return nil, err
 	}

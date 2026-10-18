@@ -239,10 +239,6 @@ func (m model) detailKey(key string) (model, tea.Cmd, bool) {
 		return move(-1), nil, true
 	case "down", "j":
 		return move(1), nil, true
-	case "home", "g":
-		return move(-n), nil, true
-	case "end", "G":
-		return move(n), nil, true
 	case "pgup":
 		d.scroll -= m.detailLayout().itemRows
 		return m.detailScrolled(), nil, true
@@ -441,12 +437,39 @@ func (m model) itemLines() []string {
 	}
 	width := max(m.detailLayout().itemWidth-2, 1)
 	meta := []string{item.Label}
+	if !item.CreatedAt.IsZero() {
+		meta = append(meta, "created "+item.CreatedAt.Format(time.RFC3339Nano))
+	}
 	var sections [][2]string
 	switch item.Kind {
 	case daemon.ItemFinding:
+		if item.Assignment != 0 {
+			meta = append(meta, fmt.Sprintf("assignment %d", item.Assignment))
+		}
+		if item.Report != 0 {
+			meta = append(meta, fmt.Sprintf("report %d", item.Report))
+		}
+		if item.Commit != "" {
+			meta = append(meta, "commit "+item.Commit)
+		}
+		if item.ClearedBy != 0 {
+			meta = append(meta, fmt.Sprintf("cleared by report %d", item.ClearedBy))
+		}
+		if !item.ClearedAt.IsZero() {
+			meta = append(meta, "cleared "+item.ClearedAt.Format(time.RFC3339Nano))
+		}
 		sections = append(sections, [2]string{"Says", item.Text})
 	case daemon.ItemAssignment:
-		meta = append(meta, "worker "+item.Worker, "owner "+item.From)
+		meta = append(meta, "worker "+item.Worker, "owner "+item.From, fmt.Sprintf("read-only %t", item.ReadOnly))
+		if item.Commit != "" {
+			meta = append(meta, "commit "+item.Commit)
+		}
+		if item.Skill != "" {
+			meta = append(meta, "skill "+item.Skill)
+		}
+		if len(item.Skills) > 0 {
+			sections = append(sections, [2]string{"Skills", "- " + strings.Join(item.Skills, "\n- ")})
+		}
 		if item.Dispatch != "" {
 			meta = append(meta, "dispatch "+item.Dispatch)
 		}

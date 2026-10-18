@@ -46,6 +46,9 @@ func TestJobWorksCountAssignmentsByStateAndNamePullRequestAndTitle(t *testing.T)
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	job := jobWithBranch(t, s)
 	a, _ := newAssignment(t, s, job)
+	if _, err := s.db.Exec(`UPDATE assignments SET skill = ?, skills = ? WHERE id = ?`, "review", `["review","check"]`, a.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	works, err := s.JobWorks()
 	if err != nil {
@@ -156,6 +159,9 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := newAssignment(t, s, job)
+	if _, err := s.db.Exec(`UPDATE assignments SET skill = ?, skills = ? WHERE id = ?`, "review", `["review","check"]`, a.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	_, got, err := s.JobWorkDetail(job)
 	if err != nil {
@@ -166,20 +172,33 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 	}
 	if len(got.Handoffs) != 1 || got.Handoffs[0].ID != sent.ID || !got.Handoffs[0].At.Equal(answered) {
 		t.Errorf("the handoffs are %+v, want the one last changed when answered", got.Handoffs)
-	} else if actual := got.Handoffs[0]; actual.Decisions != h.Decisions || actual.Evidence != h.Evidence || actual.Constraints != h.Constraints || actual.Permissions != h.Permissions || actual.Head != h.Head || !slices.Equal(actual.Criteria, h.Criteria) {
+	} else if actual := got.Handoffs[0]; actual.Decisions != h.Decisions || actual.Evidence != h.Evidence || actual.Constraints != h.Constraints || actual.Permissions != h.Permissions || actual.Head != h.Head || !slices.Equal(actual.Criteria, h.Criteria) || !actual.CreatedAt.Equal(assignmentsAt.Add(-time.Hour)) {
 		t.Errorf("the handoff lost its stored record: %+v", actual)
 	}
 	if len(got.Findings) != 2 || !got.Findings[0].At.Equal(later) || got.Findings[1].Kind != FindingNeedsYou {
 		t.Errorf("the findings are %+v, want both recorded when the validation was accepted", got.Findings)
+	} else if f := got.Findings[0]; f.Assignment != v.ID || f.Report == 0 || f.Commit != tipCommit || !f.CreatedAt.Equal(later) || f.ClearedBy != 0 || !f.ClearedAt.IsZero() {
+		t.Errorf("the finding lost its stored record: %+v", f)
 	}
 	if len(got.Assignments) != 2 {
 		t.Fatalf("the assignments are %+v, want the validation and the new one", got.Assignments)
 	}
-	if v := got.Assignments[0]; v.ID != 1 || v.State != AssignmentAccepted || !v.At.Equal(later) || !v.ReadOnly {
+	if v := got.Assignments[0]; v.ID != 1 || v.State != AssignmentAccepted || !v.At.Equal(later) || !v.ReadOnly || v.Commit != tipCommit || !v.CreatedAt.Equal(assignmentsAt) {
 		t.Errorf("the validation is %+v, want it accepted when its result was", v)
 	}
-	if n := got.Assignments[1]; n.ID != a.ID || n.State != AssignmentActive || !n.At.Equal(assignmentsAt) || n.Worker != a.Worker || n.Dispatch != DispatchCreated {
+	if n := got.Assignments[1]; n.ID != a.ID || n.State != AssignmentActive || !n.At.Equal(assignmentsAt) || n.Worker != a.Worker || n.Dispatch != DispatchCreated || n.ReadOnly || n.Commit != "" || n.Skill != "review" || !slices.Equal(n.Skills, []string{"review", "check"}) || !n.CreatedAt.Equal(assignmentsAt) {
 		t.Errorf("the new assignment is %+v, want it active since it was made, with its dispatch created", n)
+	}
+	cleared := later.Add(time.Minute)
+	if _, err := s.db.Exec(`UPDATE findings SET cleared_by = ?, cleared_at = ? WHERE id = ?`, got.Findings[0].Report, timestamp(cleared), got.Findings[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	_, updated, err := s.JobWorkDetail(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := updated.Findings[0]; !f.Cleared || f.ClearedBy != got.Findings[0].Report || !f.ClearedAt.Equal(cleared) || !f.At.Equal(cleared) {
+		t.Errorf("the cleared finding lost its clearing record: %+v", f)
 	}
 	if _, _, err := s.JobWorkDetail(job + 1); err == nil {
 		t.Error("the detail of a job that does not exist was read")

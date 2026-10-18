@@ -23,11 +23,11 @@ func jobDetailAt(now time.Time) daemon.DashboardJobDetail {
 		CI: "waiting: 3 of 5 passed, 2 pending", Validation: "accepted at 4f1c9a2, 1 blocking open",
 		Work: []daemon.JobItem{
 			{Kind: daemon.ItemFinding, ID: 3, Label: "needs-you", Needs: true, Text: "The change lets the dashboard's command set answer an agent's call without a credential, which ADR 0012 forbids.\nDecide whether the exception is wanted.", At: ago(9 * time.Minute)},
-			{Kind: daemon.ItemFinding, ID: 5, Label: "blocking", Text: "The journal order test is flaky on macOS", At: ago(9 * time.Minute)},
+			{Kind: daemon.ItemFinding, ID: 5, Label: "blocking", Text: "The journal order test is flaky on macOS", Commit: "older-head", Assignment: 31, Report: 8, At: ago(9 * time.Minute)},
 			{Kind: daemon.ItemFinding, ID: 4, Label: "advisory", Text: "No doc line for the new read", At: ago(9 * time.Minute)},
-			{Kind: daemon.ItemAssignment, ID: 31, Label: "accepted", Text: "Add the cursor read behind the dashboard's command set", From: "leader@engineering", Worker: "worker-3@engineering", Criteria: []string{"tests pass", "no CLI exposure"}, Dispatch: "stopped", At: ago(2 * time.Hour)},
+			{Kind: daemon.ItemAssignment, ID: 31, Label: "accepted", Text: "Add the cursor read behind the dashboard's command set", From: "leader@engineering", Worker: "worker-3@engineering", Criteria: []string{"tests pass", "no CLI exposure"}, Skill: "cursor", Skills: []string{"cursor", "test"}, Dispatch: "stopped", At: ago(2 * time.Hour)},
 			{Kind: daemon.ItemAssignment, ID: 32, Label: "active", Text: "Add --after to the journal read", From: "leader@engineering", Worker: "worker-3@engineering", Criteria: []string{"filters by job, agent and kind", "pages in both directions without reading an entry twice"}, Dispatch: "working", At: ago(14 * time.Minute)},
-			{Kind: daemon.ItemAssignment, ID: 33, Label: "active", Text: "Validate 4f1c9a2 against the mandate and the repository's instructions", From: "leader@quality", Worker: "worker-2@quality", Criteria: []string{"blocking findings reported"}, Dispatch: "delivered", At: ago(4 * time.Minute)},
+			{Kind: daemon.ItemAssignment, ID: 33, Label: "active", Text: "Validate 4f1c9a2 against the mandate and the repository's instructions", From: "leader@quality", Worker: "worker-2@quality", Criteria: []string{"blocking findings reported"}, ReadOnly: true, Commit: "4f1c9a2b7d0e", Dispatch: "delivered", At: ago(4 * time.Minute)},
 			{Kind: daemon.ItemHandoff, ID: 7, Label: "accepted", Text: "Add a cursor read to the journal for the dashboard", From: "leader@coordination", To: "leader@engineering", Decisions: "Use the journal", Evidence: "The log needs a cursor", Constraints: "Keep reads bounded", Permissions: "Read the repository", Criteria: []string{"No repeated entries"}, Answer: "Accepted", At: ago(3 * time.Hour)},
 			{Kind: daemon.ItemHandoff, ID: 9, Label: "accepted", Text: "Validate the job branch at 4f1c9a2", From: "leader@engineering", To: "leader@quality", Head: "4f1c9a2b7d0e", At: ago(26 * time.Minute)},
 		},
@@ -178,11 +178,13 @@ func TestDashboardJobDetailMovesThroughTheWorkAndShowsEachItemInFull(t *testing.
 		keys string
 		want []string
 	}{
-		{"jjj", []string{"Assignment 31", "worker worker-3@engineering", "owner leader@engineering", "Acceptance:", "- no CLI exposure"}},
+		{"j", []string{"Finding 5", "commit older-head", "assignment 31", "report 8"}},
+		{"jj", []string{"Assignment 31", "worker worker-3@engineering", "owner leader@engineering", "read-only false", "skill cursor", "Skills:", "Acceptance:", "- no CLI exposure"}},
 		{"j", []string{"Assignment 32", "dispatch working", "enter attach"}},
-		{"jj", []string{"Handoff 7", "leader@coordination → leader@engineering", "Request:", "Decisions:", "Use the journal"}},
-		{"G", []string{"Handoff 9", "head 4f1c9a2b7d0e"}},
-		{"g", []string{"Finding 3"}},
+		{"j", []string{"Assignment 33", "read-only true", "commit 4f1c9a2b7d0e"}},
+		{"j", []string{"Handoff 7", "leader@coordination → leader@engineering", "Request:", "Decisions:", "Use the journal"}},
+		{"j", []string{"Handoff 9", "head 4f1c9a2b7d0e"}},
+		{"kkkkkkk", []string{"Finding 3"}},
 	} {
 		d.Send(step.keys)
 		screen := d.WaitForText(step.want[0])

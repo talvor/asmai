@@ -262,26 +262,28 @@ type JobDetail struct {
 // FindingWork is a finding with when it was recorded or, for a blocking
 // finding, cleared.
 type FindingWork struct {
-	ID      int64
-	Kind    string
-	Text    string
-	Commit  string
-	Cleared bool
-	At      time.Time
+	ID, Assignment, Report, ClearedBy int64
+	Kind, Text, Commit                string
+	Cleared                           bool
+	CreatedAt, ClearedAt, At          time.Time
 }
 
 // AssignmentWork is an assignment with when it last changed, and the state of
 // the latest dispatch that carried it to its worker, empty when it has none.
 type AssignmentWork struct {
-	ID       int64
-	Owner    string
-	Worker   string
-	Outcome  string
-	Criteria []string
-	State    string
-	ReadOnly bool
-	Dispatch string
-	At       time.Time
+	ID        int64
+	Owner     string
+	Worker    string
+	Outcome   string
+	Criteria  []string
+	State     string
+	ReadOnly  bool
+	Commit    string
+	Skill     string
+	Skills    []string
+	Dispatch  string
+	CreatedAt time.Time
+	At        time.Time
 }
 
 // HandoffWork is a handoff with when it was sent or answered.
@@ -298,6 +300,7 @@ type HandoffWork struct {
 	State       string
 	Answer      string
 	Head        string
+	CreatedAt   time.Time
 	At          time.Time
 }
 
@@ -388,19 +391,28 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 		return JobDetail{}, err
 	}
 
-	rows, err := tx.Query(`SELECT id, kind, text, commit_id, cleared_by IS NOT NULL, COALESCE(cleared_at, created_at) FROM findings WHERE job = ? ORDER BY id`, job)
+	rows, err := tx.Query(`SELECT id, assignment, report, kind, text, commit_id, COALESCE(cleared_by, 0), cleared_at, created_at FROM findings WHERE job = ? ORDER BY id`, job)
 	if err != nil {
 		return JobDetail{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var f FindingWork
-		var at string
-		if err := rows.Scan(&f.ID, &f.Kind, &f.Text, &f.Commit, &f.Cleared, &at); err != nil {
+		var cleared sql.NullString
+		var created string
+		if err := rows.Scan(&f.ID, &f.Assignment, &f.Report, &f.Kind, &f.Text, &f.Commit, &f.ClearedBy, &cleared, &created); err != nil {
 			return JobDetail{}, err
 		}
-		if f.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
+		f.Cleared = f.ClearedBy != 0
+		if f.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
 			return JobDetail{}, err
+		}
+		f.At = f.CreatedAt
+		if cleared.Valid {
+			if f.ClearedAt, err = time.Parse(time.RFC3339Nano, cleared.String); err != nil {
+				return JobDetail{}, err
+			}
+			f.At = f.ClearedAt
 		}
 		d.Findings = append(d.Findings, f)
 	}
@@ -413,10 +425,11 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	if err != nil {
 		return JobDetail{}, err
 	}
-	arows, err := tx.Query(`SELECT a.id, a.owner, a.worker, a.outcome, a.criteria, a.state, a.read_only,
+	arows, err := tx.Query(`SELECT a.id, a.owner, a.worker, a.outcome, a.criteria, a.state, a.read_only, a.skill, a.skills, COALESCE(w.base, ''),
 			COALESCE(x.state, ''), a.created_at,
 			COALESCE(x.updated_at, a.created_at)
 		FROM assignments a
+		LEFT JOIN workspaces w ON w.assignment = a.id
 		LEFT JOIN dispatches x ON x.id = (SELECT d.id FROM dispatches d JOIN messages m ON m.id = d.message
 			WHERE m.assignment = a.id AND m.recipient = a.worker AND d.agent = a.worker ORDER BY d.id DESC LIMIT 1)
 		WHERE a.job = ? ORDER BY a.id`, job)
@@ -426,11 +439,20 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 	defer arows.Close()
 	for arows.Next() {
 		var a AssignmentWork
-		var criteria, created, dispatched string
-		if err := arows.Scan(&a.ID, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &a.ReadOnly, &a.Dispatch, &created, &dispatched); err != nil {
+		var criteria, skills, base, created, dispatched string
+		if err := arows.Scan(&a.ID, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &a.ReadOnly, &a.Skill, &skills, &base, &a.Dispatch, &created, &dispatched); err != nil {
 			return JobDetail{}, err
 		}
 		if err := json.Unmarshal([]byte(criteria), &a.Criteria); err != nil {
+			return JobDetail{}, err
+		}
+		if err := json.Unmarshal([]byte(skills), &a.Skills); err != nil {
+			return JobDetail{}, err
+		}
+		if a.ReadOnly {
+			a.Commit = base
+		}
+		if a.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
 			return JobDetail{}, err
 		}
 		stamps := []string{created, dispatched}
@@ -463,6 +485,9 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 		var h HandoffWork
 		var criteria, at string
 		if err := hrows.Scan(&h.ID, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head, &at); err != nil {
+			return JobDetail{}, err
+		}
+		if h.CreatedAt, err = time.Parse(time.RFC3339Nano, at); err != nil {
 			return JobDetail{}, err
 		}
 		if err := json.Unmarshal([]byte(criteria), &h.Criteria); err != nil {

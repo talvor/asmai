@@ -80,11 +80,12 @@ func TestJobDetailKeepsLateSuccessfulReadsAfterNewerFailures(t *testing.T) {
 
 func TestSelectedHandoffShowsItsStoredRecord(t *testing.T) {
 	m := newModel("", Options{Columns: 160, Rows: 40})
+	created := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 	item := daemon.JobItem{
 		Kind: daemon.ItemHandoff, ID: 7, Label: "accepted", Text: "Build the feature",
 		From: "leader@coordination", To: "leader@engineering", Head: "1111111111111111111111111111111111111111",
 		Decisions: "Use the fixture", Evidence: "The user asked for it", Constraints: "Stay on the branch",
-		Permissions: "Read the repository", Criteria: []string{"tests pass", "no side effects"}, Answer: "Accepted",
+		Permissions: "Read the repository", Criteria: []string{"tests pass", "no side effects"}, Answer: "Accepted", CreatedAt: created,
 	}
 	m.detail = jobDetail{open: true, data: &daemon.DashboardJobDetail{Work: []daemon.JobItem{item}}, readAt: time.Now()}
 	lines := strings.Join(m.itemLines(), "\n")
@@ -92,10 +93,35 @@ func TestSelectedHandoffShowsItsStoredRecord(t *testing.T) {
 		"leader@coordination", "leader@engineering", "1111111111111111111111111111111111111111",
 		"Request:", "Build the feature", "Decisions:", "Use the fixture", "Evidence:", "The user asked for it",
 		"Constraints:", "Stay on the branch", "Permissions:", "Read the repository", "Acceptance:",
-		"- tests pass", "- no side effects", "Answer:", "Accepted",
+		"- tests pass", "- no side effects", "Answer:", "Accepted", "created 2026-10-08T09:00:00Z",
 	} {
 		if !strings.Contains(lines, want) {
 			t.Errorf("the selected handoff omitted %q:\n%s", want, lines)
+		}
+	}
+}
+
+func TestSelectedFindingAndAssignmentShowStoredFields(t *testing.T) {
+	m := newModel("", Options{Columns: 160, Rows: 40})
+	created := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	cleared := created.Add(time.Hour)
+	m.detail = jobDetail{open: true, data: &daemon.DashboardJobDetail{Work: []daemon.JobItem{
+		{Kind: daemon.ItemFinding, ID: 3, Label: "blocking (cleared)", Text: "The check failed", Assignment: 7, Report: 8, Commit: "finding-head", ClearedBy: 9, CreatedAt: created, ClearedAt: cleared, At: cleared},
+		{Kind: daemon.ItemAssignment, ID: 7, Label: "accepted", Text: "Validate the job", From: "leader@quality", Worker: "worker-1@quality", ReadOnly: true, Commit: "validation-head", Skill: "review", Skills: []string{"review", "check"}, CreatedAt: created, At: created},
+	}}, readAt: cleared}
+	for _, item := range []struct {
+		cursor int
+		want   []string
+	}{
+		{0, []string{"blocking (cleared)", "assignment 7", "report 8", "commit finding-head", "cleared by report 9", "created 2026-10-08T09:00:00Z", "cleared 2026-10-08T10:00:00Z", "The check failed"}},
+		{1, []string{"accepted", "owner leader@quality", "worker worker-1@quality", "read-only true", "commit validation-head", "skill review", "Skills:", "- review", "- check", "Validate the job"}},
+	} {
+		m.detail.cursor = item.cursor
+		lines := strings.Join(m.itemLines(), "\n")
+		for _, want := range item.want {
+			if !strings.Contains(lines, want) {
+				t.Errorf("the selected item %d omitted %q:\n%s", item.cursor, want, lines)
+			}
 		}
 	}
 }

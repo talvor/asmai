@@ -446,13 +446,13 @@ func TestAJobsWorkListsNeedsYouFindingsFirst(t *testing.T) {
 	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 	detail := store.JobDetail{
 		Findings: []store.FindingWork{
-			{ID: 1, Kind: store.FindingAdvisory, Text: "no doc line", At: at},
-			{ID: 2, Kind: store.FindingBlocking, Text: "flaky", Cleared: true, At: at.Add(time.Minute)},
+			{ID: 1, Assignment: 11, Report: 12, Kind: store.FindingAdvisory, Text: "no doc line", Commit: "old-head", CreatedAt: at, At: at},
+			{ID: 2, Kind: store.FindingBlocking, Text: "flaky", Cleared: true, ClearedBy: 13, ClearedAt: at.Add(time.Minute), At: at.Add(time.Minute)},
 			{ID: 3, Kind: store.FindingNeedsYou, Text: "widens ADR 0012", At: at.Add(2 * time.Minute)},
 			{ID: 4, Kind: store.FindingBlocking, Text: "wrong order", At: at.Add(3 * time.Minute)},
 		},
-		Assignments: []store.AssignmentWork{{ID: 5, Worker: "worker-1@engineering", Owner: "leader@engineering", State: store.AssignmentNeedsReconciliation, Outcome: "Add it", Dispatch: store.DispatchUnknown, At: at.Add(4 * time.Minute)}},
-		Handoffs:    []store.HandoffWork{{ID: 6, Sender: "leader@coordination", Receiver: "leader@engineering", State: store.HandoffAccepted, Outcome: "Add a cursor read", Decisions: "Use the journal", Evidence: "The log needs a cursor", Constraints: "Read only", Permissions: "Read the repository", Criteria: []string{"No repeated entries"}, Head: "abc123", Answer: "Accepted", At: at.Add(5 * time.Minute)}},
+		Assignments: []store.AssignmentWork{{ID: 5, Worker: "worker-1@engineering", Owner: "leader@engineering", State: store.AssignmentNeedsReconciliation, Outcome: "Add it", ReadOnly: true, Commit: "validation-head", Skill: "review", Skills: []string{"review", "check"}, Dispatch: store.DispatchUnknown, CreatedAt: at, At: at.Add(4 * time.Minute)}},
+		Handoffs:    []store.HandoffWork{{ID: 6, Sender: "leader@coordination", Receiver: "leader@engineering", State: store.HandoffAccepted, Outcome: "Add a cursor read", Decisions: "Use the journal", Evidence: "The log needs a cursor", Constraints: "Read only", Permissions: "Read the repository", Criteria: []string{"No repeated entries"}, Head: "abc123", Answer: "Accepted", CreatedAt: at, At: at.Add(5 * time.Minute)}},
 	}
 	items := jobItems(detail, false)
 	var got []string
@@ -472,7 +472,16 @@ func TestAJobsWorkListsNeedsYouFindingsFirst(t *testing.T) {
 	if items[4].Worker != "worker-1@engineering" || items[5].From != "leader@coordination" || items[5].To != "leader@engineering" {
 		t.Errorf("the parties are wrong: %+v", items[4:])
 	}
-	if h := items[5]; h.Decisions != "Use the journal" || h.Evidence != "The log needs a cursor" || h.Constraints != "Read only" || h.Permissions != "Read the repository" || h.Head != "abc123" || h.Answer != "Accepted" || !slices.Equal(h.Criteria, []string{"No repeated entries"}) {
+	if f := items[1]; f.Assignment != 11 || f.Report != 12 || f.Commit != "old-head" || !f.CreatedAt.Equal(at) {
+		t.Errorf("the finding lost its stored record: %+v", f)
+	}
+	if f := items[2]; f.ClearedBy != 13 || !f.ClearedAt.Equal(at.Add(time.Minute)) {
+		t.Errorf("the cleared finding lost its clearing record: %+v", f)
+	}
+	if a := items[4]; !a.ReadOnly || a.Commit != "validation-head" || a.Skill != "review" || !slices.Equal(a.Skills, []string{"review", "check"}) || !a.CreatedAt.Equal(at) {
+		t.Errorf("the assignment lost its stored record: %+v", a)
+	}
+	if h := items[5]; h.Decisions != "Use the journal" || h.Evidence != "The log needs a cursor" || h.Constraints != "Read only" || h.Permissions != "Read the repository" || h.Head != "abc123" || h.Answer != "Accepted" || !slices.Equal(h.Criteria, []string{"No repeated entries"}) || !h.CreatedAt.Equal(at) {
 		t.Errorf("the handoff lost its stored record: %+v", h)
 	}
 	if delivered := jobItems(detail, true); delivered[0].Needs || delivered[0].Label != store.FindingNeedsYou {

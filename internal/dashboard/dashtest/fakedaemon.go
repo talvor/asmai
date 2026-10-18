@@ -13,6 +13,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"sync"
 	"testing"
 
@@ -59,6 +61,7 @@ func NewFakeDaemon(t *testing.T) *FakeDaemon {
 	f.SetAgents()
 	f.SetJobs()
 	f.SetWaiting()
+	f.SetLog(nil, nil)
 	f.Start()
 	t.Cleanup(f.Stop)
 	return f
@@ -89,6 +92,47 @@ func (f *FakeDaemon) SetWaiting(items ...daemon.WaitingItem) {
 	f.snapshot.Waiting = append([]daemon.WaitingItem{}, items...)
 	f.mu.Unlock()
 	f.serveSnapshot()
+}
+
+// SetLog sets the journal the log read pages over, oldest first, and the
+// bodies an entry read returns by journal ID. The fake daemon filters and
+// pages as the real one does but summarises nothing.
+func (f *FakeDaemon) SetLog(entries []daemon.LogEntry, bodies map[int64]string) {
+	f.Handle(daemon.CommandDashboardLog, func(req daemon.Request) daemon.Response {
+		q := daemon.LogQuery{}
+		if req.Log != nil {
+			q = *req.Log
+		}
+		var match []daemon.LogEntry
+		for _, e := range entries {
+			if (len(q.Kinds) == 0 || slices.Contains(q.Kinds, e.Kind)) && (q.Job == 0 || e.Job == q.Job) && (q.Agent == "" || e.From == q.Agent || e.To == q.Agent) {
+				match = append(match, e)
+			}
+		}
+		limit := q.Limit
+		if limit <= 0 {
+			limit = 300
+		}
+		lo, hi := max(len(match)-limit, 0), len(match)
+		switch {
+		case q.After > 0:
+			lo = sort.Search(len(match), func(i int) bool { return match[i].ID > q.After })
+			hi = min(lo+limit, len(match))
+		case q.Before > 0:
+			hi = sort.Search(len(match), func(i int) bool { return match[i].ID >= q.Before })
+			lo = max(hi-limit, 0)
+		}
+		page := daemon.DashboardLog{Entries: slices.Clone(match[lo:hi]), Older: lo > 0, Newer: hi < len(match)}
+		return daemon.Response{Log: &page}
+	})
+	f.Handle(daemon.CommandDashboardEntry, func(req daemon.Request) daemon.Response {
+		for _, e := range entries {
+			if e.ID == req.Entry {
+				return daemon.Response{LogEntry: &daemon.DashboardEntry{LogEntry: e, Body: bodies[e.ID], Data: json.RawMessage(`{}`)}}
+			}
+		}
+		return daemon.Response{Error: "journal entry does not exist"}
+	})
 }
 
 func (f *FakeDaemon) serveSnapshot() {

@@ -1,0 +1,40 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ TIME     FROM                     → TO                       SUMMARY (agent traffic)
+ 09:02:00 leader@coordination      → leader@engineering       handoff: Add the log tab to the dashb…
+ 09:05:00 leader@engineering       → worker-3@engineering     assignment 21: Read the journal with …
+ 09:07:00 worker-3@engineering     → leader@engineering       blocked on assignment 21: the store h…
+ 09:08:00 leader@engineering       → worker-3@engineering     assignment 22: Read the journal with …
+ 09:09:00 worker-3@engineering     → leader@engineering       result of assignment 22
+ 09:10:00 leader@engineering       → worker-3@engineering     rejected assignment 22: the cursor sk…
+ 09:11:00 worker-3@engineering     → leader@engineering       result of assignment 22
+ 09:12:00 leader@engineering       → worker-3@engineering     accepted assignment 22: both directio…
+ 09:13:00 leader@engineering       → reviewer-12@quality-ass… handoff: Validate the log read at the…
+ 09:14:00 reviewer-12@quality-ass… → worker-5@quality-assura… assignment 23: Validate the log read
+ 09:15:00 worker-5@quality-assura… → reviewer-12@quality-ass… result of assignment 23
+ 09:16:00 reviewer-12@quality-ass… → worker-5@quality-assura… accepted assignment 23: no blocking f…
+ 09:17:00 leader@coordination      → leader@engineering       handoff: Fix the stopped message wrap…
+ 09:18:00 leader@engineering       → worker-3@engineering     assignment 24: Wrap the stopped messa…
+ 09:19:00 worker-3@engineering     → leader@engineering       blocked on assignment 24: the fixture…
+
+
+
+
+
+
+
+
+
+
+ 1/2/3 tab · ↑/↓ move · enter open · t journal · f filter · q quit
+--- attributes
+1 1-100: reverse
+2 2-11: faint
+2 13-20: faint
+2 22-28: reverse
+4 1-14: faint
+4 36-39: faint
+4 63-85: faint
+19 1-100: reverse
+30 1-100: reverse

@@ -181,6 +181,10 @@ type Request struct {
 	// Evidence what it rests on.
 	Choice    string `json:"choice,omitempty"`
 	Rationale string `json:"rationale,omitempty"`
+	// Log is a Dashboard log read, and Entry the journal ID of the entry a
+	// Dashboard entry read is for.
+	Log   *LogQuery `json:"log,omitempty"`
+	Entry int64     `json:"entry,omitempty"`
 }
 
 // Response is the daemon's answer to a Request: one JSON line.
@@ -200,6 +204,10 @@ type Response struct {
 	Change *DashboardChange `json:"change,omitempty"`
 	// Dashboard is the Dashboard's snapshot of the factory.
 	Dashboard *DashboardSnapshot `json:"dashboard,omitempty"`
+	// Log is a page of the journal, and LogEntry one entry in full, for the
+	// Dashboard.
+	Log      *DashboardLog   `json:"log,omitempty"`
+	LogEntry *DashboardEntry `json:"log_entry,omitempty"`
 	// Attached is the agent an attach follows, and Screen its screen when
 	// a snapshot was asked for.
 	Attached *Leader   `json:"attached,omitempty"`
@@ -552,6 +560,25 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		reply(conn, Response{Dashboard: &snapshot})
 	case CommandDashboardSubscribe:
 		d.subscribe(conn, r)
+	case CommandDashboardLog:
+		var q LogQuery
+		if req.Log != nil {
+			q = *req.Log
+		}
+		page, err := d.dashboardLog(q)
+		if err != nil {
+			d.log.Error("reading the dashboard log", "error", err.Error())
+			reply(conn, Response{Error: err.Error()})
+			return false
+		}
+		reply(conn, Response{Log: &page})
+	case CommandDashboardEntry:
+		entry, err := d.dashboardEntry(req.Entry)
+		if err != nil {
+			reply(conn, Response{Error: err.Error()})
+			return false
+		}
+		reply(conn, Response{LogEntry: &entry})
 	case CommandAttach:
 		d.attach(conn, r, req)
 	case CommandConversation:

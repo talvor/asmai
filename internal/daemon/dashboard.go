@@ -27,10 +27,16 @@ const (
 	// grows or a waiting prompt or an input owner changes, which are not
 	// journaled. The Dashboard re-reads on a tick and derives nothing from it.
 	CommandDashboardSubscribe = "dashboard.subscribe"
+	// CommandDashboardLog reads a page of the journal as one-line entries,
+	// from a cursor in either direction, narrowed by job, agent and kind.
+	CommandDashboardLog = "dashboard.log"
+	// CommandDashboardEntry reads one journal entry with the body of the
+	// message or decision it records.
+	CommandDashboardEntry = "dashboard.entry"
 )
 
 // DashboardCommands are the commands only the Dashboard sends.
-var DashboardCommands = []string{CommandDashboardSnapshot, CommandDashboardSubscribe}
+var DashboardCommands = []string{CommandDashboardSnapshot, CommandDashboardSubscribe, CommandDashboardLog, CommandDashboardEntry}
 
 // DashboardChange is one tick of the change subscription.
 type DashboardChange struct {
@@ -446,4 +452,173 @@ func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings 
 		items = []WaitingItem{}
 	}
 	return items
+}
+
+// TrafficKinds are the journal kinds of agent traffic: handoffs, assignments,
+// results, blocked reports, and acceptances and rejections. The Log tab shows
+// them by default and the whole journal on request.
+var TrafficKinds = []string{
+	store.KindHandoffSent, store.KindAssignmentCreated, store.KindResultSubmitted,
+	store.KindBlockedReported, store.KindResultAccepted, store.KindResultRejected,
+}
+
+// The least and most entries a log read returns, and what it returns when the
+// request does not say.
+const (
+	logLimitDefault = 300
+	logLimitMax     = 1000
+)
+
+// LogQuery is a log read. With neither Before nor After it reads the latest
+// entries; with Before, the entries older than that journal ID; with After,
+// the entries newer than it. Kinds, Job and Agent narrow it when set.
+type LogQuery struct {
+	Kinds  []string `json:"kinds,omitempty"`
+	Job    int64    `json:"job,omitempty"`
+	Agent  string   `json:"agent,omitempty"`
+	Before int64    `json:"before,omitempty"`
+	After  int64    `json:"after,omitempty"`
+	Limit  int      `json:"limit,omitempty"`
+}
+
+// LogEntry is one journal entry as a one-line summary.
+type LogEntry struct {
+	ID   int64     `json:"id"`
+	At   time.Time `json:"at"`
+	Kind string    `json:"kind"`
+	// Job is the job the entry is about, zero for none.
+	Job int64 `json:"job,omitempty"`
+	// From and To are the agents the entry runs between, either may be empty.
+	From    string `json:"from,omitempty"`
+	To      string `json:"to,omitempty"`
+	Summary string `json:"summary"`
+}
+
+// DashboardLog is a page of the journal, oldest first. Older and Newer say
+// whether entries that match the query lie beyond the page in each direction.
+type DashboardLog struct {
+	Entries []LogEntry `json:"entries"`
+	Older   bool       `json:"older"`
+	Newer   bool       `json:"newer"`
+}
+
+// DashboardEntry is one journal entry in full: its summary, the body of the
+// message or decision it records, and the entry's data.
+type DashboardEntry struct {
+	LogEntry
+	Body string          `json:"body"`
+	Data json.RawMessage `json:"data"`
+}
+
+// entryFields are the fields of a journal entry's data that a summary reads.
+type entryFields struct {
+	ID         int64    `json:"id"`
+	Job        int64    `json:"job"`
+	Assignment int64    `json:"assignment"`
+	Sender     string   `json:"sender"`
+	Receiver   string   `json:"receiver"`
+	Recipient  string   `json:"recipient"`
+	Owner      string   `json:"owner"`
+	Worker     string   `json:"worker"`
+	Leader     string   `json:"leader"`
+	Agent      string   `json:"agent"`
+	Kind       string   `json:"kind"`
+	Outcome    string   `json:"outcome"`
+	Reason     string   `json:"reason"`
+	Reasons    []string `json:"reasons"`
+}
+
+// firstLine is the first non-blank line of s.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// logEntry summarises e in a line. The summary is the one derivation of the
+// log's words; the Dashboard only shows it.
+func (d *daemon) logEntry(e store.Entry) LogEntry {
+	var f entryFields
+	json.Unmarshal(e.Data, &f)
+	out := LogEntry{ID: e.ID, At: e.At, Kind: e.Kind, Job: f.Job, Summary: e.Kind}
+	out.From = cmpFirst(f.Sender, f.Owner, f.Leader, f.Agent)
+	out.To = cmpFirst(f.Receiver, f.Recipient, f.Worker)
+	with := func(prefix, detail string) string {
+		if detail = firstLine(detail); detail != "" {
+			return prefix + ": " + detail
+		}
+		return prefix
+	}
+	// The assignment a report or a decision is about says who the other end is.
+	other := func() store.Assignment {
+		a, _ := d.store.Assignment(f.Assignment)
+		return a
+	}
+	switch e.Kind {
+	case store.KindHandoffSent:
+		out.Summary = with("handoff", f.Outcome)
+	case store.KindAssignmentCreated:
+		out.Summary = with(fmt.Sprintf("assignment %d", f.ID), f.Outcome)
+	case store.KindResultSubmitted:
+		out.To = other().Owner
+		out.Summary = fmt.Sprintf("result of assignment %d", f.Assignment)
+	case store.KindBlockedReported:
+		out.To = other().Owner
+		out.Summary = with(fmt.Sprintf("blocked on assignment %d", f.Assignment), f.Reason)
+	case store.KindResultAccepted:
+		out.To = other().Worker
+		out.Summary = with(fmt.Sprintf("accepted assignment %d", f.Assignment), strings.Join(f.Reasons, " "))
+	case store.KindResultRejected:
+		out.To = other().Worker
+		out.Summary = with(fmt.Sprintf("rejected assignment %d", f.Assignment), strings.Join(f.Reasons, " "))
+	case store.KindMessageCreated:
+		out.Summary = f.Kind + " message"
+	}
+	return out
+}
+
+// cmpFirst is the first of names that is not empty.
+func cmpFirst(names ...string) string {
+	for _, n := range names {
+		if n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+// dashboardLog reads a page of the journal for the Log tab.
+func (d *daemon) dashboardLog(q LogQuery) (DashboardLog, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = logLimitDefault
+	}
+	entries, older, newer, err := d.store.JournalPage(store.JournalQuery{Kinds: q.Kinds, Job: q.Job, Agent: q.Agent, Before: q.Before, After: q.After, Limit: min(limit, logLimitMax)})
+	if err != nil {
+		return DashboardLog{}, fmt.Errorf("reading the journal: %w", err)
+	}
+	page := DashboardLog{Entries: []LogEntry{}, Older: older, Newer: newer}
+	for _, e := range entries {
+		page.Entries = append(page.Entries, d.logEntry(e))
+	}
+	return page, nil
+}
+
+// dashboardEntry reads one journal entry with its body.
+func (d *daemon) dashboardEntry(id int64) (DashboardEntry, error) {
+	entries, _, _, err := d.store.JournalPage(store.JournalQuery{Before: id + 1, Limit: 1})
+	if err != nil {
+		return DashboardEntry{}, fmt.Errorf("reading the journal entry: %w", err)
+	}
+	if len(entries) == 0 || entries[0].ID != id {
+		return DashboardEntry{}, fmt.Errorf("journal entry %d does not exist", id)
+	}
+	body, err := d.store.MessageBodyOf(entries[0])
+	if err != nil {
+		return DashboardEntry{}, fmt.Errorf("reading the body of journal entry %d: %w", id, err)
+	}
+	return DashboardEntry{LogEntry: d.logEntry(entries[0]), Body: body, Data: entries[0].Data}, nil
 }

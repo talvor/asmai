@@ -109,6 +109,8 @@ type model struct {
 	cursor, offset int
 	// jobCursor and jobOffset are the same for the Jobs tab.
 	jobCursor, jobOffset int
+	// log is the Log tab.
+	log logState
 	// read is false until the first answer, so the first frame does not claim
 	// the factory is stopped before the daemon has been asked.
 	read              bool
@@ -312,6 +314,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.read, m.failed = true, false
 		selected, selectedJob := m.selected(), m.selectedJob()
 		m.factory = msg.factory
+		if !m.factory.running {
+			// Nothing outlives the daemon, the log included.
+			m.log = logState{full: m.log.full, job: m.log.job, agent: m.log.agent, view: m.log.view + 1}
+		}
 		m.cursor, m.jobCursor = 0, 0
 		for i, a := range m.factory.agents {
 			if a.Agent == selected {
@@ -331,7 +337,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.round++
 		round := m.round
 		generation := m.generation
-		return m, tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} })
+		return m, tea.Batch(m.refreshLog(), tea.Tick(wait, func(time.Time) tea.Msg { return retryMsg{round: round, generation: generation} }))
 	case retryMsg:
 		if msg.generation != m.generation || msg.round != m.round {
 			return m, nil
@@ -345,18 +351,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wait = false
 		fresh, cmd := m.reading(time.Now())
 		return fresh, tea.Batch(tea.RequestWindowSize, tea.ClearScreen, cmd)
+	case logMsg:
+		return m.logPage(msg)
+	case entryMsg:
+		if msg.view != m.log.view || msg.id != m.log.want || m.log.open {
+			return m, nil
+		}
+		m.log.open, m.log.id, m.log.entry, m.log.failure, m.log.scroll = true, msg.id, nil, "", 0
+		if msg.err != nil {
+			m.log.failure = msg.err.Error()
+		} else {
+			m.log.entry = &msg.entry
+		}
+		return m, nil
 	case tea.KeyPressMsg:
-		switch msg.String() {
+		key := msg.String()
+		if m.tab == tabLog && m.factory.running && m.width >= MinColumns && m.height >= MinRows {
+			if m.log.open {
+				if key != "q" && key != "ctrl+c" && key != "1" && key != "2" && key != "3" {
+					return m.entryKey(key), nil
+				}
+			} else if m, cmd, handled := m.logKey(key); handled {
+				return m, cmd
+			}
+		}
+		switch key {
 		case "enter":
 			return m, m.attach()
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "1":
-			m.tab = tabAgents
+			m.tab, m.log.open = tabAgents, false
 		case "2":
-			m.tab = tabJobs
+			m.tab, m.log.open = tabJobs, false
 		case "3":
 			m.tab = tabLog
+			return m, m.refreshLog()
 		case "up", "k":
 			m = m.moved(-1)
 		case "down", "j":
@@ -370,6 +400,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end", "G":
 			m = m.moved(m.listLen())
 		}
+		return m.pageOlder()
 	}
 	return m, nil
 }
@@ -420,6 +451,8 @@ func (m model) listLen() int {
 		return len(m.factory.agents)
 	case tabJobs:
 		return len(m.factory.jobs)
+	case tabLog:
+		return len(m.log.entries)
 	}
 	return 0
 }
@@ -437,8 +470,11 @@ func (m model) moved(delta int) model {
 
 // position is where the selected tab's cursor and window are.
 func (m *model) position() (cursor, offset *int) {
-	if m.tab == tabJobs {
+	switch m.tab {
+	case tabJobs:
 		return &m.jobCursor, &m.jobOffset
+	case tabLog:
+		return &m.log.cursor, &m.log.offset
 	}
 	return &m.cursor, &m.offset
 }
@@ -449,7 +485,7 @@ func (m model) scrolled() model {
 	for _, l := range []struct {
 		cursor, offset *int
 		n              int
-	}{{&m.cursor, &m.offset, len(m.factory.agents)}, {&m.jobCursor, &m.jobOffset, len(m.factory.jobs)}} {
+	}{{&m.cursor, &m.offset, len(m.factory.agents)}, {&m.jobCursor, &m.jobOffset, len(m.factory.jobs)}, {&m.log.cursor, &m.log.offset, len(m.log.entries)}} {
 		*l.cursor = min(max(*l.cursor, 0), max(l.n-1, 0))
 		*l.offset = min(max(*l.offset, *l.cursor-rows+1), *l.cursor)
 		*l.offset = max(min(*l.offset, l.n-rows), 0)

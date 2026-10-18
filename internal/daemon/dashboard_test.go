@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -42,6 +43,8 @@ func TestDashboardCommandsAreDeniedToAgentsAndChangeNothing(t *testing.T) {
 	}
 	p := stateDir(t)
 	runDaemon(t, p)
+	// A job detail needs a job to read.
+	openJob(t, p, "fixture", store.JobOpen)
 	before := journal(t, p)
 	for _, command := range DashboardCommands {
 		for _, credential := range []string{"coordination", "engineering", "worker"} {
@@ -54,7 +57,7 @@ func TestDashboardCommandsAreDeniedToAgentsAndChangeNothing(t *testing.T) {
 		}
 		// A read of one entry needs an entry to read; the daemon wrote the
 		// first into the journal when it started.
-		if _, err := Call(p.Socket, Request{Command: command, Entry: 1}); err != nil {
+		if _, err := Call(p.Socket, Request{Command: command, Entry: 1, Job: 1}); err != nil {
 			t.Errorf("%s: %v", command, err)
 		}
 	}
@@ -434,5 +437,132 @@ func TestJobOpeningSummaryUsesItsNumber(t *testing.T) {
 	e := d.logEntry(store.Entry{Kind: store.KindJobOpened, Data: []byte(`{"number":7}`)})
 	if e.Job != 7 {
 		t.Errorf("job opening belongs to job %d, want 7", e.Job)
+	}
+}
+
+// A job's work lists needs-you findings first, then the other findings, the
+// assignments and the handoffs, each with the time it last changed.
+func TestAJobsWorkListsNeedsYouFindingsFirst(t *testing.T) {
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	detail := store.JobDetail{
+		Findings: []store.FindingWork{
+			{ID: 1, Assignment: 11, Report: 12, Kind: store.FindingAdvisory, Text: "no doc line", Commit: "old-head", CreatedAt: at, At: at},
+			{ID: 2, Kind: store.FindingBlocking, Text: "flaky", Cleared: true, ClearedBy: 13, ClearedAt: at.Add(time.Minute), At: at.Add(time.Minute)},
+			{ID: 3, Kind: store.FindingNeedsYou, Text: "widens ADR 0012", At: at.Add(2 * time.Minute)},
+			{ID: 4, Kind: store.FindingBlocking, Text: "wrong order", At: at.Add(3 * time.Minute)},
+		},
+		Assignments: []store.AssignmentWork{{ID: 5, Worker: "worker-1@engineering", Owner: "leader@engineering", State: store.AssignmentNeedsReconciliation, Outcome: "Add it", ReadOnly: true, Commit: "validation-head", Skill: "review", Skills: []string{"review", "check"}, Dispatch: store.DispatchUnknown, CreatedAt: at, At: at.Add(4 * time.Minute)}},
+		Handoffs:    []store.HandoffWork{{ID: 6, Sender: "leader@coordination", Receiver: "leader@engineering", State: store.HandoffAccepted, Outcome: "Add a cursor read", Decisions: "Use the journal", Evidence: "The log needs a cursor", Constraints: "Read only", Permissions: "Read the repository", Criteria: []string{"No repeated entries"}, Head: "abc123", Answer: "Accepted", CreatedAt: at, At: at.Add(5 * time.Minute)}},
+	}
+	items := jobItems(detail, false)
+	var got []string
+	for _, it := range items {
+		got = append(got, fmt.Sprintf("%s %d %s", it.Kind, it.ID, it.Label))
+	}
+	want := []string{"finding 3 needs-you", "finding 1 advisory", "finding 2 blocking (cleared)", "finding 4 blocking", "assignment 5 needs reconciliation", "handoff 6 accepted"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the work is %q, want %q", got, want)
+	}
+	if !items[0].Needs || items[1].Needs {
+		t.Errorf("only the needs-you finding is marked: %+v", items[:2])
+	}
+	if !items[0].At.Equal(at.Add(2*time.Minute)) || !items[4].At.Equal(at.Add(4*time.Minute)) || !items[5].At.Equal(at.Add(5*time.Minute)) {
+		t.Errorf("the items lost the time they last changed: %+v", items)
+	}
+	if items[4].Worker != "worker-1@engineering" || items[5].From != "leader@coordination" || items[5].To != "leader@engineering" {
+		t.Errorf("the parties are wrong: %+v", items[4:])
+	}
+	if f := items[1]; f.Assignment != 11 || f.Report != 12 || f.Commit != "old-head" || !f.CreatedAt.Equal(at) {
+		t.Errorf("the finding lost its stored record: %+v", f)
+	}
+	if f := items[2]; f.ClearedBy != 13 || !f.ClearedAt.Equal(at.Add(time.Minute)) {
+		t.Errorf("the cleared finding lost its clearing record: %+v", f)
+	}
+	if a := items[4]; !a.ReadOnly || a.Commit != "validation-head" || a.Skill != "review" || !slices.Equal(a.Skills, []string{"review", "check"}) || !a.CreatedAt.Equal(at) {
+		t.Errorf("the assignment lost its stored record: %+v", a)
+	}
+	if h := items[5]; h.Decisions != "Use the journal" || h.Evidence != "The log needs a cursor" || h.Constraints != "Read only" || h.Permissions != "Read the repository" || h.Head != "abc123" || h.Answer != "Accepted" || !slices.Equal(h.Criteria, []string{"No repeated entries"}) || !h.CreatedAt.Equal(at) {
+		t.Errorf("the handoff lost its stored record: %+v", h)
+	}
+	if delivered := jobItems(detail, true); delivered[0].Needs || delivered[0].Label != store.FindingNeedsYou {
+		t.Errorf("a delivered job still calls its historic finding active: %+v", delivered[0])
+	}
+}
+
+func TestJobDetailReportsHandoffCompletionFromAcceptedHandoffs(t *testing.T) {
+	p := stateDir(t)
+	if err := os.MkdirAll(filepath.Dir(p.Store), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	if err := st.RepositoryAdded(store.Repository{Name: "fixture", Origin: "https://example.test/fixture", DefaultBranch: "main", Clone: "/fixture", AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	openJob(t, p, "fixture", store.JobOpen)
+	d := &daemon{store: st}
+	read := func() DashboardJobDetail {
+		t.Helper()
+		got, err := d.dashboardJob(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := read(); got.Stage != StageWorking || got.HandoffComplete {
+		t.Errorf("the unhanded job is %+v", got)
+	}
+	h, inbound, err := st.SendHandoff(store.Handoff{Job: 1, Sender: "leader@coordination", Receiver: "leader@engineering", Outcome: "Build it", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"done"}}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.HandoffComplete {
+		t.Errorf("a pending handoff completed the stage: %+v", got)
+	}
+	if _, err := st.Inbox(h.Receiver, inbound.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.AnswerHandoff(h.ID, h.Receiver, inbound.ID, 0, store.HandoffAccepted, "Accepted", at); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); !got.HandoffComplete {
+		t.Errorf("the accepted handoff left the stage incomplete: %+v", got)
+	}
+}
+
+func TestAJobHeaderSaysHowItsPullRequestChecksAndValidationStand(t *testing.T) {
+	for state, want := range map[string]store.PullRequest{
+		"not ready": {State: "OPEN", NotReady: true, Draft: true},
+		"draft":     {State: "OPEN", Draft: true},
+		"ready":     {State: "OPEN"},
+		"merged":    {State: "MERGED"},
+		"closed":    {State: "CLOSED"},
+	} {
+		if got := pullRequestWords(want); got != state {
+			t.Errorf("%+v reads %q, want %q", want, got, state)
+		}
+	}
+	checks := &store.ChecksObservation{Verdict: "waiting", Checks: []store.CheckState{{State: "passed"}, {State: "passed"}, {State: "pending"}, {State: "failed"}}}
+	if got, want := checksWords(checks), "waiting: 2 of 4 passed, 1 failed, 1 pending"; got != want {
+		t.Errorf("checks read %q, want %q", got, want)
+	}
+	if got := checksWords(nil); got != "not observed" {
+		t.Errorf("no observation reads %q", got)
+	}
+	for _, tt := range []struct {
+		work store.JobWork
+		want string
+	}{
+		{store.JobWork{}, "not started"},
+		{store.JobWork{Validating: true, Validated: true}, "validating"},
+		{store.JobWork{Validated: true, OpenBlocking: 2}, "accepted at 4f1c9a2, 2 blocking open"},
+	} {
+		if got := validationWords(tt.work, "4f1c9a2b0c"); got != tt.want {
+			t.Errorf("%+v reads %q, want %q", tt.work, got, tt.want)
+		}
 	}
 }

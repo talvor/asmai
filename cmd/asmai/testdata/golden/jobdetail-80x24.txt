@@ -1,0 +1,39 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ #12  Add a cursor read to the journal for the dashboard
+ ✓ Handoff ── ▲ Working ── ○ Validating ── ○ Delivering ── ○ Delivered
+ Stage ▲ Needs you · Branch asmai/job-12-journal-cursor-read · Head 4f1c9a2
+ Pull request #101 not ready · CI waiting: 3 of 5 passed, 2 pending
+ Validation accepted at 4f1c9a2, 1 blocking open
+
+ ITEM STATE       WORK (1/8)                                                AGE
+ F3   ▲ needs-you The change lets the dashboard's command set answer an ag… 9m
+ F5   blocking    The journal order test is flaky on macOS                  9m
+ F4   advisory    No doc line for the new read                              9m
+ A31  accepted    Add the cursor read behind the dashboard's command set    2h
+ A32  active      Add --after to the journal read                           14m
+ A33  active      Validate 4f1c9a2 against the mandate and the repository'… 4m
+ Finding 3
+ needs-you · changed 9m ago
+
+ Says:
+ The change lets the dashboard's command set answer an agent's call without a
+ credential, which ADR 0012 forbids.
+ Decide whether the exception is wanted.
+ 1/2/3 tab · ↑/↓ move · pgup/pgdn read · l log · esc back · q quit
+--- attributes
+1 1-80: reverse
+2 2-11: faint
+2 13-20: reverse
+2 22-28: faint
+4 1-56: bold
+5 15-23: fg=0x1000003
+5 28-39: faint
+5 44-55: faint
+5 60-70: faint
+10 1-28: faint
+10 77-79: faint
+11 1-80: reverse
+17 1-10: faint
+24 1-80: reverse

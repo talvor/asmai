@@ -1,0 +1,62 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ #14  Make the log read take a cursor
+ ● Handoff ── ○ Working ── ○ Validating ── ○ Delivering ── ○ Delivered
+ Stage ● Working · Branch - · Head -
+ Pull request - · CI no pull request
+ Validation not started
+
+ ITEM STATE    WORK                                AGE │ SELECTED
+ Nothing recorded for this job yet.                    │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+ 1/2/3 tab · ↑/↓ move · pgup/pgdn read · l log · esc back · q quit
+--- attributes
+1 1-100: reverse
+2 2-11: faint
+2 13-20: reverse
+2 22-28: faint
+4 1-37: bold
+5 15-23: faint
+5 28-39: faint
+5 44-55: faint
+5 60-70: faint
+10 1-19: faint
+10 52-65: faint
+11 56-56: faint
+12 56-56: faint
+13 56-56: faint
+14 56-56: faint
+15 56-56: faint
+16 56-56: faint
+17 56-56: faint
+18 56-56: faint
+19 56-56: faint
+20 56-56: faint
+21 56-56: faint
+22 56-56: faint
+23 56-56: faint
+24 56-56: faint
+25 56-56: faint
+26 56-56: faint
+27 56-56: faint
+28 56-56: faint
+29 56-56: faint
+30 1-100: reverse

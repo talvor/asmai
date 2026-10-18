@@ -3,6 +3,11 @@
 package store
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -118,6 +123,14 @@ func (s *Store) JobWorks() ([]JobWork, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
+	works, err := jobWorks(tx)
+	if err != nil {
+		return nil, err
+	}
+	return works, tx.Commit()
+}
+
+func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 	rows, err := tx.Query(`WITH latest_pr AS (
 			SELECT p.job, p.number, p.title, p.head FROM pull_requests p
 			JOIN (SELECT job, MAX(id) id FROM pull_requests GROUP BY job) last ON last.id = p.id
@@ -226,4 +239,279 @@ func (s *Store) NeedsYouFindings() ([]NeedsYouFinding, error) {
 		list = append(list, f)
 	}
 	return list, rows.Err()
+}
+
+// JobDetail is what a job's records say of its branch, pull request and work,
+// for the daemon to put in the Dashboard's job detail. Every item carries the
+// time it last changed.
+type JobDetail struct {
+	// Branch and Head are the job branch's name and tip, empty for a job with
+	// no repository.
+	Branch, Head string
+	// PullRequest is the latest pull request recorded for the job, nil when it
+	// has none; Checks are the latest observation of the checks on a pull
+	// request's head, nil when there is none.
+	PullRequest *PullRequest
+	Checks      *ChecksObservation
+	// Findings, Assignments and Handoffs are the job's, oldest first.
+	Findings    []FindingWork
+	Assignments []AssignmentWork
+	Handoffs    []HandoffWork
+}
+
+// FindingWork is a finding with when it was recorded or, for a blocking
+// finding, cleared.
+type FindingWork struct {
+	ID, Assignment, Report, ClearedBy int64
+	Kind, Text, Commit                string
+	Cleared                           bool
+	CreatedAt, ClearedAt, At          time.Time
+}
+
+// AssignmentWork is an assignment with when it last changed, and the state of
+// the latest dispatch that carried it to its worker, empty when it has none.
+type AssignmentWork struct {
+	ID        int64
+	Owner     string
+	Worker    string
+	Outcome   string
+	Criteria  []string
+	State     string
+	ReadOnly  bool
+	Commit    string
+	Skill     string
+	Skills    []string
+	Dispatch  string
+	CreatedAt time.Time
+	At        time.Time
+}
+
+// HandoffWork is a handoff with when it was sent or answered.
+type HandoffWork struct {
+	ID          int64
+	Sender      string
+	Receiver    string
+	Outcome     string
+	Decisions   string
+	Evidence    string
+	Constraints string
+	Permissions string
+	Criteria    []string
+	State       string
+	Answer      string
+	Head        string
+	CreatedAt   time.Time
+	At          time.Time
+}
+
+// assignmentChanges are the journal kinds that change an assignment: they
+// name it in their data's assignment field. Its own state is not stamped, so
+// when it last changed is the latest of these.
+var assignmentChanges = []string{
+	KindResultSubmitted, KindBlockedReported, KindResultAccepted, KindResultRejected,
+	KindCancellationRequested, KindAssignmentCancelled, KindAssignmentResumed, KindAssignmentNeedsReconciliation,
+}
+
+func jobChangeTimes(tx *sql.Tx, job int64) (map[int64]string, map[int64]string, error) {
+	changes := "'" + strings.Join(assignmentChanges, "','") + "'"
+	rows, err := tx.Query(`SELECT kind, json_extract(data, '$.assignment'), json_extract(data, '$.id'), at
+		FROM journal WHERE json_extract(data, '$.job') = ? AND kind IN (`+changes+`, ?, ?) ORDER BY id`, job, KindHandoffSent, KindHandoffAnswered)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	assignments, handoffs := map[int64]string{}, map[int64]string{}
+	for rows.Next() {
+		var kind, at string
+		var assignment, handoff sql.NullInt64
+		if err := rows.Scan(&kind, &assignment, &handoff, &at); err != nil {
+			return nil, nil, err
+		}
+		if kind == KindHandoffSent || kind == KindHandoffAnswered {
+			if handoff.Valid {
+				handoffs[handoff.Int64] = at
+			}
+		} else if assignment.Valid {
+			assignments[assignment.Int64] = at
+		}
+	}
+	return assignments, handoffs, rows.Err()
+}
+
+// JobWorkDetail reads the job's stage inputs and detail in one snapshot.
+func (s *Store) JobWorkDetail(job int64) (JobWork, JobDetail, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return JobWork{}, JobDetail{}, err
+	}
+	defer tx.Rollback()
+	works, err := jobWorks(tx)
+	if err != nil {
+		return JobWork{}, JobDetail{}, err
+	}
+	for _, work := range works {
+		if work.Number == job {
+			detail, err := jobDetail(tx, job)
+			if err != nil {
+				return JobWork{}, JobDetail{}, err
+			}
+			return work, detail, tx.Commit()
+		}
+	}
+	return JobWork{}, JobDetail{}, fmt.Errorf("job %d does not exist", job)
+}
+
+func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
+	var d JobDetail
+	if _, err := jobFor(tx, job); err != nil {
+		return JobDetail{}, err
+	}
+	if b, err := jobBranch(tx, job); err == nil {
+		d.Branch, d.Head = b.Name, b.Tip
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return JobDetail{}, err
+	}
+	var pr PullRequest
+	var at string
+	switch err := tx.QueryRow(`SELECT id, job, number, url, title, draft, not_ready, branch, head, state, leader, dispatch, effect, created_at FROM pull_requests WHERE job = ? ORDER BY id DESC LIMIT 1`, job).
+		Scan(&pr.ID, &pr.Job, &pr.Number, &pr.URL, &pr.Title, &pr.Draft, &pr.NotReady, &pr.Branch, &pr.Head, &pr.State, &pr.Leader, &pr.Dispatch, &pr.Effect, &at); {
+	case err == nil:
+		if pr.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return JobDetail{}, err
+		}
+		d.PullRequest = &pr
+	case !errors.Is(err, sql.ErrNoRows):
+		return JobDetail{}, err
+	}
+	if o, err := latestChecks(tx, job); err == nil {
+		if d.PullRequest != nil && o.Number == d.PullRequest.Number && o.Head == d.PullRequest.Head && o.Head == d.Head {
+			d.Checks = &o
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return JobDetail{}, err
+	}
+
+	rows, err := tx.Query(`SELECT id, assignment, report, kind, text, commit_id, COALESCE(cleared_by, 0), cleared_at, created_at FROM findings WHERE job = ? ORDER BY id`, job)
+	if err != nil {
+		return JobDetail{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var f FindingWork
+		var cleared sql.NullString
+		var created string
+		if err := rows.Scan(&f.ID, &f.Assignment, &f.Report, &f.Kind, &f.Text, &f.Commit, &f.ClearedBy, &cleared, &created); err != nil {
+			return JobDetail{}, err
+		}
+		f.Cleared = f.ClearedBy != 0
+		if f.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
+			return JobDetail{}, err
+		}
+		f.At = f.CreatedAt
+		if cleared.Valid {
+			if f.ClearedAt, err = time.Parse(time.RFC3339Nano, cleared.String); err != nil {
+				return JobDetail{}, err
+			}
+			f.At = f.ClearedAt
+		}
+		d.Findings = append(d.Findings, f)
+	}
+	if err := rows.Err(); err != nil {
+		return JobDetail{}, err
+	}
+	rows.Close()
+
+	assignmentTimes, handoffTimes, err := jobChangeTimes(tx, job)
+	if err != nil {
+		return JobDetail{}, err
+	}
+	arows, err := tx.Query(`SELECT a.id, a.owner, a.worker, a.outcome, a.criteria, a.state, a.read_only, a.skill, a.skills, COALESCE(w.base, ''),
+			COALESCE(x.state, ''), a.created_at,
+			COALESCE(x.updated_at, a.created_at)
+		FROM assignments a
+		LEFT JOIN workspaces w ON w.assignment = a.id
+		LEFT JOIN dispatches x ON x.id = (SELECT d.id FROM dispatches d JOIN messages m ON m.id = d.message
+			WHERE m.assignment = a.id AND m.recipient = a.worker AND d.agent = a.worker ORDER BY d.id DESC LIMIT 1)
+		WHERE a.job = ? ORDER BY a.id`, job)
+	if err != nil {
+		return JobDetail{}, err
+	}
+	defer arows.Close()
+	for arows.Next() {
+		var a AssignmentWork
+		var criteria, skills, base, created, dispatched string
+		if err := arows.Scan(&a.ID, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &a.ReadOnly, &a.Skill, &skills, &base, &a.Dispatch, &created, &dispatched); err != nil {
+			return JobDetail{}, err
+		}
+		if err := json.Unmarshal([]byte(criteria), &a.Criteria); err != nil {
+			return JobDetail{}, err
+		}
+		if err := json.Unmarshal([]byte(skills), &a.Skills); err != nil {
+			return JobDetail{}, err
+		}
+		if a.ReadOnly {
+			a.Commit = base
+		}
+		if a.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
+			return JobDetail{}, err
+		}
+		stamps := []string{created, dispatched}
+		if changed, ok := assignmentTimes[a.ID]; ok {
+			stamps = append(stamps, changed)
+		}
+		for _, stamp := range stamps {
+			at, err := time.Parse(time.RFC3339Nano, stamp)
+			if err != nil {
+				return JobDetail{}, err
+			}
+			if at.After(a.At) {
+				a.At = at
+			}
+		}
+		d.Assignments = append(d.Assignments, a)
+	}
+	if err := arows.Err(); err != nil {
+		return JobDetail{}, err
+	}
+	arows.Close()
+
+	hrows, err := tx.Query(`SELECT h.id, h.sender, h.receiver, h.outcome, h.decisions, h.evidence, h.constraints, h.permissions, h.criteria, h.state, h.answer, h.head, h.created_at
+		FROM handoffs h WHERE h.job = ? ORDER BY h.id`, job)
+	if err != nil {
+		return JobDetail{}, err
+	}
+	defer hrows.Close()
+	for hrows.Next() {
+		var h HandoffWork
+		var criteria, at string
+		if err := hrows.Scan(&h.ID, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head, &at); err != nil {
+			return JobDetail{}, err
+		}
+		if h.CreatedAt, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return JobDetail{}, err
+		}
+		if err := json.Unmarshal([]byte(criteria), &h.Criteria); err != nil {
+			return JobDetail{}, err
+		}
+		if changed, ok := handoffTimes[h.ID]; ok {
+			at = changed
+		}
+		if h.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return JobDetail{}, err
+		}
+		d.Handoffs = append(d.Handoffs, h)
+	}
+	if err := hrows.Err(); err != nil {
+		return JobDetail{}, err
+	}
+	return d, nil
+}
+
+// jobFor returns job, or an error saying it does not exist.
+func jobFor(q queryer, number int64) (Job, error) {
+	j, err := job(q, number)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, fmt.Errorf("job %d does not exist", number)
+	}
+	return j, err
 }

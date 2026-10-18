@@ -208,6 +208,8 @@ type Response struct {
 	// message body, for the Dashboard.
 	Log      *DashboardLog   `json:"log,omitempty"`
 	LogEntry *DashboardEntry `json:"log_entry,omitempty"`
+	// JobDetail is one job's detail, for the Dashboard.
+	JobDetail *DashboardJobDetail `json:"job_detail,omitempty"`
 	// Attached is the agent an attach follows, and Screen its screen when
 	// a snapshot was asked for.
 	Attached *Leader   `json:"attached,omitempty"`
@@ -579,6 +581,13 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			return false
 		}
 		reply(conn, Response{LogEntry: &entry})
+	case CommandDashboardJob:
+		detail, err := d.dashboardJob(req.Job)
+		if err != nil {
+			reply(conn, Response{Error: err.Error()})
+			return false
+		}
+		reply(conn, Response{JobDetail: &detail})
 	case CommandAttach:
 		d.attach(conn, r, req)
 	case CommandConversation:

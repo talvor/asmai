@@ -1,0 +1,63 @@
+ asmai dashboard  factory running
+  1 Agents   2 Jobs   3 Log
+
+ #12  Add a cursor read to the journal for the dashboard
+ ✓ Handoff ── ▲ Working ── ○ Validating ── ○ Delivering ── ○ Delivered
+ Stage ▲ Needs you · Branch asmai/job-12-journal-cursor-read · Head 4f1c9a2
+ Pull request #101 not ready · CI waiting: 3 of 5 passed, 2 pending
+ Validation accepted at 4f1c9a2, 1 blocking open
+
+ ITEM STATE       WORK                             AGE │ Finding 3
+ F3   ▲ needs-you The change lets the dashboard's… 9m  │ needs-you · changed 9m ago
+ F5   blocking    The journal order test is flaky… 9m  │
+ F4   advisory    No doc line for the new read     9m  │ Says:
+ A31  accepted    Add the cursor read behind the … 2h  │ The change lets the dashboard's command
+ A32  active      Add --after to the journal read  14m │ set answer an agent's call without a
+ A33  active      Validate 4f1c9a2 against the ma… 4m  │ credential, which ADR 0012 forbids.
+ H7   accepted    Add a cursor read to the journa… 3h  │ Decide whether the exception is wanted.
+ H9   accepted    Validate the job branch at 4f1c… 26m │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+                                                       │
+ 1/2/3 tab · ↑/↓ move · pgup/pgdn read · l log · esc back · q quit
+--- attributes
+1 1-100: reverse
+2 2-11: faint
+2 13-20: reverse
+2 22-28: faint
+4 1-56: bold
+5 15-23: fg=0x1000003
+5 28-39: faint
+5 44-55: faint
+5 60-70: faint
+10 1-22: faint
+10 52-66: faint
+11 1-55: reverse
+11 56-56: faint
+12 56-56: faint
+13 56-56: faint
+14 56-56: faint
+15 56-56: faint
+16 56-56: faint
+17 56-56: faint
+18 56-56: faint
+19 56-56: faint
+20 56-56: faint
+21 56-56: faint
+22 56-56: faint
+23 56-56: faint
+24 56-56: faint
+25 56-56: faint
+26 56-56: faint
+27 56-56: faint
+28 56-56: faint
+29 56-56: faint
+30 1-100: reverse

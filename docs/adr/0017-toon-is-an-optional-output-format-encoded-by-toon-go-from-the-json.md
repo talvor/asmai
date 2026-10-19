@@ -1,6 +1,8 @@
-# Agents read `asmai` output as TOON, encoded by toon-go from the JSON each command already marshals
+# TOON is an optional `asmai` output format, encoded by toon-go from the JSON each command already marshals
 
-Agents read every `asmai` result into their context, and `--json` repeats every key on every row. Every command that accepts `--json` therefore also accepts `--toon`, which prints the same data as [TOON](https://github.com/toon-format/toon) (Token-Oriented Object Notation, spec 4.4), and the role instructions and the operating guide tell every agent to pass it. `--json` is unchanged and stays the format for scripts and tests, tables stay the default for people, and the two flags together are a usage error that exits 1. A failure under `--toon` is the same `error` object, in TOON, with the same exit code.
+`--json` repeats every key on every row, which costs tokens when the output is read into an agent's context. Every command that accepts `--json` therefore also accepts `--toon`, which prints the same data as [TOON](https://github.com/toon-format/toon) (Token-Oriented Object Notation, spec 4.4). `--json` is unchanged and stays the format for scripts and tests, tables stay the default for people and for agents, and the two flags together are a usage error that exits 1. A failure under `--toon` is the same `error` object, in TOON, with the same exit code.
+
+Agents are not told to pass `--toon`. Measured on a fixture factory, TOON is 5–45% cheaper than JSON, but the default tables agents read today are cheaper than TOON for every command measured (`status` 97 tokens as a table, 218 as TOON, 358 as JSON), so switching agents would raise their context cost.
 
 TOON is encoded with `github.com/toon-format/toon-go` v1.0.1, a new dependency, and from the JSON that `encoding/json` marshals from the very value `--json` prints, read back in document order. The struct tags, `omitempty`, `json.RawMessage` and `MarshalJSON` methods that decide what `--json` prints decide what `--toon` prints, so the two cannot drift and the key order is the JSON's.
 
@@ -9,7 +11,7 @@ TOON is encoded with `github.com/toon-format/toon-go` v1.0.1, a new dependency, 
 - **toon-go, fed the JSON text** (chosen): MIT, no dependencies of its own, targets spec 4.4 and runs the spec's conformance fixtures, writes a map's keys in sorted order and an `Object`'s in the order given, so the output is deterministic. It was published on 8 October 2026, so it is young; the pin is v1.0.1, and the cost of a wrong encoder is limited to what agents read, not to any record.
 - **toon-go, fed the Go values**: no JSON round trip, but toon-go reads `toon` tags and falls back to `json` tags without honouring `json.RawMessage` or `MarshalJSON`, so a field printed one way by `--json` could print another by `--toon`.
 - **An encoder of our own**: no dependency, but the quoting and tabular-array rules are the part of the format that is easy to get subtly wrong, and the repository would own a second decoder to test it.
-- **TOON as the default, or `--json` removed**: ruled out. People read tables, scripts and tests read JSON, and the daemon's journal and log formats are not affected.
+- **TOON as the default, as the format agents are told to use, or `--json` removed**: ruled out. People and agents read tables, scripts and tests read JSON, and the daemon's journal and log formats are not affected.
 
 ## Consequences
 

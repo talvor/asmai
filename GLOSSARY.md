@@ -239,5 +239,5 @@ The things the factory cannot continue without the user: a native prompt waiting
 _Avoid_: Attention, notification
 
 **Output format**:
-How an `asmai` command prints its result: readable tables for the user by default, JSON with `--json` for scripts and tests, or TOON with `--toon` for agents. JSON and TOON hold the same data, and a command takes one of them at most.
+How an `asmai` command prints its result: readable tables for the user by default, JSON with `--json` for scripts and tests, or TOON with `--toon`, a more compact encoding of the same data than JSON. Agents read the default tables. JSON and TOON hold the same data, and a command takes one of them at most.
 _Avoid_: Mode, view

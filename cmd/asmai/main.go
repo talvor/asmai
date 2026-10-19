@@ -184,8 +184,8 @@ commands agents run:
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
 Every command accepts --json to print JSON instead of tables, or --toon to print the same data as
-TOON (Token-Oriented Object Notation), which takes fewer tokens: agents pass --toon, scripts and
-tests use --json. The two cannot be combined. A failure prints {"error": ...} in the format asked
+TOON (Token-Oriented Object Notation), which takes fewer tokens than JSON; scripts and tests
+use --json. The two cannot be combined. A failure prints {"error": ...} in the format asked
 for, and exits 1. asmai attach --json or --toon prints the agent's screen as it is now, and asmai
 chat --json or --toon Coordination's. asmai log --json prints each record as a JSON line, and
 asmai log --toon each as its own TOON document, separated by a blank line.

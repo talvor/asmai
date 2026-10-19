@@ -111,6 +111,15 @@ const (
 	// CommandTrailers answers a worker's git hook with the trailers its
 	// commit carries.
 	CommandTrailers = "trailers"
+	// CommandDecisionRequest is an agent requesting a decision, or issuing a
+	// new version of one: a worker's goes to its owning leader and a
+	// leader's to the user through Coordination. CommandDecisionAnswer is
+	// the owning leader answering one version of a worker's request, and
+	// CommandDecisions the user listing the pending decisions, which
+	// answers none.
+	CommandDecisionRequest = "decision.request"
+	CommandDecisionAnswer  = "decision.answer"
+	CommandDecisions       = "decisions"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -185,6 +194,18 @@ type Request struct {
 	// Evidence what it rests on.
 	Choice    string `json:"choice,omitempty"`
 	Rationale string `json:"rationale,omitempty"`
+	// Request and Version name the decision request, and the version of it,
+	// that a decision request or an answer is about; Content, Questions and
+	// Blocks are what a request holds besides its Kind: the agent's own
+	// content above the questions, the questions, and the assignments whose
+	// work waits for the choice. ReliedOn names the record an answer rests
+	// on.
+	Request   int64            `json:"request,omitempty"`
+	Version   int              `json:"version,omitempty"`
+	Content   string           `json:"content,omitempty"`
+	Questions []store.Question `json:"questions,omitempty"`
+	Blocks    []int64          `json:"blocks,omitempty"`
+	ReliedOn  string           `json:"relied_on,omitempty"`
 	// Log is a Dashboard log read, and Entry the journal ID of the entry a
 	// Dashboard entry read is for.
 	Log   *LogQuery `json:"log,omitempty"`
@@ -226,19 +247,24 @@ type Response struct {
 	Repository   *store.Repository  `json:"repository,omitempty"`
 	// Writable are the folders outside their workspaces that the shown
 	// repository's workers may write.
-	Writable   []config.Folder   `json:"writable,omitempty"`
-	Jobs       []store.Job       `json:"jobs,omitempty"`
-	Job        *store.Job        `json:"job,omitempty"`
-	Brief      string            `json:"brief,omitempty"`
-	Handoff    *store.Handoff    `json:"handoff,omitempty"`
-	Dispatch   *store.Dispatch   `json:"dispatch,omitempty"`
-	Messages   []store.Message   `json:"messages,omitempty"`
-	Assignment *store.Assignment `json:"assignment,omitempty"`
-	Effect     *store.Effect     `json:"effect,omitempty"`
-	Report     *store.Report     `json:"report,omitempty"`
-	Decision   *store.Decision   `json:"decision,omitempty"`
-	JobBranch  *store.JobBranch  `json:"job_branch,omitempty"`
-	Push       *store.Push       `json:"push,omitempty"`
+	Writable []config.Folder `json:"writable,omitempty"`
+	Jobs     []store.Job     `json:"jobs,omitempty"`
+	Job      *store.Job      `json:"job,omitempty"`
+	Brief    string          `json:"brief,omitempty"`
+	Handoff  *store.Handoff  `json:"handoff,omitempty"`
+	Dispatch *store.Dispatch `json:"dispatch,omitempty"`
+	Messages []store.Message `json:"messages,omitempty"`
+	// DecisionRequest is the version of a decision request that a request or
+	// an answer made, and DecisionRequests the pending ones `asmai
+	// decisions` lists.
+	DecisionRequest  *store.DecisionRequest  `json:"decision_request,omitempty"`
+	DecisionRequests []store.DecisionRequest `json:"decision_requests,omitempty"`
+	Assignment       *store.Assignment       `json:"assignment,omitempty"`
+	Effect           *store.Effect           `json:"effect,omitempty"`
+	Report           *store.Report           `json:"report,omitempty"`
+	Decision         *store.Decision         `json:"decision,omitempty"`
+	JobBranch        *store.JobBranch        `json:"job_branch,omitempty"`
+	Push             *store.Push             `json:"push,omitempty"`
 	// PullRequest is the pull request the delivery owner's effect named,
 	// as the daemon recorded it.
 	PullRequest *store.PullRequest `json:"pull_request,omitempty"`
@@ -676,6 +702,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.pushCommand(conn, req)
 	case CommandDecisionRecord:
 		d.decisionRecordCommand(conn, req)
+	case CommandDecisionRequest, CommandDecisionAnswer, CommandDecisions:
+		d.decisionRequestCommand(conn, req)
 	case CommandTrailers:
 		trailers, err := d.trailers(req)
 		if err != nil {

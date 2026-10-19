@@ -237,6 +237,18 @@ ALTER TABLE dispatches ADD COLUMN skills TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE native_sessions ADD COLUMN unqualified TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE dispatches ADD COLUMN unqualified TEXT NOT NULL DEFAULT '{}';
 `,
+	`
+CREATE TABLE decision_requests (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, request INTEGER NOT NULL, version INTEGER NOT NULL,
+ job INTEGER NOT NULL REFERENCES jobs(number), requester TEXT NOT NULL, recipient TEXT NOT NULL,
+ assignment INTEGER REFERENCES assignments(id), kind TEXT NOT NULL, surface TEXT NOT NULL,
+ content TEXT NOT NULL, questions TEXT NOT NULL, blocks TEXT NOT NULL DEFAULT '[]',
+ state TEXT NOT NULL, answer TEXT NOT NULL DEFAULT '', answered_by TEXT NOT NULL DEFAULT '',
+ relied_on TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, settled_at TEXT,
+ UNIQUE (request, version)
+);
+ALTER TABLE messages ADD COLUMN request INTEGER REFERENCES decision_requests(id);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -341,7 +353,14 @@ const (
 	// source. KindChecksRerun records the daemon re-running the failed jobs
 	// of a head's red checks once, on the delegated decision it cites.
 	KindDecisionRecorded = "decision.recorded"
-	KindChecksRerun      = "checks.rerun"
+	// KindDecisionRequested, KindDecisionReplaced, KindDecisionAnswered and
+	// KindDecisionWithdrawn record a decision request's versions and how each
+	// ended: replaced by a newer version, answered, or withdrawn.
+	KindDecisionRequested = "decision.requested"
+	KindDecisionReplaced  = "decision.replaced"
+	KindDecisionAnswered  = "decision.answered"
+	KindDecisionWithdrawn = "decision.withdrawn"
+	KindChecksRerun       = "checks.rerun"
 	// KindCIWaitReplaced records the daemon dropping its wait on the checks
 	// of an older head of a job's pull request for those of the head it
 	// pushed since.

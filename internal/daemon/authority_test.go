@@ -74,6 +74,18 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"current", CommandDecisionRecord, "only leader@engineering, judging a red head's checks"},
 		{"worker", CommandDecisionRecord, "only leader@engineering, judging a red head's checks"},
 		{"", CommandDecisionRecord, "asmai decision record is an agent command"},
+		// Any agent requests a decision; only a leader answers one; only the
+		// user lists the pending decisions.
+		{"worker", CommandDecisionRequest, ""},
+		{"engineering", CommandDecisionRequest, ""},
+		{"current", CommandDecisionRequest, ""},
+		{"", CommandDecisionRequest, "asmai decision request is an agent command"},
+		{"engineering", CommandDecisionAnswer, ""},
+		{"worker", CommandDecisionAnswer, "only a leader may run asmai decision answer"},
+		{"", CommandDecisionAnswer, "asmai decision answer is an agent command"},
+		{"", CommandDecisions, ""},
+		{"engineering", CommandDecisions, "ask the user to run `asmai decisions`"},
+		{"worker", CommandDecisions, "ask the user to run `asmai decisions`"},
 		// No agent runs Lavish or asks about its server (04 rule 22).
 		{"current", CommandLavish, "ask the user to run `asmai lavish`"},
 		{"engineering", CommandLavish, "ask the user to run `asmai lavish`"},

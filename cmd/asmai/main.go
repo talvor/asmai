@@ -67,6 +67,8 @@ commands you type:
   asmai status                show the daemon, its version and each leader
   asmai agents                list the factory's agents
   asmai jobs                  list numbered jobs
+  asmai decisions             list the decisions waiting for you, each with its answer surface, the conversation
+                              or Lavish. It only lists: it answers nothing
   asmai job <number>          show a job and its witnessed request
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
@@ -159,6 +161,16 @@ commands agents run:
                               Engineering's leader records its judgment that the red checks on the pushed head
                               failed for a reason unrelated to the change, as a delegated decision, and the
                               daemon re-runs their failed jobs once; a second re-run of the same head is refused
+  asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --title <text> --option <text> [--recommend <option>]
+  asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --question '<json>' [--content <text>] [--blocks <assignment>]
+                              request a decision. A worker's request goes to its owning leader, never to the user,
+                              and holds its assignment's work until the answer; a leader's goes to the user through
+                              Coordination, and holds the assignments of its own that --blocks names. --request
+                              issues a new version, which replaces the pending one; a single choice is answered
+                              in the conversation and everything else in Lavish
+  asmai decision answer --request <id> --version <n> --answer <text> [--relied-on <text>]
+                              a worker's owning leader answers one version of its request from the records; an
+                              answer naming an older version is refused
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
 Every command accepts --json to print JSON instead of tables; asmai attach --json prints the
@@ -170,7 +182,7 @@ var groups = map[string][]string{
 	"providers": {"install", "list"},
 	"repo":      {"add", "list", "show", "remove"},
 	"handoff":   {"send", "accept", "clarify", "decline"},
-	"decision":  {"record"},
+	"decision":  {"record", "request", "answer"},
 	"config":    {"check", "show", "edit", "apply", "example"},
 	"role":      {"list", "set"},
 }
@@ -260,6 +272,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var role roleChoices
 	var claudeDefaultModel string
 	var choice, rationale string
+	var request requestFlags
 	var resultArgs resultFlags
 	switch name {
 	case "init":
@@ -335,7 +348,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
 		flags.StringVar(&rationale, "rationale", "", "why")
 		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
-	case "chat", "dashboard", "doctor", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
+	case "decision request":
+		flags.Int64Var(&request.job, "job", 0, "job number; a leader's request names its job, and a worker's is about its assignment's")
+		flags.Int64Var(&request.request, "request", 0, "the request this is a new version of, which it replaces")
+		flags.StringVar(&request.kind, "kind", "", "choice or provider (one question with options), review, grilling, wayfinder or questions; the default is choice for one question with options, questions otherwise")
+		flags.StringVar(&request.content, "content", "", "your own content above the questions, such as a prototype, a diff or a report")
+		flags.StringVar(&request.title, "title", "", "the title of the one question")
+		flags.StringVar(&request.body, "body", "", "the body of the one question")
+		flags.Var(&request.options, "option", "an option of the one question; may be repeated")
+		flags.StringVar(&request.recommend, "recommend", "", "the option you recommend for the one question")
+		flags.Var(&request.questions, "question", `a question as JSON, {"id": ..., "title": ..., "body": ..., "options": [...], "recommendation": ...}; may be repeated`)
+		flags.Var(&request.blocks, "blocks", "an assignment you own whose work waits for the answer; may be repeated")
+	case "decision answer":
+		flags.Int64Var(&request.request, "request", 0, "the decision request")
+		flags.IntVar(&request.version, "version", 0, "the version the answer is to")
+		flags.StringVar(&request.answer, "answer", "", "the answer")
+		flags.StringVar(&request.reliedOn, "relied-on", "", "the record the answer rests on")
+	case "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -364,7 +393,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -467,6 +496,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return push(o, paths, arg)
 	case "decision record":
 		return decisionRecord(o, paths, decisionJob, choice, rationale, evidence)
+	case "decision request":
+		return decisionRequest(o, paths, request)
+	case "decision answer":
+		return decisionAnswer(o, paths, request)
+	case "decisions":
+		return listDecisions(o, paths)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "dashboard":

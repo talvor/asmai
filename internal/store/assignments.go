@@ -695,11 +695,22 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err := tx.QueryRow(`SELECT kind FROM messages m JOIN dispatches d ON d.message = m.id WHERE d.id = ?`, sub.Dispatch).Scan(&given); err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if given != MessageAssignment && given != MessageRejection && given != MessageResumption {
+	if given != MessageAssignment && given != MessageRejection && given != MessageResumption && given != MessageDecisionAnswer {
 		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d does not give %s an assignment to report on", sub.Dispatch, sub.Agent)
 	}
 	if a.State != AssignmentActive {
 		return Report{}, Dispatch{}, fmt.Errorf("assignment %d is %s, so it takes no new report", a.ID, a.State)
+	}
+	// Work that depends on a pending decision waits for its answer, and a
+	// result is that work finished; a blocked report is not.
+	if sub.Kind == ReportResult {
+		pending, err := blockingDecisions(tx, a.ID)
+		if err != nil {
+			return Report{}, Dispatch{}, err
+		}
+		if len(pending) > 0 {
+			return Report{}, Dispatch{}, waitingOnDecision(a.ID, pending)
+		}
 	}
 	// A read-only assignment's commit is the one it is fixed at, and it has
 	// no branch for its worker to take the job branch's tip into.

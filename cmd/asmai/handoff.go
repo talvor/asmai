@@ -98,6 +98,13 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if r := m.ReportData; r != nil {
 			printReport(o.stdout, *r)
 		}
+		if r := m.RequestData; r != nil {
+			if m.Kind == store.MessageDecisionAnswer {
+				fmt.Fprintf(o.stdout, "Answer to version %d of decision request %d, from %s:\n%s\n", r.Version, r.Request, m.Sender, m.Body)
+			} else {
+				printRequest(o.stdout, *r)
+			}
+		}
 	}
 	return 0
 }

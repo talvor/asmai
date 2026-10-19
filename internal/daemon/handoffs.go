@@ -127,7 +127,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
 	switch m.Kind {
 	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageCancellation, store.MessageValidation, store.ReportResult, store.ReportBlocked,
-		store.MessageResumption, store.MessageReconciliation, store.MessageRestoration:
+		store.MessageResumption, store.MessageReconciliation, store.MessageRestoration, store.MessageDecisionRequest, store.MessageDecisionAnswer:
 	default:
 		return nil
 	}

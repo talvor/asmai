@@ -105,8 +105,12 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					if err == nil {
 						records, err = d.store.DecisionRecords(j.Number)
 					}
+					var requests []store.DecisionRequest
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records)
+						requests, err = d.store.JobDecisionRequests(j.Number)
+					}
+					if err == nil {
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests)
 					}
 				}
 			}
@@ -137,7 +141,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
@@ -244,7 +248,22 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	for _, r := range records {
 		fmt.Fprintf(&b, "- %d %s by %s: %s. Rationale: %s. Evidence: %s\n", r.ID, r.Source, r.Leader, r.Choice, r.Rationale, r.Evidence)
 	}
-	fmt.Fprintln(&b, "Pending decisions: none\nGrants: none\nRecent journal:")
+	fmt.Fprintln(&b, "Pending decisions:")
+	pending := 0
+	for _, r := range requests {
+		if r.State != store.RequestPending {
+			continue
+		}
+		pending++
+		fmt.Fprintf(&b, "- request %d, version %d, from %s to %s, answered in %s: %s\n", r.Request, r.Version, r.Requester, r.Recipient, r.Surface, questionTitles(r.Questions))
+		if len(r.Blocks) > 0 {
+			fmt.Fprintf(&b, "  the work of assignments %v waits for the answer; independent work goes on\n", r.Blocks)
+		}
+	}
+	if pending == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	fmt.Fprintln(&b, "Grants: none\nRecent journal:")
 	for _, entry := range entries {
 		fmt.Fprintf(&b, "- %d %s\n", entry.ID, entry.Kind)
 	}
@@ -262,4 +281,13 @@ func PullRequestState(p store.PullRequest) string {
 	default:
 		return `neither a draft nor marked "[not ready]"`
 	}
+}
+
+// questionTitles is the titles of questions, for a line about a request.
+func questionTitles(questions []store.Question) string {
+	titles := make([]string, len(questions))
+	for i, q := range questions {
+		titles[i] = q.Title
+	}
+	return strings.Join(titles, "; ")
 }

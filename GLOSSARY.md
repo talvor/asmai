@@ -179,6 +179,10 @@ _Avoid_: Current job, active job
 A message the factory observed the user submit from their own keyboard in an agent's terminal. It is the only conversation evidence that a decision, grant or mandate came from the user.
 _Avoid_: Turn, prompt (when meaning the user's attributable words)
 
+**Decision request**:
+A leader's or worker's request for a choice that is not theirs to make. A worker's goes to its owning leader, never to the user, which answers it from the records or escalates it through Coordination; a leader's goes to the user through Coordination. Every request is versioned, and is pending, answered, replaced by a newer version, or withdrawn when its job is cancelled. An answer applies only to the version it answers, work that depends on the choice waits for it, and silence is never approval.
+_Avoid_: Question (a request holds questions), Escalation (when meaning the request itself rather than its being carried to the user)
+
 **Answer surface**:
 The one place where a given version of a decision request can be answered: the conversation or Lavish.
 

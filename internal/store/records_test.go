@@ -112,35 +112,57 @@ func TestADecisionMissingItsLeaderOrItsChoiceIsRefused(t *testing.T) {
 	}
 }
 
-func TestAHumanDecisionCitesAWitnessedMessageThatExists(t *testing.T) {
+func TestAHumanDecisionCitesAWitnessedMessageOfTheJobsConversation(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
-	if err := s.ConversationEntered("leader@coordination", "coordination", 1, "/dev/pts/3", assignmentsAt); err != nil {
-		t.Fatal(err)
+	for _, agent := range []string{"leader@coordination", "leader@engineering"} {
+		if err := s.ConversationEntered(agent, strings.TrimPrefix(agent, "leader@"), 1, "/dev/pts/3", assignmentsAt); err != nil {
+			t.Fatal(err)
+		}
 	}
-	w := Witnessed{Agent: "leader@coordination", Role: "coordination", Generation: 1, Terminal: "/dev/pts/3", Text: "use the existing library"}
-	_, witnessed, err := s.ObservedWitnessed(w, "UserPromptSubmit", json.RawMessage(`{"prompt":"use the existing library"}`), assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
+	say := func(agent, text string) int64 {
+		t.Helper()
+		w := Witnessed{Agent: agent, Role: strings.TrimPrefix(agent, "leader@"), Generation: 1, Terminal: "/dev/pts/3", Text: text}
+		_, message, err := s.ObservedWitnessed(w, "UserPromptSubmit", json.RawMessage(`{}`), assignmentsAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return message
 	}
+	earlier := say("leader@coordination", "something else")
+	request := say("leader@coordination", "add a greeting")
+	later := say("leader@coordination", "use the existing library")
+	elsewhere := say("leader@engineering", "use the existing library")
 	job, d := leaderWorking(t, s)
+	if _, err := s.db.Exec(`UPDATE jobs SET witness = ? WHERE number = ?`, request, job); err != nil {
+		t.Fatal(err)
+	}
 	human := rule25(job, d)
 	human.Source = SourceHuman
 
-	human.Cites = witnessed + 100
-	if _, err := s.DecisionRecorded(human, 1, assignmentsAt); err == nil || !strings.Contains(err.Error(), "does not exist") {
-		t.Errorf("a human decision citing a message that does not exist: %v", err)
+	for _, c := range []struct {
+		name  string
+		cites int64
+		want  string
+	}{
+		{"a message that does not exist", elsewhere + 100, "does not exist"},
+		{"an entry that is no witnessed message", request - 1, "not a witnessed message"},
+		{"an unrelated earlier message", earlier, "not in the job's conversation"},
+		{"a message to another agent", elsewhere, "not in the job's conversation"},
+	} {
+		human.Cites = c.cites
+		if _, err := s.DecisionRecorded(human, 1, assignmentsAt); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("a human decision citing %s: %v", c.name, err)
+		}
 	}
-	human.Cites = witnessed - 1 // the observation, not the message
-	if _, err := s.DecisionRecorded(human, 1, assignmentsAt); err == nil || !strings.Contains(err.Error(), "not a witnessed message") {
-		t.Errorf("a human decision citing an entry that is no witnessed message: %v", err)
-	}
-	human.Cites = witnessed
-	got, err := s.DecisionRecorded(human, 1, assignmentsAt)
-	if err != nil || got.Source != SourceHuman || got.Cites != witnessed {
-		t.Fatalf("a human decision citing the user's message: %+v (%v)", got, err)
-	}
-	if text := got.Text("", ""); !strings.Contains(text, "human, citing witnessed message") {
-		t.Errorf("the record reads %q", text)
+	for name, cites := range map[string]int64{"the job's own witness": request, "a later message in its conversation": later} {
+		human.Cites = cites
+		got, err := s.DecisionRecorded(human, 1, assignmentsAt)
+		if err != nil || got.Source != SourceHuman || got.Cites != cites {
+			t.Fatalf("a human decision citing %s: %+v (%v)", name, got, err)
+		}
+		if text := got.Text("", ""); !strings.Contains(text, "human, citing witnessed message") {
+			t.Errorf("the record reads %q", text)
+		}
 	}
 }
 

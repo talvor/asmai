@@ -97,14 +97,30 @@ func insertDecisionRecord(tx *sql.Tx, d DecisionRecord, generation int, at time.
 		}
 	}
 	if d.Source == SourceHuman {
-		var kind string
-		if err := tx.QueryRow(`SELECT kind FROM journal WHERE id = ?`, d.Cites).Scan(&kind); errors.Is(err, sql.ErrNoRows) {
+		var kind, data string
+		if err := tx.QueryRow(`SELECT kind, data FROM journal WHERE id = ?`, d.Cites).Scan(&kind, &data); errors.Is(err, sql.ErrNoRows) {
 			return DecisionRecord{}, fmt.Errorf("witnessed message %d does not exist", d.Cites)
 		} else if err != nil {
 			return DecisionRecord{}, err
 		}
 		if kind != KindMessageWitnessed {
 			return DecisionRecord{}, fmt.Errorf("journal entry %d is %s, not a witnessed message", d.Cites, kind)
+		}
+		if d.Cites < j.Witness {
+			return DecisionRecord{}, fmt.Errorf("witnessed message %d came before job %d's own request, message %d, so it is not in the job's conversation", d.Cites, j.Number, j.Witness)
+		}
+		var cited, request Witnessed
+		if err := json.Unmarshal([]byte(data), &cited); err != nil {
+			return DecisionRecord{}, err
+		}
+		if err := tx.QueryRow(`SELECT data FROM journal WHERE id = ?`, j.Witness).Scan(&data); err != nil {
+			return DecisionRecord{}, fmt.Errorf("job %d's own request, message %d, cannot be read: %w", j.Number, j.Witness, err)
+		}
+		if err := json.Unmarshal([]byte(data), &request); err != nil {
+			return DecisionRecord{}, err
+		}
+		if cited.Agent != request.Agent {
+			return DecisionRecord{}, fmt.Errorf("witnessed message %d was submitted to %s, not to %s, which job %d's request went to, so it is not in the job's conversation", d.Cites, cited.Agent, request.Agent, j.Number)
 		}
 	}
 	d.Assumptions, d.ReopenWhen, d.At = nonNil(d.Assumptions), nonNil(d.ReopenWhen), at.UTC()

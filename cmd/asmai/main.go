@@ -164,13 +164,23 @@ commands agents run:
                               itself as the accountable leader, the mandate or grant it relied on, the choice,
                               its rationale and evidence, its material assumptions and the conditions that
                               would reopen it, marked delegated (the default) or human, which cites the
-                              witnessed message it came from. Repeat --assumption and --reopen-when for each.
+                              witnessed message it came from (its journal ID, or latest). Repeat --assumption and --reopen-when for each.
                               A routine edit needs no record. Pass the records that matter on with
                               --record <id> on asmai assign and asmai handoff send
   asmai decision record --job <number> --choice rerun-failed --rationale <text> --evidence <text>
                               Engineering's leader records its judgment that the red checks on the pushed head
                               failed for a reason unrelated to the change, as a delegated decision, and the
                               daemon re-runs their failed jobs once; a second re-run of the same head is refused
+  asmai decision record --request <id> --version <n> --cites <witnessed message> --reading <text> --choice <text> [--job <number>]
+                              Coordination's leader records the user's answer to a decision request that is
+                              answered in the conversation: a human decision citing the user's witnessed message
+                              given after that version was shown, and refused if it cites a nudge or a message
+                              typed against an older version, when the current version is presented again. It
+                              stores your --reading of their words beside them, and the owning leader that asked
+                              receives both; --relied-on, --rationale and --evidence default to the answer itself
+  asmai decision present --request <id> --version <n>
+                              Coordination's leader records that it showed the user that version in the
+                              conversation, once; the user's answer is the message they send after it
   asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --title <text> --option <text> [--recommend <option>]
   asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --question '<json>' [--content <text>] [--blocks <assignment>]
                               request a decision. A worker's request goes to its owning leader, never to the user,
@@ -196,7 +206,7 @@ var groups = map[string][]string{
 	"providers": {"install", "list"},
 	"repo":      {"add", "list", "show", "remove"},
 	"handoff":   {"send", "accept", "clarify", "decline"},
-	"decision":  {"record", "request", "answer"},
+	"decision":  {"record", "request", "answer", "present"},
 	"config":    {"check", "show", "edit", "apply", "example"},
 	"role":      {"list", "set"},
 }
@@ -369,7 +379,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&decision.assumptions, "assumption", "a material assumption the choice rests on, or none; may be repeated")
 		flags.Var(&decision.reopenWhen, "reopen-when", "a condition that would reopen the decision, or none; may be repeated")
 		flags.StringVar(&decision.source, "source", "", "delegated (the default), or human")
-		flags.Int64Var(&decision.cites, "cites", 0, "with --source human, the witnessed message the decision came from")
+		flags.StringVar(&decision.cites, "cites", "", "with --source human, the witnessed message the decision came from: its journal ID, or latest for the newest the user sent you")
+		flags.Int64Var(&decision.request, "request", 0, "the decision request the user's answer in the conversation is to; Coordination's leader only")
+		flags.IntVar(&decision.version, "version", 0, "with --request, the version the user's message answers")
+		flags.StringVar(&decision.reading, "reading", "", "with --request, your reading of the user's words, stored beside them")
 	case "decision request":
 		flags.Int64Var(&request.job, "job", 0, "job number; a leader's request names its job, and a worker's is about its assignment's")
 		flags.Int64Var(&request.request, "request", 0, "the request this is a new version of, which it replaces")
@@ -381,6 +394,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&request.recommend, "recommend", "", "the option you recommend for the one question")
 		flags.Var(&request.questions, "question", `a question as JSON, {"id": ..., "title": ..., "body": ..., "options": [...], "recommendation": ...}; may be repeated`)
 		flags.Var(&request.blocks, "blocks", "an assignment you own whose work waits for the answer; may be repeated")
+	case "decision present":
+		flags.Int64Var(&request.request, "request", 0, "the decision request")
+		flags.IntVar(&request.version, "version", 0, "the version you showed the user")
 	case "decision answer":
 		flags.Int64Var(&request.request, "request", 0, "the decision request")
 		flags.IntVar(&request.version, "version", 0, "the version the answer is to")
@@ -419,7 +435,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -526,6 +542,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return decisionRequest(o, paths, request)
 	case "decision answer":
 		return decisionAnswer(o, paths, request)
+	case "decision present":
+		return decisionPresent(o, paths, request)
 	case "decisions":
 		return listDecisions(o, paths)
 	case "chat":

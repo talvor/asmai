@@ -115,6 +115,11 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 	if ref.address.Name != roles.Leader {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("only a role's leader may run asmai decision record: a worker's decision goes to its owning leader")
 	}
+	if req.LatestWitness {
+		if req.Cites, err = d.store.LatestWitnessed(ref.address.String()); err != nil {
+			return store.DecisionRecord{}, store.Rerun{}, refuse("%v", err)
+		}
+	}
 	record := store.DecisionRecord{
 		Job: req.Job, Leader: ref.address.String(), Source: req.DecisionSource, Cites: req.Cites, ReliedOn: req.ReliedOn,
 		Choice: strings.TrimSpace(req.Choice), Rationale: req.Rationale, Evidence: req.Evidence,

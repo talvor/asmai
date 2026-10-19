@@ -75,6 +75,11 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return errors.New("only a leader may run asmai decision answer: a worker's request is answered by its owning leader")
+	case CommandDecisionPresent:
+		if ref.address == roles.LeaderOf(roles.Coordination) {
+			return nil
+		}
+		return errors.New("only leader@coordination may run asmai decision present: it shows the user a decision in the conversation")
 	case CommandResult, CommandBlocked:
 		if ref.address.Name != roles.Leader {
 			return nil
@@ -95,7 +100,7 @@ func isAgentCommand(command string) bool {
 	case CommandJobOpen, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
 		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
-		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandTrailers:
+		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers:
 		return true
 	}
 	return false
@@ -129,6 +134,8 @@ func commandName(command string) string {
 		return "decision request"
 	case CommandDecisionAnswer:
 		return "decision answer"
+	case CommandDecisionPresent:
+		return "decision present"
 	case CommandDecisions:
 		return "decisions"
 	case CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:

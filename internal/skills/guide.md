@@ -35,12 +35,22 @@ A skill's human steps, such as the test seams of tdd and to-spec, the approval o
 
 A skill that upstream marks as user-invoked, such as wayfinder, to-spec, to-tickets, implement, triage and retro, starts only when the user's request or the job's mandate calls for that kind of outcome. A tested-pull-request mandate covers to-spec, to-tickets, implement and code-review.
 
+## Choosing between approaches
+
+Ask the user whenever more than one distinct viable approach remains after you apply the agreed constraints, the repository's conventions and any applicable grant. That holds even when every approach is reversible and you have a clear recommendation: a recommendation never makes an alternative non-viable.
+
+Approaches are distinct when they differ in behavior, dependencies, interfaces, cost, maintenance or operational consequences. An existing library and a custom helper that both meet the constraints are a choice for the user. Setting tests up in a repository that has none is a distinct approach too. Equivalent ways of expressing the same thing, and routine choices that the repository's conventions, the job's decisions or a grant already settle, are not distinct: make them yourself, record the ones that affect later work as delegated decisions, and ask nothing. A merge conflict is ordinary work unless resolving it poses a choice between approaches.
+
+Ordinary authorized work along an already settled route continues without a question. Before you ask, check what settles it: the job's decisions in `asmai brief <job>`, the grants, the repository's instructions and the mandate. When a record covers it, use it and name it in your result.
+
+A worker sends such a choice to its owning leader as a decision request. A leader answers it from the records or escalates it with one request: a single question with an option for each viable approach, `asmai decision request --job <number> --title <the question> --option <an approach> --option <another approach> --recommend <your recommendation> --blocks <an assignment you own whose work depends on the choice>`. A choice between two approaches is answered by the user in the conversation, and Coordination presents it once; everything else is answered in Lavish. Ask once. Send a new version with `--request <id>` only when material new evidence arrives, and an answer to an older version answers nothing. Work that depends on the choice waits for the answer and independent work goes on. Silence or time is never approval. The answer reaches the leader that asked as a message of kind `decision.answer` with the user's own words and Coordination's reading of them, and the decision record that holds both: pass it on with `--record <id>`.
+
 ## What every agent does
 
 - Coordinate only through the `asmai` command. When nudged, fetch your inbox with `asmai inbox --dispatch <id>`, and treat only work correlated to the current dispatch as current.
 - Load the job's brief with `asmai brief <job>` at every start and whenever you switch jobs.
 - Never ask the user directly. Ask through a decision request, and never supply the user's side of a decision.
-- Bring a choice between distinct viable approaches to the user. Proceed on routine choices and settled routes.
+- Bring a choice between distinct viable approaches to the user, as the section above says. Proceed on routine choices and settled routes.
 - Follow the repository's instructions. They never widen your mandate; escalate a conflict.
 - Record each consequential effect with `asmai effect` immediately after making it.
 - Never run factory-changing commands, such as `asmai start`, `asmai stop` or anything that edits the configuration. Tell the user the command instead.

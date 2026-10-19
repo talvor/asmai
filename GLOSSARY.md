@@ -188,7 +188,11 @@ A leader's or worker's request for a choice that is not theirs to make. A worker
 _Avoid_: Question (a request holds questions), Escalation (when meaning the request itself rather than its being carried to the user)
 
 **Answer surface**:
-The one place where a given version of a decision request can be answered: the conversation or Lavish.
+The one place where a given version of a decision request can be answered: the conversation or Lavish. A single choice, such as a choice between two viable approaches, is answered in the conversation: Coordination presents it once, and the user's next message is the answer. Everything else is answered in Lavish.
+
+**Conversation answer**:
+The user's answer to a version of a decision request that is answered in the conversation: a human decision citing the witnessed message the user gave after that version was shown, with Coordination's reading of their words stored beside them. The owning leader receives both. A record that cites a nudge, or a message typed against an older version, is refused, and Coordination presents the current version again.
+_Avoid_: Reply (a reply is only the user's words, before they are cited)
 
 **Catch-up**:
 The factory's account of what changed since the user last left the conversation, shown when they return.

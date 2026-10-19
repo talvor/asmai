@@ -35,6 +35,21 @@ func (d *daemon) decisionRequestCommand(conn *net.UnixConn, req Request) {
 		if r, dispatch, err = d.decisionAnswer(req); err == nil {
 			resp.DecisionRequest, resp.Dispatch, notify = &r, &dispatch, dispatch.Agent
 		}
+	case CommandDecisionPresent:
+		var r store.DecisionRequest
+		if r, err = d.decisionPresent(req); err == nil {
+			resp.DecisionRequest = &r
+		}
+	case CommandDecisionRecord:
+		var record store.DecisionRecord
+		var r store.DecisionRequest
+		var dispatch *store.Dispatch
+		if record, r, dispatch, err = d.conversationAnswer(req); err == nil {
+			resp.DecisionRecord, resp.DecisionRequest = &record, &r
+			if dispatch != nil {
+				resp.Dispatch, notify = dispatch, dispatch.Agent
+			}
+		}
 	case CommandDecisions:
 		// Listing is not answering: it reads and changes nothing.
 		resp.DecisionRequests, err = d.store.PendingDecisions()
@@ -145,7 +160,7 @@ func (d *daemon) decisionAnswer(req Request) (store.DecisionRequest, store.Dispa
 	}
 	switch {
 	case latest.Recipient == store.ToUser:
-		return store.DecisionRequest{}, store.Dispatch{}, refuse("decision request %d goes to the user, whose answer no agent supplies; Coordination presents it and returns the user's own answer", latest.Request)
+		return store.DecisionRequest{}, store.Dispatch{}, refuse("decision request %d goes to the user, whose answer no agent supplies; Coordination presents it and records the user's own message with `asmai decision record --request %d --version %d --cites <witnessed message> --reading <text>`", latest.Request, latest.Request, latest.Version)
 	case latest.Recipient != ref.address.String():
 		return store.DecisionRequest{}, store.Dispatch{}, refuse("decision request %d goes to %s, not %s", latest.Request, latest.Recipient, ref.address)
 	}
@@ -160,4 +175,90 @@ func (d *daemon) decisionAnswer(req Request) (store.DecisionRequest, store.Dispa
 		}
 	}
 	return r, dispatch, nil
+}
+
+// decisionPresent records that Coordination's leader showed the user a version
+// of a decision request in the conversation. A decision is presented once,
+// with its answer surface, which was fixed when the version was made.
+func (d *daemon) decisionPresent(req Request) (store.DecisionRequest, error) {
+	d.mu.Lock()
+	ref, _, err := d.caller(req)
+	d.mu.Unlock()
+	if err != nil {
+		return store.DecisionRequest{}, err
+	}
+	if ref.address != roles.LeaderOf(roles.Coordination) {
+		return store.DecisionRequest{}, refuse("only %s presents a decision to the user, in the conversation", roles.LeaderOf(roles.Coordination))
+	}
+	if req.Request <= 0 || req.Version <= 0 {
+		return store.DecisionRequest{}, refuse("asmai decision present needs the request and the version shown")
+	}
+	r, err := d.store.DecisionPresented(req.Request, req.Version, ref.address.String(), time.Now())
+	if err != nil {
+		return store.DecisionRequest{}, refuse("%v", err)
+	}
+	d.log.Info("decision presented", "request", r.Request, "version", r.Version, "job", r.Job, "surface", r.Surface, "shown", r.Shown)
+	return r, nil
+}
+
+// conversationAnswer records the user's answer to one version of a decision
+// request that is answered in the conversation: a human decision, by
+// Coordination's leader, citing the user's witnessed message given after the
+// version was shown and carrying Coordination's reading of it beside their
+// words. The owning leader that asked receives both, and the returned dispatch
+// carries them to it; no agent supplies the answer. A record citing a nudge
+// or a message typed against an older version is refused, and the refusal
+// shows the current version to present again.
+func (d *daemon) conversationAnswer(req Request) (store.DecisionRecord, store.DecisionRequest, *store.Dispatch, error) {
+	d.mu.Lock()
+	ref, l, err := d.caller(req)
+	current := int64(0)
+	if err == nil {
+		current = l.currentDispatch
+	}
+	d.mu.Unlock()
+	if err != nil {
+		return store.DecisionRecord{}, store.DecisionRequest{}, nil, err
+	}
+	if ref.address != roles.LeaderOf(roles.Coordination) {
+		return store.DecisionRecord{}, store.DecisionRequest{}, nil, refuse("only %s records the user's answer in the conversation: other agents never supply the user's side of a decision", roles.LeaderOf(roles.Coordination))
+	}
+	if req.DecisionSource != "" && req.DecisionSource != store.SourceHuman {
+		return store.DecisionRecord{}, store.DecisionRequest{}, nil, refuse("an answer to a decision request is the user's own: --source %s is refused", req.DecisionSource)
+	}
+	if req.LatestWitness {
+		if req.Cites, err = d.store.LatestWitnessed(ref.address.String()); err != nil {
+			return store.DecisionRecord{}, store.DecisionRequest{}, nil, refuse("%v", err)
+		}
+	}
+	if req.Job <= 0 {
+		asked, err := d.store.DecisionRequest(req.Request)
+		if err != nil {
+			return store.DecisionRecord{}, store.DecisionRequest{}, nil, refuse("%v", err)
+		}
+		req.Job = asked.Job
+	}
+	record := store.DecisionRecord{
+		Job: req.Job, Leader: ref.address.String(), Source: store.SourceHuman, Cites: req.Cites, ReliedOn: req.ReliedOn,
+		Choice: strings.TrimSpace(req.Choice), Rationale: req.Rationale, Evidence: req.Evidence,
+		Assumptions: req.Assumptions, ReopenWhen: req.ReopenWhen, Dispatch: current,
+		Request: req.Request, Version: req.Version, Reading: req.Reading,
+	}
+	record, r, dispatch, err := d.store.ConversationAnswerRecorded(record, ref.generation, time.Now())
+	if err != nil {
+		var refused *store.AnswerRefused
+		if errors.As(err, &refused) {
+			d.log.Info("an answer was refused", "request", req.Request, "version", req.Version, "cites", req.Cites, "reason", refused.Reason)
+		}
+		return store.DecisionRecord{}, store.DecisionRequest{}, nil, refuse("%v", err)
+	}
+	d.log.Info("decision answered in the conversation", "request", r.Request, "version", r.Version, "job", r.Job, "record", record.ID, "cites", record.Cites, "requester", r.Requester)
+	if dispatch != nil {
+		if to, err := roles.ParseAddress(dispatch.Agent); err == nil {
+			if err := d.ensureAgent(to); err != nil {
+				d.log.Error("starting the requester of an answered decision", "agent", dispatch.Agent, "dispatch", dispatch.ID, "error", err.Error())
+			}
+		}
+	}
+	return record, r, dispatch, nil
 }

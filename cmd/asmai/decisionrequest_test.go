@@ -3,6 +3,9 @@
 package main
 
 import (
+	"encoding/json"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -120,5 +123,108 @@ func TestAsmaiDecisionsListsThePendingDecisionsWithTheirAnswerSurfaceAndAnswersN
 	// The user does not run the agents' commands.
 	if _, stderr, code := runAsmai(t, "decision", "request", "--job", "1", "--title", "x", "--option", "a", "--option", "b"); code != 1 || !strings.Contains(stderr, "agent command") {
 		t.Fatalf("user requesting a decision: code %d, %s", code, stderr)
+	}
+}
+
+func TestAChoiceIsPresentedOnceAndOnlyTheUsersMessageAfterItAnswersWithCoordinationsReading(t *testing.T) {
+	testDir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	record := `asmai decision record --request 1 --version 1 --cites latest --choice in-memory --reading 'The user picked the in-memory cache.'`
+	script := []string{
+		`{"screen": "> "}`,
+		`{"expect": "Please fix the fixture\r"}`,
+		`{"hook": "UserPromptSubmit", "payload": {"hook_event_name": "UserPromptSubmit", "prompt": "Please fix the fixture"}}`,
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Fix the fixture' --criterion 'Tests pass'`, 0, "Opened job 1"),
+		fakeRun(`asmai decision request --job 1 --title 'Which cache?' --option redis --option in-memory --recommend in-memory`, 0, "decision request 1, version 1, recorded for job 1; it goes to user and is answered in conversation"),
+		// Nothing answers a version before it is shown.
+		fakeRun(record, 1, "has not been presented"),
+		fakeRun(`asmai decision present --request 1 --version 1`, 0, "(?s)version 1 of decision request 1 presented.*wait for their next message"),
+		// It is presented once.
+		fakeRun(`asmai decision present --request 1 --version 1`, 1, "presented already"),
+		// An entry that is not the user's message, as a nudge is not, is
+		// refused, and the current version is shown for presenting again.
+		fakeRun(`asmai decision record --request 1 --version 1 --cites 1 --choice in-memory --reading 'The user picked the in-memory cache.'`, 1, "(?s)not a witnessed message.*present the current version to the user again.*Question q1: Which cache\\?"),
+		fakeRun(`asmai decision present --request 1 --version 1`, 0, "presented"),
+		// The user's earlier message, typed before this version was shown, is
+		// no answer to it.
+		fakeRun(record, 1, "(?s)was given before version 1.*typed against an older version.*present the current version to the user again"),
+		fakeRun(`asmai decision present --request 1 --version 1 && touch "$ASMAI_TEST_DIR/shown"`, 0, "presented"),
+		`{"expect": "in-memory please\r"}`,
+		`{"hook": "UserPromptSubmit", "payload": {"hook_event_name": "UserPromptSubmit", "prompt": "in-memory please"}}`,
+		fakeRun(record, 0, "(?s)decision 1 recorded, human by leader@coordination: in-memory.*version 1 of decision request 1 answered by witnessed message"),
+		fakeRun(`asmai brief 1`, 0, "(?s)human, citing witnessed message.*Coordination's reading of the user's words: The user picked the in-memory cache\\."),
+		fakeRun(`touch "$ASMAI_TEST_DIR/done"`, 0, ""),
+		`{"expect": "only typed by a test that means to"}`,
+	}
+	stateDir := readyFactory(t, script)
+	origin := filepath.Join(t.TempDir(), "fixture.git")
+	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
+	work := t.TempDir()
+	gitIn(t, work, "clone", "--quiet", origin, "fixture")
+	checkout := filepath.Join(work, "fixture")
+	gitIn(t, checkout, "commit", "--allow-empty", "-m", "initial")
+	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:main")
+	if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
+		t.Fatalf("repo add: %s", stderr)
+	}
+	a := inTerminal(t, 100, 25)
+	t.Cleanup(func() {
+		if t.Failed() {
+			filepath.WalkDir(stateDir, func(path string, e fs.DirEntry, err error) error {
+				if err == nil && !e.IsDir() && strings.HasSuffix(path, ".log") {
+					text, _ := os.ReadFile(path)
+					t.Logf("%s:\n%s", path, text)
+				}
+				return nil
+			})
+		}
+	})
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("Coordination's terminal:\n%s", strings.Join(a.lines(), "\n"))
+		}
+	})
+	waitFor(t, "Coordination's prompt", a.shows(">"))
+	a.ptmx.WriteString("Please fix the fixture\r")
+	waitFor(t, "the choice to be shown to the user", touched(testDir, "shown"))
+	a.ptmx.WriteString("in-memory please\r")
+	waitFor(t, "the answer to be recorded", touched(testDir, "done"))
+
+	// The user has nothing left to answer, and the answer cites their own
+	// message beside Coordination's reading.
+	stdout, stderr, code := runAsmai(t, "decisions")
+	if code != 0 || strings.TrimSpace(stdout) != "No decisions are pending." {
+		t.Fatalf("asmai decisions = %q, %q, %d", stdout, stderr, code)
+	}
+	if got := journaled(t, "decision.presented"); len(got) != 3 {
+		t.Fatalf("%d presentations journaled, want 3: the first, and two after refusals", len(got))
+	}
+	if got := journaled(t, "decision.refused"); len(got) != 2 {
+		t.Fatalf("%d refusals journaled, want 2", len(got))
+	}
+	var answers []struct {
+		State   string `json:"state"`
+		Answer  string `json:"answer"`
+		Cites   int64  `json:"cites"`
+		Reading string `json:"reading"`
+		By      string `json:"answered_by"`
+	}
+	for _, e := range journaled(t, "decision.answered") {
+		var answer struct {
+			State   string `json:"state"`
+			Answer  string `json:"answer"`
+			Cites   int64  `json:"cites"`
+			Reading string `json:"reading"`
+			By      string `json:"answered_by"`
+		}
+		if err := json.Unmarshal(e.Data, &answer); err != nil {
+			t.Fatal(err)
+		}
+		answers = append(answers, answer)
+	}
+	witnessed := journaled(t, "message.witnessed")
+	if len(answers) != 1 || answers[0].State != "answered" || answers[0].Answer != "in-memory please" || answers[0].By != "user" || answers[0].Reading != "The user picked the in-memory cache." ||
+		len(witnessed) != 2 || answers[0].Cites != witnessed[1].ID {
+		t.Fatalf("answers = %+v, witnessed = %+v", answers, witnessed)
 	}
 }

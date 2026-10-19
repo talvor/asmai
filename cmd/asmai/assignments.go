@@ -450,7 +450,14 @@ type decisionFlags struct {
 	choice, reliedOn, rationale, evidence string
 	assumptions, reopenWhen               listFlags
 	source                                string
-	cites                                 int64
+	// cites is the witnessed message's journal ID, or latest.
+	cites string
+	// request, version and reading make the record the user's answer in the
+	// conversation to a version of a decision request, with Coordination's
+	// reading of their words.
+	request int64
+	version int
+	reading string
 }
 
 // recordIDs reads the values of --record, decision record IDs.
@@ -489,6 +496,13 @@ func printRecords(w io.Writer, title string, records []store.DecisionRecord) {
 // Engineering's leader's choice rerun-failed is its judgment on a head's red
 // checks, on which the daemon re-runs their failed jobs once.
 func decisionRecord(o *output, paths statedir.Paths, f decisionFlags) int {
+	cites, latest, err := witnessedRef(f.cites)
+	if err != nil {
+		return o.fail(fmt.Errorf("--cites: %w", err))
+	}
+	if f.request != 0 {
+		return conversationAnswer(o, paths, f, cites, latest)
+	}
 	rerun := strings.TrimSpace(f.choice) == store.ChoiceRerunFailed
 	switch {
 	case f.job <= 0:
@@ -515,7 +529,7 @@ func decisionRecord(o *output, paths statedir.Paths, f decisionFlags) int {
 		}
 	}
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRecord, Job: f.job, Choice: f.choice, ReliedOn: f.reliedOn, Rationale: f.rationale, Evidence: f.evidence,
-		Assumptions: assumptions, ReopenWhen: reopenWhen, DecisionSource: f.source, Cites: f.cites})
+		Assumptions: assumptions, ReopenWhen: reopenWhen, DecisionSource: f.source, Cites: cites, LatestWitness: latest})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -531,6 +545,23 @@ func decisionRecord(o *output, paths statedir.Paths, f decisionFlags) int {
 	fmt.Fprintf(o.stdout, "the daemon re-ran the failed jobs of head %s once, in workflow runs %s: %s\n", r.Head, runList(r.Runs), store.CheckNames(r.Checks))
 	fmt.Fprintln(o.stdout, "next: the daemon watches the head's checks again; a second re-run of this head is refused, so if they stay red assign a fix")
 	return 0
+}
+
+// witnessedRef reads --cites: the journal ID of a witnessed message, or
+// latest for the newest the user submitted to the caller's conversation, or
+// nothing.
+func witnessedRef(value string) (id int64, latest bool, err error) {
+	switch value = strings.TrimSpace(value); value {
+	case "":
+		return 0, false, nil
+	case "latest":
+		return 0, true, nil
+	}
+	id, err = strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false, fmt.Errorf("%q is not a witnessed message's ID or latest", value)
+	}
+	return id, false, nil
 }
 
 func runList(runs []int64) string {

@@ -35,6 +35,12 @@ func (d DecisionRecord) Check() error {
 		return errors.New("a human decision cites the witnessed message it came from")
 	case d.Source == SourceDelegated && d.Cites != 0:
 		return errors.New("a delegated decision cites no witnessed message: only a human decision has one")
+	case d.Request != 0 && (d.Source != SourceHuman || d.Version <= 0):
+		return errors.New("only a human decision answers a decision request, and it names the version it answers")
+	case d.Request != 0 && blank(d.Reading):
+		return errors.New("an answer to a decision request carries Coordination's reading of the user's words")
+	case d.Request == 0 && (d.Version != 0 || d.Reading != ""):
+		return errors.New("a version and a reading belong to an answer to a decision request")
 	}
 	if slices.ContainsFunc(d.Assumptions, blank) {
 		return errors.New("each assumption must have text")
@@ -86,7 +92,8 @@ func insertDecisionRecord(tx *sql.Tx, d DecisionRecord, generation int, at time.
 	if err != nil {
 		return DecisionRecord{}, err
 	}
-	if j.State != JobOpen {
+	// A paused job's pending decisions stay answerable.
+	if j.State != JobOpen && !(d.Request != 0 && jobTakesDecisions(j.State)) {
 		return DecisionRecord{}, fmt.Errorf("job %d is %s, so it takes no new decision", j.Number, j.State)
 	}
 	// A leader in a conversation, such as Coordination's, has no dispatch;
@@ -132,8 +139,8 @@ func insertDecisionRecord(tx *sql.Tx, d DecisionRecord, generation int, at time.
 	if err != nil {
 		return DecisionRecord{}, err
 	}
-	result, err := tx.Exec(`INSERT INTO decision_records (job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, dispatch, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.Job, d.Leader, d.Source, d.Cites, d.ReliedOn, d.Choice, d.Rationale, d.Evidence, string(assumptions), string(reopen), nullIfZero(d.Dispatch), timestamp(at))
+	result, err := tx.Exec(`INSERT INTO decision_records (job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, dispatch, request, version, reading, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.Job, d.Leader, d.Source, d.Cites, d.ReliedOn, d.Choice, d.Rationale, d.Evidence, string(assumptions), string(reopen), nullIfZero(d.Dispatch), d.Request, d.Version, d.Reading, timestamp(at))
 	if err != nil {
 		return DecisionRecord{}, err
 	}
@@ -146,7 +153,7 @@ func insertDecisionRecord(tx *sql.Tx, d DecisionRecord, generation int, at time.
 	return d, nil
 }
 
-const decisionRecordColumns = `id, job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, COALESCE(dispatch, 0), created_at`
+const decisionRecordColumns = `id, job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, COALESCE(dispatch, 0), request, version, reading, created_at`
 
 func scanDecisionRecords(q querier, where string, args ...any) ([]DecisionRecord, error) {
 	rows, err := q.Query(`SELECT `+decisionRecordColumns+` FROM decision_records WHERE `+where+` ORDER BY id`, args...)
@@ -158,7 +165,7 @@ func scanDecisionRecords(q querier, where string, args ...any) ([]DecisionRecord
 	for rows.Next() {
 		var d DecisionRecord
 		var assumptions, reopen, at string
-		if err := rows.Scan(&d.ID, &d.Job, &d.Leader, &d.Source, &d.Cites, &d.ReliedOn, &d.Choice, &d.Rationale, &d.Evidence, &assumptions, &reopen, &d.Dispatch, &at); err != nil {
+		if err := rows.Scan(&d.ID, &d.Job, &d.Leader, &d.Source, &d.Cites, &d.ReliedOn, &d.Choice, &d.Rationale, &d.Evidence, &assumptions, &reopen, &d.Dispatch, &d.Request, &d.Version, &d.Reading, &at); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(assumptions), &d.Assumptions); err != nil {
@@ -261,8 +268,12 @@ func (d DecisionRecord) Text(first, rest string) string {
 		}
 		return strings.Join(items, "; ")
 	}
-	return fmt.Sprintf("%sdecision %d | job %d | %s | accountable leader %s | %s\n%sChoice: %s\n%sRelied on: %s\n%sRationale: %s\n%sEvidence: %s\n%sAssumptions: %s\n%sReopen when: %s\n",
+	text := fmt.Sprintf("%sdecision %d | job %d | %s | accountable leader %s | %s\n%sChoice: %s\n%sRelied on: %s\n%sRationale: %s\n%sEvidence: %s\n%sAssumptions: %s\n%sReopen when: %s\n",
 		first, d.ID, d.Job, source, d.Leader, d.At.Format(time.RFC3339),
 		rest, d.Choice, rest, d.ReliedOn, rest, d.Rationale, rest, d.Evidence,
 		rest, list(d.Assumptions), rest, list(d.ReopenWhen))
+	if d.Request != 0 {
+		text += fmt.Sprintf("%sAnswers: version %d of decision request %d, in the conversation\n%sCoordination's reading of the user's words: %s\n", rest, d.Version, d.Request, rest, d.Reading)
+	}
+	return text
 }

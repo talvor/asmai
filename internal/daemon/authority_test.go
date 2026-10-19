@@ -83,6 +83,12 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"engineering", CommandDecisionAnswer, ""},
 		{"worker", CommandDecisionAnswer, "only a leader may run asmai decision answer"},
 		{"", CommandDecisionAnswer, "asmai decision answer is an agent command"},
+		// Only Coordination shows the user a decision, in the conversation.
+		{"current", CommandDecisionPresent, ""},
+		{"engineering", CommandDecisionPresent, "only leader@coordination may run asmai decision present"},
+		{"quality", CommandDecisionPresent, "only leader@coordination may run asmai decision present"},
+		{"worker", CommandDecisionPresent, "only leader@coordination may run asmai decision present"},
+		{"", CommandDecisionPresent, "asmai decision present is an agent command"},
 		{"", CommandDecisions, ""},
 		{"engineering", CommandDecisions, "ask the user to run `asmai decisions`"},
 		{"worker", CommandDecisions, "ask the user to run `asmai decisions`"},

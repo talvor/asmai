@@ -264,6 +264,15 @@ ALTER TABLE decision_records_next RENAME TO decision_records;
 ALTER TABLE assignments ADD COLUMN decision_records TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE handoffs ADD COLUMN decision_records TEXT NOT NULL DEFAULT '[]';
 `,
+	`
+ALTER TABLE decision_requests ADD COLUMN shown INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE decision_requests ADD COLUMN cites INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE decision_requests ADD COLUMN reading TEXT NOT NULL DEFAULT '';
+ALTER TABLE decision_requests ADD COLUMN record INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE decision_records ADD COLUMN request INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE decision_records ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE decision_records ADD COLUMN reading TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -375,6 +384,12 @@ const (
 	KindDecisionReplaced  = "decision.replaced"
 	KindDecisionAnswered  = "decision.answered"
 	KindDecisionWithdrawn = "decision.withdrawn"
+	// KindDecisionPresented records Coordination showing the user a version
+	// of a decision request in the conversation, and KindDecisionRefused the
+	// daemon refusing a record that cited a nudge, or a message typed
+	// against an older version, as the user's answer to it.
+	KindDecisionPresented = "decision.presented"
+	KindDecisionRefused   = "decision.refused"
 	KindChecksRerun       = "checks.rerun"
 	// KindCIWaitReplaced records the daemon dropping its wait on the checks
 	// of an older head of a job's pull request for those of the head it

@@ -111,6 +111,71 @@ func decisionAnswer(o *output, paths statedir.Paths, f requestFlags) int {
 	return 0
 }
 
+// decisionPresent has Coordination's leader record that it showed the user a
+// version of a decision request in the conversation.
+func decisionPresent(o *output, paths statedir.Paths, f requestFlags) int {
+	if f.request <= 0 || f.version <= 0 {
+		return o.fail(errors.New("decision present needs --request and --version: the version you showed the user"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionPresent, Session: os.Getenv(daemon.SessionCredential), Request: f.request, Version: f.version})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(resp)
+	}
+	r := resp.DecisionRequest
+	fmt.Fprintf(o.stdout, "version %d of decision request %d presented, for job %d; the user answers it in the conversation\n", r.Version, r.Request, r.Job)
+	fmt.Fprintf(o.stdout, "next: wait for their next message; when it arrives, record it with `asmai decision record --request %d --version %d --cites <its witnessed ID> --reading <your reading> --choice <what they chose>`\n", r.Request, r.Version)
+	return 0
+}
+
+// conversationAnswer has Coordination's leader record the user's answer in
+// the conversation to a version of a decision request: their witnessed
+// message and Coordination's reading of it, which the owning leader receives.
+func conversationAnswer(o *output, paths statedir.Paths, f decisionFlags, cites int64, latest bool) int {
+	switch {
+	case f.version <= 0:
+		return o.fail(errors.New("decision record --request needs --version: the version the user's message answers"))
+	case cites <= 0 && !latest:
+		return o.fail(errors.New("decision record --request needs --cites: the user's witnessed message, or latest"))
+	case strings.TrimSpace(f.reading) == "":
+		return o.fail(errors.New("decision record --request needs --reading: your reading of the user's words"))
+	case strings.TrimSpace(f.choice) == "":
+		return o.fail(errors.New("decision record --request needs --choice: what the user chose"))
+	}
+	// An answer needs no assumptions or reopening conditions, but gives them
+	// the way any decision does when it has them.
+	var assumptions, reopenWhen []string
+	if len(f.assumptions) > 0 {
+		var err error
+		if assumptions, err = explicit("assumption", f.assumptions); err != nil {
+			return o.fail(err)
+		}
+	}
+	if len(f.reopenWhen) > 0 {
+		var err error
+		if reopenWhen, err = explicit("reopen-when", f.reopenWhen); err != nil {
+			return o.fail(err)
+		}
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRecord, Session: os.Getenv(daemon.SessionCredential), Job: f.job, Request: f.request, Version: f.version,
+		Cites: cites, LatestWitness: latest, Reading: f.reading, Choice: f.choice, ReliedOn: f.reliedOn, Rationale: f.rationale, Evidence: f.evidence, Assumptions: assumptions, ReopenWhen: reopenWhen, DecisionSource: f.source})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(resp)
+	}
+	d, r := resp.DecisionRecord, resp.DecisionRequest
+	fmt.Fprintf(o.stdout, "job %d: decision %d recorded, human by %s: %s\n", d.Job, d.ID, d.Leader, d.Choice)
+	fmt.Fprintf(o.stdout, "version %d of decision request %d answered by witnessed message %d, with your reading beside it\n", r.Version, r.Request, d.Cites)
+	if resp.Dispatch != nil {
+		fmt.Fprintf(o.stdout, "next: the answer, the user's words and your reading go to %s, dispatch %d; the work that waited for it goes on\n", r.Requester, resp.Dispatch.ID)
+	}
+	return 0
+}
+
 // listDecisions lists the pending decisions, each with its answer surface. It
 // only reads: listing is not answering.
 func listDecisions(o *output, paths statedir.Paths) int {
@@ -152,23 +217,5 @@ func surfaceName(surface string) string {
 // printRequest prints the decision request version a request or an answer
 // message carries, as `asmai inbox` shows it.
 func printRequest(w io.Writer, r store.DecisionRequest) {
-	fmt.Fprintf(w, "Decision request %d, version %d | job %d | from %s to %s | %s | answered in %s\n", r.Request, r.Version, r.Job, r.Requester, r.Recipient, r.State, surfaceName(r.Surface))
-	if r.Content != "" {
-		fmt.Fprintf(w, "Content: %s\n", r.Content)
-	}
-	for _, q := range r.Questions {
-		fmt.Fprintf(w, "Question %s: %s\n", q.ID, q.Title)
-		if q.Body != "" {
-			fmt.Fprintf(w, "  %s\n", q.Body)
-		}
-		for _, option := range q.Options {
-			fmt.Fprintf(w, "  - %s\n", option)
-		}
-		if q.Recommendation != "" {
-			fmt.Fprintf(w, "  recommended: %s\n", q.Recommendation)
-		}
-	}
-	if len(r.Blocks) > 0 && r.State == store.RequestPending {
-		fmt.Fprintf(w, "The work of assignments %v waits for the answer.\n", r.Blocks)
-	}
+	fmt.Fprint(w, r.Text())
 }

@@ -120,6 +120,11 @@ const (
 	CommandDecisionRequest = "decision.request"
 	CommandDecisionAnswer  = "decision.answer"
 	CommandDecisions       = "decisions"
+	// CommandDecisionPresent is Coordination recording that it showed the
+	// user a version of a decision request in the conversation, once. The
+	// user's answer is a witnessed message given after it, which Coordination
+	// records with CommandDecisionRecord naming the request and version.
+	CommandDecisionPresent = "decision.present"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -712,8 +717,13 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 	case CommandPush:
 		d.pushCommand(conn, req)
 	case CommandDecisionRecord:
-		d.decisionRecordCommand(conn, req)
-	case CommandDecisionRequest, CommandDecisionAnswer, CommandDecisions:
+		if req.Request != 0 {
+			// The user's answer to a decision request, in the conversation.
+			d.decisionRequestCommand(conn, req)
+		} else {
+			d.decisionRecordCommand(conn, req)
+		}
+	case CommandDecisionRequest, CommandDecisionAnswer, CommandDecisions, CommandDecisionPresent:
 		d.decisionRequestCommand(conn, req)
 	case CommandTrailers:
 		trailers, err := d.trailers(req)

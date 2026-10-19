@@ -92,13 +92,24 @@ type DecisionRequest struct {
 	Questions []Question `json:"questions"`
 	// Blocks are the assignments whose work depends on the choice: they wait
 	// while the version is pending.
-	Blocks     []int64    `json:"blocks,omitempty"`
-	State      string     `json:"state"`
-	Answer     string     `json:"answer,omitempty"`
-	AnsweredBy string     `json:"answered_by,omitempty"`
-	ReliedOn   string     `json:"relied_on,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	SettledAt  *time.Time `json:"settled_at,omitempty"`
+	Blocks []int64 `json:"blocks,omitempty"`
+	// Shown is the journal entry of Coordination showing the user this
+	// version in the conversation, or zero while it has not been shown; the
+	// user's answer is a witnessed message after it.
+	Shown      int64  `json:"shown,omitempty"`
+	State      string `json:"state"`
+	Answer     string `json:"answer,omitempty"`
+	AnsweredBy string `json:"answered_by,omitempty"`
+	ReliedOn   string `json:"relied_on,omitempty"`
+	// Cites, Reading and Record are, for the user's answer in the
+	// conversation, the witnessed message that holds their words (which are
+	// Answer), Coordination's reading of them, and the decision record that
+	// holds both.
+	Cites     int64      `json:"cites,omitempty"`
+	Reading   string     `json:"reading,omitempty"`
+	Record    int64      `json:"record,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	SettledAt *time.Time `json:"settled_at,omitempty"`
 }
 
 // DecisionRequestInput is a decision request to make: a new request, or with
@@ -176,7 +187,7 @@ func validateRequest(in DecisionRequestInput) error {
 	return nil
 }
 
-const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), kind, surface, content, questions, blocks, state, answer, answered_by, relied_on, created_at, settled_at`
+const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), kind, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, cites, reading, record, created_at, settled_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -184,7 +195,7 @@ func scanDecisionRequest(row rowScanner) (DecisionRequest, error) {
 	var r DecisionRequest
 	var questions, blocks, created string
 	var settled sql.NullString
-	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Kind, &r.Surface, &r.Content, &questions, &blocks, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &created, &settled); err != nil {
+	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Kind, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &r.Cites, &r.Reading, &r.Record, &created, &settled); err != nil {
 		return DecisionRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(questions), &r.Questions); err != nil {
@@ -385,6 +396,40 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 		return DecisionRequest{}, Dispatch{}, err
 	}
 	return r, d, tx.Commit()
+}
+
+// Text writes the version as a message about it, or the user, is shown it:
+// who asked and where it is answered, the agent's own content, each question
+// with its options and recommendation, and what waits for the answer.
+func (r DecisionRequest) Text() string {
+	surface := "conversation"
+	if r.Surface == SurfaceLavish {
+		surface = "Lavish"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Decision request %d, version %d | job %d | from %s to %s | %s | answered in %s\n", r.Request, r.Version, r.Job, r.Requester, r.Recipient, r.State, surface)
+	if r.Content != "" {
+		fmt.Fprintf(&b, "Content: %s\n", r.Content)
+	}
+	for _, q := range r.Questions {
+		fmt.Fprintf(&b, "Question %s: %s\n", q.ID, q.Title)
+		if q.Body != "" {
+			fmt.Fprintf(&b, "  %s\n", q.Body)
+		}
+		for _, option := range q.Options {
+			fmt.Fprintf(&b, "  - %s\n", option)
+		}
+		if q.Recommendation != "" {
+			fmt.Fprintf(&b, "  recommended: %s\n", q.Recommendation)
+		}
+	}
+	if len(r.Blocks) > 0 && r.State == RequestPending {
+		fmt.Fprintf(&b, "The work of assignments %v waits for the answer.\n", r.Blocks)
+	}
+	if r.Cites != 0 {
+		fmt.Fprintf(&b, "Answered by the user in witnessed message %d: %s\nCoordination's reading: %s\n", r.Cites, r.Answer, r.Reading)
+	}
+	return b.String()
 }
 
 // JobDecisionsWithdrawn withdraws every pending decision request of job, as

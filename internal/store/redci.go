@@ -55,10 +55,17 @@ type DecisionRecord struct {
 	Evidence  string `json:"evidence"`
 	// Assumptions are the material assumptions the choice rests on, and
 	// ReopenWhen the conditions that would reopen it.
-	Assumptions []string  `json:"assumptions"`
-	ReopenWhen  []string  `json:"reopen_when"`
-	Dispatch    int64     `json:"dispatch"`
-	At          time.Time `json:"at"`
+	Assumptions []string `json:"assumptions"`
+	ReopenWhen  []string `json:"reopen_when"`
+	Dispatch    int64    `json:"dispatch"`
+	// Request and Version name the version of the decision request that a
+	// human decision answers in the conversation, with Cites the witnessed
+	// message that holds the user's words and Reading Coordination's reading
+	// of them, stored beside them.
+	Request int64     `json:"request,omitempty"`
+	Version int       `json:"version,omitempty"`
+	Reading string    `json:"reading,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 // Rerun is the daemon re-running the failed jobs of the red checks on Head,

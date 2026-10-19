@@ -462,3 +462,57 @@ func TestEveryLeadersInstructionsRecordDecisionsAndPassThemOn(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryLeadersInstructionsSayWhatCountsAsDistinctAndWhenToAsk(t *testing.T) {
+	for _, role := range []string{Coordination, Engineering, Quality} {
+		text, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"Ask the user whenever more than one distinct viable approach remains",
+			"a recommendation never makes an alternative non-viable",
+			"differ in behavior, dependencies, interfaces, cost, maintenance or operational consequences",
+			"An existing library and a custom helper that both meet the constraints are a choice for the user",
+			"Equivalent ways of expressing the same thing",
+			"Ordinary authorized work along an already settled route continues without a question",
+			"Ask once",
+			"a choice between two approaches is answered by the user in the conversation",
+		} {
+			if !strings.Contains(strings.ToLower(text), strings.ToLower(want)) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+	}
+	for _, role := range []string{Engineering, Quality} {
+		text, _ := LeaderInstructions(role)
+		for _, want := range []string{"Ask when distinct viable approaches remain", "asmai decision request --job", "`decision.answer`", "Coordination's reading"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+	}
+}
+
+func TestCoordinationPresentsAChoiceOnceAndRecordsTheUsersOwnMessageWithItsReading(t *testing.T) {
+	text, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Present a choice once and record the user's own answer",
+		"`asmai decision present --request <id> --version <n>`",
+		"Never show a version twice",
+		"`asmai decision record --request <id> --version <n> --cites latest --choice",
+		"--reading <your reading of their words>",
+		"sends both to the requesting leader",
+		"Never supply the user's answer yourself",
+		"never a nudge and never an earlier message",
+		"present it to the user again",
+		"the user's reply to the old one answers nothing",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+}

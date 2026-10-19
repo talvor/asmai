@@ -437,3 +437,28 @@ func TestEveryAgentsInstructionsCarryTheOperatingGuideAndLeadersTheirIndex(t *te
 		t.Error("Engineering's worker instructions lack the PR section")
 	}
 }
+
+func TestEveryLeadersInstructionsRecordDecisionsAndPassThemOn(t *testing.T) {
+	for _, role := range []string{Coordination, Engineering, Quality} {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"Record decisions that affect later work",
+			"`asmai decision record --job <number> --choice",
+			"--relied-on",
+			"--assumption",
+			"--reopen-when",
+			"--source human --cites",
+			"A routine edit",
+			"needs no record",
+			"`--record <id>` on `asmai assign`",
+			"`asmai handoff send`",
+		} {
+			if !strings.Contains(leader, want) {
+				t.Errorf("%s's instructions lack %q", role, want)
+			}
+		}
+	}
+}

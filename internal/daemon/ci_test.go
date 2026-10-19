@@ -93,11 +93,11 @@ func TestTheBriefShowsTheJudgedReRunAndItsDecision(t *testing.T) {
 	j := store.Job{Number: 1, Role: "coordination", State: store.JobOpen, Repository: "fixture"}
 	at := time.Date(2026, 10, 12, 1, 2, 3, 0, time.UTC)
 	reruns := []store.Rerun{{Head: "bbb", Decision: 4, Checks: []store.CheckState{{Name: "CI / test"}}, At: at}}
-	records := []store.DecisionRecord{{ID: 4, Leader: "leader@engineering", Source: store.SourceDelegated, Choice: store.ChoiceRerunFailed, Rationale: "a runner fault", Evidence: "the log"}}
+	records := []store.DecisionRecord{{ID: 4, Job: 1, Leader: "leader@engineering", Source: store.SourceDelegated, ReliedOn: store.MandateRelied, Choice: store.ChoiceRerunFailed, Rationale: "a runner fault", Evidence: "the log", At: at}}
 	got := brief(j, store.Repository{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, reruns, records, nil)
 	for _, want := range []string{
 		"Judged re-runs of red checks (once per head):\n- the failed jobs of bbb re-run once on decision 4, 2026-10-12T01:02:03Z: CI / test\n",
-		"Decisions:\n- 4 delegated by leader@engineering: rerun-failed. Rationale: a runner fault. Evidence: the log\n",
+		"Decisions:\n- decision 4 | job 1 | delegated | accountable leader leader@engineering | 2026-10-12T01:02:03Z\n  Choice: rerun-failed\n  Relied on: the job's mandate\n  Rationale: a runner fault\n  Evidence: the log\n  Assumptions: none\n  Reopen when: none\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the brief lacks %q:\n%s", want, got)

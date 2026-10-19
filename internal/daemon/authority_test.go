@@ -70,9 +70,9 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"worker", CommandPush, "only leader@engineering, the delivery owner"},
 		{"", CommandPush, "asmai push is an agent command"},
 		{"engineering", CommandDecisionRecord, ""},
-		{"quality", CommandDecisionRecord, "only leader@engineering, judging a red head's checks"},
-		{"current", CommandDecisionRecord, "only leader@engineering, judging a red head's checks"},
-		{"worker", CommandDecisionRecord, "only leader@engineering, judging a red head's checks"},
+		{"quality", CommandDecisionRecord, ""},
+		{"current", CommandDecisionRecord, ""},
+		{"worker", CommandDecisionRecord, "only a role's leader may run asmai decision record"},
 		{"", CommandDecisionRecord, "asmai decision record is an agent command"},
 		// Any agent requests a decision; only a leader answers one; only the
 		// user lists the pending decisions.

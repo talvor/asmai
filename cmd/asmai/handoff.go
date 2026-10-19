@@ -12,14 +12,18 @@ import (
 	"github.com/talvor/asmai/internal/store"
 )
 
-func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisions, evidence, constraints, permissions string, criteria []string) int {
+func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisions, evidence, constraints, permissions string, criteria []string, records []string) int {
 	if job <= 0 || strings.TrimSpace(to) == "" || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(fmt.Errorf("handoff send needs --job, --to, --outcome and --criterion"))
 	}
 	if strings.TrimSpace(decisions) == "" || strings.TrimSpace(evidence) == "" || strings.TrimSpace(constraints) == "" || strings.TrimSpace(permissions) == "" {
 		return o.fail(fmt.Errorf("handoff send needs --decisions, --evidence, --constraints and --permissions; use 'none' when empty"))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandHandoffSend, Session: os.Getenv(daemon.SessionCredential), Job: job, Agent: to, Outcome: outcome, Decisions: decisions, Evidence: evidence, Constraints: constraints, Permissions: permissions, Criteria: criteria})
+	ids, err := recordIDs(records)
+	if err != nil {
+		return o.fail(err)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandHandoffSend, Session: os.Getenv(daemon.SessionCredential), Job: job, Agent: to, Outcome: outcome, Decisions: decisions, Evidence: evidence, Constraints: constraints, Permissions: permissions, Criteria: criteria, Records: ids})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -30,6 +34,9 @@ func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisi
 		return o.printJSON(resp)
 	}
 	fmt.Fprintf(o.stdout, "handoff %d sent to %s for job %d; dispatch %d\n", resp.Handoff.ID, resp.Handoff.Receiver, job, resp.Dispatch.ID)
+	if len(resp.Handoff.Records) > 0 {
+		fmt.Fprintf(o.stdout, "decision records passed on: %s\n", strings.Join(idList(resp.Handoff.Records), ", "))
+	}
 	return 0
 }
 
@@ -76,6 +83,7 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 			if h.Head != "" {
 				fmt.Fprintf(o.stdout, "Head to validate: %s\n", h.Head)
 			}
+			printRecords(o.stdout, "Decision records passed with the handoff", h.DecisionRecords)
 		}
 		if m.HandoffData != nil && m.Kind != "handoff" {
 			fmt.Fprintf(o.stdout, "Answer: %s\n", m.Body)

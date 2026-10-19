@@ -249,6 +249,21 @@ CREATE TABLE decision_requests (
 );
 ALTER TABLE messages ADD COLUMN request INTEGER REFERENCES decision_requests(id);
 `,
+	`
+CREATE TABLE decision_records_next (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number),
+ leader TEXT NOT NULL, source TEXT NOT NULL, cites INTEGER NOT NULL DEFAULT 0, relied_on TEXT NOT NULL,
+ choice TEXT NOT NULL, rationale TEXT NOT NULL, evidence TEXT NOT NULL,
+ assumptions TEXT NOT NULL DEFAULT '[]', reopen_when TEXT NOT NULL DEFAULT '[]',
+ dispatch INTEGER REFERENCES dispatches(id), created_at TEXT NOT NULL
+);
+INSERT INTO decision_records_next (id, job, leader, source, relied_on, choice, rationale, evidence, dispatch, created_at)
+ SELECT id, job, leader, source, 'the job''s mandate', choice, rationale, evidence, dispatch, created_at FROM decision_records;
+DROP TABLE decision_records;
+ALTER TABLE decision_records_next RENAME TO decision_records;
+ALTER TABLE assignments ADD COLUMN decision_records TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE handoffs ADD COLUMN decision_records TEXT NOT NULL DEFAULT '[]';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

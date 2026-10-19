@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -16,28 +15,50 @@ import (
 // is about a job, not an assignment or a handoff.
 const MessageChecksRed = "checks-red"
 
-// The sources of a decision record: a leader's own judgment, or the user's.
-// The user's decisions arrive later.
-const SourceDelegated = "delegated"
+// The sources of a decision record: a leader's own judgment, delegated, or
+// the user's, human, which cites the witnessed message it came from.
+const (
+	SourceDelegated = "delegated"
+	SourceHuman     = "human"
+)
+
+// Sources are the sources a decision record may name.
+var Sources = []string{SourceDelegated, SourceHuman}
+
+// MandateRelied is what a judged re-run relies on when its leader names
+// nothing else: the authority of the job's mandate.
+const MandateRelied = "the job's mandate"
 
 // ChoiceRerunFailed is Engineering's leader's judgment that a head's red
 // checks failed for a reason unrelated to the change, so their failed jobs
 // are re-run once.
 const ChoiceRerunFailed = "rerun-failed"
 
-// DecisionRecord is a decision a leader recorded with asmai decision record:
-// the job, the choice, its rationale and evidence, and its source, with the
-// leader and the dispatch it was working on.
+// DecisionRecord is a decision a leader recorded with asmai decision record,
+// with the fields of rule 25: the accountable leader, the job, the mandate or
+// grant relied on, the choice, its rationale and evidence, its material
+// assumptions, the conditions that would reopen it, and its source. It also
+// holds the dispatch the leader was working on. A judged re-run is one kind
+// of decision: its choice is ChoiceRerunFailed.
 type DecisionRecord struct {
-	ID        int64     `json:"id"`
-	Job       int64     `json:"job"`
-	Leader    string    `json:"leader"`
-	Source    string    `json:"source"`
-	Choice    string    `json:"choice"`
-	Rationale string    `json:"rationale"`
-	Evidence  string    `json:"evidence"`
-	Dispatch  int64     `json:"dispatch"`
-	At        time.Time `json:"at"`
+	ID     int64  `json:"id"`
+	Job    int64  `json:"job"`
+	Leader string `json:"leader"`
+	// Source is SourceDelegated, or SourceHuman with Cites the witnessed
+	// message the user's decision came from.
+	Source string `json:"source"`
+	Cites  int64  `json:"cites,omitempty"`
+	// ReliedOn is the mandate or grant the decision relied on.
+	ReliedOn  string `json:"relied_on"`
+	Choice    string `json:"choice"`
+	Rationale string `json:"rationale"`
+	Evidence  string `json:"evidence"`
+	// Assumptions are the material assumptions the choice rests on, and
+	// ReopenWhen the conditions that would reopen it.
+	Assumptions []string  `json:"assumptions"`
+	ReopenWhen  []string  `json:"reopen_when"`
+	Dispatch    int64     `json:"dispatch"`
+	At          time.Time `json:"at"`
 }
 
 // Rerun is the daemon re-running the failed jobs of the red checks on Head,
@@ -117,11 +138,14 @@ func (s *Store) ChecksRed(o ChecksObservation, recipient, body string, at time.T
 // both. The failed jobs of a head are re-run once: a second re-run of the
 // same head is refused.
 func (s *Store) RerunDecided(d DecisionRecord, r Rerun, generation int, at time.Time) (DecisionRecord, Rerun, error) {
-	if d.Choice != ChoiceRerunFailed || strings.TrimSpace(d.Rationale) == "" || strings.TrimSpace(d.Evidence) == "" {
-		return DecisionRecord{}, Rerun{}, errors.New("a judged re-run is a decision to re-run the failed jobs, with its rationale and evidence")
+	if d.Choice != ChoiceRerunFailed || d.Source != "" && d.Source != SourceDelegated {
+		return DecisionRecord{}, Rerun{}, errors.New("a judged re-run is a delegated decision to re-run the failed jobs")
 	}
 	if r.Head == "" || len(r.Runs) == 0 {
 		return DecisionRecord{}, Rerun{}, errors.New("a re-run names its head and the workflow runs it re-ran")
+	}
+	if d.ReliedOn == "" {
+		d.ReliedOn = MandateRelied
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -140,16 +164,7 @@ func (s *Store) RerunDecided(d DecisionRecord, r Rerun, generation int, at time.
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return DecisionRecord{}, Rerun{}, err
 	}
-	d.Source, d.At = SourceDelegated, at.UTC()
-	result, err := tx.Exec(`INSERT INTO decision_records (job, leader, source, choice, rationale, evidence, dispatch, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.Job, d.Leader, d.Source, d.Choice, d.Rationale, d.Evidence, d.Dispatch, timestamp(at))
-	if err != nil {
-		return DecisionRecord{}, Rerun{}, err
-	}
-	if d.ID, err = result.LastInsertId(); err != nil {
-		return DecisionRecord{}, Rerun{}, err
-	}
-	if _, err := appendEntry(tx, at, KindDecisionRecorded, d); err != nil {
+	if d, err = insertDecisionRecord(tx, d, generation, at); err != nil {
 		return DecisionRecord{}, Rerun{}, err
 	}
 	runs, err := json.Marshal(r.Runs)
@@ -164,7 +179,7 @@ func (s *Store) RerunDecided(d DecisionRecord, r Rerun, generation int, at time.
 		return DecisionRecord{}, Rerun{}, err
 	}
 	r.Decision, r.At = d.ID, at.UTC()
-	result, err = tx.Exec(`INSERT INTO reruns (job, number, head, runs, checks, decision, observation, created_at) VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(id), 0) FROM check_observations WHERE job = ?), ?)`, r.Job, r.Number, r.Head, string(runs), string(checks), r.Decision, r.Job, timestamp(at))
+	result, err := tx.Exec(`INSERT INTO reruns (job, number, head, runs, checks, decision, observation, created_at) VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(id), 0) FROM check_observations WHERE job = ?), ?)`, r.Job, r.Number, r.Head, string(runs), string(checks), r.Decision, r.Job, timestamp(at))
 	if err != nil {
 		return DecisionRecord{}, Rerun{}, err
 	}
@@ -245,24 +260,7 @@ func scanReruns(q querier, where string, args ...any) ([]Rerun, error) {
 
 // DecisionRecords returns the decisions recorded for job, oldest first.
 func (s *Store) DecisionRecords(job int64) ([]DecisionRecord, error) {
-	rows, err := s.db.Query(`SELECT id, job, leader, source, choice, rationale, evidence, dispatch, created_at FROM decision_records WHERE job = ? ORDER BY id`, job)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	records := []DecisionRecord{}
-	for rows.Next() {
-		var d DecisionRecord
-		var at string
-		if err := rows.Scan(&d.ID, &d.Job, &d.Leader, &d.Source, &d.Choice, &d.Rationale, &d.Evidence, &d.Dispatch, &at); err != nil {
-			return nil, err
-		}
-		if d.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
-			return nil, err
-		}
-		records = append(records, d)
-	}
-	return records, rows.Err()
+	return scanDecisionRecords(s.db, `job = ?`, job)
 }
 
 // CIWaitReplaced journals that the daemon dropped its wait on the checks of

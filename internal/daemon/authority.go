@@ -59,10 +59,10 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return errors.New("only leader@engineering, the delivery owner of a code job, may run asmai push")
 	case CommandDecisionRecord:
-		if ref.address == roles.LeaderOf(roles.Engineering) {
+		if ref.address.Name == roles.Leader {
 			return nil
 		}
-		return errors.New("only leader@engineering, judging a red head's checks, may run asmai decision record")
+		return errors.New("only a role's leader may run asmai decision record: a worker's decision goes to its owning leader")
 	case CommandEffect:
 		if ref.address.Name != roles.Leader || ref.address == roles.LeaderOf(roles.Engineering) {
 			return nil

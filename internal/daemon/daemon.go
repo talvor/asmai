@@ -104,9 +104,9 @@ const (
 	// branch to origin, which it refuses over commits AsmAI did not make.
 	CommandPush = "push"
 	// CommandDecisionRecord is a leader recording a decision. Of
-	// Engineering's leader, it is its judgment that a head's red checks
-	// failed for a reason unrelated to the change, on which the daemon
-	// re-runs their failed jobs once.
+	// Engineering's leader, the choice rerun-failed is its judgment that a
+	// head's red checks failed for a reason unrelated to the change, on which
+	// the daemon re-runs their failed jobs once.
 	CommandDecisionRecord = "decision.record"
 	// CommandTrailers answers a worker's git hook with the trailers its
 	// commit carries.
@@ -199,13 +199,24 @@ type Request struct {
 	// Blocks are what a request holds besides its Kind: the agent's own
 	// content above the questions, the questions, and the assignments whose
 	// work waits for the choice. ReliedOn names the record an answer rests
-	// on.
+	// on, or the mandate or grant a recorded decision relied on.
 	Request   int64            `json:"request,omitempty"`
 	Version   int              `json:"version,omitempty"`
 	Content   string           `json:"content,omitempty"`
 	Questions []store.Question `json:"questions,omitempty"`
 	Blocks    []int64          `json:"blocks,omitempty"`
 	ReliedOn  string           `json:"relied_on,omitempty"`
+	// DecisionSource and Cites say whether a recorded decision is delegated or
+	// human, and for a human one the witnessed message it cites. Assumptions and
+	// ReopenWhen are its material assumptions and the conditions that would
+	// reopen it.
+	DecisionSource string   `json:"decision_source,omitempty"`
+	Cites          int64    `json:"cites,omitempty"`
+	Assumptions    []string `json:"assumptions,omitempty"`
+	ReopenWhen     []string `json:"reopen_when,omitempty"`
+	// Records are the decision records of the job that an assign or a
+	// handoff send passes on.
+	Records []int64 `json:"records,omitempty"`
 	// Log is a Dashboard log read, and Entry the journal ID of the entry a
 	// Dashboard entry read is for.
 	Log   *LogQuery `json:"log,omitempty"`

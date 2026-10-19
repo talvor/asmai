@@ -126,9 +126,10 @@ commands agents run:
                               Coordination's leader opens a job; repeat --criterion for each acceptance criterion
   asmai brief <number>        read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
-  asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text>
+  asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>]
+                              repeat --record for each of the job's decision records that goes with the handoff
   asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
-  asmai assign --job <number> --outcome <text> --criterion <text>
+  asmai assign --job <number> --outcome <text> --criterion <text> [--record <id>]
                               Engineering's leader gives a writing assignment to a worker, in a workspace of
                               AsmAI's clone on its own branch; repeat --criterion for each acceptance criterion
   asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text>
@@ -157,6 +158,14 @@ commands agents run:
                               push the job branch: it fetches the branch from origin, refuses and records an
                               outside change if origin has commits AsmAI did not make, and otherwise pushes
                               it with a plain push, never forced, recorded as the daemon's effect
+  asmai decision record --job <number> --choice <text> --relied-on <text> --rationale <text> --evidence <text> --assumption <text>|none --reopen-when <text>|none [--source delegated|human --cites <witnessed message>]
+                              a leader records a decision that affects later work, with the fields of rule 25:
+                              itself as the accountable leader, the mandate or grant it relied on, the choice,
+                              its rationale and evidence, its material assumptions and the conditions that
+                              would reopen it, marked delegated (the default) or human, which cites the
+                              witnessed message it came from. Repeat --assumption and --reopen-when for each.
+                              A routine edit needs no record. Pass the records that matter on with
+                              --record <id> on asmai assign and asmai handoff send
   asmai decision record --job <number> --choice rerun-failed --rationale <text> --evidence <text>
                               Engineering's leader records its judgment that the red checks on the pushed head
                               failed for a reason unrelated to the change, as a delegated decision, and the
@@ -267,12 +276,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var assignOutcome, blockedReason, blockedNeeds string
 	var decidedAssignment int64
 	var reasons listFlags
-	var decisionJob int64
 	var repoOptions repoSettings
 	var role roleChoices
 	var claudeDefaultModel string
-	var choice, rationale string
 	var request requestFlags
+	var decision decisionFlags
+	var records listFlags
 	var resultArgs resultFlags
 	switch name {
 	case "init":
@@ -312,6 +321,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&constraints, "constraints", "", "constraints")
 		flags.StringVar(&permissions, "permissions", "", "permissions granted")
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
+		flags.Var(&records, "record", "the ID of one of the job's decision records that goes with the handoff; may be repeated")
 	case "handoff accept", "handoff clarify", "handoff decline":
 		flags.Int64Var(&handoffID, "handoff", 0, "handoff ID")
 		flags.StringVar(&answer, "answer", "", "answer, question or reason")
@@ -325,6 +335,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&assignCommit, "commit", "", "with --read-only, the job branch's exact head commit the validation is fixed at")
 		flags.StringVar(&assignSkill, "skill", "", "the skill from the worker's list that it is to run")
 		flags.Var(&assignNarrow, "narrow", "a skill the worker's list is narrowed to, from the role's workers' list; may be repeated")
+		flags.Var(&records, "record", "the ID of one of the job's decision records that the worker is given; may be repeated")
 	case "effect":
 	case "result":
 		flags.Var(&resultArgs.evidence, "evidence", "what shows the work does; may be repeated")
@@ -344,10 +355,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
 	case "decision record":
-		flags.Int64Var(&decisionJob, "job", 0, "job number")
-		flags.StringVar(&choice, "choice", "", "what the decision chose: rerun-failed")
-		flags.StringVar(&rationale, "rationale", "", "why")
-		flags.StringVar(&evidence, "evidence", "", "what the decision rests on")
+		flags.Int64Var(&decision.job, "job", 0, "job number")
+		flags.StringVar(&decision.choice, "choice", "", "what the decision chose")
+		flags.StringVar(&decision.reliedOn, "relied-on", "", "the mandate or grant the decision relied on")
+		flags.StringVar(&decision.rationale, "rationale", "", "why")
+		flags.StringVar(&decision.evidence, "evidence", "", "what the decision rests on")
+		flags.Var(&decision.assumptions, "assumption", "a material assumption the choice rests on, or none; may be repeated")
+		flags.Var(&decision.reopenWhen, "reopen-when", "a condition that would reopen the decision, or none; may be repeated")
+		flags.StringVar(&decision.source, "source", "", "delegated (the default), or human")
+		flags.Int64Var(&decision.cites, "cites", 0, "with --source human, the witnessed message the decision came from")
 	case "decision request":
 		flags.Int64Var(&request.job, "job", 0, "job number; a leader's request names its job, and a worker's is about its assignment's")
 		flags.Int64Var(&request.request, "request", 0, "the request this is a new version of, which it replaces")
@@ -479,11 +495,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "inbox":
 		return inbox(o, paths, dispatchID)
 	case "handoff send":
-		return handoffSend(o, paths, handoffJob, recipient, outcome, decisions, evidence, constraints, permissions, criteria)
+		return handoffSend(o, paths, handoffJob, recipient, outcome, decisions, evidence, constraints, permissions, criteria, records)
 	case "handoff accept", "handoff clarify", "handoff decline":
 		return handoffAnswer(o, paths, name, handoffID, answer)
 	case "assign":
-		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit, assignSkill, assignNarrow)
+		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit, assignSkill, assignNarrow, records)
 	case "effect":
 		return effect(o, paths, operands[0], operands[1])
 	case "result":
@@ -495,7 +511,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "push":
 		return push(o, paths, arg)
 	case "decision record":
-		return decisionRecord(o, paths, decisionJob, choice, rationale, evidence)
+		return decisionRecord(o, paths, decision)
 	case "decision request":
 		return decisionRequest(o, paths, request)
 	case "decision answer":

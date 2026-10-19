@@ -154,6 +154,9 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	if j.Repository == "" {
 		return store.Assignment{}, store.Dispatch{}, refuse("job %d has no repository, so it has no writing assignment", j.Number)
 	}
+	if err := d.store.CheckRecords(j.Number, req.Records); err != nil {
+		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
+	}
 	repository, err := d.store.Repository(j.Repository)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Assignment{}, store.Dispatch{}, notRegistered(j.Repository)
@@ -231,7 +234,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	}
 	a, dispatch, err := d.store.AssignmentCreated(store.NewAssignment{
 		ID: id, Job: j.Number, Owner: ref.address.String(), Worker: worker.String(),
-		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly, Skill: req.Skill, Skills: skillList,
+		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly, Skill: req.Skill, Skills: skillList, Records: req.Records,
 	}, time.Now())
 	if err != nil {
 		undo()

@@ -75,6 +75,13 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 	if a.State != store.AssignmentSubmitted {
 		return Response{}, refuse("assignment %d is %s, so it has no result to accept", a.ID, a.State)
 	}
+	// Work that depends on a pending decision waits for its answer; the
+	// store refuses the acceptance too, but only after the branch has moved.
+	if pending, err := d.store.BlockingDecisions(a.ID); err != nil {
+		return Response{}, err
+	} else if len(pending) > 0 {
+		return Response{}, refuse("assignment %d waits for decision request %d (version %d), which is pending, so its result is not accepted yet; independent work goes on", a.ID, pending[0].Request, pending[0].Version)
+	}
 	if a.ReadOnly {
 		return d.acceptValidation(req, ref, a)
 	}

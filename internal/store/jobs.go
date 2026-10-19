@@ -12,6 +12,10 @@ import (
 )
 
 const JobOpen = "open"
+
+// JobPaused is the state of a job the user paused. Its pending decision
+// requests stay answerable.
+const JobPaused = "paused"
 const MandateTestedPR = "tested-pr"
 
 // Job holds the user's witnessed request beside Coordination's reading.

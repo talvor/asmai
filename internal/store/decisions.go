@@ -133,6 +133,13 @@ func (s *Store) ResultAccepted(in Acceptance, at time.Time) (Decision, error) {
 	if a.State != AssignmentSubmitted {
 		return Decision{}, fmt.Errorf("assignment %d is %s, so it has no result to accept", a.ID, a.State)
 	}
+	pending, err := blockingDecisions(tx, a.ID)
+	if err != nil {
+		return Decision{}, err
+	}
+	if len(pending) > 0 {
+		return Decision{}, waitingOnDecision(a.ID, pending)
+	}
 	r, err := latestResult(tx, a.ID)
 	if err != nil {
 		return Decision{}, err

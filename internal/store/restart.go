@@ -254,20 +254,24 @@ type LeaderWork struct {
 
 // OpenLeaderWork returns each leader that has open work in an open job, with
 // the job, by leader and job. A leader has open work in a job when a handoff
-// to it is open, it owns an assignment that has not ended, or a message
-// waits in its inbox; Coordination has it in every open job, as the role
-// responsible for the user's conversation and overall delivery progress.
+// to it is open, it owns an assignment that has not ended, a decision it
+// requested or one it answers is pending, or a message waits in its inbox;
+// Coordination has it in every open job, as the role responsible for the
+// user's conversation and overall delivery progress.
 func (s *Store) OpenLeaderWork() ([]LeaderWork, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT w.leader, w.job FROM (
 			SELECT receiver AS leader, job FROM handoffs WHERE state = ?
 			UNION SELECT owner, job FROM assignments WHERE state IN (?, ?, ?, ?)
 			UNION SELECT m.recipient, m.job FROM messages m JOIN dispatches d ON d.message = m.id
 				WHERE m.fetched_at IS NULL AND d.state IN (?, ?, ?) AND m.recipient LIKE 'leader@%'
+			UNION SELECT requester, job FROM decision_requests WHERE state = ? AND requester LIKE 'leader@%'
+			UNION SELECT recipient, job FROM decision_requests WHERE state = ? AND recipient LIKE 'leader@%'
 			UNION SELECT 'leader@' || role, number FROM jobs
 		) w JOIN jobs j ON j.number = w.job WHERE j.state = ? ORDER BY w.leader, w.job`,
 		HandoffPending,
 		AssignmentActive, AssignmentSubmitted, AssignmentCancelling, AssignmentNeedsReconciliation,
 		DispatchCreated, DispatchNudged, DispatchUnknown,
+		RequestPending, RequestPending,
 		JobOpen)
 	if err != nil {
 		return nil, err

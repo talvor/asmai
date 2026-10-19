@@ -78,7 +78,10 @@ func (d *daemon) decisionRecordCommand(conn *net.UnixConn, req Request) {
 	var resp Response
 	record, rerun, err := d.recordDecision(req)
 	if record.ID != 0 {
-		resp.DecisionRecord, resp.Rerun = &record, &rerun
+		resp.DecisionRecord = &record
+		if rerun.ID != 0 {
+			resp.Rerun = &rerun
+		}
 	}
 	if err != nil {
 		if !errors.As(err, new(*userError)) {
@@ -89,16 +92,16 @@ func (d *daemon) decisionRecordCommand(conn *net.UnixConn, req Request) {
 	reply(conn, resp)
 }
 
-// recordDecision records the decision of req, Engineering's leader's,
-// working on a dispatch: its judgment that the red checks on the head of
-// req.Job's pull request the daemon pushed failed for a reason unrelated to
-// the change, with its rationale and evidence, as a delegated decision. On
-// it, the daemon re-runs the failed jobs of those checks with gh, in AsmAI's
-// clone, and records the re-run with the decision. It re-runs a head's failed
-// jobs once: a second re-run of the same head is refused, and nothing is
-// recorded when nothing was re-run.
+// recordDecision records the decision of req, a leader's, about req.Job, with
+// the fields of rule 25: the leader, the job, the mandate or grant relied on,
+// the choice, its rationale and evidence, its material assumptions and the
+// conditions that would reopen it, and its source. Any choice is recorded as
+// it is, tagged with the dispatch the leader is working on, if it is working
+// on one, and a record is made only when the leader chooses to make one:
+// routine edits need none. The choice rerun-failed is Engineering's leader's
+// judged re-run of a head's red checks, one kind of decision, on which the
+// daemon also re-runs the failed jobs.
 func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun, error) {
-	owner := roles.LeaderOf(roles.Engineering)
 	d.mu.Lock()
 	ref, l, err := d.caller(req)
 	dispatch := int64(0)
@@ -109,14 +112,49 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 	if err != nil {
 		return store.DecisionRecord{}, store.Rerun{}, err
 	}
+	if ref.address.Name != roles.Leader {
+		return store.DecisionRecord{}, store.Rerun{}, refuse("only a role's leader may run asmai decision record: a worker's decision goes to its owning leader")
+	}
+	record := store.DecisionRecord{
+		Job: req.Job, Leader: ref.address.String(), Source: req.DecisionSource, Cites: req.Cites, ReliedOn: req.ReliedOn,
+		Choice: strings.TrimSpace(req.Choice), Rationale: req.Rationale, Evidence: req.Evidence,
+		Assumptions: req.Assumptions, ReopenWhen: req.ReopenWhen, Dispatch: dispatch,
+	}
+	if record.Source == "" {
+		record.Source = store.SourceDelegated
+	}
+	if record.Choice == store.ChoiceRerunFailed {
+		if record.Source != store.SourceDelegated {
+			return store.DecisionRecord{}, store.Rerun{}, refuse("a judged re-run is the leader's own, delegated decision: --choice %s takes no other source", store.ChoiceRerunFailed)
+		}
+		return d.recordRerun(req, ref, record)
+	}
+	if err := record.Check(); err != nil {
+		return store.DecisionRecord{}, store.Rerun{}, refuse("%v", err)
+	}
+	record, err = d.store.DecisionRecorded(record, ref.generation, time.Now())
+	if err != nil {
+		return store.DecisionRecord{}, store.Rerun{}, refuse("%v", err)
+	}
+	d.log.Info("decision recorded", "job", record.Job, "decision", record.ID, "leader", record.Leader, "source", record.Source, "choice", record.Choice)
+	return record, store.Rerun{}, nil
+}
+
+// recordRerun records record, Engineering's leader's judgment that the red
+// checks on the head of req.Job's pull request the daemon pushed failed for a
+// reason unrelated to the change, as a delegated decision. On it, the daemon
+// re-runs the failed jobs of those checks with gh, in AsmAI's clone, and
+// records the re-run with the decision. It re-runs a head's failed jobs once:
+// a second re-run of the same head is refused, and nothing is recorded when
+// nothing was re-run.
+func (d *daemon) recordRerun(req Request, ref sessionRef, record store.DecisionRecord) (store.DecisionRecord, store.Rerun, error) {
+	owner := roles.LeaderOf(roles.Engineering)
+	dispatch := record.Dispatch
 	if ref.address != owner {
-		return store.DecisionRecord{}, store.Rerun{}, refuse("only %s, judging a red head's checks, may run asmai decision record", owner)
+		return store.DecisionRecord{}, store.Rerun{}, refuse("only %s, judging a red head's checks, may record --choice %s", owner, store.ChoiceRerunFailed)
 	}
 	if dispatch == 0 {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("%s has no current dispatch to tag the decision with; record it while working on a dispatch you fetched with `asmai inbox`", ref.address)
-	}
-	if req.Choice != store.ChoiceRerunFailed {
-		return store.DecisionRecord{}, store.Rerun{}, refuse("asmai decision record records only the judged re-run of a head's red checks, --choice %s, not %q", store.ChoiceRerunFailed, req.Choice)
 	}
 	if strings.TrimSpace(req.Rationale) == "" || strings.TrimSpace(req.Evidence) == "" {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("a decision gives its --rationale and its --evidence")
@@ -178,7 +216,6 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 	if len(rerun) == 0 {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("nothing was re-run and nothing is recorded: %v", ghErr)
 	}
-	record := store.DecisionRecord{Job: j.Number, Leader: ref.address.String(), Choice: req.Choice, Rationale: req.Rationale, Evidence: req.Evidence, Dispatch: dispatch}
 	r := store.Rerun{Job: j.Number, Number: pr.Number, Head: head, Runs: rerun, Checks: failed}
 	record, r, err = d.store.RerunDecided(record, r, ref.generation, time.Now())
 	if err != nil {

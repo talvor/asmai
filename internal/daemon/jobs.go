@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,6 +168,7 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		if h.Head != "" {
 			fmt.Fprintf(&b, " (validate %s)", h.Head)
 		}
+		b.WriteString(passedOn(h.Records))
 		fmt.Fprintln(&b)
 	}
 	fmt.Fprintln(&b, "Assignments:")
@@ -175,10 +177,10 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	}
 	for _, a := range assignments {
 		if a.ReadOnly {
-			fmt.Fprintf(&b, "- %d %s (owner %s) %s, read-only at %s: %s\n", a.ID, a.Worker, a.Owner, a.State, a.Commit, a.Outcome)
+			fmt.Fprintf(&b, "- %d %s (owner %s) %s, read-only at %s: %s%s\n", a.ID, a.Worker, a.Owner, a.State, a.Commit, a.Outcome, passedOn(a.Records))
 			continue
 		}
-		fmt.Fprintf(&b, "- %d %s (owner %s) %s on branch %s: %s\n", a.ID, a.Worker, a.Owner, a.State, a.Workspace.Branch, a.Outcome)
+		fmt.Fprintf(&b, "- %d %s (owner %s) %s on branch %s: %s%s\n", a.ID, a.Worker, a.Owner, a.State, a.Workspace.Branch, a.Outcome, passedOn(a.Records))
 	}
 	fmt.Fprintln(&b, "Findings:")
 	if len(findings) == 0 {
@@ -246,7 +248,7 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		fmt.Fprintln(&b, "- none")
 	}
 	for _, r := range records {
-		fmt.Fprintf(&b, "- %d %s by %s: %s. Rationale: %s. Evidence: %s\n", r.ID, r.Source, r.Leader, r.Choice, r.Rationale, r.Evidence)
+		b.WriteString(r.Text("- ", "  "))
 	}
 	fmt.Fprintln(&b, "Pending decisions:")
 	pending := 0
@@ -268,6 +270,19 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		fmt.Fprintf(&b, "- %d %s\n", entry.ID, entry.Kind)
 	}
 	return b.String()
+}
+
+// passedOn says which decision records were passed on with a handoff or an
+// assignment, or nothing when none was.
+func passedOn(records []int64) string {
+	if len(records) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(records))
+	for _, id := range records {
+		ids = append(ids, strconv.FormatInt(id, 10))
+	}
+	return " [decisions passed on: " + strings.Join(ids, ", ") + "]"
 }
 
 // PullRequestState says whether p is a draft, or opened with "[not ready]"

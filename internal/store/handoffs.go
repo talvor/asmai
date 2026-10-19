@@ -40,6 +40,10 @@ type Handoff struct {
 	// Head is the exact commit of the job branch that a handoff to Quality
 	// asks it to validate, which the daemon fixes when the handoff is sent.
 	Head string `json:"head,omitempty"`
+	// Records are the IDs of the job's decision records the sending leader
+	// passes with the handoff, and DecisionRecords the records themselves.
+	Records         []int64          `json:"records,omitempty"`
+	DecisionRecords []DecisionRecord `json:"decision_records,omitempty"`
 }
 
 type Message struct {
@@ -148,8 +152,17 @@ func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) 
 		}
 	}
 	criteria, _ := json.Marshal(h.Criteria)
+	passed, err := passedRecords(tx, h.Job, h.Records)
+	if err != nil {
+		return Handoff{}, Dispatch{}, err
+	}
+	records, _ := json.Marshal(recordIDs(passed))
 	h.State = HandoffPending
-	result, err := tx.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,head,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, h.Job, h.Sender, h.Receiver, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions, string(criteria), h.State, h.Head, timestamp(at))
+	h.Records, h.DecisionRecords = nil, nil
+	if len(passed) > 0 {
+		h.Records, h.DecisionRecords = recordIDs(passed), passed
+	}
+	result, err := tx.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,head,decision_records,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, h.Job, h.Sender, h.Receiver, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions, string(criteria), h.State, h.Head, string(records), timestamp(at))
 	if err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
@@ -271,14 +284,17 @@ func (s *Store) AnswerHandoff(id int64, agent string, currentDispatch int64, gen
 	return h, d, tx.Commit()
 }
 
-func handoff(q queryer, id int64) (Handoff, error) {
+func handoff(q querier, id int64) (Handoff, error) {
 	var h Handoff
-	var criteria string
-	err := q.QueryRow(`SELECT id,job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,answer,head FROM handoffs WHERE id=?`, id).Scan(&h.ID, &h.Job, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head)
+	var criteria, records string
+	err := q.QueryRow(`SELECT id,job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,answer,head,decision_records FROM handoffs WHERE id=?`, id).Scan(&h.ID, &h.Job, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head, &records)
 	if err != nil {
 		return Handoff{}, err
 	}
-	err = json.Unmarshal([]byte(criteria), &h.Criteria)
+	if err = json.Unmarshal([]byte(criteria), &h.Criteria); err != nil {
+		return Handoff{}, err
+	}
+	h.Records, h.DecisionRecords, err = loadRecords(q, records)
 	return h, err
 }
 func (s *Store) Handoff(id int64) (Handoff, error) { return handoff(s.db, id) }

@@ -78,7 +78,10 @@ func firstRun(t *testing.T, worker func(transcript string) []string, leader []st
 		hookStep("UserPromptSubmit", "handoff", "asmai inbox --dispatch 1"),
 		fakeRun(`asmai inbox --dispatch 1`, 0, "Add a greeting"),
 		fakeRun(`asmai handoff accept --handoff 1`, 0, "reply dispatch 2"),
-		fakeRun(`asmai assign --job 1 --outcome 'Add greeting.txt, saying hello' --criterion 'greeting.txt says hello'`, 0, "assignment 1 of job 1 given to worker1@engineering; dispatch 3"),
+		// A decision that affects the work is recorded and passed to the worker
+		// with its assignment, and has to survive a stop and a start.
+		fakeRun(`asmai decision record --job 1 --choice 'put the greeting in greeting.txt' --relied-on 'the job mandate' --rationale 'one file needs no design' --evidence 'the request names one greeting' --assumption 'one file is enough' --reopen-when 'the greeting needs configuration'`, 0, "job 1: decision 1 recorded, delegated by leader@engineering: put the greeting in greeting.txt"),
+		fakeRun(`asmai assign --job 1 --outcome 'Add greeting.txt, saying hello' --criterion 'greeting.txt says hello' --record 1`, 0, "(?s)assignment 1 of job 1 given to worker1@engineering; dispatch 3.*decision records passed on: 1"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/assigned"`, 0, ""),
 	}
 	engineering = append(engineering, leader...)
@@ -92,7 +95,7 @@ func firstRun(t *testing.T, worker func(transcript string) []string, leader []st
 		`{"screen":"\u001b[?2004h> "}`,
 		`{"expect":"asmai inbox --dispatch 3\r"}`,
 		nativeHook("UserPromptSubmit", "assignment", "asmai inbox --dispatch 3", transcript),
-		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Add greeting.txt"),
+		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Add greeting.txt.*Decision records passed to you with this assignment:\n  decision 1 \\| job 1 \\| delegated"),
 		fakeRun(`printf '%s' "$ASMAI_SESSION" > "$ASMAI_TEST_DIR/worker-credential"`, 0, ""),
 	}, worker(transcript)...)
 	t.Setenv(fakeprovider.ScriptEnv+"_WORKER", writeScript(t, "worker-first", workerScript))
@@ -293,6 +296,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 6"),
 		fakeRun(`asmai inbox --dispatch 6`, 0, restoration),
 		fakeRun(`asmai brief 1`, 0, "(?s)Handoffs:\n- 1 leader@coordination -> leader@engineering: accepted"),
+		fakeRun(`asmai brief 1`, 0, "(?s)Decisions:\n- decision 1 \\| job 1 \\| delegated \\| accountable leader leader@engineering \\| [^\n]+\n  Choice: put the greeting in greeting.txt\n  Relied on: the job mandate\n  Rationale: one file needs no design\n  Evidence: the request names one greeting\n  Assumptions: one file is enough\n  Reopen when: the greeting needs configuration\n"),
 		hookStep("Stop", "restore", ""),
 		`{"expect":"asmai inbox --dispatch 8\r"}`,
 		hookStep("UserPromptSubmit", "reply", "asmai inbox --dispatch 8"),
@@ -315,7 +319,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		`{"expect":"asmai inbox --dispatch 7\r"}`,
 		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 7"),
 		fakeRun(`asmai inbox --dispatch 7`, 0, restoration),
-		fakeRun(`asmai brief 1`, 0, "(?s)Assignments:\n- 1 worker1@engineering \\(owner leader@engineering\\) (active|submitted) on branch "+branch),
+		fakeRun(`asmai brief 1`, 0, "(?s)Assignments:\n- 1 worker1@engineering \\(owner leader@engineering\\) (active|submitted) on branch "+branch+": Add greeting.txt, saying hello \\[decisions passed on: 1\\]\n"),
 		hookStep("Stop", "restore", ""),
 		// The worker's result reaches the leader in the dispatch the worker
 		// was given after the restart.
@@ -333,7 +337,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		`{"screen":"\u001b[?2004h> "}`,
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		nativeHook("UserPromptSubmit", "resumption", "asmai inbox --dispatch 5", r.transcript),
-		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)resumption from daemon.*Resumes dispatch 3.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active"),
+		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)resumption from daemon.*Resumes dispatch 3.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Decision records passed to you with this assignment:\n  decision 1 \\| job 1 \\| delegated \\| accountable leader leader@engineering.*Choice: put the greeting in greeting.txt"),
 		// Fetching the dispatch that stopped again is safe, and changes
 		// nothing about it.
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),

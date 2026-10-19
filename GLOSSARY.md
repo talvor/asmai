@@ -80,6 +80,10 @@ A way of achieving an outcome that satisfies the agreed constraints and differs 
 **Delegated decision**:
 A choice made by an accountable leader within its mandate or an applicable grant, recorded as agent-made rather than attributed to the user.
 
+**Decision record**:
+The durable record of a decision that affects later work: the accountable leader, the job, the mandate or grant relied on, the choice, its rationale and evidence, its material assumptions, the conditions that would reopen it, and its source, delegated or human. The owning leader passes the relevant records to its workers in assignments and with handoffs; each job's brief carries them all. Routine edits need none. A judged re-run is one kind.
+_Avoid_: Decision log, ADR (an ADR records a decision about AsmAI itself)
+
 **Escalation**:
 A decision request carried to the user through Coordination when work requires the user's choice or authority.
 

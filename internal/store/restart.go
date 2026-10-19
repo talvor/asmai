@@ -91,7 +91,7 @@ func (s *Store) WorkerDispatch(assignment int64) (WorkerDispatch, error) {
 	return workerDispatch(s.db, assignment)
 }
 
-func workerDispatch(q queryer, id int64) (WorkerDispatch, error) {
+func workerDispatch(q querier, id int64) (WorkerDispatch, error) {
 	var w WorkerDispatch
 	var resumes sql.NullInt64
 	err := q.QueryRow(`SELECT d.id, d.message, d.agent, d.generation, d.state, d.transcript, d.resumes, d.native_session, m.kind, m.fetched_at IS NOT NULL,

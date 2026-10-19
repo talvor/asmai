@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -115,7 +116,7 @@ func TestAHeadsFailedJobsAreReRunOnceOnADelegatedDecisionAndASecondReRunIsRefuse
 	if _, _, err := s.RerunDecided(decision, rerun, 1, assignmentsAt); err == nil || !strings.Contains(err.Error(), "a second re-run of the same head is refused") {
 		t.Errorf("a second re-run of the head: %v", err)
 	}
-	if records, err := s.DecisionRecords(job); err != nil || len(records) != 1 || records[0] != got {
+	if records, err := s.DecisionRecords(job); err != nil || len(records) != 1 || !reflect.DeepEqual(records[0], got) {
 		t.Errorf("the decisions are %+v (%v)", records, err)
 	}
 	// A newer head may have its own.

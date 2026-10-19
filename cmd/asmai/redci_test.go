@@ -42,8 +42,8 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 	t.Setenv(fakeprovider.ScriptEnv+"_ENGINEERING", filepath.Join(testDir, "engineering.jsonl"))
 	t.Setenv(fakeprovider.ScriptEnv+"_QUALITY", filepath.Join(testDir, "quality.jsonl"))
 
-	handoffToQuality := func(evidence string) string {
-		return `asmai handoff send --job 1 --to quality --outcome 'Validate the job branch at its exact head' --decisions none --evidence '` + evidence + `' --constraints none --permissions none --criterion 'greeting.txt says hello'`
+	handoffToQuality := func(evidence string, more ...string) string {
+		return `asmai handoff send --job 1 --to quality --outcome 'Validate the job branch at its exact head' --decisions none --evidence '` + evidence + `' --constraints none --permissions none --criterion 'greeting.txt says hello' ` + strings.Join(more, " ")
 	}
 	updateBody := func(text string) []string {
 		return []string{
@@ -87,11 +87,18 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 			[]string{
 				fakeRun(`asmai inbox --dispatch 10`, 0, "(?s)dispatch 10 \\| job 1 \\| checks-red from daemon\nThe checks on head "+sha+" of job 1's pull request #7 are red\\. Failing: CI / test \\("+runURL+"\\)\\. If you judge the failure unrelated to the change, you may re-run the failed jobs once for this head.*asmai decision record --job 1 --choice rerun-failed"),
 				fakeRun(`asmai brief 1`, 0, "(?s)- red at "+sha+".*\n  - CI / test: failed\nJudged re-runs of red checks \\(once per head\\):\n- none"),
-				fakeRun(`asmai decision record --job 1 --choice merge-anyway --rationale x --evidence y`, 1, "records only the judged re-run of a head's red checks, --choice rerun-failed"),
+				fakeRun(`asmai decision record --job 1 --choice merge-anyway --rationale x --evidence y`, 1, "needs --relied-on"),
+				fakeRun(`asmai decision record --job 1 --choice merge-anyway --relied-on 'the job mandate' --rationale x --evidence y`, 1, "give --assumption, or --assumption none"),
 				fakeRun(`asmai decision record --job 1 --choice rerun-failed --rationale x`, 1, "needs --evidence"),
 				fakeRun(rerun, 0, "(?s)job 1: decision 1 recorded, delegated by leader@engineering: rerun-failed\nthe daemon re-ran the failed jobs of head "+sha+" once, in workflow runs 41: CI / test\nnext:.*a second re-run of this head is refused"),
 				fakeRun(rerun, 1, "re-run once already, on decision 1; a second re-run of the same head is refused"),
-				fakeRun(`asmai brief 1`, 0, "(?s)Judged re-runs of red checks \\(once per head\\):\n- the failed jobs of "+sha+" re-run once on decision 1, [^:]+:[^:]+:[^:]+: CI / test\n.*Decisions:\n- 1 delegated by leader@engineering: rerun-failed\\. Rationale: the runner lost its network, which the change cannot cause\\. Evidence: the log of CI / test shows a DNS failure"),
+				fakeRun(`asmai brief 1`, 0, "(?s)Judged re-runs of red checks \\(once per head\\):\n- the failed jobs of "+sha+" re-run once on decision 1, [^:]+:[^:]+:[^:]+: CI / test\n.*Decisions:\n- decision 1 \\| job 1 \\| delegated \\| accountable leader leader@engineering \\| [^\n]+\n  Choice: rerun-failed\n  Relied on: the job's mandate\n  Rationale: the runner lost its network, which the change cannot cause\n  Evidence: the log of CI / test shows a DNS failure[^\n]*\n  Assumptions: none\n  Reopen when: none\n"),
+			},
+			[]string{
+				// Any other decision that affects later work is recorded with
+				// the same fields, and needs no re-run.
+				fakeRun(`asmai decision record --job 1 --choice 'fix CI / test with a new assignment if the re-run fails again' --relied-on 'the job mandate' --rationale 'a second red run of the same head is not a runner fault' --evidence 'the log of CI / test' --assumption 'the failure is in the change' --reopen-when 'CI / test fails on a second head'`, 0, "(?s)job 1: decision 2 recorded, delegated by leader@engineering: fix CI / test.*--record 2"),
+				fakeRun(`asmai brief 1`, 0, "(?s)- decision 2 \\| job 1 \\| delegated \\| accountable leader leader@engineering \\| [^\n]+\n  Choice: fix CI / test with a new assignment if the re-run fails again\n  Relied on: the job mandate\n  Rationale: a second red run of the same head is not a runner fault\n  Evidence: the log of CI / test\n  Assumptions: the failure is in the change\n  Reopen when: CI / test fails on a second head\n"),
 			},
 			updateBody("CI: CI / test failed; its failed jobs are re-run once on decision 1."),
 			[]string{touchFile("rerun-done")},
@@ -101,19 +108,21 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 			fakeRun(`asmai inbox --dispatch 11`, 0, "(?s)checks-red from daemon\nThe checks on head "+sha+" of job 1's pull request #7 are red\\. Failing: CI / test.*re-run once already, on decision 1, and failed again: a second re-run of this head is refused\\. Assign a fix"),
 			fakeRun(rerun, 1, "a second re-run of the same head is refused"),
 			fakeRun(`cp "$ASMAI_TEST_DIR/worker-2.jsonl" "$ASMAI_TEST_DIR/worker.jsonl"`, 0, ""),
-			fakeRun(`asmai assign --job 1 --outcome 'Fix the failing check CI / test' --criterion 'CI / test passes'`, 0, "assignment 3 of job 1 given to worker1@engineering; dispatch 12"),
+			fakeRun(`asmai assign --job 1 --outcome 'Fix the failing check CI / test' --criterion 'CI / test passes' --record 99`, 1, "decision record 99 does not exist"),
+			fakeRun(`asmai assign --job 1 --outcome 'Fix the failing check CI / test' --criterion 'CI / test passes' --record 2`, 0, "(?s)assignment 3 of job 1 given to worker1@engineering; dispatch 12.*decision records passed on: 2"),
 		),
 		turn(13, "result3",
 			fakeRun(`asmai inbox --dispatch 13`, 0, "result [0-9]+ \\| assignment 3"),
 			awaitFile("w2-done"),
 			fakeRun(`asmai accept --assignment 3 --reason 'CI / test passes with the fix'`, 0, "fast-forwarded"),
-			fakeRun(handoffToQuality("result 3 accepted, fixing CI / test"), 0, "handoff 3 sent to leader@quality for job 1; dispatch 14"),
+			fakeRun(handoffToQuality("result 3 accepted, fixing CI / test", "--record 2"), 0, "(?s)handoff 3 sent to leader@quality for job 1; dispatch 14.*decision records passed on: 2"),
 		),
 		turn(15, "accepted2", fakeRun(`asmai inbox --dispatch 15`, 0, "accepted from leader@quality")),
 		// Quality passes the new head: it is pushed, and the body says so.
 		turn(18, "validation2", concat(
 			[]string{
 				fakeRun(`asmai inbox --dispatch 18`, 0, "(?s)validation from leader@quality.*0 blocking"),
+				fakeRun(`asmai brief 1`, 0, "(?s)- 3 worker1@engineering \\(owner leader@engineering\\) accepted on branch asmai/job-1/3: Fix the failing check CI / test \\[decisions passed on: 2\\]\n"),
 				fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
 			},
 			updateBody("A fix of CI / test is validated at the new head; CI has not reported on it yet."),
@@ -133,7 +142,7 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 			fakeRun(`asmai accept --assignment 2 --reason 'the checks re-ran at the exact head'`, 0, "delivered to leader@engineering as dispatch 9"),
 		),
 		turn(14, "handoff3",
-			fakeRun(`asmai inbox --dispatch 14`, 0, "(?s)handoff 3 .*Head to validate: "+sha),
+			fakeRun(`asmai inbox --dispatch 14`, 0, "(?s)handoff 3 .*Head to validate: "+sha+"\nDecision records passed with the handoff:\n  decision 2 \\| job 1 \\| delegated .*Assumptions: the failure is in the change"),
 			fakeRun(`asmai handoff accept --handoff 3`, 0, "reply dispatch 15"),
 			fakeRun(`cp "$ASMAI_TEST_DIR/quality-worker-2.jsonl" "$ASMAI_TEST_DIR/quality-worker.jsonl"`, 0, ""),
 			fakeRun(`asmai assign --read-only --commit `+headOf(14)+` --job 1 --outcome 'Validate the new head' --criterion 'the checks re-ran at the commit'`, 0, "assignment 4 of job 1 given to worker1@quality; dispatch 16"),
@@ -159,7 +168,7 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(12, "fix",
-		fakeRun(`asmai inbox --dispatch 12`, 0, "(?s)assignment 3.*Fix the failing check CI / test"),
+		fakeRun(`asmai inbox --dispatch 12`, 0, "(?s)assignment 3.*Fix the failing check CI / test.*Decision records passed to you with this assignment:\n  decision 2 \\| job 1 \\| delegated .*Reopen when: CI / test fails on a second head"),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf 'ok\n' > ci-fixed.txt && git add -A && git commit -q -m 'Fix CI / test'`, 0, ""),
 		fakeRun(`git push -q origin asmai/job-1/3 && asmai effect push "origin/asmai/job-1/3@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'CI / test passes' --test none --check 'grep hello greeting.txt -> passed' --gap none --pr-section 'Fixes CI / test.'`, 0, "result recorded for assignment 3"),
@@ -182,7 +191,7 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 			hookStep("UserPromptSubmit", "", "Please add a greeting"),
 			fakeRun(`asmai job open --message latest --repository fixture --reading 'Add a greeting' --criterion 'Greeting is printed'`, 0, "Opened job 1"),
 			fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'Add a greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'Greeting is printed'`, 0, "dispatch 1"),
-			fakeRun(`asmai decision record --job 1 --choice rerun-failed --rationale x --evidence y`, 1, "only leader@engineering, judging a red head's checks, may run asmai decision record"),
+			fakeRun(`asmai decision record --job 1 --choice rerun-failed --rationale x --evidence y`, 1, "only leader@engineering, judging a red head's checks, may record --choice rerun-failed"),
 			hookStep("Stop", "", ""),
 		},
 		turn(2, "reply", fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering")),
@@ -319,19 +328,26 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 		t.Errorf("the checks observed are %q, want %q", strings.Join(seen, "; "), want)
 	}
 
-	// The re-run is recorded once, with the delegated decision it rests on.
+	// The re-run is recorded once, with the delegated decision it rests on,
+	// beside the other decision the leader recorded, which re-ran nothing.
 	type decisionEntry struct {
-		ID        int    `json:"id"`
-		Job       int    `json:"job"`
-		Leader    string `json:"leader"`
-		Source    string `json:"source"`
-		Choice    string `json:"choice"`
-		Rationale string `json:"rationale"`
-		Evidence  string `json:"evidence"`
+		ID          int      `json:"id"`
+		Job         int      `json:"job"`
+		Leader      string   `json:"leader"`
+		Source      string   `json:"source"`
+		ReliedOn    string   `json:"relied_on"`
+		Choice      string   `json:"choice"`
+		Rationale   string   `json:"rationale"`
+		Evidence    string   `json:"evidence"`
+		Assumptions []string `json:"assumptions"`
+		ReopenWhen  []string `json:"reopen_when"`
 	}
 	decisions := journaled(t, "decision.recorded")
-	if len(decisions) != 1 {
+	if len(decisions) != 2 {
 		t.Fatalf("decisions: %+v", decisions)
+	}
+	if d := decode[decisionEntry](t, decisions[1]); d.ID != 2 || d.ReliedOn != "the job mandate" || !slices.Equal(d.Assumptions, []string{"the failure is in the change"}) || !slices.Equal(d.ReopenWhen, []string{"CI / test fails on a second head"}) {
+		t.Errorf("the second decision is %+v", d)
 	}
 	if d := decode[decisionEntry](t, decisions[0]); d.ID != 1 || d.Job != 1 || d.Leader != "leader@engineering" || d.Source != "delegated" || d.Choice != "rerun-failed" || !strings.Contains(d.Rationale, "the runner lost its network") || !strings.Contains(d.Evidence, "DNS failure") {
 		t.Errorf("the decision is %+v", d)

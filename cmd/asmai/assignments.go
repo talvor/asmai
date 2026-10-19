@@ -62,7 +62,7 @@ func parseChecks(values []string) ([]store.Check, error) {
 	return checks, nil
 }
 
-func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit, skill string, narrow []string) int {
+func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit, skill string, narrow []string, records []string) int {
 	if job <= 0 || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(errors.New("assign needs --job, --outcome and --criterion"))
 	}
@@ -72,7 +72,11 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if !readOnly && commit != "" {
 		return o.fail(errors.New("--commit belongs to --read-only: a writing assignment is made from the job branch's tip"))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit, Skill: skill, Skills: narrow})
+	ids, err := recordIDs(records)
+	if err != nil {
+		return o.fail(err)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit, Skill: skill, Skills: narrow, Records: ids})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -86,6 +90,9 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	}
 	if list := listOf(*a); len(list) > 0 {
 		fmt.Fprintf(o.stdout, "skill list: %s\n", strings.Join(list, ", "))
+	}
+	if len(a.Records) > 0 {
+		fmt.Fprintf(o.stdout, "decision records passed on: %s\n", strings.Join(idList(a.Records), ", "))
 	}
 	if a.ReadOnly {
 		fmt.Fprintf(o.stdout, "read-only workspace fixed at %s of %s, with no branch\nworkspace: %s (slot %d)\n", a.Commit, a.JobBranch, a.Workspace.Path, a.Workspace.Slot)
@@ -325,6 +332,7 @@ func printAssignment(w io.Writer, a store.Assignment) {
 	if a.Skill != "" {
 		fmt.Fprintf(w, "Skill to run: %s\n", a.Skill)
 	}
+	printRecords(w, "Decision records passed to you with this assignment", a.DecisionRecords)
 	if list := listOf(a); len(list) > 0 {
 		fmt.Fprintf(w, "Your skill list for this assignment: %s\n", strings.Join(list, ", "))
 	}
@@ -436,20 +444,78 @@ func push(o *output, paths statedir.Paths, number string) int {
 	return 0
 }
 
-// decisionRecord has Engineering's leader record its judgment on a head's
-// red checks, on which the daemon re-runs their failed jobs once.
-func decisionRecord(o *output, paths statedir.Paths, job int64, choice, rationale, evidence string) int {
+// decisionFlags are the values of `asmai decision record`'s flags.
+type decisionFlags struct {
+	job                                   int64
+	choice, reliedOn, rationale, evidence string
+	assumptions, reopenWhen               listFlags
+	source                                string
+	cites                                 int64
+}
+
+// recordIDs reads the values of --record, decision record IDs.
+func recordIDs(values []string) ([]int64, error) {
+	var ids []int64
+	for _, v := range values {
+		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("--record %q is not a decision record ID, as `asmai brief` lists them", v)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func idList(ids []int64) []string {
+	list := make([]string, 0, len(ids))
+	for _, id := range ids {
+		list = append(list, strconv.FormatInt(id, 10))
+	}
+	return list
+}
+
+// printRecords writes the decision records passed on, each with its fields.
+func printRecords(w io.Writer, title string, records []store.DecisionRecord) {
+	if len(records) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%s:\n", title)
+	for _, r := range records {
+		fmt.Fprint(w, r.Text("  ", "  "))
+	}
+}
+
+// decisionRecord has a leader record a decision with the fields of rule 25.
+// Engineering's leader's choice rerun-failed is its judgment on a head's red
+// checks, on which the daemon re-runs their failed jobs once.
+func decisionRecord(o *output, paths statedir.Paths, f decisionFlags) int {
+	rerun := strings.TrimSpace(f.choice) == store.ChoiceRerunFailed
 	switch {
-	case job <= 0:
+	case f.job <= 0:
 		return o.fail(errors.New("decision record needs --job"))
-	case choice == "":
-		return o.fail(fmt.Errorf("decision record needs --choice: %s", store.ChoiceRerunFailed))
-	case strings.TrimSpace(rationale) == "":
+	case strings.TrimSpace(f.choice) == "":
+		return o.fail(errors.New("decision record needs --choice: what the decision chose"))
+	case !rerun && strings.TrimSpace(f.reliedOn) == "":
+		return o.fail(errors.New("decision record needs --relied-on: the mandate or grant the decision relied on"))
+	case strings.TrimSpace(f.rationale) == "":
 		return o.fail(errors.New("decision record needs --rationale: why"))
-	case strings.TrimSpace(evidence) == "":
+	case strings.TrimSpace(f.evidence) == "":
 		return o.fail(errors.New("decision record needs --evidence: what the decision rests on"))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRecord, Job: job, Choice: choice, Rationale: rationale, Evidence: evidence})
+	var assumptions, reopenWhen []string
+	if rerun {
+		assumptions, reopenWhen = f.assumptions, f.reopenWhen
+	} else {
+		var err error
+		if assumptions, err = explicit("assumption", f.assumptions); err != nil {
+			return o.fail(err)
+		}
+		if reopenWhen, err = explicit("reopen-when", f.reopenWhen); err != nil {
+			return o.fail(err)
+		}
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRecord, Job: f.job, Choice: f.choice, ReliedOn: f.reliedOn, Rationale: f.rationale, Evidence: f.evidence,
+		Assumptions: assumptions, ReopenWhen: reopenWhen, DecisionSource: f.source, Cites: f.cites})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -458,6 +524,10 @@ func decisionRecord(o *output, paths statedir.Paths, job int64, choice, rational
 	}
 	d, r := resp.DecisionRecord, resp.Rerun
 	fmt.Fprintf(o.stdout, "job %d: decision %d recorded, %s by %s: %s\n", d.Job, d.ID, d.Source, d.Leader, d.Choice)
+	if r == nil {
+		fmt.Fprintf(o.stdout, "next: pass it on with --record %d on asmai assign or asmai handoff send where it matters; it is in the job's brief\n", d.ID)
+		return 0
+	}
 	fmt.Fprintf(o.stdout, "the daemon re-ran the failed jobs of head %s once, in workflow runs %s: %s\n", r.Head, runList(r.Runs), store.CheckNames(r.Checks))
 	fmt.Fprintln(o.stdout, "next: the daemon watches the head's checks again; a second re-run of this head is refused, so if they stay red assign a fix")
 	return 0

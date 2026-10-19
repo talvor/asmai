@@ -141,6 +141,13 @@ type Assignment struct {
 	// is delivered at each start.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
+	// Records are the IDs of the decision records the owning leader passed to
+	// the worker with the assignment, and DecisionRecords the records
+	// themselves, which survive restarts with the store.
+	Records         []int64          `json:"records,omitempty"`
+	DecisionRecords []DecisionRecord `json:"decision_records,omitempty"`
+	// recorded is the column Records are read from.
+	recorded string
 	// List is the skill list the worker is given, with added and
 	// switched-on repository skills: in its own inbox, the list its running
 	// session was given, otherwise as the daemon makes it from the
@@ -374,6 +381,9 @@ type NewAssignment struct {
 	// explicit narrowing, if any, as the daemon checked it against the role's list.
 	Skill  string
 	Skills []string
+	// Records are the IDs of the decision records of the job that the owning
+	// leader passes to the worker.
+	Records []int64
 }
 
 // AssignmentCreated records a writing assignment and its workspace, and the
@@ -428,8 +438,16 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 	if err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at, read_only, skill, skills) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at), n.ReadOnly, n.Skill, string(skills)); err != nil {
+	passed, err := passedRecords(tx, n.Job, n.Records)
+	if err != nil {
+		return Assignment{}, Dispatch{}, err
+	}
+	records, err := json.Marshal(recordIDs(passed))
+	if err != nil {
+		return Assignment{}, Dispatch{}, err
+	}
+	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at, read_only, skill, skills, decision_records) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at), n.ReadOnly, n.Skill, string(skills), string(records)); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
 	if _, err := tx.Exec(`INSERT INTO workspaces (assignment, slot, path, tmp, branch, base) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -437,6 +455,9 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 		return Assignment{}, Dispatch{}, err
 	}
 	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w, Skill: n.Skill, Skills: n.Skills}
+	if len(passed) > 0 {
+		a.Records, a.DecisionRecords = recordIDs(passed), passed
+	}
 	if n.ReadOnly {
 		a.ReadOnly, a.Commit = true, w.Base
 		a.Intent = &Intent{Words: j.Words, Reading: j.Reading, Mandate: j.Mandate, Criteria: j.Criteria}
@@ -467,12 +488,23 @@ func (s *Store) Assignment(id int64) (Assignment, error) {
 }
 
 const (
-	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, b.name, w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria, a.skill, a.skills`
+	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, b.name, w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria, a.skill, a.skills, a.decision_records`
 	assignmentTables  = `assignments a JOIN workspaces w ON w.assignment = a.id JOIN job_branches b ON b.job = a.job JOIN jobs j ON j.number = a.job`
 )
 
-func assignment(q queryer, id int64) (Assignment, error) {
-	return scanAssignment(q.QueryRow(`SELECT `+assignmentColumns+` FROM `+assignmentTables+` WHERE a.id = ?`, id))
+func assignment(q querier, id int64) (Assignment, error) {
+	a, err := scanAssignment(q.QueryRow(`SELECT `+assignmentColumns+` FROM `+assignmentTables+` WHERE a.id = ?`, id))
+	if err != nil {
+		return Assignment{}, err
+	}
+	return withRecords(q, a)
+}
+
+// withRecords gives a the decision records its owning leader passed to it.
+func withRecords(q querier, a Assignment) (Assignment, error) {
+	var err error
+	a.Records, a.DecisionRecords, err = loadRecords(q, a.recorded)
+	return a, err
 }
 
 func scanAssignment(row *sql.Row) (Assignment, error) {
@@ -481,7 +513,7 @@ func scanAssignment(row *sql.Row) (Assignment, error) {
 	var intent Intent
 	var jobCriteria, skills string
 	err := row.Scan(&a.ID, &a.Job, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &created, &a.JobBranch, &a.Workspace.Slot, &a.Workspace.Path, &a.Workspace.Tmp, &a.Workspace.Branch, &a.Workspace.Base,
-		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria, &a.Skill, &skills)
+		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria, &a.Skill, &skills, &a.recorded)
 	if err != nil {
 		return Assignment{}, err
 	}
@@ -508,7 +540,11 @@ func scanAssignment(row *sql.Row) (Assignment, error) {
 // LiveAssignmentOf returns the assignment that worker, by address, carries
 // now: the latest that has not ended, or sql.ErrNoRows.
 func (s *Store) LiveAssignmentOf(worker string) (Assignment, error) {
-	return scanAssignment(s.db.QueryRow(`SELECT `+assignmentColumns+` FROM `+assignmentTables+` WHERE a.worker = ? AND a.state NOT IN ('accepted', 'cancelled') ORDER BY a.id DESC LIMIT 1`, worker))
+	a, err := scanAssignment(s.db.QueryRow(`SELECT `+assignmentColumns+` FROM `+assignmentTables+` WHERE a.worker = ? AND a.state NOT IN ('accepted', 'cancelled') ORDER BY a.id DESC LIMIT 1`, worker))
+	if err != nil {
+		return Assignment{}, err
+	}
+	return withRecords(s.db, a)
 }
 
 // AssignmentsForJob returns the assignments of job, oldest first.

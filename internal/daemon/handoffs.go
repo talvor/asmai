@@ -56,7 +56,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 		} else if address.Name != roles.Leader || handoffTo[ref.address.Role] != address.Role {
 			err = errors.New("send a handoff to another role's leader: Coordination hands a job to Engineering, and Engineering hands validation to Quality")
 		} else {
-			h := store.Handoff{Job: req.Job, Sender: ref.address.String(), Receiver: address.String(), Outcome: req.Outcome, Decisions: req.Decisions, Evidence: req.Evidence, Constraints: req.Constraints, Permissions: req.Permissions, Criteria: req.Criteria, Head: head}
+			h := store.Handoff{Job: req.Job, Sender: ref.address.String(), Receiver: address.String(), Outcome: req.Outcome, Decisions: req.Decisions, Evidence: req.Evidence, Constraints: req.Constraints, Permissions: req.Permissions, Criteria: req.Criteria, Head: head, Records: req.Records}
 			var dispatch store.Dispatch
 			h, dispatch, err = d.store.SendHandoff(h, time.Now())
 			if err == nil {

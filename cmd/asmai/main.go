@@ -32,13 +32,14 @@ import (
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
+	"github.com/talvor/asmai/internal/toonjson"
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
 // Development builds keep "dev".
 var version = "dev"
 
-const usage = `usage: asmai [<command>] [--json]
+const usage = `usage: asmai [<command>] [--json | --toon]
 
 commands you type:
   asmai, asmai chat           talk with Coordination: attach this terminal to Coordination's leader,
@@ -182,8 +183,12 @@ commands agents run:
                               answer naming an older version is refused
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
-Every command accepts --json to print JSON instead of tables; asmai attach --json prints the
-agent's screen as it is now, and asmai chat --json Coordination's.
+Every command accepts --json to print JSON instead of tables, or --toon to print the same data as
+TOON (Token-Oriented Object Notation), which takes fewer tokens than JSON; scripts and tests
+use --json. The two cannot be combined. A failure prints {"error": ...} in the format asked
+for, and exits 1. asmai attach --json or --toon prints the agent's screen as it is now, and asmai
+chat --json or --toon Coordination's. asmai log --json prints each record as a JSON line, and
+asmai log --toon each as its own TOON document, separated by a blank line.
 `
 
 // groups are the commands that are grouped by noun, with their subcommands.
@@ -263,6 +268,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("asmai "+name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "print JSON instead of tables")
+	toonOutput := flags.Bool("toon", false, "print TOON instead of tables")
 	foreground, follow, repoName, assumeYes := new(bool), new(bool), new(string), new(bool)
 	var message string
 	var reading, mandate, repository string
@@ -408,7 +414,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "asmai %s: unexpected argument %q\n\n%s", name, flags.Arg(0), usage)
 		return 2
 	}
-	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput}
+	if *jsonOutput && *toonOutput {
+		fmt.Fprintf(stderr, "asmai %s: --json and --toon cannot be used together: choose one output format\n", name)
+		return 1
+	}
+	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
@@ -418,8 +428,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	switch name {
 	case "version":
-		if o.json {
-			return o.printJSON(map[string]string{"version": version})
+		if o.structured() {
+			return o.printData(map[string]string{"version": version})
 		}
 		fmt.Fprintf(stdout, "asmai %s\n", version)
 		return 0
@@ -433,12 +443,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				return o.fail(fmt.Errorf("reading the installed Lavish build's notices: %w", err))
 			}
 		}
-		if o.json {
+		if o.structured() {
 			notices := map[string]string{"license": string(asmai.License), "third_party_notices": string(asmai.ThirdPartyNotices)}
 			if lavishNotices != nil {
 				notices["lavish_notices"] = string(lavishNotices)
 			}
-			return o.printJSON(notices)
+			return o.printData(notices)
 		}
 		stdout.Write(asmai.License)
 		fmt.Fprintln(stdout)
@@ -601,7 +611,7 @@ func startForeground(o *output, paths statedir.Paths) int {
 	// no copy.
 	if !isFile(o.stderr, paths.Log) {
 		cfg.Mirror = o.stderr
-		if !o.json {
+		if !o.structured() {
 			cfg.Mirror = &rendered{w: o.stderr}
 		}
 	}
@@ -635,8 +645,8 @@ func (o *output) started(st daemon.Status, already bool, paths statedir.Paths, r
 				message = daemonState + " and so is Coordination's leader, but " + plural(len(failures), "a check failed", "checks failed")
 			}
 		}
-		if o.json {
-			o.printJSON(map[string]any{"error": message, "started": !already, "daemon": runningJSON(st), "checks": resp.Checks, "leaders": resp.Leaders, "state_dir": paths.Dir})
+		if o.structured() {
+			o.printData(map[string]any{"error": message, "started": !already, "daemon": runningJSON(st), "checks": resp.Checks, "leaders": resp.Leaders, "state_dir": paths.Dir})
 			return 1
 		}
 		fmt.Fprintf(o.stderr, "asmai: %s.\n", message)
@@ -651,8 +661,8 @@ func (o *output) started(st daemon.Status, already bool, paths statedir.Paths, r
 		fmt.Fprintln(o.stderr, "Fix what failed, then run `asmai start` again.")
 		return 1
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"started": !already, "daemon": runningJSON(st), "checks": resp.Checks, "leaders": resp.Leaders, "state_dir": paths.Dir})
+	if o.structured() {
+		return o.printData(map[string]any{"started": !already, "daemon": runningJSON(st), "checks": resp.Checks, "leaders": resp.Leaders, "state_dir": paths.Dir})
 	}
 	if already {
 		fmt.Fprintln(o.stdout, "The factory is already running; no second daemon was started.")
@@ -688,8 +698,8 @@ func leaderRows(leaders []daemon.Leader) [][]string {
 func stop(o *output, paths statedir.Paths) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStop})
 	if errors.Is(err, daemon.ErrNotRunning) {
-		if o.json {
-			return o.printJSON(map[string]any{"stopped": false, "daemon": map[string]any{"running": false}})
+		if o.structured() {
+			return o.printData(map[string]any{"stopped": false, "daemon": map[string]any{"running": false}})
 		}
 		fmt.Fprintln(o.stdout, "The factory is not running.")
 		return 0
@@ -697,8 +707,8 @@ func stop(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"stopped": true, "daemon": map[string]any{"running": false, "version": resp.Status.Version, "pid": resp.Status.PID}})
+	if o.structured() {
+		return o.printData(map[string]any{"stopped": true, "daemon": map[string]any{"running": false, "version": resp.Status.Version, "pid": resp.Status.PID}})
 	}
 	fmt.Fprintln(o.stdout, "Stopped the factory; its state is saved in the store.")
 	o.table([][]string{
@@ -713,8 +723,8 @@ func stop(o *output, paths statedir.Paths) int {
 func status(o *output, paths statedir.Paths) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStatus})
 	if errors.Is(err, daemon.ErrNotRunning) {
-		if o.json {
-			return o.printJSON(map[string]any{"daemon": map[string]any{"running": false}, "state_dir": paths.Dir})
+		if o.structured() {
+			return o.printData(map[string]any{"daemon": map[string]any{"running": false}, "state_dir": paths.Dir})
 		}
 		o.table([][]string{{"daemon", "not running"}, {"state directory", paths.Dir}})
 		return 0
@@ -726,12 +736,12 @@ func status(o *output, paths statedir.Paths) int {
 	if checks == nil {
 		checks = []daemon.Check{}
 	}
-	if o.json {
+	if o.structured() {
 		prompts := resp.Prompts
 		if prompts == nil {
 			prompts = []daemon.WaitingPrompt{}
 		}
-		return o.printJSON(map[string]any{"daemon": runningJSON(*resp.Status), "leaders": resp.Leaders, "prompts": prompts, "checks": checks, "state_dir": paths.Dir})
+		return o.printData(map[string]any{"daemon": runningJSON(*resp.Status), "leaders": resp.Leaders, "prompts": prompts, "checks": checks, "state_dir": paths.Dir})
 	}
 	rows := append(runningRows(*resp.Status, paths), leaderRows(resp.Leaders)...)
 	for _, p := range resp.Prompts {
@@ -761,8 +771,8 @@ func agents(o *output, paths statedir.Paths) int {
 	if list == nil {
 		list = []store.Agent{}
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"agents": list})
+	if o.structured() {
+		return o.printData(map[string]any{"agents": list})
 	}
 	if len(list) == 0 {
 		fmt.Fprintln(o.stdout, "No agent has run yet; `asmai start` starts Coordination's leader.")
@@ -800,8 +810,8 @@ func hook(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if _, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandHook, Session: credential, Payload: payload}); err != nil {
 		return o.fail(fmt.Errorf("hook: %w", err))
 	}
-	if o.json {
-		return o.printJSON(map[string]bool{"journaled": true})
+	if o.structured() {
+		return o.printData(map[string]bool{"journaled": true})
 	}
 	return 0
 }
@@ -822,21 +832,30 @@ func runningRows(st daemon.Status, paths statedir.Paths) [][]string {
 
 // printLog prints the daemon's log from its files, so that it can be read
 // when the daemon is not running, such as after a failed start. With --json
-// it prints the log's own JSON lines.
+// it prints the log's own JSON lines. With --toon it prints each record as
+// its own TOON document, followed by a blank line, since a log that is
+// followed has no end to hold the records in one array.
 func printLog(o *output, paths statedir.Paths, follow bool) int {
 	line := func(l []byte) error {
-		if !o.json {
+		if !o.structured() {
 			_, err := fmt.Fprintln(o.stdout, logfile.Format(l))
 			return err
 		}
-		if json.Valid(l) && bytes.HasPrefix(bytes.TrimSpace(l), []byte("{")) {
-			_, err := fmt.Fprintf(o.stdout, "%s\n", l)
+		record := l
+		if !json.Valid(l) || !bytes.HasPrefix(bytes.TrimSpace(l), []byte("{")) {
+			// Output the daemon wrote that is not a log record, such as a
+			// crash report.
+			record, _ = json.Marshal(map[string]string{"text": string(l)})
+		}
+		if o.toon {
+			encoded, err := toonjson.FromJSON(record)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(o.stdout, "%s\n\n", encoded)
 			return err
 		}
-		// Output the daemon wrote that is not a log record, such as a crash
-		// report.
-		encoded, _ := json.Marshal(map[string]string{"text": string(l)})
-		_, err := fmt.Fprintf(o.stdout, "%s\n", encoded)
+		_, err := fmt.Fprintf(o.stdout, "%s\n", record)
 		return err
 	}
 	var err error
@@ -862,8 +881,8 @@ func export(o *output, paths statedir.Paths) int {
 	if journal == nil {
 		journal = []store.Entry{}
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"journal": journal})
+	if o.structured() {
+		return o.printData(map[string]any{"journal": journal})
 	}
 	rows := [][]string{{"ID", "TIME", "KIND", "DETAILS"}}
 	for _, e := range journal {
@@ -908,9 +927,9 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 		}
 	}
 
-	// With --json, stdout carries only the result.
+	// With --json or --toon, stdout carries only the result.
 	w := o.stdout
-	if o.json {
+	if o.structured() {
 		w = o.stderr
 	}
 	for _, note := range notes {
@@ -918,7 +937,7 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 	}
 	for _, installed := range installs {
 		fmt.Fprintf(w, "%s %s is already installed; nothing to do.\n", providerTitle(installed.Name), installed.Version)
-		if !o.json {
+		if !o.structured() {
 			o.table(installRows(installed))
 		}
 	}
@@ -942,7 +961,7 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 		}
 		done++
 		installs = append(installs, installed)
-		if !o.json {
+		if !o.structured() {
 			fmt.Fprintf(o.stdout, "Installed %s %s.\n", plan.Title, plan.Version)
 			o.table(installRows(installed))
 		}
@@ -954,7 +973,7 @@ func providersInstall(o *output, paths statedir.Paths, stdin io.Reader) int {
 // asked: whether it installed anything, Claude Code's install as provider,
 // and every install as providers. It prints nothing otherwise.
 func (o *output) printInstalls(installed bool, installs []store.ProviderInstall) int {
-	if !o.json {
+	if !o.structured() {
 		return 0
 	}
 	result := map[string]any{"installed": installed, "providers": installs}
@@ -963,7 +982,7 @@ func (o *output) printInstalls(installed bool, installs []store.ProviderInstall)
 			result["provider"] = i
 		}
 	}
-	return o.printJSON(result)
+	return o.printData(result)
 }
 
 // providerTitle is a provider's name for people.
@@ -1212,8 +1231,8 @@ func providersList(o *output, paths statedir.Paths) int {
 			notInstalled = append(notInstalled, pendingProvider{Name: plan.Name, Version: plan.Version})
 		}
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"providers": installs, "not_installed": notInstalled})
+	if o.structured() {
+		return o.printData(map[string]any{"providers": installs, "not_installed": notInstalled})
 	}
 	if len(installs) == 0 {
 		fmt.Fprintln(o.stdout, "No providers are installed; install the pinned ones with `asmai providers install`.")
@@ -1273,14 +1292,35 @@ func details(data json.RawMessage) string {
 	return b.String()
 }
 
-// output prints a command's result: readable tables for the user, or JSON
-// with --json.
+// output prints a command's result: readable tables for the user, JSON with
+// --json for scripts and tests, or TOON with --toon, the same data in fewer
+// tokens for agents. The two flags are never both set.
 type output struct {
 	stdout, stderr io.Writer
-	json           bool
+	json, toon     bool
 }
 
-func (o *output) printJSON(v any) int {
+// structured reports whether the result is data, in either format, and not
+// tables for the user.
+func (o *output) structured() bool {
+	return o.json || o.toon
+}
+
+// printData prints v in the format asked for. TOON is encoded from the JSON
+// v marshals to, so the two print the same data.
+func (o *output) printData(v any) int {
+	if o.toon {
+		encoded, err := toonjson.Marshal(v)
+		if err != nil {
+			fmt.Fprintf(o.stderr, "asmai: %v\n", err)
+			return 1
+		}
+		if _, err := fmt.Fprintf(o.stdout, "%s\n", encoded); err != nil {
+			fmt.Fprintf(o.stderr, "asmai: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	enc := json.NewEncoder(o.stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
@@ -1309,10 +1349,11 @@ func writeTable(out io.Writer, rows [][]string) {
 }
 
 // fail reports err and returns the exit code for it: with --json as a JSON
-// object on stdout, otherwise on stderr.
+// object on stdout, with --toon as the same object in TOON, otherwise on
+// stderr.
 func (o *output) fail(err error) int {
-	if o.json {
-		o.printJSON(map[string]string{"error": err.Error()})
+	if o.structured() {
+		o.printData(map[string]string{"error": err.Error()})
 	} else {
 		fmt.Fprintf(o.stderr, "asmai: %v\n", err)
 	}

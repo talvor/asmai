@@ -21,10 +21,10 @@ import (
 // if it is stopped, and says so, then attaches this terminal to
 // Coordination's leader with input. Every key typed here reaches it, Esc
 // included, until Ctrl-] leaves the conversation, which pauses nothing. With
-// --json it prints Coordination's screen as it is now instead.
+// --json or --toon it prints Coordination's screen as it is now instead.
 func chat(o *output, paths statedir.Paths, stdin io.Reader) int {
 	coordination := roles.LeaderOf(roles.Coordination).String()
-	if o.json {
+	if o.structured() {
 		started, code := o.openFactory(paths)
 		if code != 0 {
 			return code
@@ -34,12 +34,12 @@ func chat(o *output, paths statedir.Paths, stdin io.Reader) int {
 			return o.fail(err)
 		}
 		screen["started"] = started != ""
-		return o.printJSON(screen)
+		return o.printData(screen)
 	}
 	in, inOK := stdin.(*os.File)
 	out, outOK := o.stdout.(*os.File)
 	if !inOK || !outOK || !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
-		return o.fail(errors.New("the conversation with Coordination needs a terminal: run asmai in one, or asmai chat --json for Coordination's screen as text"))
+		return o.fail(errors.New("the conversation with Coordination needs a terminal: run asmai in one, or asmai chat --json or --toon for Coordination's screen as text"))
 	}
 	started, code := o.openFactory(paths)
 	if code != 0 {

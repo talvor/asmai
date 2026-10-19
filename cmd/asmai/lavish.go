@@ -38,8 +38,8 @@ func lavishCommand(o *output, paths statedir.Paths) int {
 		return o.fail(err)
 	}
 	forward := lavish.ForwardCommand(sshDestination(), status.Port)
-	if o.json {
-		return o.printJSON(map[string]any{"lavish": status, "forward": forward})
+	if o.structured() {
+		return o.printData(map[string]any{"lavish": status, "forward": forward})
 	}
 	w := o.stdout
 	if status.Running {

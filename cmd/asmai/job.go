@@ -41,8 +41,8 @@ func jobOpen(o *output, paths statedir.Paths, message, repository, reading, mand
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"job": resp.Job})
+	if o.structured() {
+		return o.printData(map[string]any{"job": resp.Job})
 	}
 	fmt.Fprintf(o.stdout, "Opened job %d for %s.\n", resp.Job.Number, resp.Job.Repository)
 	fmt.Fprintf(o.stdout, "Read its brief with `asmai brief %d`.\n", resp.Job.Number)
@@ -58,8 +58,8 @@ func jobs(o *output, paths statedir.Paths) int {
 	if list == nil {
 		list = []store.Job{}
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"jobs": list})
+	if o.structured() {
+		return o.printData(map[string]any{"jobs": list})
 	}
 	if len(list) == 0 {
 		fmt.Fprintln(o.stdout, "No jobs have been opened.")
@@ -82,8 +82,8 @@ func jobShow(o *output, paths statedir.Paths, number string) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"job": resp.Job})
+	if o.structured() {
+		return o.printData(map[string]any{"job": resp.Job})
 	}
 	jobRows(o, *resp.Job)
 	return 0
@@ -98,8 +98,8 @@ func jobBrief(o *output, paths statedir.Paths, number string) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"job": resp.Job, "brief": resp.Brief})
+	if o.structured() {
+		return o.printData(map[string]any{"job": resp.Job, "brief": resp.Brief})
 	}
 	fmt.Fprint(o.stdout, resp.Brief)
 	return 0

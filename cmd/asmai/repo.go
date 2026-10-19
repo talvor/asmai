@@ -44,10 +44,10 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 		return o.fail(fmt.Errorf("the daemon did not answer with the repository it registered"))
 	}
 	r := *resp.Repository
-	// With --json, stdout carries only the result, and Claude Code draws on
+	// With --json or --toon, stdout carries only the result, and Claude Code draws on
 	// stderr.
 	w := o.stdout
-	if o.json {
+	if o.structured() {
 		w = o.stderr
 	} else {
 		fmt.Fprintf(w, "Registered %s, and made AsmAI's clone of it from its origin.\n", r.Name)
@@ -114,14 +114,14 @@ func (s repoSettings) options() (config.RepositoryOptions, error) {
 	return o, nil
 }
 
-// repoAdded reports, with --json, that r is registered, and the folders its
+// repoAdded reports, with --json or --toon, that r is registered, and the folders its
 // workers may write.
 func repoAdded(o *output, r store.Repository, writable []config.Folder) int {
-	if o.json {
+	if o.structured() {
 		if writable == nil {
 			writable = []config.Folder{}
 		}
-		return o.printJSON(map[string]any{"registered": true, "repository": r, "writable": writable})
+		return o.printData(map[string]any{"registered": true, "repository": r, "writable": writable})
 	}
 	return 0
 }
@@ -149,8 +149,8 @@ func repoList(o *output, paths statedir.Paths) int {
 	if list == nil {
 		list = []store.Repository{}
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"repositories": list})
+	if o.structured() {
+		return o.printData(map[string]any{"repositories": list})
 	}
 	if len(list) == 0 {
 		fmt.Fprintln(o.stdout, "No repository is registered; register one with `asmai repo add <path-or-url>`.")
@@ -172,12 +172,12 @@ func repoShow(o *output, paths statedir.Paths, name string) int {
 	if resp.Repository == nil {
 		return o.fail(fmt.Errorf("the daemon did not answer with the repository"))
 	}
-	if o.json {
+	if o.structured() {
 		writable := resp.Writable
 		if writable == nil {
 			writable = []config.Folder{}
 		}
-		return o.printJSON(map[string]any{"repository": resp.Repository, "writable": writable})
+		return o.printData(map[string]any{"repository": resp.Repository, "writable": writable})
 	}
 	rows := append(repositoryRows(*resp.Repository), writableRows(resp.Writable)...)
 	o.table(append(rows, []string{"registered", resp.Repository.AddedAt.Local().Format(time.RFC3339)}))
@@ -192,8 +192,8 @@ func repoRemove(o *output, paths statedir.Paths, name string) int {
 	if resp.Repository == nil {
 		return o.fail(fmt.Errorf("the daemon did not answer with the repository it removed"))
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"removed": true, "repository": resp.Repository})
+	if o.structured() {
+		return o.printData(map[string]any{"removed": true, "repository": resp.Repository})
 	}
 	fmt.Fprintf(o.stdout, "Removed %s: its record, its entry in the configuration file and AsmAI's clone. Your own checkout was not touched.\n", resp.Repository.Name)
 	return 0

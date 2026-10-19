@@ -237,3 +237,7 @@ _Avoid_: Console, monitor
 **Waiting on you**:
 The things the factory cannot continue without the user: a native prompt waiting in a leader's session, an agent whose input the user still holds, a pending decision request, and a needs-you finding. An assignment needing reconciliation is the owning leader's to resolve and is not waiting on you.
 _Avoid_: Attention, notification
+
+**Output format**:
+How an `asmai` command prints its result: readable tables for the user by default, JSON with `--json` for scripts and tests, or TOON with `--toon`, a more compact encoding of the same data than JSON. Agents read the default tables. JSON and TOON hold the same data, and a command takes one of them at most.
+_Avoid_: Mode, view

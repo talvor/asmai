@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/lavish"
-	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/statedir"
 )
 
@@ -79,19 +77,4 @@ func sshDestination() string {
 		return user + "@" + host
 	}
 	return host
-}
-
-// installedLavishNotices returns the notices of the pinned Lavish build, if
-// it is installed as pinned: `asmai notices` prints them after AsmAI's own
-// (10 rule 4). It returns none when this asmai pins no Lavish build or it is
-// not installed.
-func installedLavishNotices(paths statedir.Paths) ([]byte, error) {
-	plan, _, err := pinnedLavishPlan(paths)
-	if err != nil || plan == nil {
-		return nil, err
-	}
-	if present, err := providers.Present(*plan); err != nil || !present {
-		return nil, err
-	}
-	return lavish.Notices(context.Background(), plan.Path)
 }

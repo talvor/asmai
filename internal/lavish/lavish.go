@@ -10,12 +10,10 @@
 package lavish
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -131,22 +129,4 @@ func Pages(stateDir string) ([]Page, error) {
 func ForwardCommand(destination string, port int) string {
 	p := strconv.Itoa(port)
 	return "ssh -N -L " + p + ":" + Host + ":" + p + " " + destination
-}
-
-// NoticesFlag is the argument that makes a Lavish build print its own
-// third-party notices, embedded in the executable, and exit (10 rule 4).
-const NoticesFlag = "--notices"
-
-// Notices returns the notices the Lavish build at exe carries, which are
-// those of lavish-axi, its npm dependencies, its fonts and the Deno runtime.
-func Notices(ctx context.Context, exe string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, NoticesFlag)
-	cmd.Env = Environment(os.Environ(), os.TempDir(), Port)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("running %s %s: %w", exe, NoticesFlag, err)
-	}
-	return out, nil
 }

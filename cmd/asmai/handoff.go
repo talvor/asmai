@@ -30,8 +30,8 @@ func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisi
 	if resp.Error != "" {
 		return o.fail(fmt.Errorf("%s", resp.Error))
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	fmt.Fprintf(o.stdout, "handoff %d sent to %s for job %d; dispatch %d\n", resp.Handoff.ID, resp.Handoff.Receiver, job, resp.Dispatch.ID)
 	if len(resp.Handoff.Records) > 0 {
@@ -52,8 +52,8 @@ func handoffAnswer(o *output, paths statedir.Paths, command string, id int64, an
 	if resp.Error != "" {
 		return o.fail(fmt.Errorf("%s", resp.Error))
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	fmt.Fprintf(o.stdout, "handoff %d %s; reply dispatch %d\n", id, resp.Handoff.State, resp.Dispatch.ID)
 	return 0
@@ -70,8 +70,8 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 	if resp.Error != "" {
 		return o.fail(fmt.Errorf("%s", resp.Error))
 	}
-	if o.json {
-		return o.printJSON(resp.Messages)
+	if o.structured() {
+		return o.printData(resp.Messages)
 	}
 	for _, m := range resp.Messages {
 		fmt.Fprintf(o.stdout, "message %d | dispatch %d | job %d | %s from %s\n", m.ID, m.Dispatch, m.Job, m.Kind, m.Sender)

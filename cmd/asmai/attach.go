@@ -38,11 +38,11 @@ const frameInterval = 16 * time.Millisecond
 
 // attach shows the agent's terminal on this one, drawing it from the
 // daemon's emulation of it with a status line under it, and observes: no key
-// typed here reaches the agent. Ctrl-] detaches. With --json it prints the
-// agent's screen as it is now instead.
+// typed here reaches the agent. Ctrl-] detaches. With --json or --toon it
+// prints the agent's screen as it is now instead.
 func attach(o *output, paths statedir.Paths, agent string, stdin io.Reader) int {
-	if o.json {
-		return screenJSON(o, paths, agent)
+	if o.structured() {
+		return screenData(o, paths, agent)
 	}
 	in, inOK := stdin.(*os.File)
 	out, outOK := o.stdout.(*os.File)
@@ -51,7 +51,7 @@ func attach(o *output, paths statedir.Paths, agent string, stdin io.Reader) int 
 		if _, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAttach, Agent: agent, Snapshot: true}); err != nil {
 			return o.fail(err)
 		}
-		return o.fail(errors.New("asmai attach draws the agent's screen on a terminal: run it in one, or with --json for the screen as text"))
+		return o.fail(errors.New("asmai attach draws the agent's screen on a terminal: run it in one, or with --json or --toon for the screen as text"))
 	}
 	return show(o, paths, daemon.Request{Command: daemon.CommandAttach, Agent: agent}, in, out, "")
 }
@@ -341,16 +341,16 @@ func printable(r rune) rune {
 	return r
 }
 
-// screenJSON prints the agent's screen as it is now.
-func screenJSON(o *output, paths statedir.Paths, agent string) int {
+// screenData prints the agent's screen as it is now.
+func screenData(o *output, paths statedir.Paths, agent string) int {
 	screen, err := snapshot(paths, agent)
 	if err != nil {
 		return o.fail(err)
 	}
-	return o.printJSON(screen)
+	return o.printData(screen)
 }
 
-// snapshot returns the agent and its screen as it is now, as --json prints
+// snapshot returns the agent and its screen as it is now, as --json and --toon print
 // them.
 func snapshot(paths statedir.Paths, agent string) (map[string]any, error) {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAttach, Agent: agent, Snapshot: true})

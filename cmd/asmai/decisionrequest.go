@@ -82,8 +82,8 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	r := resp.DecisionRequest
 	fmt.Fprintf(o.stdout, "decision request %d, version %d, recorded for job %d; it goes to %s and is answered in %s\n", r.Request, r.Version, r.Job, r.Recipient, r.Surface)
@@ -103,8 +103,8 @@ func decisionAnswer(o *output, paths statedir.Paths, f requestFlags) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	r := resp.DecisionRequest
 	fmt.Fprintf(o.stdout, "version %d of decision request %d answered; the answer goes to %s, dispatch %d\n", r.Version, r.Request, r.Requester, resp.Dispatch.ID)
@@ -122,8 +122,8 @@ func listDecisions(o *output, paths statedir.Paths) int {
 	if list == nil {
 		list = []store.DecisionRequest{}
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"decisions": list})
+	if o.structured() {
+		return o.printData(map[string]any{"decisions": list})
 	}
 	if len(list) == 0 {
 		fmt.Fprintln(o.stdout, "No decisions are pending.")

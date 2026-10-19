@@ -51,8 +51,8 @@ func roleList(o *output) int {
 			LeaderAdded: nonNil(skills.LeaderAdded), WorkerAdded: nonNil(skills.WorkerAdded),
 		})
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"file": path, "roles": list})
+	if o.structured() {
+		return o.printData(map[string]any{"file": path, "roles": list})
 	}
 	rows := [][]string{{"ROLE", "LEADER", "WORKERS", "LEADER SKILLS", "WORKER SKILLS"}}
 	for _, r := range list {
@@ -150,8 +150,8 @@ func roleSet(o *output, role string, c roleChoices) int {
 		return o.fail(err)
 	}
 	s := cfg.Roles[role]
-	if o.json {
-		return o.printJSON(map[string]any{"role": role, "file": path, "set": fields,
+	if o.structured() {
+		return o.printData(map[string]any{"role": role, "file": path, "set": fields,
 			"leader_provider": s.LeaderProvider, "leader_model": s.LeaderModel, "worker_provider": s.WorkerProvider, "worker_model": s.WorkerModel})
 	}
 	fmt.Fprintf(o.stdout, "Set %s in %s: leader %s, workers %s.\n", role, path, pair(s.LeaderProvider, s.LeaderModel), pair(s.WorkerProvider, s.WorkerModel))

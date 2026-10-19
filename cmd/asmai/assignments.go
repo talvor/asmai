@@ -80,8 +80,8 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	a := resp.Assignment
 	fmt.Fprintf(o.stdout, "assignment %d of job %d given to %s; dispatch %d\n", a.ID, a.Job, a.Worker, resp.Dispatch.ID)
@@ -109,8 +109,8 @@ func effect(o *output, paths statedir.Paths, kind, ref string) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	e := resp.Effect
 	fmt.Fprintf(o.stdout, "effect %d recorded: %s %s (job %d, dispatch %d)\n", e.ID, e.Kind, e.Ref, e.Job, e.Dispatch)
@@ -251,8 +251,8 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	r := resp.Report
 	if r.Validation != nil {
@@ -287,8 +287,8 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	a, d := resp.Assignment, resp.Decision
 	switch command {
@@ -436,8 +436,8 @@ func push(o *output, paths statedir.Paths, number string) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	p := resp.Push
 	fmt.Fprintf(o.stdout, "job %d: the daemon pushed %s at %s to origin with a plain push; effect %d recorded in dispatch %d\n", p.Job, p.Branch, p.Commit, p.Effect, p.Dispatch)
@@ -519,8 +519,8 @@ func decisionRecord(o *output, paths statedir.Paths, f decisionFlags) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
-		return o.printJSON(resp)
+	if o.structured() {
+		return o.printData(resp)
 	}
 	d, r := resp.DecisionRecord, resp.Rerun
 	fmt.Fprintf(o.stdout, "job %d: decision %d recorded, %s by %s: %s\n", d.Job, d.ID, d.Source, d.Leader, d.Choice)

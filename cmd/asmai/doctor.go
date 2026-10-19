@@ -242,11 +242,11 @@ func doctor(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
+	if o.structured() {
 		if unqualified == nil {
 			unqualified = []unqualifiedSkill{}
 		}
-		code := o.printJSON(map[string]any{
+		code := o.printData(map[string]any{
 			"ok":                 failures == 0,
 			"platform":           runtime.GOOS + "/" + runtime.GOARCH,
 			"provider":           map[string]string{"name": providers.ClaudeCode, "pinned": p.ClaudeCode.Version},

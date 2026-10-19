@@ -46,7 +46,7 @@ func configCheck(o *output) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	if o.json {
+	if o.structured() {
 		list := make([]configProblem, 0, len(problems))
 		for _, p := range problems {
 			list = append(list, configProblem{Line: p.Line, Problem: p.Problem, Fix: p.Fix})
@@ -55,7 +55,7 @@ func configCheck(o *output) int {
 		if writable == nil {
 			writable = []config.RepositoryFolders{}
 		}
-		code := o.printJSON(map[string]any{"file": path, "valid": len(problems) == 0, "problems": list, "writable": writable})
+		code := o.printData(map[string]any{"file": path, "valid": len(problems) == 0, "problems": list, "writable": writable})
 		if code == 0 && len(problems) > 0 {
 			code = 1
 		}
@@ -160,8 +160,8 @@ func registeredRepositoryProblems(cfg config.Config) ([]config.Problem, error) {
 // configuration, with every default written out, which passes `asmai config
 // check`. It writes no file.
 func configExample(o *output) int {
-	if o.json {
-		return o.printJSON(map[string]string{"example": string(config.ExampleConfiguration())})
+	if o.structured() {
+		return o.printData(map[string]string{"example": string(config.ExampleConfiguration())})
 	}
 	fmt.Fprint(o.stdout, string(config.ExampleConfiguration()))
 	return 0

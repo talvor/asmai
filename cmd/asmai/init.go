@@ -65,10 +65,10 @@ type setupStep struct {
 // Claude Code records the trust itself; setup only reads its record, and
 // never writes ~/.claude.json or ~/.claude.
 func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes bool, requestedModel string) int {
-	// With --json, stdout carries only the result, and Claude Code draws on
+	// With --json or --toon, stdout carries only the result, and Claude Code draws on
 	// stderr.
 	w := o.stdout
-	if o.json {
+	if o.structured() {
 		w = o.stderr
 	}
 	styled := isTerminal(w)
@@ -93,8 +93,8 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 			steps = append(steps, setupStep{Step: current, State: stepFailed, Detail: err.Error()})
 			fmt.Fprintf(w, "%s: %s. The error below says why, and what to do next.\n", current, stepFailed)
 		}
-		if o.json {
-			o.printJSON(map[string]any{"error": err.Error(), "steps": steps})
+		if o.structured() {
+			o.printData(map[string]any{"error": err.Error(), "steps": steps})
 			return 1
 		}
 		return o.fail(err)
@@ -260,8 +260,8 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	if len(problems) > 0 {
 		return fail(fmt.Errorf("%s has %s; fix %s, then run `asmai start`", configFile, plural(len(problems), "a problem", "problems"), plural(len(problems), "it", "them")))
 	}
-	if o.json {
-		return o.printJSON(map[string]any{"steps": steps})
+	if o.structured() {
+		return o.printData(map[string]any{"steps": steps})
 	}
 	fmt.Fprintln(w, "Init is done: `asmai start` starts the factory, and `asmai repo add` registers a repository for it to work on.")
 	return 0

@@ -71,12 +71,12 @@ func configShow(o *output) int {
 		return 1
 	}
 	rendered := config.Render(cfg)
-	if o.json {
+	if o.structured() {
 		var settings map[string]any
 		if err := toml.Unmarshal(rendered, &settings); err != nil {
 			return o.fail(err)
 		}
-		return o.printJSON(map[string]any{"file": path, "configuration": settings})
+		return o.printData(map[string]any{"file": path, "configuration": settings})
 	}
 	fmt.Fprintf(o.stdout, "# The effective configuration of %s, with every default written out.\n", path)
 	o.stdout.Write(rendered)
@@ -130,7 +130,7 @@ func configEdit(o *output, stdin io.Reader) int {
 		return o.fail(err)
 	}
 	w := o.stdout
-	if o.json {
+	if o.structured() {
 		w = o.stderr
 	}
 	failEdit := func(err error) int {
@@ -203,8 +203,8 @@ func configEdit(o *output, stdin io.Reader) int {
 }
 
 func (o *output) editResult(path string, saved bool) int {
-	if o.json {
-		return o.printJSON(map[string]any{"file": path, "saved": saved})
+	if o.structured() {
+		return o.printData(map[string]any{"file": path, "saved": saved})
 	}
 	return 0
 }
@@ -286,8 +286,8 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	}
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
 	if errors.Is(err, daemon.ErrNotRunning) {
-		if o.json {
-			return o.printJSON(map[string]any{"file": path, "applied": false, "running": false, "writable": openFolders(cfg, home)})
+		if o.structured() {
+			return o.printData(map[string]any{"file": path, "applied": false, "running": false, "writable": openFolders(cfg, home)})
 		}
 		fmt.Fprintf(o.stdout, "%s has no problems. The factory is not running, so no agent has anything to pick up: it reads the file when it starts, with `asmai start`.\n", path)
 		printOpenFolders(o.stdout, cfg.OpenFolders(home))
@@ -301,15 +301,15 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 		return o.fail(errors.New("the daemon did not answer with the change"))
 	}
 	if len(preview.Changes) == 0 {
-		if o.json {
-			return o.printJSON(preview)
+		if o.structured() {
+			return o.printData(preview)
 		}
 		fmt.Fprintf(o.stdout, "%s is as applied; there is no change.\n", path)
 		printOpenFolders(o.stdout, preview.Writable)
 		return 0
 	}
 	w := o.stdout
-	if o.json {
+	if o.structured() {
 		w = o.stderr
 	}
 	showChanges(w, path, preview.Changes)
@@ -330,8 +330,8 @@ func configApply(o *output, paths statedir.Paths, stdin io.Reader) int {
 	if applied == nil || !applied.Applied {
 		return o.fail(errors.New("the daemon did not apply the configuration"))
 	}
-	if o.json {
-		return o.printJSON(applied)
+	if o.structured() {
+		return o.printData(applied)
 	}
 	fmt.Fprintf(o.stdout, "Applied, and journaled as configuration.applied (SHA-256 %s).\n", applied.SHA256)
 	return 0

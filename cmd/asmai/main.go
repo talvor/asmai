@@ -120,7 +120,7 @@ commands you type:
   asmai config example        print an example configuration file, with every default written out,
                               which passes asmai config check
   asmai version               print the version of this executable
-  asmai notices               print AsmAI's license and the third-party notices
+  asmai notices               print AsmAI's license and the third-party notices of what is compiled into it
 
 commands agents run:
   asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr --criterion <text>
@@ -450,29 +450,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "asmai %s\n", version)
 		return 0
 	case "notices":
-		// The installed Lavish build carries notices of its own, which are
-		// printed after AsmAI's when it is installed.
-		var lavishNotices []byte
-		if paths, err := statedir.Default(); err == nil {
-			var err error
-			if lavishNotices, err = installedLavishNotices(paths); err != nil {
-				return o.fail(fmt.Errorf("reading the installed Lavish build's notices: %w", err))
-			}
-		}
 		if o.structured() {
-			notices := map[string]string{"license": string(asmai.License), "third_party_notices": string(asmai.ThirdPartyNotices)}
-			if lavishNotices != nil {
-				notices["lavish_notices"] = string(lavishNotices)
-			}
-			return o.printData(notices)
+			return o.printData(map[string]string{"license": string(asmai.License), "third_party_notices": string(asmai.ThirdPartyNotices)})
 		}
 		stdout.Write(asmai.License)
 		fmt.Fprintln(stdout)
 		stdout.Write(asmai.ThirdPartyNotices)
-		if lavishNotices != nil {
-			fmt.Fprintln(stdout)
-			stdout.Write(lavishNotices)
-		}
 		return 0
 	case "config check":
 		return configCheck(o)

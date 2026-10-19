@@ -23,7 +23,7 @@ import (
 )
 
 // standInLavish is what the stand-in release serves as the Lavish build: a
-// script that prints notices of its own.
+// script that prints notices of its own, which asmai notices must not show.
 var standInLavish = []byte("#!/bin/sh\n[ \"$1\" = --notices ] && echo 'Lavish build notices: lavish-axi, npm packages, fonts and Deno'\nexit 0\n")
 
 // standInReleases serves lavish as the pinned Lavish build, and Claude Code
@@ -246,29 +246,24 @@ func TestProvidersInstallSaysALavishBuildNotYetPublishedForThePlatformIsNotInsta
 	}
 }
 
-func TestNoticesPrintTheInstalledLavishBuildsNoticesToo(t *testing.T) {
+func TestAnInstalledLavishBuildDoesNotChangeWhatNoticesPrints(t *testing.T) {
 	factoryHome(t)
 	standInReleases(t, standInLavish, standInLavish)
 	startUnready(t)
-	if out, _, _ := inProcess(t, "notices"); strings.Contains(out, "Lavish build notices") {
-		t.Fatal("asmai notices prints a Lavish build's notices before one is installed")
-	}
+	before, _, _ := inProcess(t, "notices")
 	if _, stderr, code := install(t, "y\n"); code != 0 {
 		t.Fatalf("the install exited %d: %s", code, stderr)
 	}
 
-	out, stderr, code := inProcess(t, "notices")
+	after, stderr, code := inProcess(t, "notices")
 
-	license, _ := os.ReadFile("../../LICENSE")
-	if code != 0 || !strings.HasPrefix(out, string(license)) || !strings.Contains(out, "Lavish build notices: lavish-axi, npm packages, fonts and Deno") {
-		t.Errorf("asmai notices exited %d printing\n%s%s\nwant AsmAI's notices then the installed Lavish build's", code, out, stderr)
+	if code != 0 || after != before || strings.Contains(after, "Lavish build notices") {
+		t.Errorf("asmai notices exited %d printing\n%s%s\nwant what it printed before the Lavish build was installed", code, after, stderr)
 	}
-	var j struct {
-		Lavish string `json:"lavish_notices"`
-	}
+	var j map[string]string
 	inProcessJSON(t, &j, "notices")
-	if !strings.Contains(j.Lavish, "Lavish build notices") {
-		t.Errorf("asmai notices --json has lavish_notices %q", j.Lavish)
+	if _, ok := j["lavish_notices"]; ok || len(j) != 2 {
+		t.Errorf("asmai notices --json has keys %v, want only license and third_party_notices", j)
 	}
 }
 

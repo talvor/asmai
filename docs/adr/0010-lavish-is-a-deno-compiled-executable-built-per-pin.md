@@ -13,7 +13,7 @@ Node was a host prerequisite only because Lavish, the npm package lavish-axi, ne
 
 ## Consequences
 
-- AsmAI redistributes Lavish. Each Lavish build carries its own notices file for lavish-axi, its npm dependencies, its fonts and the Deno runtime. SIL OFL 1.1 is accepted for Lavish's vendored fonts, and the Deno runtime's licenses are audited before the first Lavish build.
+- AsmAI redistributes Lavish. Each Lavish build carries its own notices file for lavish-axi, its npm dependencies, its fonts and the Deno runtime; those notices travel with the Lavish release, and `asmai notices` does not print them. SIL OFL 1.1 is accepted for Lavish's vendored fonts, and the Deno runtime's licenses are audited before the first Lavish build.
 - Lavish builds are releases in talvor/asmai with their own tags, never marked latest, so the install script and `asmai doctor` keep finding AsmAI releases.
 - A Deno security fix moves the Deno pin, which makes a new Lavish build and an AsmAI patch release.
 - Lavish starts its own background server by re-running `process.execPath` with a script path, which a compiled executable cannot do. The daemon therefore runs Lavish's server itself, in the foreground, and the Lavish build's entry point restores self-start.

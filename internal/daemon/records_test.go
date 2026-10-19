@@ -48,7 +48,11 @@ func TestALeaderRecordsADecisionAndRoutineWorkNeedsNone(t *testing.T) {
 		{"no evidence", func() Request { r := record(); r.Evidence = ""; return r }(), "evidence"},
 		{"a job that does not exist", func() Request { r := record(); r.Job = 99; return r }(), "does not exist"},
 		{"a human decision citing nothing", func() Request { r := record(); r.DecisionSource = store.SourceHuman; return r }(), "cites the witnessed message"},
-		{"a human judged re-run", func() Request { r := record(); r.Choice, r.DecisionSource, r.Cites = store.ChoiceRerunFailed, store.SourceHuman, 1; return r }(), "delegated decision"},
+		{"a human judged re-run", func() Request {
+			r := record()
+			r.Choice, r.DecisionSource, r.Cites = store.ChoiceRerunFailed, store.SourceHuman, 1
+			return r
+		}(), "delegated decision"},
 	} {
 		_, _, err := f.d.recordDecision(tt.req)
 		var refusal *userError

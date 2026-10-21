@@ -96,16 +96,16 @@ func TestACarryingRequestIsRefusedForARequestTheLeaderDoesNotOwn(t *testing.T) {
 func TestTheUsersOwnAnswerToTheCarryingRequestIsWhatAnswersTheWorkersGrillingRequest(t *testing.T) {
 	c := newCarried(t)
 	// Nothing answers it while the user has not.
-	if _, err := c.s.CarriedAnswer(c.worker, c.carrying.Request, owner); err == nil || !strings.Contains(err.Error(), "pending") {
+	if _, err := carriedAnswer(c.s.db, c.worker, c.carrying.Request, owner); err == nil || !strings.Contains(err.Error(), "pending") {
 		t.Fatalf("the answer before the user's = %v, want it refused as pending", err)
 	}
 	page := c.carrying
 	c.collect(page, answerPrompt(page, "q1", "admins", ""))
-	if _, err := c.s.CarriedAnswer(c.worker, c.carrying.Request, owner); err == nil || !strings.Contains(err.Error(), "pending") {
+	if _, err := carriedAnswer(c.s.db, c.worker, c.carrying.Request, owner); err == nil || !strings.Contains(err.Error(), "pending") {
 		t.Fatalf("the answer when the user answered one question of two = %v, want it refused as pending", err)
 	}
 	c.collect(page, answerPrompt(page, "q2", "", "billing"))
-	answered, err := c.s.CarriedAnswer(c.worker, c.carrying.Request, owner)
+	answered, err := carriedAnswer(c.s.db, c.worker, c.carrying.Request, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,8 +126,29 @@ func TestTheUsersOwnAnswerToTheCarryingRequestIsWhatAnswersTheWorkersGrillingReq
 		"another worker's request":    {DecisionRequest{Request: c.worker.Request + 50, Version: 1, Job: c.job}, c.carrying.Request, owner, "carries decision request"},
 		"another version":             {DecisionRequest{Request: c.worker.Request, Version: 2, Job: c.job}, c.carrying.Request, owner, "carries version 1"},
 	} {
-		if _, err := c.s.CarriedAnswer(tt.worker, tt.request, tt.leader); err == nil || !strings.Contains(err.Error(), tt.want) {
+		if _, err := carriedAnswer(c.s.db, tt.worker, tt.request, tt.leader); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("returning %s's answer = %v, want it refused: %q", name, err, tt.want)
+		}
+	}
+}
+
+func TestAGrillingRequestKeepsItsKindThroughItsVersionsAndItsCarryingRequestKeepsItsQuestions(t *testing.T) {
+	c := newCarried(t)
+	// A new version cannot change a grilling question into another kind of
+	// request, which a leader could answer from the records.
+	in := workerRequest(c.assignment)
+	in.Request, in.Kind, in.Questions = c.worker.Request, RequestQuestions, grillingQuestions
+	if _, _, err := c.s.DecisionRequested(in, c.tick()); err == nil || !strings.Contains(err.Error(), "stays a grilling request") {
+		t.Errorf("a new version of another kind returned %v, want it refused", err)
+	}
+	// What the leader carries to the user is what the worker asked.
+	for name, questions := range map[string][]Question{
+		"a reworded question": {{ID: "q1", Title: "Anything?", Options: []string{"admins", "everyone"}}, grillingQuestions[1]},
+		"a dropped question":  grillingQuestions[:1],
+	} {
+		_, _, err := c.s.DecisionRequested(DecisionRequestInput{Job: c.job, Requester: owner, Recipient: ToUser, Notify: CoordinationLeader, Carries: c.worker.Request, Kind: RequestGrilling, Questions: questions}, c.tick())
+		if err == nil || !strings.Contains(err.Error(), "unchanged") {
+			t.Errorf("carrying %s returned %v, want it refused: the worker's questions are carried unchanged", name, err)
 		}
 	}
 }

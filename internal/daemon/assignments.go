@@ -166,8 +166,15 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
 	records := slices.Clone(req.Records)
-	if approval != nil && !slices.Contains(records, approval.ID) {
-		records = append(records, approval.ID)
+	started := ""
+	if approval != nil {
+		started = req.Skill
+		if !slices.Contains(records, approval.ID) {
+			records = append(records, approval.ID)
+		}
+	}
+	if err := checkNarrowing(j, roleList, req.Skills, started); err != nil {
+		return store.Assignment{}, store.Dispatch{}, err
 	}
 	if err := d.store.CheckRecords(j.Number, records); err != nil {
 		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
@@ -459,6 +466,9 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	}
 	if a.Worker != ref.address.String() {
 		return store.Report{}, store.Dispatch{}, refuse("assignment %d belongs to %s, not %s", a.ID, a.Worker, ref.address)
+	}
+	if err := checkRan(req.Report.SkillsRun, a); err != nil {
+		return store.Report{}, store.Dispatch{}, err
 	}
 	branch, err := d.store.JobBranch(a.Job)
 	if err != nil {

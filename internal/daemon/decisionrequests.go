@@ -163,7 +163,7 @@ func (d *daemon) decisionAnswer(req Request) (store.DecisionRequest, store.Dispa
 		return store.DecisionRequest{}, store.Dispatch{}, err
 	}
 	if req.Request <= 0 || req.Version <= 0 {
-		return store.DecisionRequest{}, store.Dispatch{}, refuse("asmai decision answer needs the request, the version it answers and the answer")
+		return store.DecisionRequest{}, store.Dispatch{}, refuse("asmai decision answer needs the request and the version it answers")
 	}
 	latest, err := d.store.DecisionRequest(req.Request)
 	if err != nil {

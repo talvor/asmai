@@ -695,3 +695,38 @@ func TestWhatTheInstructionsSayEachMandateCoversIsWhatTheDaemonEnforces(t *testi
 		t.Errorf("Planning's instructions lack %q", want)
 	}
 }
+
+func TestNarrowingToASkillThatStartsOnlyOnRequestIsRefusedAsNamingItIsAndAResultNamesOnlyTheSkillItRan(t *testing.T) {
+	p := newPlanningJob(t, store.MandatePlanningOnly)
+	// Narrowing to a skill that is not called for is refused, as naming it is.
+	if _, _, err := p.d.assign(Request{Session: "planning", Command: CommandAssign, Job: p.job.Number, Outcome: "Grill the plan", Criteria: []string{"questioned"}, Skill: "grilling", Skills: []string{"grilling", "triage"}}); err == nil || !strings.Contains(err.Error(), "triage starts only on request") {
+		t.Errorf("narrowing to triage returned %v, want it refused", err)
+	}
+	// The user's own decision that names it allows it on the list.
+	approval := p.userRecord(t, "start triage")
+	a, _, err := p.d.assign(Request{Session: "planning", Command: CommandAssign, Job: p.job.Number, Outcome: "Triage", Criteria: []string{"done"}, Skill: "triage", Skills: []string{"triage", "grilling"}, Approved: approval.ID})
+	if err != nil {
+		t.Fatalf("assigning triage with the user's decision returned %v", err)
+	}
+	// A worker's result names a skill that starts only on request only when
+	// its assignment named it.
+	if err := checkRan([]string{"grilling", "triage"}, a); err != nil {
+		t.Errorf("a result naming the skill its assignment named returned %v", err)
+	}
+	other := a
+	other.Skill = "grilling"
+	if err := checkRan([]string{"grilling", "triage"}, other); err == nil || !strings.Contains(err.Error(), "triage starts only on request") {
+		t.Errorf("a result naming triage, which its assignment did not, returned %v, want it refused", err)
+	}
+	if err := checkRan([]string{"grilling", "tdd"}, other); err != nil {
+		t.Errorf("a result naming model-invoked skills returned %v", err)
+	}
+}
+
+func TestADecisionOfTheUsersThatDoesNotNameTheSkillDoesNotStartIt(t *testing.T) {
+	p := newPlanningJob(t, store.MandatePlanningOnly)
+	unrelated := p.userRecord(t, "use the in-memory cache")
+	if _, _, err := p.d.assign(Request{Session: "planning", Command: CommandAssign, Job: p.job.Number, Outcome: "Triage", Criteria: []string{"done"}, Skill: "triage", Approved: unrelated.ID}); err == nil || !strings.Contains(err.Error(), "does not name triage") {
+		t.Errorf("starting triage with a decision about a cache returned %v, want it refused", err)
+	}
+}

@@ -25,10 +25,13 @@ var handoffTo = map[string][]string{
 	roles.Engineering:  {roles.Quality},
 }
 
+// errNotALeader is the refusal of a handoff to anything but the leader of a
+// role its sender may hand work to.
 var errNotALeader = errors.New("send a handoff to another role's leader: Coordination hands a job to Planning or Engineering, and Engineering hands validation to Quality")
 
-// jobOrZero returns job number, or the zero job when there is none: the
-// handoff that names it is refused for that when it is recorded.
+// jobOrZero returns job number, or the zero job when it cannot be read: the
+// handoff that names it is refused when it is recorded, so a job that does
+// not exist never reaches checkHandoff's mandate check.
 func (d *daemon) jobOrZero(number int64) store.Job {
 	j, _ := d.store.Job(number)
 	return j

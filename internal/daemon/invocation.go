@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/talvor/asmai/internal/skills"
 	"github.com/talvor/asmai/internal/store"
@@ -51,6 +52,33 @@ func (d *daemon) checkInvocation(j store.Job, list []skills.Given, skill string,
 		return nil, refuse("decision record %d is of job %d, not job %d: a decision of the user's starts a skill only in the job it was made in", approved, r.Job, j.Number)
 	case r.Source != store.SourceHuman:
 		return nil, refuse("decision record %d is a delegated decision, not the user's own decision: no agent starts %s for the user", approved, skill)
+	case !strings.Contains(strings.ToLower(r.Choice), skill):
+		return nil, refuse("decision record %d does not name %s: it is the user's decision about something else (%q), so propose %s to the user and record their answer, naming it in the choice", approved, skill, r.Choice, skill)
 	}
 	return &r, nil
+}
+
+// checkNarrowing refuses an assignment in job j that narrows its worker's
+// list to a skill that starts only on request which the mandate does not call
+// for, other than approved, the one the user's own decision starts: naming it
+// is refused, and so is keeping it on a narrowed list.
+func checkNarrowing(j store.Job, list []skills.Given, narrowed []string, approved string) error {
+	for _, g := range list {
+		if g.UserInvoked() && g.Name != approved && !slices.Contains(calledFor[j.Mandate], g.Name) && slices.Contains(narrowed, g.Name) {
+			return refuse("%s starts only on request, and job %d's %s mandate does not call for it: propose it to the user as a decision, and name it with --approved <the ID of the decision record of the user's own answer>", g.Name, j.Number, j.Mandate)
+		}
+	}
+	return nil
+}
+
+// checkRan refuses a result that says it ran a skill that starts only on
+// request which its assignment did not name: a worker runs such a skill only
+// when its assignment names it.
+func checkRan(ran []string, a store.Assignment) error {
+	for _, name := range ran {
+		if s, ok := skills.Get(name); ok && s.UserInvoked && name != a.Skill {
+			return refuse("%s starts only on request, and assignment %d does not name it: run only the skill your assignment names (%q), or report it with `asmai blocked`", name, a.ID, a.Skill)
+		}
+	}
+	return nil
 }

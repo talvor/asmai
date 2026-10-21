@@ -30,7 +30,8 @@ type requestFlags struct {
 	options, questions     listFlags
 	blocks                 listFlags
 	answer, reliedOn       string
-	// carries is the worker's request a leader's carries to the user, and
+	// carries is the worker's request that a leader's request carries to the
+	// user, and
 	// userAnswer the leader's request whose answer by the user returns to
 	// the worker.
 	carries, userAnswer int64
@@ -103,7 +104,7 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 }
 
 func decisionAnswer(o *output, paths statedir.Paths, f requestFlags) int {
-	if f.request <= 0 || f.version <= 0 || strings.TrimSpace(f.answer) == "" && f.userAnswer <= 0 {
+	if f.request <= 0 || f.version <= 0 || (strings.TrimSpace(f.answer) == "" && f.userAnswer <= 0) {
 		return o.fail(errors.New("decision answer needs --request, --version (the version it answers) and --answer, or --user-answer: the request of yours that carried the question to the user"))
 	}
 	if strings.TrimSpace(f.answer) != "" && f.userAnswer > 0 {

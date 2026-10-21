@@ -441,7 +441,7 @@ func TestC53ShowsTheStatusesAndTheWaitingOnYouSetOfARealFactory(t *testing.T) {
 		t.Fatalf("C53 %s: %s", r.Outcome, r.Failure)
 	}
 	requireEvidence(t, r,
-		"at rest the dashboard showed leader@coordination Idle, and leader@engineering and leader@quality, which have not run, Stopped",
+		"at rest the dashboard showed leader@coordination Idle, and leader@planning, leader@engineering and leader@quality, which have not run, Stopped",
 		"while the user held leader@coordination's input in the conversation, the dashboard showed it Waiting on you",
 		"raised a native permission prompt, which its PermissionRequest hook reported",
 		"once the user answered the prompt and the leader's turn finished, the dashboard showed leader@coordination Idle and the banner empty",

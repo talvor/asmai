@@ -329,6 +329,12 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		if in.Carries == 0 {
 			in.Carries = replaced.Carries
 		}
+		// A grilling or Wayfinder question stays one: a new version cannot
+		// turn it into a kind of request that its leader answers from the
+		// records.
+		if needsTheUser(replaced) && in.Kind != replaced.Kind {
+			return DecisionRequest{}, nil, fmt.Errorf("decision request %d stays a %s request in every version: a new version of it is not a %s request", replaced.Request, replaced.Kind, in.Kind)
+		}
 	}
 	carriesVersion, err := carriedVersion(tx, in)
 	if err != nil {
@@ -397,6 +403,11 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 	return r, dispatch, tx.Commit()
 }
 
+// sameQuestion says whether a and b are the same question.
+func sameQuestion(a, b Question) bool {
+	return a.ID == b.ID && a.Title == b.Title && a.Body == b.Body && a.Recommendation == b.Recommendation && slices.Equal(a.Options, b.Options)
+}
+
 // carriedVersion checks the worker's request that in carries, and returns the
 // version of it that is carried, its latest, or zero when in carries none. A
 // leader carries a pending request of a worker it owns, in the same job, to
@@ -419,19 +430,17 @@ func carriedVersion(tx *sql.Tx, in DecisionRequestInput) (int, error) {
 		return 0, fmt.Errorf("decision request %d is about job %d, not job %d", w.Request, w.Job, in.Job)
 	case w.State != RequestPending:
 		return 0, fmt.Errorf("version %d of decision request %d is %s, so there is nothing of it to carry to the user", w.Version, w.Request, w.State)
+	case needsTheUser(w) && (in.Kind != w.Kind || !slices.EqualFunc(in.Questions, w.Questions, sameQuestion)):
+		return 0, fmt.Errorf("decision request %d is a %s request, whose questions are carried to the user unchanged, as the worker asked them, of the same kind: put your own words in the content above them", w.Request, w.Kind)
 	}
 	return w.Version, nil
 }
 
-// CarriedAnswer returns the user's own answer to the request of leader that
+// carriedAnswer returns the user's own answer to the request of leader that
 // carries the version of the worker's request that worker is, which is what
 // answers the worker's grilling or Wayfinder question: it is refused unless
 // the user answered every question of that version in Lavish. No agent
 // supplies it.
-func (s *Store) CarriedAnswer(worker DecisionRequest, request int64, leader string) (DecisionRequest, error) {
-	return carriedAnswer(s.db, worker, request, leader)
-}
-
 func carriedAnswer(q queryer, worker DecisionRequest, request int64, leader string) (DecisionRequest, error) {
 	e, err := latestRequestVersion(q, request)
 	switch {

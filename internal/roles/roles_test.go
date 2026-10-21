@@ -604,6 +604,8 @@ func TestPlanningsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"Answer a worker's other requests from the records, or escalate them",
 		"a message of kind `reconciliation`",
 		"nothing is retried",
+		"side-effect-free",
+		"escalate it through Coordination with what was tried",
 	} {
 		if !strings.Contains(leader, want) {
 			t.Errorf("Planning's leader's instructions lack %q", want)

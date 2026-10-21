@@ -210,7 +210,7 @@ _Avoid_: Digest, recap, summary
 The role responsible for the user's conversation with the factory and overall delivery progress.
 
 **Planning**:
-The role responsible for requirements, decision maps, and specifications. It prepares and interprets planning questions; Coordination carries the exchange with the user, and a grilling or Wayfinder question is resolved only by the user's own answer.
+The role responsible for requirements, decision maps, and specifications. It prepares and interprets planning questions, and its leader carries each question its workers ask to the user as a decision request; Coordination presents the exchange to the user, and a grilling or Wayfinder question is resolved only by the user's own answer.
 
 **Research**:
 The role responsible for gathering evidence that informs the factory's work.

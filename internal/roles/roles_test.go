@@ -516,3 +516,53 @@ func TestCoordinationPresentsAChoiceOnceAndRecordsTheUsersOwnMessageWithItsReadi
 		}
 	}
 }
+
+func TestEveryLeaderCarriesGrantsChecksActionsAndSaysWhatEndedOnesNeed(t *testing.T) {
+	for _, role := range []string{Coordination, Engineering, Quality} {
+		text, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"**Grants.**",
+			"no grant can authorize a merge",
+			"spending is zero unless a grant names the amount and the scope",
+			"a job's own approval stays with that job unless the user granted it at a wider scope",
+			"`asmai authorize --job <number> --action spend|deploy|destructive",
+			"a handoff or a restart alone does not",
+			"`asmai grant invalidate <id> --because",
+			"kind `grant.ended`",
+			"never claiming to undo it",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+	}
+	coordination, _ := LeaderInstructions(Coordination)
+	for _, want := range []string{"`asmai decision record --grant --scope <job|repository|factory>", "--cites latest", "Never supply a grant yourself", "never cite a nudge or an earlier message", "`asmai grants`", "`asmai grant revoke <id>`"} {
+		if !strings.Contains(coordination, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+	for _, role := range []string{Engineering, Quality} {
+		text, _ := LeaderInstructions(role)
+		if !strings.Contains(text, "--answer <the decision record's ID>") || !strings.Contains(text, "Coordination records only the grants the user gives in the conversation") {
+			t.Errorf("%s's leader's instructions do not say how to record a grant given in an answer", role)
+		}
+	}
+}
+
+func TestWorkersCheckConsequentialActionsAgainstGrantsAndNeverMerge(t *testing.T) {
+	for _, role := range []string{Engineering, Quality} {
+		text, err := WorkerInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"`asmai authorize --action <spend|deploy|destructive>", "Spending is zero unless a grant names the amount and the scope", "never merge: no grant can authorize a merge"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s's worker instructions lack %q", role, want)
+			}
+		}
+	}
+}

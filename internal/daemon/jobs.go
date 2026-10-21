@@ -110,8 +110,12 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					if err == nil {
 						requests, err = d.store.JobDecisionRequests(j.Number)
 					}
+					var grants []store.Grant
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests)
+						grants, err = d.store.GrantsOf(j.Number)
+					}
+					if err == nil {
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, grants)
 					}
 				}
 			}
@@ -142,7 +146,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, grants []store.Grant) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
@@ -265,7 +269,14 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	if pending == 0 {
 		fmt.Fprintln(&b, "- none")
 	}
-	fmt.Fprintln(&b, "Grants: none\nRecent journal:")
+	fmt.Fprintln(&b, "Grants (the user's authority; reuse a grant while its scope and conditions hold, and check `asmai authorize` before each consequential action it covers):")
+	for _, g := range grants {
+		b.WriteString(g.Text("- ", "  "))
+	}
+	if len(grants) == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	fmt.Fprintln(&b, "Recent journal:")
 	for _, entry := range entries {
 		fmt.Fprintf(&b, "- %d %s\n", entry.ID, entry.Kind)
 	}

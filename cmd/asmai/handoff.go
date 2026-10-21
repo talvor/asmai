@@ -84,6 +84,7 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 				fmt.Fprintf(o.stdout, "Head to validate: %s\n", h.Head)
 			}
 			printRecords(o.stdout, "Decision records passed with the handoff", h.DecisionRecords)
+			printGrants(o.stdout, "Grants in force for this job, carried with the handoff; reuse one while its scope and conditions hold, and run `asmai authorize` before each consequential action it covers", h.Grants)
 		}
 		if m.HandoffData != nil && m.Kind != "handoff" {
 			fmt.Fprintf(o.stdout, "Answer: %s\n", m.Body)
@@ -97,7 +98,7 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if m.Kind == store.MessageResumption {
 			fmt.Fprintf(o.stdout, "Resumes dispatch %d, which stopped at a boundary before the factory stopped.\n%s\n", m.Resumes, m.Body)
 		}
-		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed {
+		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed || m.Kind == store.MessageGrantEnded {
 			fmt.Fprintf(o.stdout, "%s\n", m.Body)
 		}
 		if a := m.AssignmentData; a != nil {

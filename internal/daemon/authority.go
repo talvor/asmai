@@ -68,8 +68,13 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return fmt.Errorf("only a worker, or the delivery owner of a job, may run asmai effect")
-	case CommandDecisionRequest:
+	case CommandDecisionRequest, CommandAuthorize:
 		return nil
+	case CommandGrantInvalidate:
+		if ref.address.Name == roles.Leader {
+			return nil
+		}
+		return errors.New("only a role's leader may run asmai grant invalidate: a worker tells its owning leader that a condition no longer holds")
 	case CommandDecisionAnswer:
 		if ref.address.Name == roles.Leader {
 			return nil
@@ -100,7 +105,7 @@ func isAgentCommand(command string) bool {
 	case CommandJobOpen, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
 		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
-		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers:
+		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
 		return true
 	}
 	return false
@@ -126,8 +131,14 @@ func commandName(command string) string {
 		return "job <number>"
 	case CommandInbox:
 		return "inbox"
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandPush:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandPush, CommandAuthorize:
 		return command
+	case CommandGrants:
+		return "grants"
+	case CommandGrantRevoke:
+		return "grant revoke"
+	case CommandGrantInvalidate:
+		return "grant invalidate"
 	case CommandDecisionRecord:
 		return "decision record"
 	case CommandDecisionRequest:

@@ -70,6 +70,10 @@ commands you type:
   asmai jobs                  list numbered jobs
   asmai decisions             list the decisions waiting for you, each with its answer surface, the conversation
                               or Lavish. It only lists: it answers nothing
+  asmai grants                list the grants you gave, each with its scope, what it approves, what it has
+                              spent and whether it is active, revoked or invalidated. It only lists
+  asmai grant revoke <id>     revoke a grant: every later action it would cover is refused, and what it
+                              already authorized is reported as it stands, never undone
   asmai job <number>          show a job and its witnessed request
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
@@ -178,6 +182,21 @@ commands agents run:
                               typed against an older version, when the current version is presented again. It
                               stores your --reading of their words beside them, and the owning leader that asked
                               receives both; --relied-on, --rationale and --evidence default to the answer itself
+  asmai decision record --grant --scope job|repository|factory [--job <number>|--repository <name>] --action spend|deploy|destructive|decision --approved <text> --condition <text>|none [--amount <n> --currency <code>] (--cites <witnessed message>|--answer <decision record>)
+                              a leader records a grant the user gave in words, at its scope, citing them:
+                              Coordination's leader one given in the conversation, with --cites, and the
+                              leader that asked one given in an answer, with --answer, the record of that
+                              answer. A grant without a valid citation is refused; spending needs the amount
+                              and its currency, and no grant can approve a merge. It is carried through
+                              assignments, handoffs and restarts while its scope and conditions hold, and a
+                              job's own approval stays with that job unless it was granted at a wider scope
+  asmai authorize --action spend|deploy|destructive --what <text> [--job <number>] [--amount <n> --currency <code>]
+                              an agent asks before each consequential action whether a grant covers it, and
+                              takes the action only if it does. Spending is zero unless a grant names the
+                              amount and its scope; no grant covers a merge. A worker's job is its assignment's
+  asmai grant invalidate <id> --because <text>
+                              a leader reports that a condition of a grant no longer holds, so it needs a new
+                              decision of the user's
   asmai decision present --request <id> --version <n>
                               Coordination's leader records that it showed the user that version in the
                               conversation, once; the user's answer is the message they send after it
@@ -207,6 +226,7 @@ var groups = map[string][]string{
 	"repo":      {"add", "list", "show", "remove"},
 	"handoff":   {"send", "accept", "clarify", "decline"},
 	"decision":  {"record", "request", "answer", "present"},
+	"grant":     {"revoke", "invalidate"},
 	"config":    {"check", "show", "edit", "apply", "example"},
 	"role":      {"list", "set"},
 }
@@ -214,15 +234,17 @@ var groups = map[string][]string{
 // positional are the commands that take arguments, with what to say when
 // each is missing.
 var positional = map[string][]string{
-	"attach":      {"name the agent, such as leader@coordination or coordination"},
-	"repo add":    {"name a local checkout or a URL"},
-	"repo show":   {"name the repository, as `asmai repo list` shows it"},
-	"repo remove": {"name the repository, as `asmai repo list` shows it"},
-	"role set":    {"name the role, one of " + strings.Join(roles.All, ", ")},
-	"job show":    {"name the job number, as `asmai jobs` shows it"},
-	"brief":       {"name the job number, as `asmai jobs` shows it"},
-	"push":        {"name the job number, as `asmai jobs` shows it"},
-	"effect":      {"name the kind of effect, one word such as commit or push", "name what the effect is of, such as the commit or the branch pushed"},
+	"attach":           {"name the agent, such as leader@coordination or coordination"},
+	"repo add":         {"name a local checkout or a URL"},
+	"repo show":        {"name the repository, as `asmai repo list` shows it"},
+	"repo remove":      {"name the repository, as `asmai repo list` shows it"},
+	"role set":         {"name the role, one of " + strings.Join(roles.All, ", ")},
+	"job show":         {"name the job number, as `asmai jobs` shows it"},
+	"brief":            {"name the job number, as `asmai jobs` shows it"},
+	"push":             {"name the job number, as `asmai jobs` shows it"},
+	"grant revoke":     {"name the grant, as `asmai grants` lists them"},
+	"grant invalidate": {"name the grant, as `asmai grants` lists them"},
+	"effect":           {"name the kind of effect, one word such as commit or push", "name what the effect is of, such as the commit or the branch pushed"},
 }
 
 // logPoll is how often `asmai log --follow` looks for new lines.
@@ -298,6 +320,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var request requestFlags
 	var decision decisionFlags
 	var records listFlags
+	var authorizing authorizeFlags
+	var invalidation string
 	var resultArgs resultFlags
 	switch name {
 	case "init":
@@ -383,6 +407,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Int64Var(&decision.request, "request", 0, "the decision request the user's answer in the conversation is to; Coordination's leader only")
 		flags.IntVar(&decision.version, "version", 0, "with --request, the version the user's message answers")
 		flags.StringVar(&decision.reading, "reading", "", "with --request, your reading of the user's words, stored beside them")
+		flags.BoolVar(&decision.grant.grant, "grant", false, "record a grant the user gave in words, at its scope, instead of a decision")
+		flags.StringVar(&decision.grant.scope, "scope", "", "with --grant, the scope: job (with --job), repository (with --repository) or factory")
+		flags.StringVar(&decision.grant.repository, "repository", "", "with --grant --scope repository, the registered repository")
+		flags.StringVar(&decision.grant.action, "action", "", "with --grant, the action approved: spend, deploy, destructive or decision; no grant approves a merge")
+		flags.StringVar(&decision.grant.approved, "approved", "", "with --grant, the exact decision or action the user approved")
+		flags.StringVar(&decision.grant.amount, "amount", "", "with --grant --action spend, the most it lets be spent, such as 10 or 12.50")
+		flags.StringVar(&decision.grant.currency, "currency", "", "with --grant --action spend, its currency, such as USD")
+		flags.Var(&decision.grant.conditions, "condition", "with --grant, a condition the grant holds under, or none; may be repeated")
+		flags.Int64Var(&decision.grant.answer, "answer", 0, "with --grant, the decision record of the user's answer that held the grant, which the leader that asked cites instead of --cites")
 	case "decision request":
 		flags.Int64Var(&request.job, "job", 0, "job number; a leader's request names its job, and a worker's is about its assignment's")
 		flags.Int64Var(&request.request, "request", 0, "the request this is a new version of, which it replaces")
@@ -394,6 +427,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&request.recommend, "recommend", "", "the option you recommend for the one question")
 		flags.Var(&request.questions, "question", `a question as JSON, {"id": ..., "title": ..., "body": ..., "options": [...], "recommendation": ...}; may be repeated`)
 		flags.Var(&request.blocks, "blocks", "an assignment you own whose work waits for the answer; may be repeated")
+	case "authorize":
+		flags.Int64Var(&authorizing.job, "job", 0, "a leader's job; a worker's is its assignment's")
+		flags.StringVar(&authorizing.action, "action", "", "the consequential action: spend, deploy or destructive")
+		flags.StringVar(&authorizing.what, "what", "", "what the action is, such as the service bought or the environment deployed to")
+		flags.StringVar(&authorizing.amount, "amount", "", "with --action spend, the amount, such as 4 or 12.50")
+		flags.StringVar(&authorizing.currency, "currency", "", "with --action spend, its currency, such as USD")
+	case "grant invalidate":
+		flags.StringVar(&invalidation, "because", "", "the condition of the grant that no longer holds")
+	case "grants", "grant revoke":
 	case "decision present":
 		flags.Int64Var(&request.request, "request", 0, "the decision request")
 		flags.IntVar(&request.version, "version", 0, "the version you showed the user")
@@ -435,8 +477,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present"}, name) {
-		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -529,6 +571,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return decisionPresent(o, paths, request)
 	case "decisions":
 		return listDecisions(o, paths)
+	case "authorize":
+		return authorize(o, paths, authorizing)
+	case "grants":
+		return listGrants(o, paths)
+	case "grant revoke":
+		return grantEnd(o, paths, daemon.CommandGrantRevoke, parseGrantID(arg), "")
+	case "grant invalidate":
+		return grantEnd(o, paths, daemon.CommandGrantInvalidate, parseGrantID(arg), invalidation)
 	case "chat":
 		return chat(o, paths, stdin)
 	case "dashboard":

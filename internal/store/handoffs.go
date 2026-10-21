@@ -44,6 +44,11 @@ type Handoff struct {
 	// passes with the handoff, and DecisionRecords the records themselves.
 	Records         []int64          `json:"records,omitempty"`
 	DecisionRecords []DecisionRecord `json:"decision_records,omitempty"`
+	// Grants are the grants in force for the handoff's job as the receiving
+	// leader fetches it: the user's authority travels with a handoff, and the
+	// receiver checks it again before each consequential action. They are not
+	// stored with it.
+	Grants []Grant `json:"grants,omitempty"`
 }
 
 type Message struct {
@@ -369,6 +374,9 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 			if e != nil {
 				return nil, e
 			}
+			if h.Grants, e = grantsOf(tx, h.Job, true); e != nil {
+				return nil, e
+			}
 			m.HandoffData = &h
 		}
 		if m.Assignment != 0 {
@@ -380,6 +388,9 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 				if a.OpenFindings, e = openBlocking(tx, a.Job); e != nil {
 					return nil, e
 				}
+			}
+			if a.Grants, e = grantsOf(tx, a.Job, true); e != nil {
+				return nil, e
 			}
 			m.AssignmentData = &a
 		}

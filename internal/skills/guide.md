@@ -45,6 +45,14 @@ Ordinary authorized work along an already settled route continues without a ques
 
 A worker sends such a choice to its owning leader as a decision request. A leader answers it from the records or escalates it with one request: a single question with an option for each viable approach, `asmai decision request --job <number> --title <the question> --option <an approach> --option <another approach> --recommend <your recommendation> --blocks <an assignment you own whose work depends on the choice>`. A choice between two approaches is answered by the user in the conversation, and Coordination presents it once; everything else is answered in Lavish. Ask once. Send a new version with `--request <id>` only when material new evidence arrives, and an answer to an older version answers nothing. Work that depends on the choice waits for the answer and independent work goes on. Silence or time is never approval. The answer reaches the leader that asked as a message of kind `decision.answer` with the user's own words and Coordination's reading of them, and the decision record that holds both: pass it on with `--record <id>`.
 
+## Grants
+
+A grant is the user's authorization of an exact decision or action, given in their own words at a scope of a job, a repository or the whole factory, with the conditions it holds under. The job's mandate never covers deployment, spending money or destructive changes outside the job without one. Spending is zero unless a grant names the amount and the scope, and no grant can authorize a merge: AsmAI never merges.
+
+A job's own approval stays with that job. A grant carries through assignments, handoffs and a restart while its scope and conditions hold, and the grants in force are in `asmai brief <job>` and in each assignment and handoff you fetch. Before each consequential action a grant covers, run `asmai authorize --action spend|deploy|destructive --what <the action>`, with `--amount <n> --currency <code>` for spending and `--job <number>` as a leader, and take the action only when it is authorized. A grant that was revoked, a scope that changed, or a condition that no longer holds needs a new decision of the user's, which a leader asks for; it is never worked around. Name the grant you relied on in your result.
+
+When a grant is revoked or invalidated, every later action it covered is refused. Effects already made are reported as they actually stand, with the ways to recover that the user authorizes; revocation never claims to undo them.
+
 ## What every agent does
 
 - Coordinate only through the `asmai` command. When nudged, fetch your inbox with `asmai inbox --dispatch <id>`, and treat only work correlated to the current dispatch as current.

@@ -57,7 +57,14 @@ func lavishCommand(o *output, paths statedir.Paths) int {
 			if p.PendingPrompts > 0 {
 				waiting = plural(p.PendingPrompts, "1 message not yet collected", fmt.Sprintf("%d messages not yet collected", p.PendingPrompts))
 			}
-			rows = append(rows, []string{"  " + p.URL, p.File, waiting})
+			what := p.File
+			if p.Request != 0 {
+				what = fmt.Sprintf("decision request %d, version %d (job %d)", p.Request, p.Version, p.Job)
+				if p.Answered > 0 {
+					what += fmt.Sprintf(", partly answered: %d of %d questions", p.Answered, p.Questions)
+				}
+			}
+			rows = append(rows, []string{"  " + p.URL, what, waiting})
 		}
 		o.table(rows)
 	}

@@ -1,0 +1,127 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision request {{.Request}}, version {{.Version}} · job {{.Job}}</title>
+<style>
+:root { color-scheme: light dark; --fg: #1b1f24; --muted: #59636e; --bg: #ffffff; --card: #f6f8fa; --line: #d0d7de; --accent: #0969da; --good: #1a7f37; --warn: #9a6700; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e6edf3; --muted: #9198a1; --bg: #0d1117; --card: #161b22; --line: #30363d; --accent: #58a6ff; --good: #3fb950; --warn: #d29922; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+header h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+header p { margin: 0; color: var(--muted); }
+.status { display: inline-block; margin-top: .75rem; padding: .15rem .6rem; border: 1px solid var(--line); border-radius: 1rem; font-size: .9rem; }
+.status[data-status="partly"] { color: var(--warn); border-color: var(--warn); }
+.status[data-status="answered"] { color: var(--good); border-color: var(--good); }
+.own { margin: 1.5rem 0; }
+.own h2, .questions h2.section { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 .5rem; }
+.own .text { white-space: pre-wrap; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .75rem 1rem; }
+.own iframe { width: 100%; height: 28rem; border: 1px solid var(--line); border-radius: .5rem; background: #fff; }
+.howto { margin: 1.5rem 0; padding: .75rem 1rem; border-left: 3px solid var(--accent); background: var(--card); }
+.question { border: 1px solid var(--line); border-radius: .5rem; background: var(--card); padding: 1rem; margin: 0 0 1rem; }
+.question h3 { margin: 0 0 .25rem; font-size: 1.05rem; }
+.question .id { color: var(--muted); font-weight: normal; font-size: .85rem; margin-left: .4rem; }
+.question .body { margin: .25rem 0 .75rem; white-space: pre-wrap; }
+.option { display: block; padding: .3rem .5rem; border-radius: .35rem; }
+.option:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.badge { margin-left: .5rem; padding: 0 .4rem; border: 1px solid var(--accent); border-radius: .75rem; color: var(--accent); font-size: .75rem; }
+textarea { width: 100%; min-height: 4.5rem; margin: .5rem 0; padding: .5rem; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: .35rem; }
+button { font: inherit; padding: .35rem .9rem; border: 1px solid var(--accent); border-radius: .35rem; background: var(--accent); color: #fff; cursor: pointer; }
+button.secondary { background: transparent; color: var(--accent); }
+.queued, .error { margin-left: .75rem; font-size: .9rem; }
+.queued { color: var(--good); }
+.error { color: #cf222e; }
+.done { border-color: var(--good); }
+.done .answer { margin: .5rem 0 0; padding: .5rem .75rem; background: var(--bg); border-radius: .35rem; white-space: pre-wrap; }
+.done .mark { color: var(--good); font-weight: 600; }
+.send { margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<main data-asmai-request="{{.Request}}" data-asmai-version="{{.Version}}" data-asmai-job="{{.Job}}">
+<header>
+<h1>Decision request {{.Request}}, version {{.Version}}</h1>
+<p>Job {{.Job}} · asked by {{.From}}</p>
+<span class="status" data-status="{{.Status}}">{{if eq .Status "answered"}}Every question has an answer{{else if eq .Status "partly"}}Partly answered: {{.AnsweredN}} of {{.Total}} questions{{else}}Waiting for your answers: {{.Total}} {{if eq .Total 1}}question{{else}}questions{{end}}{{end}}</span>
+</header>
+{{if .HasContent}}<section class="own" aria-label="From the agent">
+<h2>From {{.From}}</h2>
+{{if .ContentHTML}}<iframe sandbox="allow-scripts" srcdoc="{{.HTML}}" title="Content from {{.From}}"></iframe>{{else}}<div class="text">{{.Text}}</div>{{end}}
+</section>{{end}}
+{{if ne .Status "answered"}}<p class="howto">Answer each question you can, press <strong>Queue answer</strong> for it, then press <strong>Send to Agent</strong>. You may send the page with some questions unanswered: what you send goes to {{.From}} at once, the request stays open as partly answered, and the rest waits for you.</p>{{end}}
+<section class="questions" aria-label="Questions">
+<h2 class="section">Questions</h2>
+{{range .Questions}}{{if .Answered}}<div class="question done" data-question="{{.ID}}">
+<h3><span class="mark">✓</span> {{.Title}}<span class="id">{{.ID}}</span></h3>
+{{if .Body}}<p class="body">{{.Body}}</p>{{end}}
+<p class="answer">{{if .Choice}}<strong>{{.Choice}}</strong>{{end}}{{if and .Choice .Notes}}
+{{end}}{{.Notes}}</p>
+</div>
+{{else}}<form class="question" data-lavish-question="{{.ID}}" data-question="{{.ID}}">
+<h3>{{.Title}}<span class="id">{{.ID}}</span></h3>
+{{if .Body}}<p class="body">{{.Body}}</p>{{end}}
+{{$id := .ID}}{{$rec := .Recommendation}}{{range .Options}}<label class="option"><input type="radio" name="choice-{{$id}}" value="{{.}}"> {{.}}{{if eq . $rec}}<span class="badge">Recommended</span>{{end}}</label>
+{{end}}<textarea name="notes" aria-label="{{if .Options}}Notes, or your own answer{{else}}Your answer{{end}}" placeholder="{{if .Options}}Notes, or your own answer{{else}}Your answer{{end}}"></textarea>
+<button type="submit">Queue answer</button><span class="queued" hidden></span><span class="error" hidden></span>
+</form>
+{{end}}{{end}}
+</section>
+{{if ne .Status "answered"}}<p class="send"><button type="button" class="secondary" id="send">Send queued answers</button><span class="error" id="send-error" hidden></span></p>{{end}}
+</main>
+<script>
+(() => {
+  const main = document.querySelector("main");
+  const request = Number(main.dataset.asmaiRequest);
+  const version = Number(main.dataset.asmaiVersion);
+  const lavish = () => window.lavish && typeof window.lavish.queuePrompt === "function" ? window.lavish : null;
+  document.querySelectorAll("form[data-question]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const queued = form.querySelector(".queued");
+      const error = form.querySelector(".error");
+      queued.hidden = error.hidden = true;
+      const question = form.dataset.question;
+      const picked = form.querySelector("input[type=radio]:checked");
+      const choice = picked ? picked.value : "";
+      const notes = form.querySelector("textarea").value.trim();
+      if (!choice && !notes) {
+        error.textContent = "Choose an option or write an answer first.";
+        error.hidden = false;
+        return;
+      }
+      if (!lavish()) {
+        error.textContent = "Open this page through Lavish to send answers.";
+        error.hidden = false;
+        return;
+      }
+      const title = form.querySelector("h3").firstChild.textContent;
+      const words = [choice, notes].filter(Boolean).join(" - ");
+      lavish().queuePrompt("Answer to question " + question + " (" + title + "): " + words, {
+        tag: "asmai-answer",
+        text: question + ": " + words,
+        element: form,
+        target: { type: "asmai-answer", request, version, question, choice, notes },
+      });
+      queued.textContent = "Queued. Press Send to Agent to send it.";
+      queued.hidden = false;
+    });
+  });
+  const send = document.getElementById("send");
+  if (send) {
+    send.addEventListener("click", () => {
+      const error = document.getElementById("send-error");
+      error.hidden = true;
+      if (!lavish() || typeof window.lavish.sendQueuedPrompts !== "function") {
+        error.textContent = "Open this page through Lavish to send answers.";
+        error.hidden = false;
+        return;
+      }
+      window.lavish.sendQueuedPrompts();
+    });
+  }
+})();
+</script>
+</body>
+</html>

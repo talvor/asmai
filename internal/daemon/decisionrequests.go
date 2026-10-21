@@ -24,6 +24,14 @@ func (d *daemon) decisionRequestCommand(conn *net.UnixConn, req Request) {
 		var r store.DecisionRequest
 		var dispatch *store.Dispatch
 		if r, dispatch, err = d.decisionRequest(req); err == nil {
+			if r.HasPage() && d.pages != nil {
+				// A version answered in Lavish is shown there at once, so that
+				// Coordination has its link when it is told of the request.
+				d.pages.sync(d.work)
+				if opened, readErr := d.store.DecisionRequest(r.Request); readErr == nil {
+					r = opened
+				}
+			}
 			resp.DecisionRequest = &r
 			if dispatch != nil {
 				resp.Dispatch, notify = dispatch, dispatch.Agent

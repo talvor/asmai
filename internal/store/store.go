@@ -290,6 +290,17 @@ CREATE TABLE authorizations (
  created_at TEXT NOT NULL
 );
 `,
+	`
+ALTER TABLE decision_requests ADD COLUMN answered TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE decision_requests ADD COLUMN page_file TEXT NOT NULL DEFAULT '';
+ALTER TABLE decision_requests ADD COLUMN page_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE decision_requests ADD COLUMN page_closed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE decision_records ADD COLUMN lavish INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE lavish_answers (
+ id INTEGER PRIMARY KEY REFERENCES journal(id), decision INTEGER NOT NULL REFERENCES decision_requests(id),
+ answers TEXT NOT NULL, created_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -407,7 +418,18 @@ const (
 	// against an older version, as the user's answer to it.
 	KindDecisionPresented = "decision.presented"
 	KindDecisionRefused   = "decision.refused"
-	KindChecksRerun       = "checks.rerun"
+	// KindLavishPageOpened records the daemon opening the Lavish page of a
+	// version of a decision request, which is when the version is shown to
+	// the user. KindLavishAnswered records what the user sent from the page,
+	// word for word, which a record attributed to the user cites, and
+	// KindLavishRefused what the daemon refused to apply because it came
+	// from a page that is no longer current. KindLavishPageClosed records
+	// the daemon ending the page's session once its version is settled.
+	KindLavishPageOpened = "lavish.page.opened"
+	KindLavishAnswered   = "lavish.answered"
+	KindLavishRefused    = "lavish.refused"
+	KindLavishPageClosed = "lavish.page.closed"
+	KindChecksRerun      = "checks.rerun"
 	// KindGrantRecorded records a leader recording a grant the user gave in
 	// words, citing them. KindActionAuthorized records the daemon finding a
 	// grant that covers a consequential action an agent asked to take, and

@@ -32,7 +32,7 @@ func (d DecisionRecord) Check() error {
 	case strings.TrimSpace(d.Evidence) == "":
 		return errors.New("a decision gives its evidence")
 	case d.Source == SourceHuman && d.Cites <= 0:
-		return errors.New("a human decision cites the witnessed message it came from")
+		return errors.New("a human decision cites the witnessed message or the Lavish answer it came from")
 	case d.Source == SourceDelegated && d.Cites != 0:
 		return errors.New("a delegated decision cites no witnessed message: only a human decision has one")
 	case d.Request != 0 && (d.Source != SourceHuman || d.Version <= 0):
@@ -62,8 +62,9 @@ func blank(text string) bool { return strings.TrimSpace(text) == "" }
 
 // DecisionRecorded records d, the decision of d.Leader's session of
 // generation, and journals it. d.Dispatch is the dispatch the leader is
-// working on, if it is working on one, and the job must be open. A human decision cites a witnessed message, which
-// must exist. Routine work needs no record: nothing else in the store asks
+// working on, if it is working on one, and the job must be open. A human
+// decision cites a witnessed message in the job's conversation, or a Lavish
+// answer the user gave in the job after its version was shown. Routine work needs no record: nothing else in the store asks
 // for one.
 func (s *Store) DecisionRecorded(d DecisionRecord, generation int, at time.Time) (DecisionRecord, error) {
 	tx, err := s.db.Begin()
@@ -106,28 +107,22 @@ func insertDecisionRecord(tx *sql.Tx, d DecisionRecord, generation int, at time.
 	if d.Source == SourceHuman {
 		var kind, data string
 		if err := tx.QueryRow(`SELECT kind, data FROM journal WHERE id = ?`, d.Cites).Scan(&kind, &data); errors.Is(err, sql.ErrNoRows) {
-			return DecisionRecord{}, fmt.Errorf("witnessed message %d does not exist", d.Cites)
+			return DecisionRecord{}, fmt.Errorf("journal entry %d, which the decision cites, does not exist", d.Cites)
 		} else if err != nil {
 			return DecisionRecord{}, err
 		}
-		if kind != KindMessageWitnessed {
-			return DecisionRecord{}, fmt.Errorf("journal entry %d is %s, not a witnessed message", d.Cites, kind)
-		}
-		if d.Cites < j.Witness {
-			return DecisionRecord{}, fmt.Errorf("witnessed message %d came before job %d's own request, message %d, so it is not in the job's conversation", d.Cites, j.Number, j.Witness)
-		}
-		var cited, request Witnessed
-		if err := json.Unmarshal([]byte(data), &cited); err != nil {
-			return DecisionRecord{}, err
-		}
-		if err := tx.QueryRow(`SELECT data FROM journal WHERE id = ?`, j.Witness).Scan(&data); err != nil {
-			return DecisionRecord{}, fmt.Errorf("job %d's own request, message %d, cannot be read: %w", j.Number, j.Witness, err)
-		}
-		if err := json.Unmarshal([]byte(data), &request); err != nil {
-			return DecisionRecord{}, err
-		}
-		if cited.Agent != request.Agent {
-			return DecisionRecord{}, fmt.Errorf("witnessed message %d was submitted to %s, not to %s, which job %d's request went to, so it is not in the job's conversation", d.Cites, cited.Agent, request.Agent, j.Number)
+		switch kind {
+		case KindLavishAnswered:
+			if err := citableLavishAnswer(tx, d); err != nil {
+				return DecisionRecord{}, err
+			}
+			d.Lavish = true
+		case KindMessageWitnessed:
+			if err := citableWitnessed(tx, d, j, data); err != nil {
+				return DecisionRecord{}, err
+			}
+		default:
+			return DecisionRecord{}, fmt.Errorf("journal entry %d is %s, not a witnessed message or a Lavish answer", d.Cites, kind)
 		}
 	}
 	d.Assumptions, d.ReopenWhen, d.At = nonNil(d.Assumptions), nonNil(d.ReopenWhen), at.UTC()
@@ -139,8 +134,8 @@ func insertDecisionRecord(tx *sql.Tx, d DecisionRecord, generation int, at time.
 	if err != nil {
 		return DecisionRecord{}, err
 	}
-	result, err := tx.Exec(`INSERT INTO decision_records (job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, dispatch, request, version, reading, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.Job, d.Leader, d.Source, d.Cites, d.ReliedOn, d.Choice, d.Rationale, d.Evidence, string(assumptions), string(reopen), nullIfZero(d.Dispatch), d.Request, d.Version, d.Reading, timestamp(at))
+	result, err := tx.Exec(`INSERT INTO decision_records (job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, dispatch, request, version, reading, lavish, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.Job, d.Leader, d.Source, d.Cites, d.ReliedOn, d.Choice, d.Rationale, d.Evidence, string(assumptions), string(reopen), nullIfZero(d.Dispatch), d.Request, d.Version, d.Reading, d.Lavish, timestamp(at))
 	if err != nil {
 		return DecisionRecord{}, err
 	}
@@ -153,7 +148,58 @@ func insertDecisionRecord(tx *sql.Tx, d DecisionRecord, generation int, at time.
 	return d, nil
 }
 
-const decisionRecordColumns = `id, job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, COALESCE(dispatch, 0), request, version, reading, created_at`
+// citableWitnessed checks that the witnessed message d cites, whose journal
+// data is data, is in the conversation of the job j: it was typed after the
+// job's own request, to the agent that request went to.
+func citableWitnessed(tx *sql.Tx, d DecisionRecord, j Job, data string) error {
+	if d.Cites < j.Witness {
+		return fmt.Errorf("witnessed message %d came before job %d's own request, message %d, so it is not in the job's conversation", d.Cites, j.Number, j.Witness)
+	}
+	var cited, request Witnessed
+	if err := json.Unmarshal([]byte(data), &cited); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(`SELECT data FROM journal WHERE id = ?`, j.Witness).Scan(&data); err != nil {
+		return fmt.Errorf("job %d's own request, message %d, cannot be read: %w", j.Number, j.Witness, err)
+	}
+	if err := json.Unmarshal([]byte(data), &request); err != nil {
+		return err
+	}
+	if cited.Agent != request.Agent {
+		return fmt.Errorf("witnessed message %d was submitted to %s, not to %s, which job %d's request went to, so it is not in the job's conversation", d.Cites, cited.Agent, request.Agent, j.Number)
+	}
+	return nil
+}
+
+// citableLavishAnswer checks that the Lavish answer d cites is the user's
+// own in the job of the decision, and was given after the version it answers
+// was shown: a record attributed to the user cites nothing else.
+func citableLavishAnswer(tx *sql.Tx, d DecisionRecord) error {
+	version, err := lavishAnswerFor(tx, d.Cites)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("journal entry %d is not a Lavish answer the user gave: a refused page, which the daemon journals too, is never the user's answer", d.Cites)
+	}
+	if err != nil {
+		return err
+	}
+	var given int
+	if err := tx.QueryRow(`SELECT json_array_length(answers) FROM lavish_answers WHERE id = ?`, d.Cites).Scan(&given); err != nil {
+		return err
+	}
+	switch {
+	case version.Job != d.Job:
+		return fmt.Errorf("Lavish answer %d is the user's answer in job %d, not job %d", d.Cites, version.Job, d.Job)
+	case version.State == RequestReplaced:
+		return fmt.Errorf("Lavish answer %d answers version %d of decision request %d, which a newer version replaced: an answer applies only to the version it answers", d.Cites, version.Version, version.Request)
+	case given == 0:
+		return fmt.Errorf("Lavish answer %d answers no question, only comments, so it is not the user's answer to a decision", d.Cites)
+	case version.Shown == 0 || d.Cites < version.Shown:
+		return fmt.Errorf("Lavish answer %d was given before version %d of decision request %d was shown, so it answers an older version", d.Cites, version.Version, version.Request)
+	}
+	return nil
+}
+
+const decisionRecordColumns = `id, job, leader, source, cites, relied_on, choice, rationale, evidence, assumptions, reopen_when, COALESCE(dispatch, 0), request, version, reading, lavish, created_at`
 
 func scanDecisionRecords(q querier, where string, args ...any) ([]DecisionRecord, error) {
 	rows, err := q.Query(`SELECT `+decisionRecordColumns+` FROM decision_records WHERE `+where+` ORDER BY id`, args...)
@@ -165,7 +211,7 @@ func scanDecisionRecords(q querier, where string, args ...any) ([]DecisionRecord
 	for rows.Next() {
 		var d DecisionRecord
 		var assumptions, reopen, at string
-		if err := rows.Scan(&d.ID, &d.Job, &d.Leader, &d.Source, &d.Cites, &d.ReliedOn, &d.Choice, &d.Rationale, &d.Evidence, &assumptions, &reopen, &d.Dispatch, &d.Request, &d.Version, &d.Reading, &at); err != nil {
+		if err := rows.Scan(&d.ID, &d.Job, &d.Leader, &d.Source, &d.Cites, &d.ReliedOn, &d.Choice, &d.Rationale, &d.Evidence, &assumptions, &reopen, &d.Dispatch, &d.Request, &d.Version, &d.Reading, &d.Lavish, &at); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(assumptions), &d.Assumptions); err != nil {
@@ -259,7 +305,9 @@ func loadRecords(q querier, column string) (ids []int64, records []DecisionRecor
 // starts with first and the others with rest.
 func (d DecisionRecord) Text(first, rest string) string {
 	source := d.Source
-	if d.Source == SourceHuman {
+	if d.Source == SourceHuman && d.Lavish {
+		source = fmt.Sprintf("human, citing Lavish answer %d", d.Cites)
+	} else if d.Source == SourceHuman {
 		source = fmt.Sprintf("human, citing witnessed message %d", d.Cites)
 	}
 	list := func(items []string) string {

@@ -180,7 +180,7 @@ The job the conversation is currently about. The user's messages apply to it unl
 _Avoid_: Current job, active job
 
 **Witnessed message**:
-A message the factory observed the user submit from their own keyboard in an agent's terminal. It is the only conversation evidence that a decision, grant or mandate came from the user.
+A message the factory observed the user submit from their own keyboard in an agent's terminal. It is the only conversation evidence that a decision, grant or mandate came from the user; a Lavish answer is the only evidence from Lavish.
 _Avoid_: Turn, prompt (when meaning the user's attributable words)
 
 **Decision request**:
@@ -193,6 +193,14 @@ The one place where a given version of a decision request can be answered: the c
 **Conversation answer**:
 The user's answer to a version of a decision request that is answered in the conversation: a human decision citing the witnessed message the user gave after that version was shown, with Coordination's reading of their words stored beside them. The owning leader receives both. A record that cites a nudge, or a message typed against an older version, is refused, and Coordination presents the current version again.
 _Avoid_: Reply (a reply is only the user's words, before they are cited)
+
+**Lavish page**:
+The page the daemon renders and opens in the factory's Lavish server for a version of a decision request that is answered in Lavish: the requesting agent's own content above the request's questions, in one standard layout keyed to that version. A new version reissues the page, and what the user sends from the old page is refused. Agents never render or run Lavish.
+_Avoid_: Review link (a link is where the page is opened)
+
+**Lavish answer**:
+What the user sent from a Lavish page, which the daemon, not an agent, collected and journaled word for word: answers to questions, comments and annotations. The daemon routes it to the owning leader at once, and Coordination confirms it in one line in the conversation. A page sent with some questions unanswered is **partly answered**: what was sent is routed and the version stays pending until every question has an answer or its leader issues a new version. A record attributed to the user cites a Lavish answer given after its version was shown.
+_Avoid_: Reply, Form submission
 
 **Catch-up**:
 The factory's account of what changed since the user last left the conversation, shown when they return.

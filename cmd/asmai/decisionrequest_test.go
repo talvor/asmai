@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/talvor/asmai/internal/store"
 )
 
 func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing.T) {
@@ -90,7 +92,7 @@ func TestAsmaiDecisionsListsThePendingDecisionsWithTheirAnswerSurfaceAndAnswersN
 	if code != 0 {
 		t.Fatalf("asmai decisions: %d, %s", code, stderr)
 	}
-	for _, want := range []string{"ANSWER SURFACE", "Which cache?", "conversation", "Lavish", "Scope, now?", "leader@coordination", "answers none"} {
+	for _, want := range []string{"ANSWER SURFACE", "STATE", "Which cache?", "conversation", "Lavish", "pending (page opening)", "Scope, now?", "leader@coordination", "answers none"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("asmai decisions did not show %q:\n%s", want, stdout)
 		}
@@ -226,5 +228,29 @@ func TestAChoiceIsPresentedOnceAndOnlyTheUsersMessageAfterItAnswersWithCoordinat
 	if len(answers) != 1 || answers[0].State != "answered" || answers[0].Answer != "in-memory please" || answers[0].By != "user" || answers[0].Reading != "The user picked the in-memory cache." ||
 		len(witnessed) != 2 || answers[0].Cites != witnessed[1].ID {
 		t.Fatalf("answers = %+v, witnessed = %+v", answers, witnessed)
+	}
+}
+
+func TestAVersionAnsweredInLavishSaysHowFarItIsAnswered(t *testing.T) {
+	questions := []store.Question{{ID: "a", Title: "Name?"}, {ID: "b", Title: "Scope?"}}
+	page := store.DecisionRequest{Surface: store.SurfaceLavish, Recipient: store.ToUser, State: store.RequestPending, Questions: questions}
+	if got := requestState(page); got != "pending (page opening)" {
+		t.Errorf("a version whose page is not open is %q", got)
+	}
+	page.PageFile = "/pages/request-1-version-1.html"
+	if got := requestState(page); got != "pending" {
+		t.Errorf("a version with its page open and no answers is %q", got)
+	}
+	page.Answered = []string{"a"}
+	if got := requestState(page); got != "partly answered (1 of 2)" {
+		t.Errorf("a version with one of two answers is %q", got)
+	}
+	page.State, page.Answered = store.RequestAnswered, []string{"a", "b"}
+	if got := requestState(page); got != "answered" {
+		t.Errorf("a version with every answer is %q", got)
+	}
+	conversation := store.DecisionRequest{Surface: store.SurfaceConversation, Recipient: store.ToUser, State: store.RequestPending, Questions: questions[:1]}
+	if got := requestState(conversation); got != "pending" {
+		t.Errorf("a version answered in the conversation is %q", got)
 	}
 }

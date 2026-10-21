@@ -69,7 +69,7 @@ commands you type:
   asmai agents                list the factory's agents
   asmai jobs                  list numbered jobs
   asmai decisions             list the decisions waiting for you, each with its answer surface, the conversation
-                              or Lavish. It only lists: it answers nothing
+                              or Lavish, and the Lavish page's link. It only lists: it answers nothing
   asmai grants                list the grants you gave, each with its scope, what it approves, what it has
                               spent and whether it is active, revoked or invalidated. It only lists
   asmai grant revoke <id>     revoke a grant: every later action it would cover is refused, and what it
@@ -163,12 +163,14 @@ commands agents run:
                               push the job branch: it fetches the branch from origin, refuses and records an
                               outside change if origin has commits AsmAI did not make, and otherwise pushes
                               it with a plain push, never forced, recorded as the daemon's effect
-  asmai decision record --job <number> --choice <text> --relied-on <text> --rationale <text> --evidence <text> --assumption <text>|none --reopen-when <text>|none [--source delegated|human --cites <witnessed message>]
+  asmai decision record --job <number> --choice <text> --relied-on <text> --rationale <text> --evidence <text> --assumption <text>|none --reopen-when <text>|none [--source delegated|human --cites <witnessed message or Lavish answer>]
                               a leader records a decision that affects later work, with the fields of rule 25:
                               itself as the accountable leader, the mandate or grant it relied on, the choice,
                               its rationale and evidence, its material assumptions and the conditions that
                               would reopen it, marked delegated (the default) or human, which cites the
-                              witnessed message it came from (its journal ID, or latest). Repeat --assumption and --reopen-when for each.
+                              witnessed message it came from (its journal ID, or latest) or the Lavish answer
+                              the user gave after the version was shown, whose entry the owning leader's
+                              message names. Repeat --assumption and --reopen-when for each.
                               A routine edit needs no record. Pass the records that matter on with
                               --record <id> on asmai assign and asmai handoff send
   asmai decision record --job <number> --choice rerun-failed --rationale <text> --evidence <text>
@@ -205,8 +207,10 @@ commands agents run:
                               request a decision. A worker's request goes to its owning leader, never to the user,
                               and holds its assignment's work until the answer; a leader's goes to the user through
                               Coordination, and holds the assignments of its own that --blocks names. --request
-                              issues a new version, which replaces the pending one; a single choice is answered
-                              in the conversation and everything else in Lavish
+                              issues a new version, which replaces the pending one and reissues its Lavish
+                              page; a single choice is answered in the conversation and everything else in
+                              Lavish, where the daemon renders the questions and --content above them and
+                              brings back what the user sends, word for word
   asmai decision answer --request <id> --version <n> --answer <text> [--relied-on <text>]
                               a worker's owning leader answers one version of its request from the records; an
                               answer naming an older version is refused
@@ -403,7 +407,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&decision.assumptions, "assumption", "a material assumption the choice rests on, or none; may be repeated")
 		flags.Var(&decision.reopenWhen, "reopen-when", "a condition that would reopen the decision, or none; may be repeated")
 		flags.StringVar(&decision.source, "source", "", "delegated (the default), or human")
-		flags.StringVar(&decision.cites, "cites", "", "with --source human, the witnessed message the decision came from: its journal ID, or latest for the newest the user sent you")
+		flags.StringVar(&decision.cites, "cites", "", "with --source human, the witnessed message the decision came from: its journal ID, or latest for the newest the user sent you; or the journal ID of the Lavish answer the user gave")
 		flags.Int64Var(&decision.request, "request", 0, "the decision request the user's answer in the conversation is to; Coordination's leader only")
 		flags.IntVar(&decision.version, "version", 0, "with --request, the version the user's message answers")
 		flags.StringVar(&decision.reading, "reading", "", "with --request, your reading of the user's words, stored beside them")

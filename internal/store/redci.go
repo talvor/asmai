@@ -45,9 +45,11 @@ type DecisionRecord struct {
 	Job    int64  `json:"job"`
 	Leader string `json:"leader"`
 	// Source is SourceDelegated, or SourceHuman with Cites the witnessed
-	// message the user's decision came from.
+	// message or, when Lavish is set, the Lavish answer the user's decision
+	// came from.
 	Source string `json:"source"`
 	Cites  int64  `json:"cites,omitempty"`
+	Lavish bool   `json:"lavish,omitempty"`
 	// ReliedOn is the mandate or grant the decision relied on.
 	ReliedOn  string `json:"relied_on"`
 	Choice    string `json:"choice"`

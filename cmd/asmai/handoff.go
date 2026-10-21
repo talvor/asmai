@@ -110,6 +110,8 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if r := m.RequestData; r != nil {
 			if m.Kind == store.MessageDecisionAnswer {
 				fmt.Fprintf(o.stdout, "Answer to version %d of decision request %d, from %s:\n%s\n", r.Version, r.Request, m.Sender, m.Body)
+			} else if m.Kind == store.MessageLavishSent {
+				fmt.Fprintf(o.stdout, "The user sent version %d of decision request %d from its Lavish page, which went to %s:\n%s\n", r.Version, r.Request, r.Requester, m.Body)
 			} else {
 				printRequest(o.stdout, *r)
 			}

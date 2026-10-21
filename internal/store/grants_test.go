@@ -482,7 +482,7 @@ func TestAmountsAreWrittenAndReadToTwoDecimalPlaces(t *testing.T) {
 			t.Errorf("ParseAmount(%q) = %d, %v, want %d", tt.text, got, err, tt.want)
 		}
 	}
-	for _, text := range []string{"", "-1", "1.234", "ten", "1,000", "1e3", ".5", "+4"} {
+	for _, text := range []string{"", "-1", "1.234", "ten", "1,000", "1e3", ".5", "+4", "184467440737095517", "92233720368547758"} {
 		if got, err := ParseAmount(text); err == nil {
 			t.Errorf("ParseAmount(%q) = %d, want a refusal", text, got)
 		}

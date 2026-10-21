@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -122,7 +123,7 @@ func ParseAmount(text string) (int64, error) {
 		return 0, badAmount
 	}
 	n, err := strconv.ParseInt(whole, 10, 64)
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || n > (math.MaxInt64-99)/100 {
 		return 0, badAmount
 	}
 	cents := int64(0)
@@ -647,7 +648,7 @@ func (s *Store) ActionAuthorized(in ActionRequest, at time.Time) (Authorization,
 			why = append(why, fmt.Sprintf("grant %d was invalidated by %s: %s; a condition that no longer holds needs a new decision", g.ID, g.EndedBy, g.EndedReason))
 		case in.Action == ActionSpend && g.Currency != in.Currency:
 			why = append(why, fmt.Sprintf("grant %d is in %s, not %s", g.ID, g.Currency, in.Currency))
-		case in.Action == ActionSpend && g.Spent+in.Amount > g.Amount:
+		case in.Action == ActionSpend && in.Amount > g.Amount-g.Spent:
 			why = append(why, fmt.Sprintf("grant %d leaves %s of %s, less than the %s asked", g.ID, FormatAmount(g.Amount-g.Spent, g.Currency), FormatAmount(g.Amount, g.Currency), FormatAmount(in.Amount, in.Currency)))
 		default:
 			if chosen == nil {

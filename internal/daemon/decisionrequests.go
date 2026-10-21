@@ -89,7 +89,7 @@ func (d *daemon) decisionRequest(req Request) (store.DecisionRequest, *store.Dis
 		return store.DecisionRequest{}, nil, err
 	}
 	in := store.DecisionRequestInput{
-		Request: req.Request, Requester: ref.address.String(), Kind: req.Kind,
+		Request: req.Request, Requester: ref.address.String(), Kind: req.Kind, Skill: req.Skill, Step: req.Step,
 		Content: req.Content, Questions: req.Questions,
 	}
 	if ref.address.Name == roles.Leader {
@@ -175,7 +175,7 @@ func (d *daemon) decisionAnswer(req Request) (store.DecisionRequest, store.Dispa
 	case latest.Recipient != ref.address.String():
 		return store.DecisionRequest{}, store.Dispatch{}, refuse("decision request %d goes to %s, not %s", latest.Request, latest.Recipient, ref.address)
 	}
-	r, dispatch, err := d.store.DecisionAnswered(store.DecisionAnswer{Request: req.Request, Version: req.Version, Answerer: ref.address.String(), Text: req.Answer, ReliedOn: req.ReliedOn, Carried: req.UserAnswer}, time.Now())
+	r, dispatch, err := d.store.DecisionAnswered(store.DecisionAnswer{Request: req.Request, Version: req.Version, Answerer: ref.address.String(), Text: req.Answer, ReliedOn: req.ReliedOn, Records: req.Records, Grants: req.Grants, Carried: req.UserAnswer}, time.Now())
 	if err != nil {
 		return store.DecisionRequest{}, store.Dispatch{}, refuse("%v", err)
 	}

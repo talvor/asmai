@@ -30,6 +30,10 @@ type requestFlags struct {
 	options, questions     listFlags
 	blocks                 listFlags
 	answer, reliedOn       string
+	// skill and step are the human step a worker's request of kind step asks
+	// for; records and grants are what its owning leader's answer rests on.
+	skill, step     string
+	records, grants listFlags
 	// carries is the worker's request that a leader's request carries to the
 	// user, and
 	// userAnswer the leader's request whose answer by the user returns to
@@ -83,7 +87,7 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 		}
 		blocks = append(blocks, id)
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRequest, Session: os.Getenv(daemon.SessionCredential), Job: f.job, Request: f.request, Kind: kind, Content: f.content, Questions: questions, Blocks: blocks, Carries: f.carries})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRequest, Session: os.Getenv(daemon.SessionCredential), Job: f.job, Request: f.request, Kind: kind, Skill: f.skill, Step: f.step, Content: f.content, Questions: questions, Blocks: blocks, Carries: f.carries})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -110,7 +114,18 @@ func decisionAnswer(o *output, paths statedir.Paths, f requestFlags) int {
 	if strings.TrimSpace(f.answer) != "" && f.userAnswer > 0 {
 		return o.fail(errors.New("decision answer takes --answer or --user-answer, not both: the user's own answer is returned as they gave it, with nothing of an agent's beside it"))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionAnswer, Session: os.Getenv(daemon.SessionCredential), Request: f.request, Version: f.version, Answer: f.answer, ReliedOn: f.reliedOn, UserAnswer: f.userAnswer})
+	records, err := idFlag("record", "decision record", f.records)
+	if err != nil {
+		return o.fail(err)
+	}
+	grants, err := idFlag("grant", "grant", f.grants)
+	if err != nil {
+		return o.fail(err)
+	}
+	if f.userAnswer > 0 && len(records)+len(grants) > 0 {
+		return o.fail(errors.New("decision answer takes --user-answer or --record and --grant, not both: the user's own answer is recorded for you, and it is what the worker names"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionAnswer, Session: os.Getenv(daemon.SessionCredential), Request: f.request, Version: f.version, Answer: f.answer, ReliedOn: f.reliedOn, Records: records, Grants: grants, UserAnswer: f.userAnswer})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -119,6 +134,9 @@ func decisionAnswer(o *output, paths statedir.Paths, f requestFlags) int {
 	}
 	r := resp.DecisionRequest
 	fmt.Fprintf(o.stdout, "version %d of decision request %d answered; the answer goes to %s, dispatch %d\n", r.Version, r.Request, r.Requester, resp.Dispatch.ID)
+	if r.Kind == store.RequestStep {
+		fmt.Fprintf(o.stdout, "the %s step (%s) rests on: %s; %s names them in its result\n", r.Skill, r.Step, r.ReliedOn, r.Requester)
+	}
 	return 0
 }
 

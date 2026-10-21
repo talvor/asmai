@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -252,5 +254,58 @@ func TestAVersionAnsweredInLavishSaysHowFarItIsAnswered(t *testing.T) {
 	conversation := store.DecisionRequest{Surface: store.SurfaceConversation, Recipient: store.ToUser, State: store.RequestPending, Questions: questions[:1]}
 	if got := requestState(conversation); got != "pending" {
 		t.Errorf("a version answered in the conversation is %q", got)
+	}
+}
+
+func TestAStepIsAnsweredFromRecordsNamedByIDAndNeverBesideTheUsersOwnAnswer(t *testing.T) {
+	for name, tt := range map[string]struct {
+		flags requestFlags
+		want  string
+	}{
+		"a record that is not an ID": {requestFlags{request: 1, version: 1, answer: "x", records: listFlags{"seams"}}, `--record "seams" is not a decision record ID`},
+		"a grant that is not an ID":  {requestFlags{request: 1, version: 1, answer: "x", grants: listFlags{"0"}}, `--grant "0" is not a grant ID`},
+		"records beside the user's":  {requestFlags{request: 1, version: 1, userAnswer: 2, records: listFlags{"3"}}, "--user-answer or --record and --grant, not both"},
+		"a grant beside the user's":  {requestFlags{request: 1, version: 1, userAnswer: 2, grants: listFlags{"3"}}, "--user-answer or --record and --grant, not both"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := decisionAnswer(&output{stdout: &stdout, stderr: &stderr}, statedir.Paths{}, tt.flags); code == 0 || !strings.Contains(stderr.String(), tt.want) {
+			t.Errorf("%s: decision answer exited %d with %q, want it refused before the daemon is called: %q", name, code, stderr.String(), tt.want)
+		}
+	}
+}
+
+func TestAResultNamesTheRecordsItReliedOnByID(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := result(&output{stdout: &stdout, stderr: &stderr}, statedir.Paths{}, resultFlags{
+		evidence: listFlags{"it works"}, tests: listFlags{"none"}, checks: listFlags{"none"}, gaps: listFlags{"none"}, prSection: "changes",
+		records: listFlags{"first"},
+	})
+	if code == 0 || !strings.Contains(stderr.String(), `--record "first" is not a decision record ID`) {
+		t.Errorf("a result naming a record that is not an ID exited %d with %q", code, stderr.String())
+	}
+}
+
+func TestAWorkersStepGoesToItsOwningLeaderWhichAnswersItOnlyFromARecord(t *testing.T) {
+	worker := []string{
+		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
+		// Only a step request names a skill and a step.
+		fakeRun(`asmai decision request --kind choice --skill tdd --step 'the test seams' --title 'Which seams?' --option handler --option parser`, 1, "only a step request names a skill and a step"),
+		fakeRun(`asmai decision request --kind step --title 'Which seams?' --option handler --option parser`, 1, "names the skill and the step"),
+		fakeRun(`asmai decision request --kind step --skill tdd --step 'the test seams' --title 'Which seams?' --option handler --option parser`, 0, "decision request 1, version 1, recorded for job 1; it goes to leader@engineering"),
+	}
+	leader := []string{
+		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)Decision request 1, version 1 \\| job 1 \\| from worker1@engineering to leader@engineering.*Asks for the step of tdd: the test seams"),
+		// Words about what the answer rests on are no record, and a record that is not there covers nothing.
+		fakeRun(`asmai decision answer --request 1 --version 1 --answer handler --relied-on "the job's decisions"`, 1, "relies on a record"),
+		fakeRun(`asmai decision answer --request 1 --version 1 --answer handler --record 99`, 1, "decision record 99 does not exist"),
+		fakeRun(`asmai decision answer --request 1 --version 1 --answer handler --grant 99`, 1, "grant 99: the grant does not exist"),
+		fakeRun(`asmai decision answer --request 1 --version 1 --user-answer 2 --record 1`, 1, "not both"),
+	}
+	assignmentFlow(t, worker, leader)
+	if got := journaled(t, "decision.requested"); len(got) != 1 {
+		t.Fatalf("requests journaled: %+v", got)
+	}
+	if got := journaled(t, "decision.answered"); len(got) != 0 {
+		t.Fatalf("a step no record covers was answered: %+v", got)
 	}
 }

@@ -20,6 +20,14 @@ AsmAI is the user's personal software engineering factory. Its agents work in ro
 - Never ask the user directly, and never supply the user's side of a decision. If a choice between distinct viable approaches blocks you, report it with `asmai blocked`. Proceed on routine choices.
 - Never run commands that change the factory, such as `asmai start` or `asmai stop`, and never edit AsmAI's configuration.
 
+## A skill's human steps
+
+Some skills have a step only the user can settle: the test seams of tdd and to-spec, the approval of to-tickets' breakdown, code-review's comparison point and spec, and wizard's stages. You never put one to the user, and you never settle one yourself, however obvious it seems or whatever record you think covers it: your owning leader judges that.
+
+- Before you take such a step, send it to your owning leader with `asmai decision request --kind step --skill <skill> --step <the step> --title <what you need settled> [--body <the context>] [--option <an option>]`, naming the skill by its bare name from your list. A request takes no job and no `--blocks`: it is about your assignment, and the work that depends on it waits. Then end your turn and wait for the answer.
+- The answer arrives as a message of kind `decision.answer`, which you fetch with `asmai inbox --dispatch <id>` when nudged. Your leader answers from the user's recorded decisions of the job or from a grant whose scope covers it, or carries the step to the user, whose own answer is recorded for the rest of the job. Either way the answer names the records it rests on, as the flags to give in your result. Follow it and carry on.
+- Name every record each step relied on in your result: `--record <id>` for each decision record and `--grant <id>` for each grant the answer named. The daemon refuses a result that leaves one out, one of another job, a delegated decision, and a grant that does not cover your job. A decision of another job, or a grant of a narrower scope, never settles a step.
+
 ## Doing the assignment
 
 1. Write tests along with the code: a failing test first where you can, then the code that makes it pass. Use the `tdd` skill from your list for it, at the seams the job's records or your assignment name.
@@ -42,12 +50,15 @@ asmai result \
   --check '<command> -> <outcome at your commit>'           (repeat, or --check none) \
   --gap <an unresolved gap>                                 (repeat, or --gap none) \
   --skill <a skill from your list that you ran>             (repeat, or --skill none) \
+  --record <a decision record that a human step relied on>          (repeat for each its answer named, or leave out) \
+  --grant <a grant that a human step relied on>                     (repeat for each its answer named, or leave out) \
   --pr-section <your part of the pull request>
 ```
 
 - Name each skill you ran with `--skill`, by its bare name from your list, such as `tdd`: your assignment says which skill to run and may narrow your list, and the daemon refuses a skill that is not on it.
 - Link your artifacts and evidence, name the tests you added, and give each check you ran with its outcome at your commit. Disclose every gap: anything you did not do, could not verify, or are unsure of.
 - The PR section is your own part of the pull request: what changed, plus before-and-after evidence. If you merged the job branch's tip in or resolved conflicts, write a section for those changes too.
+- Name the records your human steps relied on with `--record` and `--grant`, as the answer to each step gave them: an answer from the user's recorded decision or a grant needs its ID in your result, and the daemon refuses a result without it.
 - The daemon records the commit your workspace is at, and refuses a result while changes are uncommitted.
 
 If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>` after you commit and push your assignment branch.

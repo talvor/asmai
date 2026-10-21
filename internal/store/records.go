@@ -320,7 +320,9 @@ func (d DecisionRecord) Text(first, rest string) string {
 		first, d.ID, d.Job, source, d.Leader, d.At.Format(time.RFC3339),
 		rest, d.Choice, rest, d.ReliedOn, rest, d.Rationale, rest, d.Evidence,
 		rest, list(d.Assumptions), rest, list(d.ReopenWhen))
-	if d.Request != 0 {
+	if d.Request != 0 && d.Lavish {
+		text += fmt.Sprintf("%sAnswers: version %d of decision request %d, in Lavish\n%sReading of the user's words: %s\n", rest, d.Version, d.Request, rest, d.Reading)
+	} else if d.Request != 0 {
 		text += fmt.Sprintf("%sAnswers: version %d of decision request %d, in the conversation\n%sCoordination's reading of the user's words: %s\n", rest, d.Version, d.Request, rest, d.Reading)
 	}
 	return text

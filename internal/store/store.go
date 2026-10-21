@@ -305,6 +305,12 @@ CREATE TABLE lavish_answers (
 ALTER TABLE decision_requests ADD COLUMN carries INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE decision_requests ADD COLUMN carries_version INTEGER NOT NULL DEFAULT 0;
 `,
+	`
+ALTER TABLE decision_requests ADD COLUMN skill TEXT NOT NULL DEFAULT '';
+ALTER TABLE decision_requests ADD COLUMN step TEXT NOT NULL DEFAULT '';
+ALTER TABLE decision_requests ADD COLUMN relied_records TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE decision_requests ADD COLUMN relied_grants TEXT NOT NULL DEFAULT '[]';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

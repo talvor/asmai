@@ -206,6 +206,11 @@ type ReportInput struct {
 	Gaps []string `json:"gaps"`
 	// SkillsRun are the skills from its list the worker ran.
 	SkillsRun []string `json:"skills_run,omitempty"`
+	// RecordsRelied and GrantsRelied are the user's decision records and the
+	// grants that satisfied the human steps of the skills the worker ran:
+	// the records it relied on, which its result names.
+	RecordsRelied []int64 `json:"records_relied,omitempty"`
+	GrantsRelied  []int64 `json:"grants_relied,omitempty"`
 	// PRSection is the worker's part of the pull request: what changed, with
 	// before-and-after evidence.
 	PRSection string `json:"pr_section,omitempty"`
@@ -782,6 +787,9 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	}
 	if sub.Kind == ReportResult {
 		if err := checkResult(tx, a, in); err != nil {
+			return Report{}, Dispatch{}, err
+		}
+		if err := checkRelied(tx, a, in); err != nil {
 			return Report{}, Dispatch{}, err
 		}
 	}

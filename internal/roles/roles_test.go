@@ -755,3 +755,41 @@ func TestPlanningIsAStaffedRole(t *testing.T) {
 		t.Errorf("the staffed roles are %v, want Planning among them", Staffed)
 	}
 }
+
+func TestInstructionsSatisfyASkillsHumanStepsFromTheRecordsThroughTheOwningLeader(t *testing.T) {
+	for _, role := range []string{Engineering, Planning, Quality} {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"**Answer a worker's human step from the records, or carry it to the user.**",
+			"a request of kind `step`, naming its skill and step",
+			"the test seams of tdd and to-spec, the approval of to-tickets' breakdown, code-review's comparison point and spec, or wizard's stages",
+			"`asmai decision answer --request <id> --version <n> --answer <what the step settles> --record <the user's decision record's ID>` and `--grant <the grant's ID>`",
+			"a decision of another job, a delegated decision, yours or anyone's, and a grant of a narrower scope never count",
+			"--carries <the worker's request ID>",
+			"--user-answer <your request's ID>`: the daemon records it as the user's own decision of this job, so it covers the same step for the rest of the job",
+			"never ask the user a step that a record already covers",
+		} {
+			if !strings.Contains(leader, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+		worker, err := WorkerInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"## A skill's human steps",
+			"You never put one to the user, and you never settle one yourself",
+			"`asmai decision request --kind step --skill <skill> --step <the step> --title <what you need settled>",
+			"Name every record each step relied on in your result: `--record <id>` for each decision record and `--grant <id>` for each grant the answer named",
+			"A decision of another job, or a grant of a narrower scope, never settles a step",
+		} {
+			if !strings.Contains(worker, want) {
+				t.Errorf("%s's workers' instructions lack %q", role, want)
+			}
+		}
+	}
+}

@@ -18,14 +18,7 @@ import (
 // checks that the owning leader's answer rests on such a record, and that the
 // worker's result names the records it relied on.
 
-func joinIDs(ids []int64) string {
-	text := make([]string, len(ids))
-	for i, id := range ids {
-		text[i] = fmt.Sprint(id)
-	}
-	return strings.Join(text, ", ")
-}
-
+// namesSkill says whether text, a decision or a grant, names skill.
 func namesSkill(text, skill string) bool {
 	return strings.Contains(strings.ToLower(text), strings.ToLower(skill))
 }
@@ -210,19 +203,4 @@ func checkRelied(q querier, a Assignment, in ReportInput) error {
 		}
 	}
 	return nil
-}
-
-// RelianceText says what a result relied on, for its owning leader.
-func (r ReportInput) RelianceText() string {
-	if len(r.RecordsRelied)+len(r.GrantsRelied) == 0 {
-		return "none"
-	}
-	var parts []string
-	if len(r.RecordsRelied) > 0 {
-		parts = append(parts, "decision records "+joinIDs(r.RecordsRelied))
-	}
-	if len(r.GrantsRelied) > 0 {
-		parts = append(parts, "grants "+joinIDs(r.GrantsRelied))
-	}
-	return strings.Join(parts, "; ")
 }

@@ -212,10 +212,6 @@ commands agents run:
                               conversation, once; the user's answer is the message they send after it
   asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --title <text> --option <text> [--recommend <option>]
   asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --question '<json>' [--content <text>] [--blocks <assignment>] [--carries <request>]
-  asmai decision request --kind step --skill <skill> --step <text> --title <text>
-                              a worker asks its owning leader for the human step of a skill, such as the test
-                              seams of tdd: a recorded decision of the user's, or a grant, whose scope covers
-                              the job satisfies it, and where none does the leader carries it to the user
                               request a decision. A worker's request goes to its owning leader, never to the user,
                               and holds its assignment's work until the answer; a leader's goes to the user through
                               Coordination, and holds the assignments of its own that --blocks names. --request
@@ -225,18 +221,22 @@ commands agents run:
                               brings back what the user sends, word for word. --carries has a leader's request
                               carry its worker's request to the user: a worker's grilling or Wayfinder question
                               is answered only by the user's own answer to it
+  asmai decision request --kind step --skill <skill> --step <text> --title <text>
+                              a worker asks its owning leader for the human step of a skill, such as the test
+                              seams of tdd: a recorded decision of the user's, or a grant, whose scope covers
+                              the job satisfies it, and where none does the leader carries it to the user
   asmai decision answer --request <id> --version <n> --answer <text> [--relied-on <text>]
-  asmai decision answer --request <id> --version <n> --answer <text> --record <id> [--grant <id>]
-                              answer a worker's step from the records: --record is the user's own decision
-                              record of the job that names the skill, --grant a grant of a decision, active, whose
-                              scope covers the job and that names the skill; the daemon refuses a decision of
-                              another job, a delegated decision and a grant of a narrower scope
   asmai decision answer --request <id> --version <n> --user-answer <your request>
                               a worker's owning leader answers one version of its request from the records; an
                               answer naming an older version is refused. A worker's grilling or Wayfinder
                               question is never answered in an agent's words: --user-answer returns the
                               user's own answer to the leader's request that carried it, as they gave it in
                               Lavish, once every question of it is answered
+  asmai decision answer --request <id> --version <n> --answer <text> --record <id> [--grant <id>]
+                              answer a worker's step from the records: --record is the user's own decision
+                              record of the job that names the skill, --grant a grant of a decision, active, whose
+                              scope covers the job and that names the skill; the daemon refuses a decision of
+                              another job, a delegated decision and a grant of a narrower scope
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
 Every command accepts --json to print JSON instead of tables, or --toon to print the same data as

@@ -359,11 +359,8 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		// A grilling or Wayfinder question stays one: a new version cannot
 		// turn it into a kind of request that its leader answers from the
 		// records.
-		if needsTheUser(replaced) && in.Kind != replaced.Kind {
-			return DecisionRequest{}, nil, fmt.Errorf("decision request %d stays a %s request in every version: a new version of it is not a %s request", replaced.Request, replaced.Kind, in.Kind)
-		}
 		// A step stays one, of the same skill, in every version.
-		if (replaced.Kind == RequestStep) != (in.Kind == RequestStep) {
+		if (needsTheUser(replaced) || replaced.Kind == RequestStep || in.Kind == RequestStep) && in.Kind != replaced.Kind {
 			return DecisionRequest{}, nil, fmt.Errorf("decision request %d stays a %s request in every version: a new version of it is not a %s request", replaced.Request, replaced.Kind, in.Kind)
 		}
 		if in.Kind == RequestStep {

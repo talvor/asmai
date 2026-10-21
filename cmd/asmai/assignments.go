@@ -487,15 +487,7 @@ type decisionFlags struct {
 
 // recordIDs reads the values of --record, decision record IDs.
 func recordIDs(values []string) ([]int64, error) {
-	var ids []int64
-	for _, v := range values {
-		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("--record %q is not a decision record ID, as `asmai brief` lists them", v)
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
+	return idFlag("record", "decision record", values)
 }
 
 // idFlag reads the values of --name, each the ID of a thing the flag names.
@@ -504,7 +496,7 @@ func idFlag(name, what string, values []string) ([]int64, error) {
 	for _, v := range values {
 		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("--%s %q is not a %s ID, as the answer to your step named it", name, v, what)
+			return nil, fmt.Errorf("--%s %q is not a %s ID", name, v, what)
 		}
 		ids = append(ids, id)
 	}

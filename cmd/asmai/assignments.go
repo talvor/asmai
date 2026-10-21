@@ -333,6 +333,7 @@ func printAssignment(w io.Writer, a store.Assignment) {
 		fmt.Fprintf(w, "Skill to run: %s\n", a.Skill)
 	}
 	printRecords(w, "Decision records passed to you with this assignment", a.DecisionRecords)
+	printGrants(w, "Grants in force for this job, carried with the assignment; reuse one while its scope and conditions hold, and run `asmai authorize` before each consequential action it covers", a.Grants)
 	if list := listOf(a); len(list) > 0 {
 		fmt.Fprintf(w, "Your skill list for this assignment: %s\n", strings.Join(list, ", "))
 	}
@@ -458,6 +459,8 @@ type decisionFlags struct {
 	request int64
 	version int
 	reading string
+	// grant makes the record a grant the user gave in words, at its scope.
+	grant grantFlags
 }
 
 // recordIDs reads the values of --record, decision record IDs.
@@ -499,6 +502,9 @@ func decisionRecord(o *output, paths statedir.Paths, f decisionFlags) int {
 	cites, latest, err := witnessedRef(f.cites)
 	if err != nil {
 		return o.fail(fmt.Errorf("--cites: %w", err))
+	}
+	if f.grant.grant {
+		return grantRecord(o, paths, f, f.grant, cites, latest)
 	}
 	if f.request != 0 {
 		return conversationAnswer(o, paths, f, cites, latest)

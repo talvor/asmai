@@ -146,6 +146,11 @@ type Assignment struct {
 	// themselves, which survive restarts with the store.
 	Records         []int64          `json:"records,omitempty"`
 	DecisionRecords []DecisionRecord `json:"decision_records,omitempty"`
+	// Grants are the grants in force for the assignment's job as its worker
+	// or owning leader fetches it, carried with the assignment and checked
+	// again before each consequential action they cover. They are not stored
+	// with it.
+	Grants []Grant `json:"grants,omitempty"`
 	// recorded is the column Records are read from.
 	recorded string
 	// List is the skill list the worker is given, with added and

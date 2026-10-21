@@ -335,9 +335,18 @@ func (d *daemon) effect(req Request) (store.Effect, error) {
 	if l.currentDispatch == 0 {
 		return store.Effect{}, refuse("%s has no current dispatch to tag the effect with; record effects while working on a dispatch you fetched with `asmai inbox`", ref.address)
 	}
+	authorized, err := d.grantedEffect(ref, req.Kind, l.currentDispatch)
+	if err != nil {
+		return store.Effect{}, err
+	}
 	e, err := d.store.EffectRecorded(ref.address.String(), ref.generation, l.currentDispatch, req.Kind, req.Ref, time.Now())
 	if err != nil {
 		return store.Effect{}, refuse("%v", err)
+	}
+	if authorized.ID != 0 {
+		if err := d.store.AuthorizationUsed(authorized.ID, e.ID); err != nil {
+			return store.Effect{}, err
+		}
 	}
 	return e, nil
 }

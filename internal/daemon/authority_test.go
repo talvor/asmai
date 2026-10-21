@@ -74,6 +74,19 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"current", CommandDecisionRecord, ""},
 		{"worker", CommandDecisionRecord, "only a role's leader may run asmai decision record"},
 		{"", CommandDecisionRecord, "asmai decision record is an agent command"},
+		// Any agent checks an action against the grants before it takes it, and
+		// only a leader reports that a condition no longer holds; listing and
+		// revoking grants are the user's.
+		{"worker", CommandAuthorize, ""},
+		{"engineering", CommandAuthorize, ""},
+		{"", CommandAuthorize, "asmai authorize is an agent command"},
+		{"quality", CommandGrantInvalidate, ""},
+		{"worker", CommandGrantInvalidate, "only a role's leader may run asmai grant invalidate"},
+		{"", CommandGrantInvalidate, "asmai grant invalidate is an agent command"},
+		{"engineering", CommandGrants, "ask the user to run `asmai grants`"},
+		{"current", CommandGrantRevoke, "ask the user to run `asmai grant revoke`"},
+		{"", CommandGrants, ""},
+		{"", CommandGrantRevoke, ""},
 		// Any agent requests a decision; only a leader answers one; only the
 		// user lists the pending decisions.
 		{"worker", CommandDecisionRequest, ""},

@@ -125,6 +125,16 @@ const (
 	// user's answer is a witnessed message given after it, which Coordination
 	// records with CommandDecisionRecord naming the request and version.
 	CommandDecisionPresent = "decision.present"
+	// CommandDecisionRecord with a Grant records one: the user's authorization
+	// of an exact decision or action, given in words, at its scope. An agent
+	// checks a consequential action against the grants with CommandAuthorize
+	// before it takes it, and a leader reports that a condition of a grant no
+	// longer holds with CommandGrantInvalidate. The user lists grants with
+	// CommandGrants and revokes one with CommandGrantRevoke.
+	CommandAuthorize       = "authorize"
+	CommandGrants          = "grants"
+	CommandGrantRevoke     = "grant.revoke"
+	CommandGrantInvalidate = "grant.invalidate"
 )
 
 // Request is a command sent to the daemon: one JSON line per connection.
@@ -222,6 +232,14 @@ type Request struct {
 	// Records are the decision records of the job that an assign or a
 	// handoff send passes on.
 	Records []int64 `json:"records,omitempty"`
+	// Grant is the grant a decision.record records, Action the consequential
+	// action an authorize checks, and GrantID and Why the grant a revocation
+	// or an invalidation ends, and for an invalidation the condition that no
+	// longer holds.
+	Grant   *store.GrantInput    `json:"grant,omitempty"`
+	Action  *store.ActionRequest `json:"action,omitempty"`
+	GrantID int64                `json:"grant_id,omitempty"`
+	Why     string               `json:"why,omitempty"`
 	// Log is a Dashboard log read, and Entry the journal ID of the entry a
 	// Dashboard entry read is for.
 	Log   *LogQuery `json:"log,omitempty"`
@@ -288,6 +306,13 @@ type Response struct {
 	// daemon's re-run of a head's failed jobs on it.
 	DecisionRecord *store.DecisionRecord `json:"decision_record,omitempty"`
 	Rerun          *store.Rerun          `json:"rerun,omitempty"`
+	// Grant is the grant a leader recorded, Grants the grants `asmai grants`
+	// lists, Authorization the grant's cover of an action that was checked,
+	// and GrantEnding what ending a grant leaves.
+	Grant         *store.Grant         `json:"grant,omitempty"`
+	Grants        []store.Grant        `json:"grants,omitempty"`
+	Authorization *store.Authorization `json:"authorization,omitempty"`
+	GrantEnding   *store.GrantEnding   `json:"grant_ending,omitempty"`
 	// ConfigApply is what config.apply shows, or applied.
 	ConfigApply *ConfigApply `json:"config_apply,omitempty"`
 	// Trailers are the trailers a worker's commit carries, each as
@@ -716,8 +741,12 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.assignmentCommand(conn, req)
 	case CommandPush:
 		d.pushCommand(conn, req)
+	case CommandAuthorize, CommandGrants, CommandGrantRevoke, CommandGrantInvalidate:
+		d.grantCommand(conn, req)
 	case CommandDecisionRecord:
-		if req.Request != 0 {
+		if req.Grant != nil {
+			d.grantCommand(conn, req)
+		} else if req.Request != 0 {
 			// The user's answer to a decision request, in the conversation.
 			d.decisionRequestCommand(conn, req)
 		} else {

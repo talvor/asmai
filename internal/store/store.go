@@ -273,6 +273,23 @@ ALTER TABLE decision_records ADD COLUMN request INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE decision_records ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE decision_records ADD COLUMN reading TEXT NOT NULL DEFAULT '';
 `,
+	`
+CREATE TABLE grants (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, job INTEGER NOT NULL DEFAULT 0,
+ repository TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, approved TEXT NOT NULL,
+ amount INTEGER NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT '', conditions TEXT NOT NULL DEFAULT '[]',
+ leader TEXT NOT NULL, cites INTEGER NOT NULL, answer INTEGER NOT NULL DEFAULT 0, words TEXT NOT NULL,
+ state TEXT NOT NULL, ended_by TEXT NOT NULL DEFAULT '', ended_reason TEXT NOT NULL DEFAULT '',
+ ended_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+CREATE TABLE authorizations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, grant_id INTEGER NOT NULL REFERENCES grants(id),
+ job INTEGER NOT NULL REFERENCES jobs(number), assignment INTEGER NOT NULL DEFAULT 0,
+ dispatch INTEGER NOT NULL DEFAULT 0, agent TEXT NOT NULL, action TEXT NOT NULL, what TEXT NOT NULL,
+ amount INTEGER NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT '', effect INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -391,6 +408,15 @@ const (
 	KindDecisionPresented = "decision.presented"
 	KindDecisionRefused   = "decision.refused"
 	KindChecksRerun       = "checks.rerun"
+	// KindGrantRecorded records a leader recording a grant the user gave in
+	// words, citing them. KindActionAuthorized records the daemon finding a
+	// grant that covers a consequential action an agent asked to take, and
+	// KindGrantRevoked and KindGrantInvalidated a grant ending: the user's
+	// revocation, and a leader reporting that a condition no longer holds.
+	KindGrantRecorded    = "grant.recorded"
+	KindActionAuthorized = "action.authorized"
+	KindGrantRevoked     = "grant.revoked"
+	KindGrantInvalidated = "grant.invalidated"
 	// KindCIWaitReplaced records the daemon dropping its wait on the checks
 	// of an older head of a job's pull request for those of the head it
 	// pushed since.

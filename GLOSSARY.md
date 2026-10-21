@@ -72,7 +72,7 @@ A request for another leader to take responsibility for a defined outcome, carry
 The authority to pursue a requested outcome within its agreed scope, constraints, and acceptance criteria.
 
 **Grant**:
-An explicit authorization for a decision or action within a recorded scope and set of conditions, reusable while those conditions hold.
+An explicit authorization for a decision or action within a recorded scope and set of conditions, reusable while those conditions hold. The user gives it in words, and a leader records it at its scope citing them. A job's own approval stays with that job unless granted at a wider scope, spending is zero unless a grant names the amount and the scope, and no grant can authorize a merge. It ends only when the user revokes it or a leader reports that a condition no longer holds; actions it already authorized are reported as they stand, never undone.
 
 **Viable approach**:
 A way of achieving an outcome that satisfies the agreed constraints and differs from alternatives in behavior, dependencies, interfaces, cost, maintenance, or operational consequences. Equivalent expression styles are not distinct approaches.

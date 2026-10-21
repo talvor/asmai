@@ -105,11 +105,36 @@ type DecisionRequest struct {
 	// conversation, the witnessed message that holds their words (which are
 	// Answer), Coordination's reading of them, and the decision record that
 	// holds both.
-	Cites     int64      `json:"cites,omitempty"`
-	Reading   string     `json:"reading,omitempty"`
-	Record    int64      `json:"record,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	SettledAt *time.Time `json:"settled_at,omitempty"`
+	Cites   int64  `json:"cites,omitempty"`
+	Reading string `json:"reading,omitempty"`
+	Record  int64  `json:"record,omitempty"`
+	// Answered are the ids of the questions of a version answered in Lavish
+	// that have an answer. The version stays pending, shown as partly
+	// answered, until every question has one or the leader issues a new
+	// version. For a version answered in Lavish, Cites is the Lavish answer
+	// that completed it.
+	Answered []string `json:"answered,omitempty"`
+	// PageFile and PageURL are the Lavish page that carries a version
+	// answered in Lavish, once the daemon opened it, and PageClosed says the
+	// daemon ended the page's session because the version is settled.
+	PageFile   string     `json:"page_file,omitempty"`
+	PageURL    string     `json:"page_url,omitempty"`
+	PageClosed bool       `json:"page_closed,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	SettledAt  *time.Time `json:"settled_at,omitempty"`
+}
+
+// Partly says the version has answers to some of its questions but not all:
+// it stays pending, shown as partly answered.
+func (r DecisionRequest) Partly() bool {
+	return r.State == RequestPending && len(r.Answered) > 0 && len(r.Answered) < len(r.Questions)
+}
+
+// HasPage says the version is carried by a Lavish page: it is a request to
+// the user answered in Lavish. A worker's request goes to its owning leader,
+// which answers it from the records, and has none.
+func (r DecisionRequest) HasPage() bool {
+	return r.Surface == SurfaceLavish && r.Recipient == ToUser
 }
 
 // DecisionRequestInput is a decision request to make: a new request, or with
@@ -187,15 +212,18 @@ func validateRequest(in DecisionRequestInput) error {
 	return nil
 }
 
-const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), kind, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, cites, reading, record, created_at, settled_at`
+const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), kind, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, cites, reading, record, answered, page_file, page_url, page_closed, created_at, settled_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanDecisionRequest(row rowScanner) (DecisionRequest, error) {
 	var r DecisionRequest
-	var questions, blocks, created string
+	var questions, blocks, answered, created string
 	var settled sql.NullString
-	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Kind, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &r.Cites, &r.Reading, &r.Record, &created, &settled); err != nil {
+	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Kind, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &r.Cites, &r.Reading, &r.Record, &answered, &r.PageFile, &r.PageURL, &r.PageClosed, &created, &settled); err != nil {
+		return DecisionRequest{}, err
+	}
+	if err := json.Unmarshal([]byte(answered), &r.Answered); err != nil {
 		return DecisionRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(questions), &r.Questions); err != nil {
@@ -407,12 +435,23 @@ func (r DecisionRequest) Text() string {
 		surface = "Lavish"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Decision request %d, version %d | job %d | from %s to %s | %s | answered in %s\n", r.Request, r.Version, r.Job, r.Requester, r.Recipient, r.State, surface)
+	state := r.State
+	if r.Partly() {
+		state = fmt.Sprintf("partly answered (%d of %d questions)", len(r.Answered), len(r.Questions))
+	}
+	fmt.Fprintf(&b, "Decision request %d, version %d | job %d | from %s to %s | %s | answered in %s\n", r.Request, r.Version, r.Job, r.Requester, r.Recipient, state, surface)
+	if r.PageURL != "" && r.State == RequestPending {
+		fmt.Fprintf(&b, "Lavish page: %s\n", r.PageURL)
+	}
 	if r.Content != "" {
 		fmt.Fprintf(&b, "Content: %s\n", r.Content)
 	}
 	for _, q := range r.Questions {
-		fmt.Fprintf(&b, "Question %s: %s\n", q.ID, q.Title)
+		answered := ""
+		if slices.Contains(r.Answered, q.ID) {
+			answered = " (answered)"
+		}
+		fmt.Fprintf(&b, "Question %s: %s%s\n", q.ID, q.Title, answered)
 		if q.Body != "" {
 			fmt.Fprintf(&b, "  %s\n", q.Body)
 		}
@@ -426,7 +465,9 @@ func (r DecisionRequest) Text() string {
 	if len(r.Blocks) > 0 && r.State == RequestPending {
 		fmt.Fprintf(&b, "The work of assignments %v waits for the answer.\n", r.Blocks)
 	}
-	if r.Cites != 0 {
+	if r.Cites != 0 && r.Surface == SurfaceLavish {
+		fmt.Fprintf(&b, "Answered by the user in Lavish, completed by Lavish answer %d:\n%s\n", r.Cites, r.Answer)
+	} else if r.Cites != 0 {
 		fmt.Fprintf(&b, "Answered by the user in witnessed message %d: %s\nCoordination's reading: %s\n", r.Cites, r.Answer, r.Reading)
 	}
 	return b.String()

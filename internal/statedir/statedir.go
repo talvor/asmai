@@ -41,6 +41,10 @@ type Paths struct {
 	// which holds its review pages and so keeps them across its restarts. It
 	// is never the user's own, ~/.lavish-axi.
 	Lavish string
+	// DecisionPages holds the Lavish page of each version of a decision
+	// request answered in Lavish, which the daemon renders and the Lavish
+	// server shows.
+	DecisionPages string
 	// GitHooks holds the git hooks every worker's git runs, which add the
 	// commit trailers and then run the repository's own hooks.
 	GitHooks string
@@ -87,21 +91,22 @@ func Default() (Paths, error) {
 // At returns the paths in the state directory dir.
 func At(dir string) Paths {
 	return Paths{
-		Dir:          dir,
-		Socket:       filepath.Join(dir, "daemon.sock"),
-		Lock:         filepath.Join(dir, "daemon.lock"),
-		Store:        filepath.Join(dir, "store.db"),
-		Log:          filepath.Join(dir, "daemon.log"),
-		Providers:    filepath.Join(dir, "providers"),
-		Bin:          filepath.Join(dir, "bin"),
-		Executable:   filepath.Join(dir, "bin", "asmai"),
-		Lavish:       filepath.Join(dir, "lavish"),
-		GitHooks:     filepath.Join(dir, "githooks"),
-		Agents:       filepath.Join(dir, "agents"),
-		Plugins:      filepath.Join(dir, "plugins"),
-		Repositories: filepath.Join(dir, "repositories"),
-		Workspaces:   filepath.Join(dir, "workspaces"),
-		Views:        filepath.Join(dir, "views"),
+		Dir:           dir,
+		Socket:        filepath.Join(dir, "daemon.sock"),
+		Lock:          filepath.Join(dir, "daemon.lock"),
+		Store:         filepath.Join(dir, "store.db"),
+		Log:           filepath.Join(dir, "daemon.log"),
+		Providers:     filepath.Join(dir, "providers"),
+		Bin:           filepath.Join(dir, "bin"),
+		Executable:    filepath.Join(dir, "bin", "asmai"),
+		Lavish:        filepath.Join(dir, "lavish"),
+		DecisionPages: filepath.Join(dir, "decision-pages"),
+		GitHooks:      filepath.Join(dir, "githooks"),
+		Agents:        filepath.Join(dir, "agents"),
+		Plugins:       filepath.Join(dir, "plugins"),
+		Repositories:  filepath.Join(dir, "repositories"),
+		Workspaces:    filepath.Join(dir, "workspaces"),
+		Views:         filepath.Join(dir, "views"),
 	}
 }
 

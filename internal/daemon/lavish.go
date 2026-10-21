@@ -30,6 +30,9 @@ type LavishConfig struct {
 	// Environ is the environment the server's is made from; with none, the
 	// daemon's.
 	Environ []string
+	// PagesEvery is how often the daemon looks for decision pages to open,
+	// to end and to listen to; with none, a second.
+	PagesEvery time.Duration
 }
 
 // LavishStatus is the factory's Lavish server and the review pages waiting
@@ -148,6 +151,18 @@ func (d *daemon) lavishStatus() *LavishStatus {
 	if err != nil {
 		s.PagesError = err.Error()
 		pages = []lavish.Page{}
+	}
+	// Each page the daemon opened for a decision request says which version it
+	// renders, and how far it is answered.
+	if open, err := d.store.LavishPagesOpen(); err == nil {
+		for i := range pages {
+			for _, r := range open {
+				if r.PageFile == pages[i].File {
+					pages[i].Request, pages[i].Version, pages[i].Job = r.Request, r.Version, r.Job
+					pages[i].Answered, pages[i].Questions = len(r.Answered), len(r.Questions)
+				}
+			}
+		}
 	}
 	s.Pages = pages
 	return s

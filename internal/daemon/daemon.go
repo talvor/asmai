@@ -445,6 +445,7 @@ func Run(ctx context.Context, cfg Config) error {
 		lookNow: make(chan struct{}, 1),
 	}
 	d.lavish = d.newLavish()
+	d.pages = d.newPages()
 	d.applied = readApplied(cfg.ConfigFile)
 	registered, err := st.Repositories()
 	if err != nil {
@@ -486,6 +487,13 @@ func Run(ctx context.Context, cfg Config) error {
 	go func() {
 		defer d.wg.Done()
 		d.lavish.Run(d.work)
+	}()
+	// The daemon renders the decision requests answered in Lavish, collects
+	// what the user sends from their pages and routes it.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.pages.run(d.work)
 	}()
 
 	var by string
@@ -539,6 +547,8 @@ type daemon struct {
 	wg   sync.WaitGroup
 	// lavish supervises the factory's Lavish server.
 	lavish *lavish.Server
+	// pages keeps the Lavish pages of decision requests answered there.
+	pages *pages
 	// lookNow has the CI watch look at every job's checks at once, as after
 	// a push or a re-run.
 	lookNow chan struct{}

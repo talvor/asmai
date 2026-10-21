@@ -87,9 +87,12 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 	}
 	r := resp.DecisionRequest
 	fmt.Fprintf(o.stdout, "decision request %d, version %d, recorded for job %d; it goes to %s and is answered in %s\n", r.Request, r.Version, r.Job, r.Recipient, r.Surface)
-	if r.Recipient != store.ToUser {
+	switch {
+	case r.Recipient != store.ToUser:
 		fmt.Fprintln(o.stdout, "next: work that depends on the choice waits for the answer, and independent work goes on; `asmai inbox` brings it")
-	} else {
+	case r.Surface == store.SurfaceLavish:
+		fmt.Fprintln(o.stdout, "next: the daemon renders your questions and your own content in a Lavish page for the user, collects what they send and brings it to you in `asmai inbox`, word for word; Coordination tells them where the page is. A page they send with some questions unanswered reaches you at once and the request stays pending, partly answered; work that depends on the choice waits for the answer, and independent work goes on")
+	default:
 		fmt.Fprintln(o.stdout, "next: Coordination presents it to the user; work that depends on the choice waits for the answer, and independent work goes on")
 	}
 	return 0
@@ -194,17 +197,35 @@ func listDecisions(o *output, paths statedir.Paths) int {
 		fmt.Fprintln(o.stdout, "No decisions are pending.")
 		return 0
 	}
-	rows := [][]string{{"REQUEST", "VERSION", "JOB", "FROM", "ANSWER SURFACE", "QUESTIONS"}}
+	rows := [][]string{{"REQUEST", "VERSION", "JOB", "FROM", "ANSWER SURFACE", "STATE", "QUESTIONS"}}
 	for _, r := range list {
 		titles := make([]string, len(r.Questions))
 		for i, q := range r.Questions {
 			titles[i] = q.Title
 		}
-		rows = append(rows, []string{strconv.FormatInt(r.Request, 10), strconv.Itoa(r.Version), strconv.FormatInt(r.Job, 10), r.Requester, surfaceName(r.Surface), strings.Join(titles, "; ")})
+		rows = append(rows, []string{strconv.FormatInt(r.Request, 10), strconv.Itoa(r.Version), strconv.FormatInt(r.Job, 10), r.Requester, surfaceName(r.Surface), requestState(r), strings.Join(titles, "; ")})
 	}
 	o.table(rows)
-	fmt.Fprintln(o.stdout, "\nThis lists decisions and answers none. Answer in the surface shown: the conversation is `asmai chat`.")
+	for _, r := range list {
+		if r.PageURL != "" {
+			fmt.Fprintf(o.stdout, "\nRequest %d, version %d is answered at %s", r.Request, r.Version, r.PageURL)
+		}
+	}
+	fmt.Fprintln(o.stdout, "\n\nThis lists decisions and answers none. Answer in the surface shown: the conversation is `asmai chat`, and a Lavish page is opened from its link (`asmai lavish` lists the links and the command that forwards the port from another machine).")
 	return 0
+}
+
+// requestState says where a pending version stands: pending, or partly
+// answered, with how many of its questions have an answer, or while its Lavish
+// page is not open yet.
+func requestState(r store.DecisionRequest) string {
+	switch {
+	case r.Partly():
+		return fmt.Sprintf("partly answered (%d of %d)", len(r.Answered), len(r.Questions))
+	case r.HasPage() && r.PageFile == "":
+		return "pending (page opening)"
+	}
+	return r.State
 }
 
 func surfaceName(surface string) string {

@@ -516,3 +516,41 @@ func TestCoordinationPresentsAChoiceOnceAndRecordsTheUsersOwnMessageWithItsReadi
 		}
 	}
 }
+
+func TestLeadersSendSeveralQuestionsToLavishAndCoordinationConfirmsWhatTheUserSentInOneLine(t *testing.T) {
+	for _, role := range []string{Engineering, Quality} {
+		text, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"Ask in Lavish when several questions are open",
+			"--kind <questions|review|grilling|wayfinder> --question",
+			"never run or open Lavish",
+			"word for word, with the Lavish answer's ID",
+			"partly answered",
+			"A new version reissues the page, and answers from the old page are refused",
+			"--source human --cites <the Lavish answer's ID>",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+	}
+	text, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"A request answered in Lavish is not shown in the conversation",
+		"`asmai decisions` lists the request with its page's link",
+		"`asmai lavish` gives the command that forwards Lavish's port",
+		"A message of kind `decision.sent`",
+		"confirm it to the user in the conversation in one line tagged with the job's number",
+		"never answer for the user",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+}

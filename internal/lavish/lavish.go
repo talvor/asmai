@@ -77,6 +77,15 @@ type Page struct {
 	// PendingPrompts counts what the user sent that has not been collected.
 	PendingPrompts int       `json:"pending_prompts"`
 	UpdatedAt      time.Time `json:"updated_at,omitzero"`
+	// Request, Version and Job name the decision request version the page
+	// renders, and Answered how many of its Questions have an answer. The
+	// daemon sets them, from its store, on the pages it opened; Lavish does
+	// not know them.
+	Request   int64 `json:"request,omitempty"`
+	Version   int   `json:"version,omitempty"`
+	Job       int64 `json:"job,omitempty"`
+	Answered  int   `json:"answered,omitempty"`
+	Questions int   `json:"questions,omitempty"`
 }
 
 // StateFile is the file in the Lavish state directory that holds the review

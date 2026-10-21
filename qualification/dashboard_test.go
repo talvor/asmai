@@ -19,6 +19,7 @@ const dashboardSample = ` asmai dashboard  factory running
  AGENT                STATUS                 JOB    INPUT      SINCE DOING
  leader@coordination  ▲ Waiting on you       -      automation <1m   native prompt: Write
  leader@engineering   ○ Idle (unknown)       -      automation <1m   dispatch state unknown
+ leader@planning      ■ Stopped              -      -          <1m   session ended
  leader@quality       ■ Stopped              -      -          <1m   session ended
 `
 
@@ -31,7 +32,7 @@ func TestTheDashboardIsReadAsItIsDrawn(t *testing.T) {
 	if want := "leader@coordination native prompt: Write `/x/qualification-dashboard.txt` · +1 more"; v.banner != want {
 		t.Errorf("banner = %q, want %q", v.banner, want)
 	}
-	if want := []string{"leader@coordination", "leader@engineering", "leader@quality"}; !slices.Equal(v.order, want) {
+	if want := []string{"leader@coordination", "leader@engineering", "leader@planning", "leader@quality"}; !slices.Equal(v.order, want) {
 		t.Errorf("agents = %q, want %q", v.order, want)
 	}
 	for agent, want := range map[string]string{"leader@coordination": "Waiting on you", "leader@engineering": "Idle", "leader@quality": "Stopped"} {
@@ -69,7 +70,7 @@ func TestAttachedScreenInFailuresRequiresShowScreen(t *testing.T) {
 func TestRunningFactoryRequiresEachLeaderOnce(t *testing.T) {
 	valid := parseDashboard(strings.Split(dashboardSample, "\n"), vt.State{})
 	if !showsRunningLeaders(valid) {
-		t.Error("the running factory's three leaders were rejected")
+		t.Error("the running factory's four leaders were rejected")
 	}
 	duplicate := parseDashboard(strings.Split(strings.Replace(dashboardSample, "leader@engineering", "leader@quality", 1), "\n"), vt.State{})
 	if showsRunningLeaders(duplicate) {
@@ -324,7 +325,7 @@ func TestC54ShowsAndClearsTheStoppedMessageAcrossTwoStopsAndStarts(t *testing.T)
 		t.Fatalf("C54 %s: %s", r.Outcome, r.Failure)
 	}
 	requireEvidence(t, r,
-		"the dashboard showed the running factory: leader@coordination, leader@engineering, leader@quality",
+		"the dashboard showed the running factory: leader@coordination, leader@engineering, leader@planning, leader@quality",
 		"round 1: asmai stop cleared the dashboard to the stopped message alone",
 		"the dashboard cleared the stopped message and showed the restored factory (Coordination's leader in generation 2)",
 		"round 2: asmai stop cleared the dashboard to the stopped message alone",
@@ -440,7 +441,7 @@ func TestC53ShowsTheStatusesAndTheWaitingOnYouSetOfARealFactory(t *testing.T) {
 		t.Fatalf("C53 %s: %s", r.Outcome, r.Failure)
 	}
 	requireEvidence(t, r,
-		"at rest the dashboard showed leader@coordination Idle, and leader@engineering and leader@quality, which have not run, Stopped",
+		"at rest the dashboard showed leader@coordination Idle, and leader@planning, leader@engineering and leader@quality, which have not run, Stopped",
 		"while the user held leader@coordination's input in the conversation, the dashboard showed it Waiting on you",
 		"raised a native permission prompt, which its PermissionRequest hook reported",
 		"once the user answered the prompt and the leader's turn finished, the dashboard showed leader@coordination Idle and the banner empty",

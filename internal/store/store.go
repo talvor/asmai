@@ -301,6 +301,10 @@ CREATE TABLE lavish_answers (
  answers TEXT NOT NULL, created_at TEXT NOT NULL
 );
 `,
+	`
+ALTER TABLE decision_requests ADD COLUMN carries INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE decision_requests ADD COLUMN carries_version INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

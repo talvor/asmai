@@ -5,6 +5,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/talvor/asmai/internal/roles"
@@ -44,15 +45,15 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return fmt.Errorf("only leader@coordination may run asmai job open")
 	case CommandAssign:
-		if ref.address == roles.LeaderOf(roles.Engineering) || ref.address == roles.LeaderOf(roles.Quality) {
+		if ownsWorkers(ref.address) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering, for writing work, or leader@quality, for validation, may run asmai assign")
+		return fmt.Errorf("only leader@engineering or leader@planning, for writing work, or leader@quality, for validation, may run asmai assign")
 	case CommandAccept, CommandReject, CommandCancel:
-		if ref.address == roles.LeaderOf(roles.Engineering) || ref.address == roles.LeaderOf(roles.Quality) {
+		if ownsWorkers(ref.address) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering or leader@quality may run asmai %s", req.Command)
+		return fmt.Errorf("only leader@engineering, leader@planning or leader@quality may run asmai %s", req.Command)
 	case CommandPush:
 		if ref.address == roles.LeaderOf(roles.Engineering) {
 			return nil
@@ -154,4 +155,11 @@ func commandName(command string) string {
 	default:
 		return ""
 	}
+}
+
+// ownsWorkers reports whether address is a leader that gives workers
+// assignments, and accepts, rejects and cancels them: Engineering's and
+// Planning's for writing work, Quality's for validation.
+func ownsWorkers(address roles.Address) bool {
+	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Quality)}, address)
 }

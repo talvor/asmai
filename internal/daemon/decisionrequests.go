@@ -96,7 +96,7 @@ func (d *daemon) decisionRequest(req Request) (store.DecisionRequest, *store.Dis
 		if req.Job <= 0 {
 			return store.DecisionRequest{}, nil, refuse("a leader's decision request names its job: give --job")
 		}
-		in.Job, in.Recipient, in.Blocks = req.Job, store.ToUser, req.Blocks
+		in.Job, in.Recipient, in.Blocks, in.Carries = req.Job, store.ToUser, req.Blocks, req.Carries
 		if coordination := roles.LeaderOf(roles.Coordination); ref.address != coordination {
 			in.Notify = coordination.String()
 		}
@@ -115,6 +115,9 @@ func (d *daemon) decisionRequest(req Request) (store.DecisionRequest, *store.Dis
 	} else {
 		if len(req.Blocks) > 0 || req.Job != 0 {
 			return store.DecisionRequest{}, nil, refuse("a worker's decision request is about its own assignment: it takes no --job and no --blocks")
+		}
+		if req.Carries != 0 {
+			return store.DecisionRequest{}, nil, refuse("a worker's decision request carries nothing: only its owning leader carries it to the user")
 		}
 		if l.currentDispatch == 0 {
 			return store.DecisionRequest{}, nil, refuse("%s has no current dispatch to ask about; ask about the assignment you fetched with `asmai inbox`", ref.address)
@@ -159,8 +162,8 @@ func (d *daemon) decisionAnswer(req Request) (store.DecisionRequest, store.Dispa
 	if err != nil {
 		return store.DecisionRequest{}, store.Dispatch{}, err
 	}
-	if req.Request <= 0 || req.Version <= 0 || strings.TrimSpace(req.Answer) == "" {
-		return store.DecisionRequest{}, store.Dispatch{}, refuse("asmai decision answer needs the request, the version it answers and the answer")
+	if req.Request <= 0 || req.Version <= 0 {
+		return store.DecisionRequest{}, store.Dispatch{}, refuse("asmai decision answer needs the request and the version it answers")
 	}
 	latest, err := d.store.DecisionRequest(req.Request)
 	if err != nil {
@@ -172,7 +175,7 @@ func (d *daemon) decisionAnswer(req Request) (store.DecisionRequest, store.Dispa
 	case latest.Recipient != ref.address.String():
 		return store.DecisionRequest{}, store.Dispatch{}, refuse("decision request %d goes to %s, not %s", latest.Request, latest.Recipient, ref.address)
 	}
-	r, dispatch, err := d.store.DecisionAnswered(store.DecisionAnswer{Request: req.Request, Version: req.Version, Answerer: ref.address.String(), Text: req.Answer, ReliedOn: req.ReliedOn}, time.Now())
+	r, dispatch, err := d.store.DecisionAnswered(store.DecisionAnswer{Request: req.Request, Version: req.Version, Answerer: ref.address.String(), Text: req.Answer, ReliedOn: req.ReliedOn, Carried: req.UserAnswer}, time.Now())
 	if err != nil {
 		return store.DecisionRequest{}, store.Dispatch{}, refuse("%v", err)
 	}

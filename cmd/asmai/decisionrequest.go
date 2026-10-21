@@ -30,6 +30,11 @@ type requestFlags struct {
 	options, questions     listFlags
 	blocks                 listFlags
 	answer, reliedOn       string
+	// carries is the worker's request that a leader's request carries to the
+	// user, and
+	// userAnswer the leader's request whose answer by the user returns to
+	// the worker.
+	carries, userAnswer int64
 }
 
 // questionsOf returns the questions the flags give: the one question of the
@@ -78,7 +83,7 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 		}
 		blocks = append(blocks, id)
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRequest, Session: os.Getenv(daemon.SessionCredential), Job: f.job, Request: f.request, Kind: kind, Content: f.content, Questions: questions, Blocks: blocks})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRequest, Session: os.Getenv(daemon.SessionCredential), Job: f.job, Request: f.request, Kind: kind, Content: f.content, Questions: questions, Blocks: blocks, Carries: f.carries})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -99,10 +104,13 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 }
 
 func decisionAnswer(o *output, paths statedir.Paths, f requestFlags) int {
-	if f.request <= 0 || f.version <= 0 || strings.TrimSpace(f.answer) == "" {
-		return o.fail(errors.New("decision answer needs --request, --version (the version it answers) and --answer"))
+	if f.request <= 0 || f.version <= 0 || (strings.TrimSpace(f.answer) == "" && f.userAnswer <= 0) {
+		return o.fail(errors.New("decision answer needs --request, --version (the version it answers) and --answer, or --user-answer: the request of yours that carried the question to the user"))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionAnswer, Session: os.Getenv(daemon.SessionCredential), Request: f.request, Version: f.version, Answer: f.answer, ReliedOn: f.reliedOn})
+	if strings.TrimSpace(f.answer) != "" && f.userAnswer > 0 {
+		return o.fail(errors.New("decision answer takes --answer or --user-answer, not both: the user's own answer is returned as they gave it, with nothing of an agent's beside it"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionAnswer, Session: os.Getenv(daemon.SessionCredential), Request: f.request, Version: f.version, Answer: f.answer, ReliedOn: f.reliedOn, UserAnswer: f.userAnswer})
 	if err != nil {
 		return o.fail(err)
 	}

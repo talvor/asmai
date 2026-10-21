@@ -191,3 +191,10 @@ func (g Given) describe() (description string, userInvoked bool) {
 	fields := frontMatter(strings.ReplaceAll(string(data), "\r\n", "\n"))
 	return fields["description"], fields["disable-model-invocation"] == "true"
 }
+
+// UserInvoked says whether the skill g starts only on request: upstream
+// marks it so, or for a skill that is not shipped its own SKILL.md does.
+func (g Given) UserInvoked() bool {
+	_, userInvoked := g.describe()
+	return userInvoked
+}

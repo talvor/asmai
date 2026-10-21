@@ -21,6 +21,12 @@ leader_model = "opus"
 worker_provider = "claude"
 worker_model = "sonnet"
 
+[roles.planning]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
 [roles.engineering]
 leader_provider = "claude"
 leader_model = "opus"

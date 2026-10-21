@@ -12,12 +12,14 @@ import (
 
 func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 	coordination := roles.LeaderOf(roles.Coordination)
+	planning := roles.LeaderOf(roles.Planning)
 	engineering := roles.LeaderOf(roles.Engineering)
 	quality := roles.LeaderOf(roles.Quality)
 	worker := roles.Address{Name: "worker-1", Role: roles.Coordination}
 	d := &daemon{
 		leaders: map[string]*leader{
 			coordination.String(): {address: coordination, session: &session.Session{}, generation: 2},
+			planning.String():     {address: planning, session: &session.Session{}, generation: 1},
 			engineering.String():  {address: engineering, session: &session.Session{}, generation: 1},
 			quality.String():      {address: quality, session: &session.Session{}, generation: 1},
 			worker.String():       {address: worker, session: &session.Session{}, generation: 1},
@@ -25,6 +27,7 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		sessions: map[string]sessionRef{
 			"current":     {address: coordination, generation: 2},
 			"old":         {address: coordination, generation: 1},
+			"planning":    {address: planning, generation: 1},
 			"engineering": {address: engineering, generation: 1},
 			"quality":     {address: quality, generation: 1},
 			"worker":      {address: worker, generation: 1},
@@ -41,17 +44,29 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"unknown", CommandJobs, "unknown or superseded"},
 		{"", CommandJobOpen, "agent command"},
 		{"engineering", CommandAssign, ""},
+		{"planning", CommandAssign, ""},
 		{"quality", CommandAssign, ""},
+		{"planning", CommandAccept, ""},
+		{"planning", CommandReject, ""},
+		{"planning", CommandCancel, ""},
 		{"engineering", CommandAccept, ""},
 		{"quality", CommandAccept, ""},
 		{"quality", CommandReject, ""},
 		{"quality", CommandCancel, ""},
-		{"current", CommandAccept, "only leader@engineering or leader@quality"},
-		{"worker", CommandCancel, "only leader@engineering or leader@quality"},
+		{"current", CommandAccept, "only leader@engineering, leader@planning or leader@quality"},
+		{"worker", CommandCancel, "only leader@engineering, leader@planning or leader@quality"},
 		{"quality", CommandResult, "only a worker"},
 		{"quality", CommandHandoffSend, ""},
-		{"current", CommandAssign, "only leader@engineering"},
-		{"worker", CommandAssign, "only leader@engineering"},
+		{"current", CommandAssign, "only leader@engineering or leader@planning"},
+		{"worker", CommandAssign, "only leader@engineering or leader@planning"},
+		// Only the delivery owner of a code job pushes, so Planning does not.
+		{"planning", CommandPush, "only leader@engineering, the delivery owner"},
+		{"planning", CommandJobOpen, "only leader@coordination"},
+		{"planning", CommandHandoffSend, ""},
+		{"planning", CommandDecisionRequest, ""},
+		{"planning", CommandDecisionAnswer, ""},
+		{"planning", CommandDecisionRecord, ""},
+		{"planning", CommandDecisionPresent, "only leader@coordination may run asmai decision present"},
 		{"worker", CommandEffect, ""},
 		{"engineering", CommandEffect, ""},
 		{"current", CommandEffect, "only a worker, or the delivery owner"},

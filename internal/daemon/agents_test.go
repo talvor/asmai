@@ -134,7 +134,7 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 
 	staffing := "[roles.%s]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"opus\"\n"
 	var config strings.Builder
-	for _, role := range []string{"coordination", "engineering", "quality"} {
+	for _, role := range []string{"coordination", "planning", "engineering", "quality"} {
 		config.WriteString(strings.ReplaceAll(staffing, "%s", role))
 	}
 	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
@@ -285,7 +285,7 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 func readyConfig(t *testing.T, dir string) string {
 	t.Helper()
 	var config strings.Builder
-	for _, role := range []string{"coordination", "engineering", "quality"} {
+	for _, role := range []string{"coordination", "planning", "engineering", "quality"} {
 		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"opus\"\n")
 	}
 	path := filepath.Join(dir, "config.toml")

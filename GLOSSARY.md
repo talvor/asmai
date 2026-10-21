@@ -69,7 +69,7 @@ _Avoid_: Pause (when the factory stopped the work)
 A request for another leader to take responsibility for a defined outcome, carrying the context and acceptance criteria needed to accept, clarify, or decline it.
 
 **Mandate**:
-The authority to pursue a requested outcome within its agreed scope, constraints, and acceptance criteria.
+The authority to pursue a requested outcome within its agreed scope, constraints, and acceptance criteria. A tested-PR mandate covers delivering a tested pull request; a planning-only mandate covers only producing its planning outcome, never code.
 
 **Grant**:
 An explicit authorization for a decision or action within a recorded scope and set of conditions, reusable while those conditions hold. The user gives it in words, and a leader records it at its scope citing them. A job's own approval stays with that job unless granted at a wider scope, spending is zero unless a grant names the amount and the scope, and no grant can authorize a merge. It ends only when the user revokes it or a leader reports that a condition no longer holds; actions it already authorized are reported as they stand, never undone.
@@ -210,7 +210,7 @@ _Avoid_: Digest, recap, summary
 The role responsible for the user's conversation with the factory and overall delivery progress.
 
 **Planning**:
-The role responsible for requirements, decision maps, and specifications.
+The role responsible for requirements, decision maps, and specifications. It prepares and interprets planning questions, and its leader carries each question its workers ask to the user as a decision request; Coordination presents the exchange to the user, and a grilling or Wayfinder question is resolved only by the user's own answer.
 
 **Research**:
 The role responsible for gathering evidence that informs the factory's work.
@@ -231,6 +231,9 @@ _Avoid_: Skill pack, skill set
 
 **Skill list**:
 The skills a role's leader, or its workers, may use. An assignment may narrow its worker's list.
+
+**User-invoked skill**:
+A skill upstream marks as one that starts only on request, such as wayfinder, to-spec, to-tickets, implement, triage and retro. It starts only when the user's request or the job's mandate calls for that kind of outcome, or with the user's own decision; otherwise the owning leader proposes it to the user as a decision.
 
 **Added skill**:
 A skill the user adds to a role's skill list through the configuration rather than one AsmAI ships. It may replace a shipped skill of the same name and is never qualified.

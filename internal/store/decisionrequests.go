@@ -82,8 +82,13 @@ type DecisionRequest struct {
 	Requester string `json:"requester"`
 	Recipient string `json:"recipient"`
 	// Assignment is the assignment a worker's request is about.
-	Assignment int64  `json:"assignment,omitempty"`
-	Kind       string `json:"kind"`
+	Assignment int64 `json:"assignment,omitempty"`
+	// Carries and CarriesVersion are the worker's request, and its version,
+	// that a leader's request to the user carries to them: the user's answer
+	// to it is what answers the worker's.
+	Carries        int64  `json:"carries,omitempty"`
+	CarriesVersion int    `json:"carries_version,omitempty"`
+	Kind           string `json:"kind"`
 	// Surface is the one answer surface of this version, fixed when it is
 	// made.
 	Surface string `json:"answer_surface"`
@@ -149,10 +154,14 @@ type DecisionRequestInput struct {
 	Recipient, Notify string
 	// Assignment is the assignment a worker's request is about.
 	Assignment int64
-	Kind       string
-	Content    string
-	Questions  []Question
-	Blocks     []int64
+	// Carries is the worker's request that a leader's request to the user
+	// carries, which is the owning leader's to carry: its new versions go on
+	// carrying it.
+	Carries   int64
+	Kind      string
+	Content   string
+	Questions []Question
+	Blocks    []int64
 }
 
 // DecisionAnswer is an answer to one version of a decision request.
@@ -164,6 +173,17 @@ type DecisionAnswer struct {
 	Text     string
 	// ReliedOn names the record the answer rests on.
 	ReliedOn string
+	// Carried is the answerer's own request to the user that carried the
+	// worker's request, whose answer by the user in Lavish is the answer:
+	// the daemon takes its words from there. A grilling or Wayfinder
+	// question is answered only so, and never in an agent's words.
+	Carried int64
+}
+
+// needsTheUser says whether the request r is a grilling or Wayfinder
+// question of a worker, which only the user's own answer resolves.
+func needsTheUser(r DecisionRequest) bool {
+	return r.Recipient != ToUser && (r.Kind == RequestGrilling || r.Kind == RequestWayfinder)
 }
 
 // jobTakesDecisions reports whether a job in state still takes decision
@@ -212,7 +232,7 @@ func validateRequest(in DecisionRequestInput) error {
 	return nil
 }
 
-const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), kind, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, cites, reading, record, answered, page_file, page_url, page_closed, created_at, settled_at`
+const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), carries, carries_version, kind, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, cites, reading, record, answered, page_file, page_url, page_closed, created_at, settled_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -220,7 +240,7 @@ func scanDecisionRequest(row rowScanner) (DecisionRequest, error) {
 	var r DecisionRequest
 	var questions, blocks, answered, created string
 	var settled sql.NullString
-	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Kind, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &r.Cites, &r.Reading, &r.Record, &answered, &r.PageFile, &r.PageURL, &r.PageClosed, &created, &settled); err != nil {
+	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Carries, &r.CarriesVersion, &r.Kind, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &r.Cites, &r.Reading, &r.Record, &answered, &r.PageFile, &r.PageURL, &r.PageClosed, &created, &settled); err != nil {
 		return DecisionRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(answered), &r.Answered); err != nil {
@@ -306,6 +326,13 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		}
 		version = replaced.Version + 1
 		in.Recipient, in.Assignment = replaced.Recipient, replaced.Assignment
+		if in.Carries == 0 {
+			in.Carries = replaced.Carries
+		}
+	}
+	carriesVersion, err := carriedVersion(tx, in)
+	if err != nil {
+		return DecisionRequest{}, nil, err
 	}
 	for _, id := range in.Blocks {
 		var job int64
@@ -330,8 +357,8 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 	if err != nil {
 		return DecisionRequest{}, nil, err
 	}
-	result, err := tx.Exec(`INSERT INTO decision_requests (request, version, job, requester, recipient, assignment, kind, surface, content, questions, blocks, state, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?)`,
-		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Kind, AnswerSurface(in.Kind, in.Questions), in.Content, string(questions), string(blocks), RequestPending, timestamp(at))
+	result, err := tx.Exec(`INSERT INTO decision_requests (request, version, job, requester, recipient, assignment, carries, carries_version, kind, surface, content, questions, blocks, state, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Carries, carriesVersion, in.Kind, AnswerSurface(in.Kind, in.Questions), in.Content, string(questions), string(blocks), RequestPending, timestamp(at))
 	if err != nil {
 		return DecisionRequest{}, nil, err
 	}
@@ -370,6 +397,68 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 	return r, dispatch, tx.Commit()
 }
 
+// carriedVersion checks the worker's request that in carries, and returns the
+// version of it that is carried, its latest, or zero when in carries none. A
+// leader carries a pending request of a worker it owns, in the same job, to
+// the user.
+func carriedVersion(tx *sql.Tx, in DecisionRequestInput) (int, error) {
+	if in.Carries == 0 {
+		return 0, nil
+	}
+	w, err := latestRequestVersion(tx, in.Carries)
+	switch {
+	case err != nil:
+		return 0, err
+	case in.Recipient != ToUser:
+		return 0, fmt.Errorf("only a request to the user carries a worker's request to them")
+	case w.Recipient == ToUser:
+		return 0, fmt.Errorf("decision request %d is not a worker's request: it goes to the user", w.Request)
+	case w.Recipient != in.Requester:
+		return 0, fmt.Errorf("decision request %d goes to %s, not %s, so only %s carries it", w.Request, w.Recipient, in.Requester, w.Recipient)
+	case w.Job != in.Job:
+		return 0, fmt.Errorf("decision request %d is about job %d, not job %d", w.Request, w.Job, in.Job)
+	case w.State != RequestPending:
+		return 0, fmt.Errorf("version %d of decision request %d is %s, so there is nothing of it to carry to the user", w.Version, w.Request, w.State)
+	}
+	return w.Version, nil
+}
+
+// CarriedAnswer returns the user's own answer to the request of leader that
+// carries the version of the worker's request that worker is, which is what
+// answers the worker's grilling or Wayfinder question: it is refused unless
+// the user answered every question of that version in Lavish. No agent
+// supplies it.
+func (s *Store) CarriedAnswer(worker DecisionRequest, request int64, leader string) (DecisionRequest, error) {
+	return carriedAnswer(s.db, worker, request, leader)
+}
+
+func carriedAnswer(q queryer, worker DecisionRequest, request int64, leader string) (DecisionRequest, error) {
+	e, err := latestRequestVersion(q, request)
+	switch {
+	case err != nil:
+		return DecisionRequest{}, err
+	case e.Recipient != ToUser:
+		return DecisionRequest{}, fmt.Errorf("decision request %d is not a request of the user's: it goes to %s, so it carries nothing to the user", e.Request, e.Recipient)
+	case e.Requester != leader:
+		return DecisionRequest{}, fmt.Errorf("decision request %d is %s's, not %s's: only the leader that carried the question returns the user's answer", e.Request, e.Requester, leader)
+	case e.Carries != worker.Request:
+		return DecisionRequest{}, fmt.Errorf("decision request %d carries decision request %d, not %d", e.Request, e.Carries, worker.Request)
+	case e.Job != worker.Job:
+		return DecisionRequest{}, fmt.Errorf("decision request %d is about job %d, not job %d", e.Request, e.Job, worker.Job)
+	case e.CarriesVersion != worker.Version:
+		return DecisionRequest{}, fmt.Errorf("decision request %d carries version %d of decision request %d, not version %d: an answer applies only to the version it answers, so carry version %d to the user and return their answer to it", e.Request, e.CarriesVersion, worker.Request, worker.Version, worker.Version)
+	case e.State == RequestPending && e.Partly():
+		return DecisionRequest{}, fmt.Errorf("decision request %d is pending, partly answered (%d of %d questions): the worker's question is answered when the user has answered every question of it, and nobody answers for them", e.Request, len(e.Answered), len(e.Questions))
+	case e.State == RequestPending:
+		return DecisionRequest{}, fmt.Errorf("decision request %d is pending: the user has not answered it, and nobody answers for them", e.Request)
+	case e.State != RequestAnswered:
+		return DecisionRequest{}, fmt.Errorf("version %d of decision request %d is %s, so it holds no answer of the user's", e.Version, e.Request, e.State)
+	case e.AnsweredBy != ToUser || e.Surface != SurfaceLavish || e.Cites == 0:
+		return DecisionRequest{}, fmt.Errorf("decision request %d was not answered by the user in Lavish", e.Request)
+	}
+	return e, nil
+}
+
 // requestSummary is the one line a message about r opens with.
 func requestSummary(r DecisionRequest) string {
 	return fmt.Sprintf("decision request %d, version %d, from %s, answered in %s", r.Request, r.Version, r.Requester, r.Surface)
@@ -381,9 +470,6 @@ func requestSummary(r DecisionRequest) string {
 // and then the request is left as it was. The answer goes back to the
 // requester in a message with a dispatch of its own, which is returned.
 func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionRequest, Dispatch, error) {
-	if strings.TrimSpace(in.Text) == "" {
-		return DecisionRequest{}, Dispatch{}, errors.New("an answer has text")
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return DecisionRequest{}, Dispatch{}, err
@@ -409,7 +495,22 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 	if !jobTakesDecisions(state) {
 		return DecisionRequest{}, Dispatch{}, fmt.Errorf("job %d is %s, so it takes no answer", latest.Job, state)
 	}
-	if _, err := tx.Exec(`UPDATE decision_requests SET state = ?, answer = ?, answered_by = ?, relied_on = ?, settled_at = ? WHERE id = ?`, RequestAnswered, in.Text, in.Answerer, in.ReliedOn, timestamp(at), latest.ID); err != nil {
+	text, reliedOn := in.Text, in.ReliedOn
+	switch {
+	case in.Carried != 0 && strings.TrimSpace(text) != "":
+		return DecisionRequest{}, Dispatch{}, fmt.Errorf("decision request %d needs the user's own answer, which no agent types: return the answer the user gave, and nothing of your own beside it", latest.Request)
+	case in.Carried != 0:
+		e, err := carriedAnswer(tx, latest, in.Carried, in.Answerer)
+		if err != nil {
+			return DecisionRequest{}, Dispatch{}, err
+		}
+		text, reliedOn = e.Answer, fmt.Sprintf("the user's own answer to decision request %d, version %d, in Lavish (Lavish answer %d)", e.Request, e.Version, e.Cites)
+	case needsTheUser(latest):
+		return DecisionRequest{}, Dispatch{}, fmt.Errorf("decision request %d is a %s question, which needs the user's own answer: no record, recommendation or earlier answer stands in for it, and a delegated decision never resolves it. Carry it to the user with a request of your own that carries it (--carries %d), and return their answer with --user-answer <the ID of your request>", latest.Request, latest.Kind, latest.Request)
+	case strings.TrimSpace(text) == "":
+		return DecisionRequest{}, Dispatch{}, errors.New("an answer has text")
+	}
+	if _, err := tx.Exec(`UPDATE decision_requests SET state = ?, answer = ?, answered_by = ?, relied_on = ?, settled_at = ? WHERE id = ?`, RequestAnswered, text, in.Answerer, reliedOn, timestamp(at), latest.ID); err != nil {
 		return DecisionRequest{}, Dispatch{}, err
 	}
 	r, err := decisionRequestVersion(tx, latest.ID)
@@ -419,7 +520,7 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 	if _, err := appendEntry(tx, at, KindDecisionAnswered, r); err != nil {
 		return DecisionRequest{}, Dispatch{}, err
 	}
-	d, err := createMessage(tx, messageRef{assignment: r.Assignment, request: r.ID}, r.Job, in.Answerer, r.Requester, MessageDecisionAnswer, in.Text, at)
+	d, err := createMessage(tx, messageRef{assignment: r.Assignment, request: r.ID}, r.Job, in.Answerer, r.Requester, MessageDecisionAnswer, text, at)
 	if err != nil {
 		return DecisionRequest{}, Dispatch{}, err
 	}
@@ -442,6 +543,9 @@ func (r DecisionRequest) Text() string {
 	fmt.Fprintf(&b, "Decision request %d, version %d | job %d | from %s to %s | %s | answered in %s\n", r.Request, r.Version, r.Job, r.Requester, r.Recipient, state, surface)
 	if r.PageURL != "" && r.State == RequestPending {
 		fmt.Fprintf(&b, "Lavish page: %s\n", r.PageURL)
+	}
+	if r.Carries != 0 {
+		fmt.Fprintf(&b, "Carries its worker's decision request %d, version %d, to the user: their own answer to it is the worker's answer\n", r.Carries, r.CarriesVersion)
 	}
 	if r.Content != "" {
 		fmt.Fprintf(&b, "Content: %s\n", r.Content)

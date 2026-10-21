@@ -145,6 +145,10 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			switch {
 			case strings.Contains(heading, "a Quality worker") && os.Getenv(ScriptEnv+"_QUALITY_WORKER") != "":
 				*scriptPath = os.Getenv(ScriptEnv + "_QUALITY_WORKER")
+			case strings.Contains(heading, "a Planning worker") && os.Getenv(ScriptEnv+"_PLANNING_WORKER") != "":
+				*scriptPath = os.Getenv(ScriptEnv + "_PLANNING_WORKER")
+			case strings.Contains(heading, "Planning's leader") && os.Getenv(ScriptEnv+"_PLANNING") != "":
+				*scriptPath = os.Getenv(ScriptEnv + "_PLANNING")
 			case strings.Contains(heading, "Quality's leader") && os.Getenv(ScriptEnv+"_QUALITY") != "":
 				*scriptPath = os.Getenv(ScriptEnv + "_QUALITY")
 			case strings.Contains(heading, "an Engineering worker") && os.Getenv(ScriptEnv+"_WORKER") != "":

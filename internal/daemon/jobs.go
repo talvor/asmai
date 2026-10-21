@@ -262,6 +262,9 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		}
 		pending++
 		fmt.Fprintf(&b, "- request %d, version %d, from %s to %s, answered in %s: %s\n", r.Request, r.Version, r.Requester, r.Recipient, r.Surface, questionTitles(r.Questions))
+		if r.Carries != 0 {
+			fmt.Fprintf(&b, "  carries its worker's request %d, version %d, to the user: their own answer to it is the worker's answer\n", r.Carries, r.CarriesVersion)
+		}
 		if len(r.Blocks) > 0 {
 			fmt.Fprintf(&b, "  the work of assignments %v waits for the answer; independent work goes on\n", r.Blocks)
 		}

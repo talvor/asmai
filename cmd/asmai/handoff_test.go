@@ -395,3 +395,77 @@ func TestAcknowledgedNudgeRepeatsUntilTheInboxIsFetched(t *testing.T) {
 		t.Errorf("repeated nudge was witnessed: %+v", got)
 	}
 }
+
+func TestAPlanningOnlyJobIsHandedToPlanningWhoseLeaderStartsOnDemandAndNeverToEngineering(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", dir)
+	planning := []string{
+		hookStep("SessionStart", "", ""),
+		`{"screen":"\u001b[?2004h> "}`,
+		`{"expect":"asmai inbox --dispatch 1\r"}`,
+		hookStep("UserPromptSubmit", "nudge-1", "asmai inbox --dispatch 1"),
+		fakeRun(`asmai inbox --dispatch 1`, 0, "(?s)job 1.*handoff.*Plan the greeting.*A map of the greeting"),
+		fakeRun(`asmai brief 1`, 0, "(?s)Mandate: planning-only.*Handoffs:.*1 leader@coordination -> leader@planning: pending"),
+		fakeRun(`asmai assign --job 1 --outcome x --criterion y --skill triage --approved 99`, 1, "decision record 99 does not exist"),
+		fakeRun(`asmai handoff accept --handoff 1`, 0, "reply dispatch 2"),
+		hookStep("Stop", "nudge-1", ""),
+		fakeRun(`touch "$ASMAI_TEST_DIR/planning-done"`, 0, ""),
+		`{"expect":"only typed by a test that means to"}`,
+	}
+	t.Setenv(fakeprovider.ScriptEnv+"_PLANNING", writeScript(t, "planning", planning))
+	coordination := []string{
+		hookStep("SessionStart", "", ""),
+		`{"screen":"> "}`,
+		`{"expect":"Please plan the greeting\r"}`,
+		hookStep("UserPromptSubmit", "", "Please plan the greeting"),
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Plan the greeting' --mandate research-only --criterion 'A map of the greeting'`, 1, "(?s)tested-pr or planning-only"),
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Plan the greeting' --mandate planning-only --criterion 'A map of the greeting'`, 0, "Opened job 1"),
+		fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'Build the greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'A map of the greeting'`, 1, "authorizes only its planning outcome, never code"),
+		fakeRun(`asmai handoff send --job 1 --to planning --outcome 'Plan the greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'A map of the greeting'`, 0, "dispatch 1"),
+		hookStep("Stop", "", ""),
+		`{"expect":"only typed by a test that means to"}`,
+	}
+	readyFactory(t, coordination)
+	t.Cleanup(func() {
+		if t.Failed() {
+			log, _, _ := runAsmai(t, "log")
+			t.Logf("the daemon's log:\n%s", log)
+			journal, _, _ := runAsmai(t, "export")
+			t.Logf("the journal:\n%s", journal)
+		}
+	})
+	registerHandoffFixture(t)
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Fatal(stderr)
+	}
+	for _, a := range agentsListed(t) {
+		if a.Agent == "leader@planning" && a.State == "running" {
+			t.Fatal("Planning's leader runs before any work for Planning arrived")
+		}
+	}
+	a := inTerminal(t, 100, 25)
+	waitFor(t, "Coordination prompt", a.shows(">"))
+	a.ptmx.WriteString("Please plan the greeting\r")
+	waitFor(t, "Planning to answer the handoff", touched(dir, "planning-done"))
+	var shown struct {
+		Job struct {
+			Mandate string `json:"mandate"`
+		} `json:"job"`
+	}
+	asmaiJSON(t, &shown, "job", "1")
+	if shown.Job.Mandate != "planning-only" {
+		t.Errorf("job 1 has the %q mandate, want planning-only", shown.Job.Mandate)
+	}
+	started := false
+	for _, a := range agentsListed(t) {
+		if a.Agent == "leader@planning" && a.State == "running" && a.Model == "opus" {
+			started = true
+		}
+		if a.Agent == "leader@engineering" && a.State == "running" {
+			t.Error("Engineering's leader started for a planning-only job")
+		}
+	}
+	if !started {
+		t.Error("Planning's leader did not start on its configured model when the handoff arrived")
+	}
+}

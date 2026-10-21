@@ -30,9 +30,9 @@ const (
 // All are the roles, in the order they are shown.
 var All = []string{Coordination, Planning, Research, Engineering, Quality}
 
-// Staffed are the roles M1 runs, which must be staffed for the factory to
-// run: Planning and Research arrive in M3.
-var Staffed = []string{Coordination, Engineering, Quality}
+// Staffed are the roles the factory runs, which must be staffed for it to run:
+// Research arrives with M3's later tickets.
+var Staffed = []string{Coordination, Planning, Engineering, Quality}
 
 // Known reports whether role is a role.
 func Known(role string) bool {
@@ -129,8 +129,8 @@ func LeaderInstructionsFor(role string, list []string, index []skills.IndexEntry
 }
 
 // WorkerInstructions returns the instructions for role's workers: their own,
-// the operating guide and their default skills. M1 has workers only in
-// Engineering.
+// the operating guide and their default skills. Coordination's workers,
+// which run repository setup, and Research's have none yet.
 func WorkerInstructions(role string) (string, error) {
 	return WorkerInstructionsFor(role, skills.WorkerList(role))
 }

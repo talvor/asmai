@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/talvor/asmai/internal/repos"
@@ -16,12 +17,35 @@ import (
 	"github.com/talvor/asmai/internal/store"
 )
 
-// handoffTo is the role each role's leader may hand work to: Coordination
-// hands a job to Engineering, and Engineering hands validation of the
-// finished job branch to Quality.
-var handoffTo = map[string]string{
-	roles.Coordination: roles.Engineering,
-	roles.Engineering:  roles.Quality,
+// handoffTo are the roles each role's leader may hand work to: Coordination
+// hands a job to Planning, for its plan, or to Engineering, and Engineering
+// hands validation of the finished job branch to Quality.
+var handoffTo = map[string][]string{
+	roles.Coordination: {roles.Planning, roles.Engineering},
+	roles.Engineering:  {roles.Quality},
+}
+
+var errNotALeader = errors.New("send a handoff to another role's leader: Coordination hands a job to Planning or Engineering, and Engineering hands validation to Quality")
+
+// jobOrZero returns job number, or the zero job when there is none: the
+// handoff that names it is refused for that when it is recorded.
+func (d *daemon) jobOrZero(number int64) store.Job {
+	j, _ := d.store.Job(number)
+	return j
+}
+
+// checkHandoff checks that the leader of the role sender may hand the job j to
+// the leader of the role receiver. A planning-only job is authorized only to
+// produce its planning outcome, so it is never handed to Engineering, whose
+// work changes code (01 rule 17).
+func checkHandoff(sender, receiver string, j store.Job) error {
+	if !slices.Contains(handoffTo[sender], receiver) {
+		return errNotALeader
+	}
+	if receiver == roles.Engineering && j.Mandate == store.MandatePlanningOnly {
+		return fmt.Errorf("job %d has the %s mandate, which authorizes only its planning outcome, never code: hand it to Planning, and ask the user for a new job if they want it built", j.Number, j.Mandate)
+	}
+	return nil
 }
 
 func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
@@ -53,9 +77,9 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 		address, e := roles.ParseAddress(req.Agent)
 		if e != nil {
 			err = e
-		} else if address.Name != roles.Leader || handoffTo[ref.address.Role] != address.Role {
-			err = errors.New("send a handoff to another role's leader: Coordination hands a job to Engineering, and Engineering hands validation to Quality")
-		} else {
+		} else if address.Name != roles.Leader {
+			err = errNotALeader
+		} else if err = checkHandoff(ref.address.Role, address.Role, d.jobOrZero(req.Job)); err == nil {
 			h := store.Handoff{Job: req.Job, Sender: ref.address.String(), Receiver: address.String(), Outcome: req.Outcome, Decisions: req.Decisions, Evidence: req.Evidence, Constraints: req.Constraints, Permissions: req.Permissions, Criteria: req.Criteria, Head: head, Records: req.Records}
 			var dispatch store.Dispatch
 			h, dispatch, err = d.store.SendHandoff(h, time.Now())

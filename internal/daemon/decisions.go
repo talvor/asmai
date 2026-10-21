@@ -29,8 +29,8 @@ func (d *daemon) decide(req Request) (resp Response, notify string, err error) {
 	if err != nil {
 		return Response{}, "", err
 	}
-	if engineering, quality := roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Quality); ref.address != engineering && ref.address != quality {
-		return Response{}, "", refuse("only %s or %s may run asmai %s", engineering, quality, req.Command)
+	if !ownsWorkers(ref.address) {
+		return Response{}, "", refuse("only %s, %s or %s may run asmai %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Quality), req.Command)
 	}
 	if req.Assignment <= 0 || len(req.Reasons) == 0 {
 		return Response{}, "", refuse("asmai %s needs an assignment and its reasons", req.Command)

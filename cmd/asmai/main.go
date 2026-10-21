@@ -127,16 +127,21 @@ commands you type:
   asmai notices               print AsmAI's license and the third-party notices of what is compiled into it
 
 commands agents run:
-  asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr --criterion <text>
-                              Coordination's leader opens a job; repeat --criterion for each acceptance criterion
+  asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr|planning-only --criterion <text>
+                              Coordination's leader opens a job; repeat --criterion for each acceptance criterion.
+                              A planning-only job is authorized only to produce its planning outcome, and is never
+                              handed to Engineering
   asmai brief <number>        read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
   asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>]
                               repeat --record for each of the job's decision records that goes with the handoff
   asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
-  asmai assign --job <number> --outcome <text> --criterion <text> [--record <id>]
-                              Engineering's leader gives a writing assignment to a worker, in a workspace of
-                              AsmAI's clone on its own branch; repeat --criterion for each acceptance criterion
+  asmai assign --job <number> --outcome <text> --criterion <text> [--skill <name>] [--narrow <name>] [--record <id>] [--approved <id>]
+                              Engineering's or Planning's leader gives a writing assignment to a worker of its
+                              role, in a workspace of AsmAI's clone on its own branch; repeat --criterion for
+                              each acceptance criterion. A skill that starts only on request starts only when
+                              the job's mandate calls for it, or with --approved, the decision record of the
+                              user's own answer to a proposal of it, which goes to the worker too
   asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text>
                               Quality's leader gives a validation to a worker, in a clean workspace fixed at the
                               job branch's exact head, with the job's mandate and criteria
@@ -203,17 +208,23 @@ commands agents run:
                               Coordination's leader records that it showed the user that version in the
                               conversation, once; the user's answer is the message they send after it
   asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --title <text> --option <text> [--recommend <option>]
-  asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --question '<json>' [--content <text>] [--blocks <assignment>]
+  asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --question '<json>' [--content <text>] [--blocks <assignment>] [--carries <request>]
                               request a decision. A worker's request goes to its owning leader, never to the user,
                               and holds its assignment's work until the answer; a leader's goes to the user through
                               Coordination, and holds the assignments of its own that --blocks names. --request
                               issues a new version, which replaces the pending one and reissues its Lavish
                               page; a single choice is answered in the conversation and everything else in
                               Lavish, where the daemon renders the questions and --content above them and
-                              brings back what the user sends, word for word
+                              brings back what the user sends, word for word. --carries has a leader's request
+                              carry its worker's request to the user: a worker's grilling or Wayfinder question
+                              is answered only by the user's own answer to it
   asmai decision answer --request <id> --version <n> --answer <text> [--relied-on <text>]
+  asmai decision answer --request <id> --version <n> --user-answer <your request>
                               a worker's owning leader answers one version of its request from the records; an
-                              answer naming an older version is refused
+                              answer naming an older version is refused. A worker's grilling or Wayfinder
+                              question is never answered in an agent's words: --user-answer returns the
+                              user's own answer to the leader's request that carried it, as they gave it in
+                              Lavish, once every question of it is answered
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
 Every command accepts --json to print JSON instead of tables, or --toon to print the same data as
@@ -314,6 +325,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var assignJob int64
 	var assignReadOnly bool
 	var assignCommit, assignSkill string
+	var assignApproved int64
 	var assignNarrow listFlags
 	var assignOutcome, blockedReason, blockedNeeds string
 	var decidedAssignment int64
@@ -354,7 +366,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&message, "message", "", "latest or the witnessed message's journal ID")
 		flags.StringVar(&repository, "repository", "", "registered repository name")
 		flags.StringVar(&reading, "reading", "", "Coordination's reading of the user's words")
-		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate")
+		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate: "+strings.Join(store.Mandates, " or "))
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
 	case "handoff send":
 		flags.Int64Var(&handoffJob, "job", 0, "job number")
@@ -378,6 +390,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.BoolVar(&assignReadOnly, "read-only", false, "give a validation, which changes nothing, instead of a writing assignment")
 		flags.StringVar(&assignCommit, "commit", "", "with --read-only, the job branch's exact head commit the validation is fixed at")
 		flags.StringVar(&assignSkill, "skill", "", "the skill from the worker's list that it is to run")
+		flags.Int64Var(&assignApproved, "approved", 0, "with --skill, a skill that starts only on request which the job's mandate does not call for: the ID of the decision record of the user's own answer that starts it")
 		flags.Var(&assignNarrow, "narrow", "a skill the worker's list is narrowed to, from the role's workers' list; may be repeated")
 		flags.Var(&records, "record", "the ID of one of the job's decision records that the worker is given; may be repeated")
 	case "effect":
@@ -431,6 +444,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&request.recommend, "recommend", "", "the option you recommend for the one question")
 		flags.Var(&request.questions, "question", `a question as JSON, {"id": ..., "title": ..., "body": ..., "options": [...], "recommendation": ...}; may be repeated`)
 		flags.Var(&request.blocks, "blocks", "an assignment you own whose work waits for the answer; may be repeated")
+		flags.Int64Var(&request.carries, "carries", 0, "the worker's decision request, which you own, that your request carries to the user; its answer is the user's own, returned with decision answer --user-answer")
 	case "authorize":
 		flags.Int64Var(&authorizing.job, "job", 0, "a leader's job; a worker's is its assignment's")
 		flags.StringVar(&authorizing.action, "action", "", "the consequential action: spend, deploy or destructive")
@@ -448,6 +462,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.IntVar(&request.version, "version", 0, "the version the answer is to")
 		flags.StringVar(&request.answer, "answer", "", "the answer")
 		flags.StringVar(&request.reliedOn, "relied-on", "", "the record the answer rests on")
+		flags.Int64Var(&request.userAnswer, "user-answer", 0, "instead of --answer, your request that carried the worker's question to the user, which the user answered in Lavish: its words are the worker's answer, as the user gave them")
 	case "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
@@ -554,7 +569,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "handoff accept", "handoff clarify", "handoff decline":
 		return handoffAnswer(o, paths, name, handoffID, answer)
 	case "assign":
-		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit, assignSkill, assignNarrow, records)
+		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit, assignSkill, assignNarrow, assignApproved, records)
 	case "effect":
 		return effect(o, paths, operands[0], operands[1])
 	case "result":

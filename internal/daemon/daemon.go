@@ -205,6 +205,10 @@ type Request struct {
 	// and narrow its skill list to Skills.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
+	// Approved is the decision record of the user's own decision that
+	// starts the skill an assign names, a skill that starts only on request
+	// which the job's mandate does not call for.
+	Approved int64 `json:"approved,omitempty"`
 	// Choice and Rationale are what a recorded decision chose and why, with
 	// Evidence what it rests on.
 	Choice    string `json:"choice,omitempty"`
@@ -221,6 +225,11 @@ type Request struct {
 	Questions []store.Question `json:"questions,omitempty"`
 	Blocks    []int64          `json:"blocks,omitempty"`
 	ReliedOn  string           `json:"relied_on,omitempty"`
+	// Carries is the worker's decision request that a leader's request
+	// carries to the user, and UserAnswer the leader's request, answered by
+	// the user, whose answer the leader returns to the worker.
+	Carries    int64 `json:"carries,omitempty"`
+	UserAnswer int64 `json:"user_answer,omitempty"`
 	// DecisionSource and Cites say whether a recorded decision is delegated or
 	// human, and for a human one the witnessed message it cites. Assumptions and
 	// ReopenWhen are its material assumptions and the conditions that would

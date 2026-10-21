@@ -25,6 +25,12 @@ leader_model = "opus"
 worker_provider = "claude"
 worker_model = "opus"
 
+[roles.planning]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
 [roles.engineering]
 leader_provider = "claude"
 leader_model = "opus"
@@ -159,7 +165,7 @@ func TestAddedRoleSkillsAreShownAsPendingAndJournaled(t *testing.T) {
 	if _, err := applyConfig(t, p.Socket, appliedStaffing, true); err != nil {
 		t.Fatal(err)
 	}
-	changed := appliedStaffing + fmt.Sprintf("\n[roles.planning]\nleader_added_skills = [%q]\n", t.TempDir())
+	changed := appliedStaffing + fmt.Sprintf("\n[roles.research]\nleader_added_skills = [%q]\n", t.TempDir())
 	if err := os.WriteFile(configFile, []byte(changed), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +175,7 @@ func TestAddedRoleSkillsAreShownAsPendingAndJournaled(t *testing.T) {
 	}
 	found := false
 	for _, c := range preview.ConfigApply.Changes {
-		if c.Setting == "roles.planning.leader_added_skills" {
+		if c.Setting == "roles.research.leader_added_skills" {
 			found = c.Skills && len(c.Gained) == 1 && len(c.Agents) == 0 && c.Note == ""
 		}
 	}
@@ -189,7 +195,7 @@ func TestAddedRoleSkillsAreShownAsPendingAndJournaled(t *testing.T) {
 	}
 	found = false
 	for _, c := range recorded.Changes {
-		if c.Setting == "roles.planning.leader_added_skills" {
+		if c.Setting == "roles.research.leader_added_skills" {
 			found = len(c.Agents) == 0 && c.Note == ""
 		}
 	}

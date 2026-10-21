@@ -62,7 +62,7 @@ func parseChecks(values []string) ([]store.Check, error) {
 	return checks, nil
 }
 
-func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit, skill string, narrow []string, records []string) int {
+func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit, skill string, narrow []string, approved int64, records []string) int {
 	if job <= 0 || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(errors.New("assign needs --job, --outcome and --criterion"))
 	}
@@ -76,7 +76,7 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if err != nil {
 		return o.fail(err)
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit, Skill: skill, Skills: narrow, Records: ids})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit, Skill: skill, Skills: narrow, Approved: approved, Records: ids})
 	if err != nil {
 		return o.fail(err)
 	}

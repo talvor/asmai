@@ -36,6 +36,14 @@ type twoResults struct {
 
 func newTwoResults(t *testing.T) twoResults {
 	t.Helper()
+	return newTwoResultsOf(t, roles.Engineering)
+}
+
+// newTwoResultsOf is newTwoResults for the writing role role, whose leader
+// owns the assignments and whose workers carry them, in a job whose mandate
+// is the one the role's work needs.
+func newTwoResultsOf(t *testing.T, role string) twoResults {
+	t.Helper()
 	paths := stateDir(t)
 	origin := remote(t)
 	clone := filepath.Join(paths.Repositories, "fixture")
@@ -59,11 +67,15 @@ func newTwoResults(t *testing.T) twoResults {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Add a greeting", Mandate: store.MandateTestedPR, Criteria: []string{"done"}}, false, at)
+	mandate := store.MandateTestedPR
+	if role == roles.Planning {
+		mandate = store.MandatePlanningOnly
+	}
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Add a greeting", Mandate: mandate, Criteria: []string{"done"}}, false, at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := roles.LeaderOf(roles.Engineering)
+	owner := roles.LeaderOf(role)
 	d := &daemon{
 		cfg: Config{Paths: paths}, work: context.Background(), store: s,
 		leaders:  map[string]*leader{owner.String(): {address: owner, session: &session.Session{}, generation: 1}},
@@ -84,7 +96,7 @@ func newTwoResults(t *testing.T) twoResults {
 		if err != nil {
 			t.Fatal(err)
 		}
-		number, slot, err := s.Allocate(roles.Engineering)
+		number, slot, err := s.Allocate(role)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +105,7 @@ func newTwoResults(t *testing.T) twoResults {
 		if err := repos.AddWorkspace(context.Background(), clone, w.Path, w.Branch, w.Base); err != nil {
 			t.Fatal(err)
 		}
-		worker := roles.WorkerOf(roles.Engineering, number)
+		worker := roles.WorkerOf(role, number)
 		a, dispatch, err := s.AssignmentCreated(store.NewAssignment{ID: id, Job: job.Number, Owner: owner.String(), Worker: worker.String(), Outcome: "outcome", Criteria: []string{"done"}, Workspace: w}, at)
 		if err != nil {
 			t.Fatal(err)

@@ -403,7 +403,7 @@ func isTerminal(w io.Writer) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// staffedRoles names the roles M1 runs, for people.
+// staffedRoles names the roles the factory runs, for people.
 func staffedRoles() string {
 	var titles []string
 	for _, role := range roles.Staffed {

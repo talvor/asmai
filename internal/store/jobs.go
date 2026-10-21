@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -16,7 +17,18 @@ const JobOpen = "open"
 // JobPaused is the state of a job the user paused. Its pending decision
 // requests stay answerable.
 const JobPaused = "paused"
-const MandateTestedPR = "tested-pr"
+
+// The mandates a job has. A tested-PR job is authorized to inspect, plan,
+// research, make scoped edits, run checks, commit, push and open and update
+// its pull request. A planning-only job is authorized only to produce its
+// planning outcome: it is never handed to Engineering (01 rule 17).
+const (
+	MandateTestedPR     = "tested-pr"
+	MandatePlanningOnly = "planning-only"
+)
+
+// Mandates are the mandates a job may have.
+var Mandates = []string{MandateTestedPR, MandatePlanningOnly}
 
 // Job holds the user's witnessed request beside Coordination's reading.
 type Job struct {
@@ -36,8 +48,8 @@ type Job struct {
 // same transaction that numbers and journals the job. A nudge or observation
 // can never stand in for the user's words.
 func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
-	if (job.Witness <= 0 && !latest) || strings.TrimSpace(job.Reading) == "" || job.Mandate != MandateTestedPR || len(job.Criteria) == 0 {
-		return Job{}, errors.New("job open needs a witnessed message, a reading, the tested-pr mandate and acceptance criteria")
+	if (job.Witness <= 0 && !latest) || strings.TrimSpace(job.Reading) == "" || !slices.Contains(Mandates, job.Mandate) || len(job.Criteria) == 0 {
+		return Job{}, fmt.Errorf("job open needs a witnessed message, a reading, a mandate (%s) and acceptance criteria", strings.Join(Mandates, " or "))
 	}
 	for _, criterion := range job.Criteria {
 		if strings.TrimSpace(criterion) == "" {
@@ -73,7 +85,7 @@ func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 		return Job{}, fmt.Errorf("witnessed message %d was not submitted to Coordination's leader", job.Witness)
 	}
 	if job.Repository == "" {
-		return Job{}, errors.New("a tested-PR job needs a registered repository")
+		return Job{}, fmt.Errorf("a %s job needs a registered repository", job.Mandate)
 	}
 	if _, err := repository(tx, job.Repository); errors.Is(err, sql.ErrNoRows) {
 		return Job{}, fmt.Errorf("repository %q is not registered; ask the user to run `asmai repo add <path-or-url>`", job.Repository)

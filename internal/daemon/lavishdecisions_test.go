@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/lavish"
+	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -27,7 +28,13 @@ type lavishFactory struct {
 
 func newLavishFactory(t *testing.T) lavishFactory {
 	t.Helper()
-	f := newTwoResults(t)
+	return newLavishFactoryOf(t, roles.Engineering)
+}
+
+// newLavishFactoryOf is newLavishFactory for the writing role role.
+func newLavishFactoryOf(t *testing.T, role string) lavishFactory {
+	t.Helper()
+	f := newTwoResultsOf(t, role)
 	f.withWorkers(t)
 	pins, config := pinnedLavish(t, f.d.cfg.Paths)
 	config.PagesEvery = 20 * time.Millisecond

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -85,31 +86,35 @@ func (d *daemon) caller(req Request) (sessionRef, *leader, error) {
 	return ref, l, nil
 }
 
-// assign gives the assignment req describes to a worker: a writing
-// assignment to one of Engineering, or with req.ReadOnly a validation to one
-// of Quality. It makes the job's branch if it has none, takes the lowest free
-// worker number and slot, makes the worker's workspace of AsmAI's clone, which
-// is on the assignment's own branch from the job branch's tip for a writing
-// assignment and a clean checkout fixed at the tip's commit, with no branch,
-// for a validation, records the assignment with the dispatch that delivers
-// it, and starts the worker in the workspace. The worker is nudged at its
+// writingRoles are the roles whose workers carry writing assignments:
+// Engineering's change code, and Planning's write notes.
+var writingRoles = []string{roles.Engineering, roles.Planning}
+
+// assign gives the assignment req describes to a worker of the role of the
+// leader that makes it: a writing assignment to one of Engineering or
+// Planning, or with req.ReadOnly a validation to one of Quality. It makes the
+// job's branch if it has none, takes the lowest free worker number and slot,
+// makes the worker's workspace of AsmAI's clone, which is on the assignment's
+// own branch from the job branch's tip for a writing assignment and a clean
+// checkout fixed at the tip's commit, with no branch, for a validation,
+// records the assignment with the dispatch that delivers it, and starts the
+// worker in the workspace. The worker is nudged at its
 // first input boundary.
 func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
-	role, owner := roles.Engineering, roles.LeaderOf(roles.Engineering)
-	if req.ReadOnly {
-		role, owner = roles.Quality, roles.LeaderOf(roles.Quality)
-	}
 	d.mu.Lock()
 	ref, _, err := d.caller(req)
 	d.mu.Unlock()
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
-	if ref.address != owner {
-		if req.ReadOnly {
-			return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign read-only validation", owner)
-		}
-		return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign writing work: Quality's validation is read-only, and never changes the work", owner)
+	role := ref.address.Role
+	switch {
+	case ref.address.Name != roles.Leader:
+		return store.Assignment{}, store.Dispatch{}, refuse("only a role's leader may assign: a worker carries its own assignment")
+	case req.ReadOnly && ref.address != roles.LeaderOf(roles.Quality):
+		return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign read-only validation", roles.LeaderOf(roles.Quality))
+	case !req.ReadOnly && !slices.Contains(writingRoles, role):
+		return store.Assignment{}, store.Dispatch{}, refuse("only %s or %s may assign writing work: Quality's validation is read-only, and never changes the work", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning))
 	}
 	if req.Job <= 0 || strings.TrimSpace(req.Outcome) == "" || len(req.Criteria) == 0 {
 		return store.Assignment{}, store.Dispatch{}, refuse("an assignment needs a job, an outcome and acceptance criteria")
@@ -154,7 +159,17 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	if j.Repository == "" {
 		return store.Assignment{}, store.Dispatch{}, refuse("job %d has no repository, so it has no writing assignment", j.Number)
 	}
-	if err := d.store.CheckRecords(j.Number, req.Records); err != nil {
+	// A skill that starts only on request starts only when the mandate calls
+	// for it or the user's own decision does, which goes to the worker too.
+	approval, err := d.checkInvocation(j, roleList, req.Skill, req.Approved)
+	if err != nil {
+		return store.Assignment{}, store.Dispatch{}, err
+	}
+	records := slices.Clone(req.Records)
+	if approval != nil && !slices.Contains(records, approval.ID) {
+		records = append(records, approval.ID)
+	}
+	if err := d.store.CheckRecords(j.Number, records); err != nil {
 		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
 	}
 	repository, err := d.store.Repository(j.Repository)
@@ -234,7 +249,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	}
 	a, dispatch, err := d.store.AssignmentCreated(store.NewAssignment{
 		ID: id, Job: j.Number, Owner: ref.address.String(), Worker: worker.String(),
-		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly, Skill: req.Skill, Skills: skillList, Records: req.Records,
+		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly, Skill: req.Skill, Skills: skillList, Records: records,
 	}, time.Now())
 	if err != nil {
 		undo()

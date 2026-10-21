@@ -373,7 +373,7 @@ var neverRunGHCommands = []string{}
 
 func TestEveryGHCommandTheInstructionsNameIsExcludedAndAllowedOrNeverRun(t *testing.T) {
 	var texts []string
-	for _, role := range []string{roles.Coordination, roles.Engineering, roles.Quality} {
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Engineering, roles.Quality} {
 		leader, err := roles.LeaderInstructions(role)
 		if err != nil {
 			t.Fatal(err)

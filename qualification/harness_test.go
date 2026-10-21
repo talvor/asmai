@@ -96,8 +96,14 @@ func TestTheHarnessCommitsWhateverTheUsersSigningConfigurationSays(t *testing.T)
 	}
 }
 
-// staffing staffs every role M1 runs on Claude.
+// staffing staffs every role the factory runs on Claude.
 const staffing = `[roles.coordination]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
+[roles.planning]
 leader_provider = "claude"
 leader_model = "opus"
 worker_provider = "claude"

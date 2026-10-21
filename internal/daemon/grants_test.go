@@ -87,7 +87,7 @@ func TestAConsequentialActionNeedsAGrantAndTheEffectNeedsTheAuthorization(t *tes
 	if err := record("worker0", "deploy"); err == nil || !strings.Contains(err.Error(), "only after `asmai authorize") {
 		t.Fatalf("recording a deployment nobody authorized = %v", err)
 	}
-	if _, err := check("worker0", store.ActionSpend, 500); err == nil || !strings.Contains(err.Error(), "spending budget is zero") {
+	if _, err := check("worker0", store.ActionSpend, 500); err == nil || !strings.Contains(err.Error(), "spending is zero") {
 		t.Fatalf("spending with no grant = %v", err)
 	}
 	// A leader names its job; a worker's is its assignment's.
@@ -97,9 +97,6 @@ func TestAConsequentialActionNeedsAGrantAndTheEffectNeedsTheAuthorization(t *tes
 	// A merge is never authorized, never recorded, and never granted.
 	if _, err := check("worker0", "merge", 0); err == nil || !strings.Contains(err.Error(), "AsmAI never merges") {
 		t.Fatalf("authorizing a merge = %v", err)
-	}
-	if err := record("worker0", "merge"); err == nil || !strings.Contains(err.Error(), "AsmAI never merges") {
-		t.Fatalf("recording a merge = %v", err)
 	}
 	said := f.userSays(t, "you may deploy to staging")
 	merge := jobGrant(f.job.Number)
@@ -118,16 +115,67 @@ func TestAConsequentialActionNeedsAGrantAndTheEffectNeedsTheAuthorization(t *tes
 	if err != nil || a.Grant != g.ID || a.Job != f.job.Number || a.Assignment != f.assignments[1].ID || a.Agent != f.assignments[1].Worker || a.Dispatch == 0 {
 		t.Fatalf("authorizing under the grant = %+v, %v", a, err)
 	}
-	// The authorization belongs to the dispatch it was made in: the other
-	// worker's effect of the same kind still needs its own check.
+	// The authorization belongs to the dispatch it was made in, and covers one
+	// effect: the other worker's effect of the same kind, and a second effect
+	// of this worker's, each still need a check of their own.
 	if err := record("worker1", "deploy"); err != nil {
 		t.Fatalf("recording the authorized deployment = %v", err)
 	}
 	if err := record("worker0", "deploy"); err == nil {
 		t.Fatal("another dispatch's authorization covered this worker's effect")
 	}
-	// A grant of deployment is no grant of spending or of destructive changes.
-	if _, err := check("worker1", store.ActionDestructive, 0); err == nil || !strings.Contains(err.Error(), "no grant covers destructive") {
+	if err := record("worker1", "deploy"); err == nil || !strings.Contains(err.Error(), "once for each effect") {
+		t.Fatalf("a second effect on one authorization = %v", err)
+	}
+	if used, err := f.s.Authorized(g.ID); err != nil || len(used) != 1 || used[0].Effect == 0 {
+		t.Fatalf("the authorization after its effect = %+v, %v", used, err)
+	}
+	// An effect is checked again when it is recorded: a grant that was revoked
+	// after the check covers nothing, and the check stands as an earlier action.
+	if _, err := check("worker1", store.ActionDeploy, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.endGrant(Request{Command: CommandGrantRevoke, GrantID: g.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := record("worker1", "deploy"); err == nil || !strings.Contains(err.Error(), "still in force") {
+		t.Fatalf("an effect after the grant was revoked = %v", err)
+	}
+	if _, err := check("worker1", store.ActionDeploy, 0); err == nil {
+		t.Fatal("a revoked grant authorized an action")
+	}
+}
+
+func TestADeliveryOwnersEffectIsCheckedAgainstTheJobsGrantsToo(t *testing.T) {
+	f := newTwoResults(t)
+	f.withWorkers(t)
+	said := f.userSays(t, "you may deploy to staging, and you may not spend or change anything destructively")
+	in := jobGrant(f.job.Number)
+	in.Cites = said
+	if _, err := f.d.recordGrant(f.grantRequest("coordination", in)); err != nil {
+		t.Fatal(err)
+	}
+	dispatch := f.leaderWorks(t)
+	_ = dispatch
+	effect := func(kind string) error {
+		_, err := f.d.effect(Request{Session: "credential", Command: CommandEffect, Kind: kind, Ref: "staging"})
+		return err
+	}
+	check := func(action string) error {
+		_, err := f.d.authorizeAction(Request{Session: "credential", Command: CommandAuthorize, Action: &store.ActionRequest{Job: f.job.Number, Action: action, What: "staging"}})
+		return err
+	}
+	if err := effect("deploy"); err == nil {
+		t.Fatal("a leader's deployment was recorded unchecked")
+	}
+	if err := check("deploy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := effect("deploy"); err != nil {
+		t.Fatalf("the leader's checked deployment = %v", err)
+	}
+	// A grant of deployment is no grant of destructive changes.
+	if err := check("destructive"); err == nil || !strings.Contains(err.Error(), "no grant covers destructive") {
 		t.Fatalf("a destructive change under a deployment grant = %v", err)
 	}
 }

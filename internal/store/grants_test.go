@@ -140,6 +140,22 @@ func TestAGrantGivenInAnAnswerIsRecordedByTheLeaderThatAsked(t *testing.T) {
 		t.Errorf("grant = %+v", g)
 	}
 
+	// An approval given in a job stays with that job: its answer is no grant
+	// of another job, or of a repository it is not of.
+	elsewhere := otherJob(t, c.s, "")
+	other := c.spendGrant(0)
+	other.Job, other.Answer = elsewhere, answer.ID
+	if _, err := c.s.GrantRecorded(other, owner, grantsAt); err == nil || !strings.Contains(err.Error(), "stays with that job") {
+		t.Errorf("the answer of one job as another job's grant = %v", err)
+	}
+	wrongRepository := GrantInput{Scope: ScopeRepository, Repository: "second", Action: ActionDeploy, Approved: "deploy", Answer: answer.ID}
+	if err := c.s.RepositoryAdded(Repository{Name: "second", Origin: "/o2", DefaultBranch: "main", Clone: "/c2", AddedAt: assignmentsAt}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.s.GrantRecorded(wrongRepository, owner, grantsAt); err == nil || !strings.Contains(err.Error(), "not of repository second") {
+		t.Errorf("the answer of a job as another repository's grant = %v", err)
+	}
+
 	// A delegated decision is not the user's words.
 	delegated, err := c.s.DecisionRecorded(DecisionRecord{Job: c.job, Leader: owner, Choice: "use redis", ReliedOn: "the mandate", Rationale: "it is there", Evidence: "it runs"}, 1, grantsAt)
 	if err != nil {
@@ -197,7 +213,7 @@ func (c *conversation) authorize(job int64, action string, amount int64) (Author
 
 func TestSpendingIsZeroUnlessAGrantNamesTheAmountAndScope(t *testing.T) {
 	c := newConversation(t)
-	if _, err := c.authorize(c.job, ActionSpend, 100); err == nil || !strings.Contains(err.Error(), "no grant covers") || !strings.Contains(err.Error(), "spending budget is zero") {
+	if _, err := c.authorize(c.job, ActionSpend, 100); err == nil || !strings.Contains(err.Error(), "no grant covers") || !strings.Contains(err.Error(), "spending is zero") {
 		t.Fatalf("spending with no grant = %v", err)
 	}
 	said := c.say(CoordinationLeader, "you may spend up to 10 dollars")

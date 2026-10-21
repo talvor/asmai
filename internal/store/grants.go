@@ -48,6 +48,9 @@ const (
 // its assignments carried is no longer in force.
 const MessageGrantEnded = "grant.ended"
 
+// ErrMerge is the refusal of a merge, which no grant authorizes.
+var ErrMerge = errors.New("AsmAI never merges in v1, and no grant can authorize a merge: the user merges a tested pull request themselves")
+
 // ErrNoGrant is returned for a grant that does not exist.
 var ErrNoGrant = errors.New("the grant does not exist")
 
@@ -113,18 +116,19 @@ func FormatAmount(amount int64, currency string) string {
 // ParseAmount reads a decimal amount of at most two places, such as 10 or
 // 12.50, as hundredths.
 func ParseAmount(text string) (int64, error) {
+	badAmount := fmt.Errorf("%q is not an amount of at most two decimal places, such as 10 or 12.50", text)
 	whole, fraction, _ := strings.Cut(strings.TrimSpace(text), ".")
 	if whole == "" || len(fraction) > 2 || strings.ContainsAny(whole+fraction, "+-_ ") {
-		return 0, fmt.Errorf("%q is not an amount of at most two decimal places, such as 10 or 12.50", text)
+		return 0, badAmount
 	}
 	n, err := strconv.ParseInt(whole, 10, 64)
 	if err != nil || n < 0 {
-		return 0, fmt.Errorf("%q is not an amount of at most two decimal places, such as 10 or 12.50", text)
+		return 0, badAmount
 	}
 	cents := int64(0)
 	if fraction != "" {
 		if cents, err = strconv.ParseInt((fraction + "0")[:2], 10, 64); err != nil {
-			return 0, fmt.Errorf("%q is not an amount of at most two decimal places, such as 10 or 12.50", text)
+			return 0, badAmount
 		}
 	}
 	return n*100 + cents, nil
@@ -150,7 +154,7 @@ var gatedActions = []string{ActionSpend, ActionDeploy, ActionDestructive}
 func knownAction(action string, amount int64, currency string) error {
 	switch {
 	case strings.EqualFold(action, ActionMerge):
-		return errors.New("AsmAI never merges in v1, and no grant can authorize a merge: the user merges a tested pull request themselves")
+		return ErrMerge
 	case !slices.Contains(gatedActions, action) && action != ActionDecision:
 		return fmt.Errorf("an action is spend, deploy, destructive or decision, not %q", action)
 	case action == ActionSpend && amount <= 0:
@@ -229,7 +233,8 @@ func (g Grant) ScopeText() string {
 	return "the whole factory"
 }
 
-// Text writes g with every field of rule 30, one to a line: the first line
+// Text writes g with what a grant records (the exact action approved, its
+// scope, its conditions and its source), one to a line: the first line
 // starts with first and the others with rest.
 func (g Grant) Text(first, rest string) string {
 	source := fmt.Sprintf("the user's own words, witnessed message %d", g.Cites)
@@ -395,9 +400,23 @@ func (s *Store) GrantRecorded(in GrantInput, leader string, at time.Time) (Grant
 	}
 
 	if in.Answer != 0 {
-		g.Cites, g.Answer, g.Words, err = answerWords(tx, in.Answer, leader)
+		var answered DecisionRequest
+		if answered, g.Cites, g.Words, err = answerWords(tx, in.Answer, leader); err != nil {
+			return Grant{}, err
+		}
+		g.Answer = in.Answer
+		// An approval given in a job stays with that job: the answer must be
+		// to a request of the job the grant is of, or of a job of its
+		// repository.
+		asked, err := openedJob(tx, answered.Job)
 		if err != nil {
 			return Grant{}, err
+		}
+		switch {
+		case in.Scope == ScopeJob && asked.Number != in.Job:
+			return Grant{}, fmt.Errorf("the answer in decision record %d is to a request of job %d, so it is not the user's grant of job %d: an approval given in a job stays with that job unless the user granted it at a wider scope", in.Answer, asked.Number, in.Job)
+		case in.Scope == ScopeRepository && asked.Repository != in.Repository:
+			return Grant{}, fmt.Errorf("the answer in decision record %d is to a request of job %d, which is not of repository %s", in.Answer, asked.Number, in.Repository)
 		}
 	} else {
 		if leader != CoordinationLeader {
@@ -439,32 +458,32 @@ func (s *Store) GrantRecorded(in GrantInput, leader string, at time.Time) (Grant
 // answerWords checks that record is the user's own answer to a decision
 // request that leader made, and returns the witnessed message and the words
 // it holds.
-func answerWords(q querier, record int64, leader string) (cites int64, answer int64, words string, err error) {
-	var request int64
-	err = q.QueryRow(`SELECT id FROM decision_requests WHERE record = ?`, record).Scan(&request)
+func answerWords(q querier, record int64, leader string) (request DecisionRequest, cites int64, words string, err error) {
+	var row int64
+	err = q.QueryRow(`SELECT id FROM decision_requests WHERE record = ?`, record).Scan(&row)
 	if errors.Is(err, sql.ErrNoRows) {
 		if r, e := scanDecisionRecords(q, `id = ?`, record); e == nil && len(r) == 0 {
-			return 0, 0, "", fmt.Errorf("decision record %d does not exist; the answer that held the grant has a record, which the message that carried it names", record)
+			return DecisionRequest{}, 0, "", fmt.Errorf("decision record %d does not exist; the answer that held the grant has a record, which the message that carried it names", record)
 		}
-		return 0, 0, "", fmt.Errorf("decision record %d is not the user's answer to a decision request: only the words of an answer, or a witnessed message, can hold a grant", record)
+		return DecisionRequest{}, 0, "", fmt.Errorf("decision record %d is not the user's answer to a decision request: only the words of an answer, or a witnessed message, can hold a grant", record)
 	}
 	if err != nil {
-		return 0, 0, "", err
+		return DecisionRequest{}, 0, "", err
 	}
-	r, err := decisionRequestVersion(q, request)
+	r, err := decisionRequestVersion(q, row)
 	if err != nil {
-		return 0, 0, "", err
+		return DecisionRequest{}, 0, "", err
 	}
 	if r.State != RequestAnswered || r.AnsweredBy != ToUser {
-		return 0, 0, "", fmt.Errorf("decision request %d is not answered by the user", r.Request)
+		return DecisionRequest{}, 0, "", fmt.Errorf("decision request %d is not answered by the user", r.Request)
 	}
 	if r.Requester != leader {
-		return 0, 0, "", fmt.Errorf("the answer in decision record %d is to a request of %s, which asked it, so only %s records a grant given in it", record, r.Requester, r.Requester)
+		return DecisionRequest{}, 0, "", fmt.Errorf("the answer in decision record %d is to a request of %s, which asked it, so only %s records a grant given in it", record, r.Requester, r.Requester)
 	}
 	if _, err := witnessedMessage(q, r.Cites); err != nil {
-		return 0, 0, "", err
+		return DecisionRequest{}, 0, "", err
 	}
-	return r.Cites, record, r.Answer, nil
+	return r, r.Cites, r.Answer, nil
 }
 
 // ActionRequest is an agent's request to take a consequential action, which
@@ -487,21 +506,33 @@ type ActionRequest struct {
 // Authorization is the daemon's record that a grant covered an action when
 // an agent asked to take it. It is what a revocation reports as it stands.
 type Authorization struct {
-	ID         int64     `json:"id"`
-	Grant      int64     `json:"grant"`
-	Job        int64     `json:"job"`
-	Assignment int64     `json:"assignment,omitempty"`
-	Dispatch   int64     `json:"dispatch,omitempty"`
-	Agent      string    `json:"agent"`
-	Action     string    `json:"action"`
-	What       string    `json:"what"`
-	Amount     int64     `json:"amount,omitempty"`
-	Currency   string    `json:"currency,omitempty"`
-	At         time.Time `json:"at"`
+	ID         int64  `json:"id"`
+	Grant      int64  `json:"grant"`
+	Job        int64  `json:"job"`
+	Assignment int64  `json:"assignment,omitempty"`
+	Dispatch   int64  `json:"dispatch,omitempty"`
+	Agent      string `json:"agent"`
+	Action     string `json:"action"`
+	What       string `json:"what"`
+	Amount     int64  `json:"amount,omitempty"`
+	Currency   string `json:"currency,omitempty"`
+	// Effect is the effect the agent recorded for the action, once it did;
+	// each authorization covers one.
+	Effect int64     `json:"effect,omitempty"`
+	At     time.Time `json:"at"`
+}
+
+// AmountText is the amount a spending authorization gave, with a space before
+// it, and nothing for any other action.
+func (a Authorization) AmountText() string {
+	if a.Amount == 0 {
+		return ""
+	}
+	return " " + FormatAmount(a.Amount, a.Currency)
 }
 
 func scanAuthorizations(q querier, where string, args ...any) ([]Authorization, error) {
-	rows, err := q.Query(`SELECT id, grant_id, job, assignment, dispatch, agent, action, what, amount, currency, created_at FROM authorizations WHERE `+where+` ORDER BY id`, args...)
+	rows, err := q.Query(`SELECT id, grant_id, job, assignment, dispatch, agent, action, what, amount, currency, effect, created_at FROM authorizations WHERE `+where+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +541,7 @@ func scanAuthorizations(q querier, where string, args ...any) ([]Authorization, 
 	for rows.Next() {
 		var a Authorization
 		var created string
-		if err := rows.Scan(&a.ID, &a.Grant, &a.Job, &a.Assignment, &a.Dispatch, &a.Agent, &a.Action, &a.What, &a.Amount, &a.Currency, &created); err != nil {
+		if err := rows.Scan(&a.ID, &a.Grant, &a.Job, &a.Assignment, &a.Dispatch, &a.Agent, &a.Action, &a.What, &a.Amount, &a.Currency, &a.Effect, &created); err != nil {
 			return nil, err
 		}
 		if a.At, err = time.Parse(time.RFC3339Nano, created); err != nil {
@@ -526,10 +557,35 @@ func (s *Store) Authorized(grant int64) ([]Authorization, error) {
 	return scanAuthorizations(s.db, `grant_id = ?`, grant)
 }
 
-// AuthorizedIn returns the authorizations of action that agent was given in
-// dispatch, oldest first.
-func (s *Store) AuthorizedIn(dispatch int64, action string) ([]Authorization, error) {
-	return scanAuthorizations(s.db, `dispatch = ? AND action = ?`, dispatch, action)
+// OpenAuthorization returns the oldest authorization of action that agent
+// was given for the effect it is about to record, which no effect has used and
+// whose grant is still in force: the action it authorized is re-checked when
+// the effect is recorded, so a grant that ended in between covers nothing. A
+// worker's authorizations are tied to its dispatch, a leader's to the job.
+// It returns sql.ErrNoRows when none is left.
+func (s *Store) OpenAuthorization(agent string, dispatch, job int64, action string) (Authorization, error) {
+	list, err := scanAuthorizations(s.db, `action = ? AND effect = 0 AND ((dispatch != 0 AND dispatch = ?) OR (dispatch = 0 AND agent = ? AND job = ?))
+		AND (SELECT state FROM grants WHERE grants.id = authorizations.grant_id) = ?`, action, dispatch, agent, job, GrantActive)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if len(list) == 0 {
+		return Authorization{}, sql.ErrNoRows
+	}
+	return list[0], nil
+}
+
+// AuthorizationUsed records that effect is the effect authorization id
+// covered, which no other effect uses.
+func (s *Store) AuthorizationUsed(id, effect int64) error {
+	result, err := s.db.Exec(`UPDATE authorizations SET effect = ? WHERE id = ? AND effect = 0`, effect, id)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n == 0 {
+		return fmt.Errorf("authorization %d was used already", id)
+	}
+	return nil
 }
 
 // ActionAuthorized re-checks the authority an agent acts on, before the
@@ -623,7 +679,7 @@ func noGrant(in ActionRequest, j Job, why []string) error {
 	what := in.Action
 	if in.Action == ActionSpend {
 		what = "spending " + FormatAmount(in.Amount, in.Currency)
-		fmt.Fprintf(&b, "no grant covers %s in job %d: the spending budget is zero unless the user grants an amount and a scope", what, j.Number)
+		fmt.Fprintf(&b, "no grant covers %s in job %d: spending is zero unless the user grants an amount and a scope", what, j.Number)
 	} else {
 		fmt.Fprintf(&b, "no grant covers %s in job %d: the job's mandate never covers it without the user's grant", what, j.Number)
 	}
@@ -766,11 +822,7 @@ func grantEndedBody(g Grant, affected []Assignment, earlier []Authorization) str
 	}
 	b.WriteString(" What it authorized before it ended stands as it is; nothing is undone, and only a decision of the user's authorizes a way to recover:")
 	for _, a := range earlier {
-		amount := ""
-		if a.Amount != 0 {
-			amount = " " + FormatAmount(a.Amount, a.Currency)
-		}
-		fmt.Fprintf(&b, "\n- authorization %d, %s%s: %s, by %s at %s", a.ID, a.Action, amount, a.What, a.Agent, a.At.Format(time.RFC3339))
+		fmt.Fprintf(&b, "\n- authorization %d, %s%s: %s, by %s at %s", a.ID, a.Action, a.AmountText(), a.What, a.Agent, a.At.Format(time.RFC3339))
 	}
 	return b.String()
 }

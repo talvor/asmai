@@ -83,12 +83,8 @@ func authorize(o *output, paths statedir.Paths, f authorizeFlags) int {
 		return o.printData(resp)
 	}
 	a := resp.Authorization
-	amount := ""
-	if a.Amount != 0 {
-		amount = " " + store.FormatAmount(a.Amount, a.Currency)
-	}
-	fmt.Fprintf(o.stdout, "authorized %s%s in job %d by grant %d (authorization %d): %s\n", a.Action, amount, a.Job, a.Grant, a.ID, a.What)
-	fmt.Fprintf(o.stdout, "next: take only the action you named; check again before each further consequential action, because a revoked or invalidated grant, or a changed scope, authorizes nothing, and record the effect with `asmai effect %s <what you did>`\n", a.Action)
+	fmt.Fprintf(o.stdout, "authorized %s%s in job %d by grant %d (authorization %d): %s\n", a.Action, a.AmountText(), a.Job, a.Grant, a.ID, a.What)
+	fmt.Fprintf(o.stdout, "next: take only the action you named; check again before each further consequential action, because a revoked or invalidated grant, or a changed scope, authorizes nothing, and record the effect with `asmai effect %s <what you did>`, once for this authorization\n", a.Action)
 	return 0
 }
 
@@ -158,11 +154,7 @@ func printGrantEnding(w io.Writer, e store.GrantEnding) {
 	} else {
 		fmt.Fprintln(w, "what it authorized before it ended stands as it is; nothing is undone, and only your decision authorizes a way to recover:")
 		for _, a := range e.Earlier {
-			amount := ""
-			if a.Amount != 0 {
-				amount = " " + store.FormatAmount(a.Amount, a.Currency)
-			}
-			fmt.Fprintf(w, "  authorization %d | %s%s | job %d | %s | by %s at %s\n", a.ID, a.Action, amount, a.Job, a.What, a.Agent, a.At.Format(time.RFC3339))
+			fmt.Fprintf(w, "  authorization %d | %s%s | job %d | %s | by %s at %s\n", a.ID, a.Action, a.AmountText(), a.Job, a.What, a.Agent, a.At.Format(time.RFC3339))
 		}
 	}
 	if len(e.Affected) == 0 {

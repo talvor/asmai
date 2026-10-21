@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"database/sql"
 	"errors"
 	"net"
 	"time"
@@ -104,6 +105,8 @@ func (d *daemon) authorizeAction(req Request) (store.Authorization, error) {
 	in := *req.Action
 	in.Agent, in.Generation = ref.address.String(), ref.generation
 	if ref.address.Name == roles.Leader {
+		// A leader's authorization is of the job it names, whatever dispatch it
+		// is working on.
 		if in.Job <= 0 {
 			return store.Authorization{}, refuse("a leader's action is of a job: give --job")
 		}
@@ -165,22 +168,22 @@ func (d *daemon) endGrant(req Request) (store.GrantEnding, error) {
 	return ending, nil
 }
 
-// grantedEffect checks the effect of kind that req's worker records against
-// the actions that need a grant: a merge is never recorded, and a spend, a
-// deployment or a destructive change is recorded only after the daemon
-// authorized it in the same dispatch.
-func (d *daemon) grantedEffect(kind string, dispatch int64) error {
-	switch kind {
-	case store.ActionMerge:
-		return refuse("AsmAI never merges in v1, and no grant can authorize a merge: the user merges a tested pull request themselves")
-	case store.ActionSpend, store.ActionDeploy, store.ActionDestructive:
-		authorized, err := d.store.AuthorizedIn(dispatch, kind)
-		if err != nil {
-			return err
-		}
-		if len(authorized) == 0 {
-			return refuse("a %s effect is recorded only after `asmai authorize --action %s` found a grant that covers it, in this dispatch; check first, and take no action a grant does not cover", kind, kind)
-		}
+// grantedEffect checks the effect of kind that req's agent records against the
+// actions that need a grant: a spend, a deployment or a destructive change is
+// recorded only for an action the daemon authorized, once, and only while the
+// grant that authorized it is still in force. It returns the authorization the
+// effect uses.
+func (d *daemon) grantedEffect(ref sessionRef, kind string, dispatch int64) (store.Authorization, error) {
+	if kind != store.ActionSpend && kind != store.ActionDeploy && kind != store.ActionDestructive {
+		return store.Authorization{}, nil
 	}
-	return nil
+	job, err := d.store.WorkingOn(dispatch, ref.address.String(), ref.generation)
+	if err != nil {
+		return store.Authorization{}, refuse("%v", err)
+	}
+	a, err := d.store.OpenAuthorization(ref.address.String(), dispatch, job, kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Authorization{}, refuse("a %s effect is recorded only after `asmai authorize --action %s` found a grant that covers it, once for each effect, and while that grant is still in force; check first, and take no action a grant does not cover", kind, kind)
+	}
+	return a, err
 }

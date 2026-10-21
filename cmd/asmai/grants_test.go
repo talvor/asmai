@@ -19,7 +19,7 @@ func TestTheUserGivesAGrantInTheConversationAndListsAndRevokesIt(t *testing.T) {
 		fakeRun(`asmai job open --message latest --repository fixture --reading 'Fix the fixture' --criterion 'Tests pass'`, 0, "Opened job 1"),
 		// Nothing is granted yet: spending is zero, and a grant needs the
 		// user's own words to cite.
-		fakeRun(`asmai authorize --job 1 --action spend --amount 5 --currency USD --what 'a staging database'`, 1, "spending budget is zero"),
+		fakeRun(`asmai authorize --job 1 --action spend --amount 5 --currency USD --what 'a staging database'`, 1, "spending is zero"),
 		fakeRun(`asmai decision record --grant --scope job --job 1 --action deploy --approved 'deploy the build to staging' --condition none`, 1, "cites the witnessed message"),
 		fakeRun(`asmai decision record --grant --scope job --job 1 --action deploy --approved 'deploy the build to staging' --condition none --cites 1`, 1, "not a witnessed message"),
 		fakeRun(`asmai decision record --grant --scope job --job 1 --action merge --approved 'merge the pull request' --condition none --cites latest`, 1, "no grant can authorize a merge"),

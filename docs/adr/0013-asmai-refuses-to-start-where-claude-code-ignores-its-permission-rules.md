@@ -1,3 +1,7 @@
+---
+status: superseded by 0018
+---
+
 # AsmAI refuses to start where Claude Code ignores its permission rules
 
 Spec 03 rule 7 has AsmAI take what it needs to know of a provider from the provider's own signal, and rule 10 has it never write or override managed or user Claude Code settings. Agents run unattended only because AsmAI passes its permission rules to Claude Code with `--settings` (`Bash(asmai:*)`, the git and gh rules, the file rules), and ADR 0012 has every agent but Coordination's leader denied what its rules do not allow. An account whose managed settings set `allowManagedPermissionRulesOnly: true` makes Claude Code apply only the permission rules of managed settings and ignore those from `--settings`. On such an account `asmai start` passed its checks, the agents started, and each stopped, at a prompt nobody answers or at a denial, on its first `asmai` command ([issue #84](https://github.com/talvor/asmai/issues/84), found in the #36 M1 exit checks on a managed workstation account).

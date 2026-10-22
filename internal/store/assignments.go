@@ -136,6 +136,10 @@ type Assignment struct {
 	Commit       string    `json:"commit,omitempty"`
 	Intent       *Intent   `json:"intent,omitempty"`
 	OpenFindings []Finding `json:"open_findings,omitempty"`
+	// Scratch says the assignment is of a job with no repository: its
+	// workspace is an empty scratch directory, with no job branch, no
+	// assignment branch and no commit (05 rule 8).
+	Scratch bool `json:"scratch,omitempty"`
 	// Skill is the skill the owning leader named for the worker to run, and
 	// Skills the explicit narrowing, if any; otherwise the current role list
 	// is delivered at each start.
@@ -411,9 +415,6 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 	}
 	w := n.Workspace
 	w.Assignment = n.ID
-	if w.Slot <= 0 || w.Path == "" || w.Tmp == "" || w.Base == "" || (w.Branch == "") != n.ReadOnly {
-		return Assignment{}, Dispatch{}, errors.New("a workspace needs a slot, a path, a temporary directory and the commit it was made at, and a writing workspace its branch; a read-only one has none")
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Assignment{}, Dispatch{}, err
@@ -426,12 +427,24 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 	if j.State != JobOpen {
 		return Assignment{}, Dispatch{}, fmt.Errorf("job %d is %s, so it takes no new assignment", n.Job, j.State)
 	}
-	b, err := jobBranch(tx, n.Job)
-	if err != nil {
-		return Assignment{}, Dispatch{}, fmt.Errorf("job %d has no job branch: %w", n.Job, err)
+	// An assignment of a job with no repository works in an empty scratch
+	// workspace, which has no job branch to be made from and no branch or
+	// commit of its own.
+	scratch := j.Repository == ""
+	switch {
+	case scratch && (n.ReadOnly || w.Slot <= 0 || w.Path == "" || w.Tmp == "" || w.Base != "" || w.Branch != ""):
+		return Assignment{}, Dispatch{}, errors.New("a scratch workspace needs a slot, a path and a temporary directory, and has no branch and no commit; a job with no repository has no read-only assignment")
+	case !scratch && (w.Slot <= 0 || w.Path == "" || w.Tmp == "" || w.Base == "" || (w.Branch == "") != n.ReadOnly):
+		return Assignment{}, Dispatch{}, errors.New("a workspace needs a slot, a path, a temporary directory and the commit it was made at, and a writing workspace its branch; a read-only one has none")
 	}
-	if w.Base != b.Tip {
-		return Assignment{}, Dispatch{}, fmt.Errorf("the workspace was made at %s, but the job branch's tip is %s", w.Base, b.Tip)
+	var b JobBranch
+	if !scratch {
+		if b, err = jobBranch(tx, n.Job); err != nil {
+			return Assignment{}, Dispatch{}, fmt.Errorf("job %d has no job branch: %w", n.Job, err)
+		}
+		if w.Base != b.Tip {
+			return Assignment{}, Dispatch{}, fmt.Errorf("the workspace was made at %s, but the job branch's tip is %s", w.Base, b.Tip)
+		}
 	}
 	if n.ReadOnly {
 		if live, err := liveValidation(tx, n.Job); err != nil {
@@ -464,7 +477,7 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 		w.Assignment, w.Slot, w.Path, w.Tmp, w.Branch, w.Base); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
-	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w, Skill: n.Skill, Skills: n.Skills}
+	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w, Skill: n.Skill, Skills: n.Skills, Scratch: scratch}
 	if len(passed) > 0 {
 		a.Records, a.DecisionRecords = recordIDs(passed), passed
 	}
@@ -498,8 +511,8 @@ func (s *Store) Assignment(id int64) (Assignment, error) {
 }
 
 const (
-	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, b.name, w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria, a.skill, a.skills, a.decision_records`
-	assignmentTables  = `assignments a JOIN workspaces w ON w.assignment = a.id JOIN job_branches b ON b.job = a.job JOIN jobs j ON j.number = a.job`
+	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, COALESCE(b.name, ''), w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria, a.skill, a.skills, a.decision_records, COALESCE(j.repository, '') = ''`
+	assignmentTables  = `assignments a JOIN workspaces w ON w.assignment = a.id LEFT JOIN job_branches b ON b.job = a.job JOIN jobs j ON j.number = a.job`
 )
 
 func assignment(q querier, id int64) (Assignment, error) {
@@ -523,7 +536,7 @@ func scanAssignment(row *sql.Row) (Assignment, error) {
 	var intent Intent
 	var jobCriteria, skills string
 	err := row.Scan(&a.ID, &a.Job, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &created, &a.JobBranch, &a.Workspace.Slot, &a.Workspace.Path, &a.Workspace.Tmp, &a.Workspace.Branch, &a.Workspace.Base,
-		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria, &a.Skill, &skills, &a.recorded)
+		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria, &a.Skill, &skills, &a.recorded, &a.Scratch)
 	if err != nil {
 		return Assignment{}, err
 	}
@@ -715,9 +728,6 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	default:
 		return Report{}, Dispatch{}, fmt.Errorf("a report is a result or a blocked report, not %q", sub.Kind)
 	}
-	if sub.Commit == "" {
-		return Report{}, Dispatch{}, errors.New("a report names the commit the workspace is at")
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Report{}, Dispatch{}, err
@@ -747,6 +757,14 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if a.State != AssignmentActive {
 		return Report{}, Dispatch{}, fmt.Errorf("assignment %d is %s, so it takes no new report", a.ID, a.State)
 	}
+	// A scratch workspace is no repository: its report names no commit, takes
+	// in no job branch's tip and records no push of an assignment branch.
+	if a.Scratch && (sub.Commit != "" || sub.TookInTip) {
+		return Report{}, Dispatch{}, fmt.Errorf("assignment %d works in a scratch workspace, which has no commit and no job branch to take in", a.ID)
+	}
+	if !a.Scratch && sub.Commit == "" {
+		return Report{}, Dispatch{}, errors.New("a report names the commit the workspace is at")
+	}
 	// Work that depends on a pending decision waits for its answer, and a
 	// result is that work finished; a blocked report is not.
 	if sub.Kind == ReportResult {
@@ -763,7 +781,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if a.ReadOnly && sub.Commit != a.Commit {
 		return Report{}, Dispatch{}, fmt.Errorf("the workspace is at %s, but assignment %d is fixed at %s: validation never changes the work", sub.Commit, a.ID, a.Commit)
 	}
-	if !a.ReadOnly && !sub.TookInTip {
+	if !a.ReadOnly && !a.Scratch && !sub.TookInTip {
 		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
 	// The skills a worker ran are those its session was given, as the
@@ -807,7 +825,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if !a.ReadOnly && !slices.ContainsFunc(effects, func(e Effect) bool { return e.Kind == "push" }) {
+	if !a.ReadOnly && !a.Scratch && !slices.ContainsFunc(effects, func(e Effect) bool { return e.Kind == "push" }) {
 		return Report{}, Dispatch{}, errors.New("a result or blocked report records its assignment branch push")
 	}
 	// A list that is empty is still given, so that a record never says null.
@@ -870,8 +888,14 @@ func checkResult(q querier, a Assignment, in ReportInput) error {
 	if in.Validation != nil {
 		return errors.New("findings belong to a validation: a writing assignment's result has none")
 	}
-	if strings.TrimSpace(in.PRSection) == "" || len(in.Evidence) == 0 {
-		return errors.New("a result links its evidence and has a PR section: what changed, with before-and-after evidence")
+	// A scratch assignment has no pull request, so its result has no PR
+	// section: it links its evidence and the results it produced.
+	if a.Scratch {
+		if len(in.Evidence) == 0 {
+			return errors.New("a result links its evidence: the sources each finding rests on")
+		}
+	} else if strings.TrimSpace(in.PRSection) == "" || len(in.Evidence) == 0 {
+		return errors.New("a result links its evidence and has a PR section (--pr-section): your part of the pull request, what changed with before-and-after evidence; only a worker in a scratch workspace, which has no pull request, gives none")
 	}
 	for _, evidence := range in.Evidence {
 		if strings.TrimSpace(evidence) == "" {

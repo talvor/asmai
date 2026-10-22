@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/talvor/asmai/internal/repos"
@@ -18,16 +19,17 @@ import (
 )
 
 // handoffTo are the roles each role's leader may hand work to: Coordination
-// hands a job to Planning, for its plan, or to Engineering, and Engineering
-// hands validation of the finished job branch to Quality.
+// hands a job to Planning, for its plan, to Research, for its findings, or to
+// Engineering, and Engineering hands validation of the finished job branch to
+// Quality.
 var handoffTo = map[string][]string{
-	roles.Coordination: {roles.Planning, roles.Engineering},
+	roles.Coordination: {roles.Planning, roles.Research, roles.Engineering},
 	roles.Engineering:  {roles.Quality},
 }
 
 // errNotALeader is the refusal of a handoff to anything but the leader of a
 // role its sender may hand work to.
-var errNotALeader = errors.New("send a handoff to another role's leader: Coordination hands a job to Planning or Engineering, and Engineering hands validation to Quality")
+var errNotALeader = errors.New("send a handoff to another role's leader: Coordination hands a job to Planning, Research or Engineering, and Engineering hands validation to Quality")
 
 // jobOrZero returns job number, or the zero job when it cannot be read: the
 // handoff that names it is refused when it is recorded, so a job that does
@@ -37,16 +39,28 @@ func (d *daemon) jobOrZero(number int64) store.Job {
 	return j
 }
 
+// onlyRole is the role that a job of each notes mandate is handed to: a
+// planning-only job is authorized only to produce its planning outcome, and a
+// research-only job only its research outcome, so neither goes to Engineering,
+// whose work changes code, and each goes only to its own role (01 rule 17).
+var onlyRole = map[string]string{
+	store.MandatePlanningOnly: roles.Planning,
+	store.MandateResearchOnly: roles.Research,
+}
+
 // checkHandoff checks that the leader of the role sender may hand the job j to
-// the leader of the role receiver. A planning-only job is authorized only to
-// produce its planning outcome, so it is never handed to Engineering, whose
-// work changes code (01 rule 17).
+// the leader of the role receiver, and that the receiver is the role the job's
+// mandate authorizes.
 func checkHandoff(sender, receiver string, j store.Job) error {
 	if !slices.Contains(handoffTo[sender], receiver) {
 		return errNotALeader
 	}
-	if receiver == roles.Engineering && j.Mandate == store.MandatePlanningOnly {
-		return fmt.Errorf("job %d has the %s mandate, which authorizes only its planning outcome, never code: hand it to Planning, and ask the user for a new job if they want it built", j.Number, j.Mandate)
+	if only, ok := onlyRole[j.Mandate]; ok && receiver != only {
+		outcome := strings.TrimSuffix(j.Mandate, "-only")
+		if receiver == roles.Engineering {
+			return fmt.Errorf("job %d has the %s mandate, which authorizes only its %s outcome, never code: hand it to %s, and ask the user for a new job if they want it built", j.Number, j.Mandate, outcome, roles.Title(only))
+		}
+		return fmt.Errorf("job %d has the %s mandate, which authorizes only its %s outcome: hand it to %s, and ask the user for a new job if they want more", j.Number, j.Mandate, outcome, roles.Title(only))
 	}
 	return nil
 }

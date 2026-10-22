@@ -217,8 +217,8 @@ func TestRoleListShowsEachRoleAndRoleSetEditsTheFileForClaudeAndRefusesCodex(t *
 		} `json:"roles"`
 	}
 	asmaiJSON(t, &list, "role", "list")
-	if len(list.Roles) != 5 || list.Roles[0].Role != "coordination" || !list.Roles[0].Staffed || list.Roles[1].Role != "planning" || !list.Roles[1].Staffed || list.Roles[2].Role != "research" || list.Roles[2].Staffed {
-		t.Fatalf("asmai role list --json printed %+v, want the five roles, coordination and planning staffed and research not", list.Roles)
+	if len(list.Roles) != 5 || list.Roles[0].Role != "coordination" || !list.Roles[0].Staffed || list.Roles[1].Role != "planning" || !list.Roles[1].Staffed || list.Roles[2].Role != "research" || !list.Roles[2].Staffed {
+		t.Fatalf("asmai role list --json printed %+v, want the five roles, coordination, planning and research staffed", list.Roles)
 	}
 	stdout, stderr, code := runAsmai(t, "role", "list")
 	if code != 0 || !strings.Contains(stdout, "engineering") || !strings.Contains(stdout, "claude/opus") || !strings.Contains(stdout, "pr") {

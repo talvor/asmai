@@ -36,6 +36,12 @@ leader_model = "opus"
 worker_provider = "claude"
 worker_model = "opus"
 
+[roles.research]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
 [roles.engineering]
 leader_provider = "claude"
 leader_model = "opus"
@@ -296,7 +302,7 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 	if started.Started || len(started.Checks) != 7 || slices.ContainsFunc(started.Checks, func(c checkJSON) bool { return !c.OK }) {
 		t.Errorf("asmai start printed %+v, want the running daemon with every check passed", started)
 	}
-	if len(started.Leaders) != 4 || started.Leaders[0].Agent != "leader@coordination" || started.Leaders[0].State != "running" || started.Leaders[0].Generation != 1 {
+	if len(started.Leaders) != 5 || started.Leaders[0].Agent != "leader@coordination" || started.Leaders[0].State != "running" || started.Leaders[0].Generation != 1 {
 		t.Fatalf("asmai start shows the leaders %+v, want leader@coordination running as generation 1", started.Leaders)
 	}
 	waitFor(t, "the leader to play its script", func() bool {
@@ -631,6 +637,7 @@ func TestStartNamesTheLineAndTheFixOfAConfigurationItCannotHonour(t *testing.T) 
 	}
 	want := []string{
 		path + ": there is no [roles.planning], so Planning is not staffed",
+		path + ": there is no [roles.research], so Research is not staffed",
 		path + ": there is no [roles.engineering], so Engineering is not staffed",
 		path + ": [roles.quality] has no leader_provider",
 		path + ": [roles.quality] has no worker_provider",

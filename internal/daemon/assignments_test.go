@@ -133,7 +133,7 @@ func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var config strings.Builder
-	for _, role := range []string{roles.Coordination, roles.Planning, roles.Engineering, roles.Quality} {
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
 		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
 	}
 	fmt.Fprintf(&config, "[repositories.fixture]\norigin = %q\ndefault_branch = \"trunk\"\n", origin)
@@ -183,7 +183,7 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 	t.Setenv("ASMAI_TEST_OUT", out)
 	configFile := filepath.Join(root, "config.toml")
 	var config strings.Builder
-	for _, role := range []string{roles.Coordination, roles.Planning, roles.Engineering, roles.Quality} {
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
 		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
 	}
 	config.WriteString("[repositories.fixture]\norigin = \"/origin\"\ndefault_branch = \"main\"\n")

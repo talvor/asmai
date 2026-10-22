@@ -113,6 +113,11 @@ func (d *daemon) holdForReconciliation(w store.WorkerDispatch, why string) {
 	body := fmt.Sprintf("Assignment %d of job %d needs reconciliation: %s.\n"+
 		"It is held: %s keeps its workspace %s on branch %s, and nothing is retried. Look at `asmai brief %d`, the effects its worker recorded, and the workspace's branch on origin to see what was done.",
 		a.ID, a.Job, why, a.Worker, a.Workspace.Path, a.Workspace.Branch, a.Job)
+	if a.Scratch {
+		body = fmt.Sprintf("Assignment %d of job %d needs reconciliation: %s.\n"+
+			"It is held: %s keeps its scratch workspace %s, which has no branch, and nothing is retried. Look at `asmai brief %d`, the effects its worker recorded, and what is in the workspace to see what was done.",
+			a.ID, a.Job, why, a.Worker, a.Workspace.Path, a.Job)
+	}
 	told, err := d.store.AssignmentNeedsReconciliation(a.ID, w.Dispatch.ID, why, body, time.Now())
 	if err != nil {
 		d.log.Error("holding an assignment for reconciliation", "assignment", a.ID, "error", err.Error())
@@ -216,6 +221,11 @@ func (d *daemon) restoreLeaders() {
 // cancellationResumption is the message that resumes a worker whose
 // assignment was cancelled before its dispatch finished the cancellation.
 func cancellationResumption(a store.Assignment, dispatch int64) string {
+	if a.Scratch {
+		return fmt.Sprintf("The factory was stopped and started again, and your session resumes where it was. Your owning leader has cancelled assignment %d of job %d: your dispatch %d stopped at a boundary before the cancellation was complete, and this dispatch resumes it.\n"+
+			"Do not submit a result. Your workspace is a scratch workspace with no branch, so there is nothing to commit or push: what you wrote stays in it. Stop. Never repeat an effect you already made.",
+			a.ID, a.Job, dispatch)
+	}
 	return fmt.Sprintf("The factory was stopped and started again, and your session resumes where it was. Your owning leader has cancelled assignment %d of job %d: your dispatch %d stopped at a boundary before the cancellation was complete, and this dispatch resumes it.\n"+
 		"Do not submit a result. Look at your workspace and at the effects you have recorded, commit whatever you have, push your assignment branch with `git push origin %s` if it is not pushed (as its own single Bash call, never chained, piped or after a `cd`), record the push with `asmai effect push`, and stop. Never repeat an effect you already made.",
 		a.ID, a.Job, dispatch, a.Workspace.Branch)

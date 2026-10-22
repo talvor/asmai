@@ -44,7 +44,11 @@ func jobOpen(o *output, paths statedir.Paths, message, repository, reading, mand
 	if o.structured() {
 		return o.printData(map[string]any{"job": resp.Job})
 	}
-	fmt.Fprintf(o.stdout, "Opened job %d for %s.\n", resp.Job.Number, resp.Job.Repository)
+	if resp.Job.Repository == "" {
+		fmt.Fprintf(o.stdout, "Opened job %d, which has no repository: its assignments work in scratch workspaces.\n", resp.Job.Number)
+	} else {
+		fmt.Fprintf(o.stdout, "Opened job %d for %s.\n", resp.Job.Number, resp.Job.Repository)
+	}
 	fmt.Fprintf(o.stdout, "Read its brief with `asmai brief %d`.\n", resp.Job.Number)
 	return 0
 }
@@ -67,7 +71,7 @@ func jobs(o *output, paths statedir.Paths) int {
 	}
 	rows := [][]string{{"JOB", "STATE", "ROLE", "REPOSITORY", "READING"}}
 	for _, j := range list {
-		rows = append(rows, []string{strconv.FormatInt(j.Number, 10), j.State, j.Role, j.Repository, j.Reading})
+		rows = append(rows, []string{strconv.FormatInt(j.Number, 10), j.State, j.Role, repositoryText(j), j.Reading})
 	}
 	o.table(rows)
 	return 0
@@ -89,6 +93,29 @@ func jobShow(o *output, paths statedir.Paths, number string) int {
 	return 0
 }
 
+// jobClean removes the scratch workspaces of a job with no repository that
+// has ended, which are kept until the user asks. The daemon refuses it while
+// the job is open.
+func jobClean(o *output, paths statedir.Paths, number string) int {
+	n, err := jobNumber(number)
+	if err != nil {
+		return o.fail(err)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandJobClean, Job: n})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(map[string]any{"job": n, "removed": append([]string{}, resp.Removed...)})
+	}
+	if len(resp.Removed) == 0 {
+		fmt.Fprintf(o.stdout, "Job %d's scratch workspaces are already removed.\n", n)
+		return 0
+	}
+	fmt.Fprintf(o.stdout, "Removed job %d's scratch workspaces and the results in them: %s\n", n, strings.Join(resp.Removed, ", "))
+	return 0
+}
+
 func jobBrief(o *output, paths statedir.Paths, number string) int {
 	n, err := jobNumber(number)
 	if err != nil {
@@ -106,9 +133,17 @@ func jobBrief(o *output, paths statedir.Paths, number string) int {
 }
 
 func jobRows(o *output, j store.Job) {
-	rows := [][]string{{"job", strconv.FormatInt(j.Number, 10)}, {"state", j.State}, {"role", j.Role}, {"repository", j.Repository}, {"witnessed message", strconv.FormatInt(j.Witness, 10)}, {"user's words", j.Words}, {"Coordination's reading", j.Reading}, {"mandate", j.Mandate}}
+	rows := [][]string{{"job", strconv.FormatInt(j.Number, 10)}, {"state", j.State}, {"role", j.Role}, {"repository", repositoryText(j)}, {"witnessed message", strconv.FormatInt(j.Witness, 10)}, {"user's words", j.Words}, {"Coordination's reading", j.Reading}, {"mandate", j.Mandate}}
 	for i, criterion := range j.Criteria {
 		rows = append(rows, []string{fmt.Sprintf("criterion %d", i+1), criterion})
 	}
 	o.table(rows)
+}
+
+// repositoryText is the repository a job targets, or none.
+func repositoryText(j store.Job) string {
+	if j.Repository == "" {
+		return "none"
+	}
+	return j.Repository
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -87,19 +88,20 @@ func (d *daemon) caller(req Request) (sessionRef, *leader, error) {
 }
 
 // writingRoles are the roles whose workers carry writing assignments:
-// Engineering's change code, and Planning's write notes.
-var writingRoles = []string{roles.Engineering, roles.Planning}
+// Engineering's change code, and Planning's and Research's write notes.
+var writingRoles = []string{roles.Engineering, roles.Planning, roles.Research}
 
 // assign gives the assignment req describes to a worker of the role of the
-// leader that makes it: a writing assignment to one of Engineering or
-// Planning, or with req.ReadOnly a validation to one of Quality. It makes the
-// job's branch if it has none, takes the lowest free worker number and slot,
-// makes the worker's workspace of AsmAI's clone, which is on the assignment's
-// own branch from the job branch's tip for a writing assignment and a clean
-// checkout fixed at the tip's commit, with no branch, for a validation,
-// records the assignment with the dispatch that delivers it, and starts the
-// worker in the workspace. The worker is nudged at its
-// first input boundary.
+// leader that makes it: a writing assignment to one of Engineering, Planning
+// or Research, or with req.ReadOnly a validation to one of Quality. It makes
+// the job's branch if it has none, takes the lowest free worker number and
+// slot, makes the worker's workspace of AsmAI's clone, which is on the
+// assignment's own branch from the job branch's tip for a writing assignment
+// and a clean checkout fixed at the tip's commit, with no branch, for a
+// validation, records the assignment with the dispatch that delivers it, and
+// starts the worker in the workspace. A job with no repository has neither
+// branch nor clone: the workspace is an empty scratch directory. The worker is
+// nudged at its first input boundary.
 func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	d.mu.Lock()
 	ref, _, err := d.caller(req)
@@ -114,7 +116,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	case req.ReadOnly && ref.address != roles.LeaderOf(roles.Quality):
 		return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign read-only validation", roles.LeaderOf(roles.Quality))
 	case !req.ReadOnly && !slices.Contains(writingRoles, role):
-		return store.Assignment{}, store.Dispatch{}, refuse("only %s or %s may assign writing work: Quality's validation is read-only, and never changes the work", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning))
+		return store.Assignment{}, store.Dispatch{}, refuse("only %s, %s or %s may assign writing work: Quality's validation is read-only, and never changes the work", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research))
 	}
 	if req.Job <= 0 || strings.TrimSpace(req.Outcome) == "" || len(req.Criteria) == 0 {
 		return store.Assignment{}, store.Dispatch{}, refuse("an assignment needs a job, an outcome and acceptance criteria")
@@ -156,8 +158,14 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	if j.State != store.JobOpen {
 		return store.Assignment{}, store.Dispatch{}, refuse("job %d is %s, so it takes no new assignment", j.Number, j.State)
 	}
-	if j.Repository == "" {
-		return store.Assignment{}, store.Dispatch{}, refuse("job %d has no repository, so it has no writing assignment", j.Number)
+	// A job of a notes mandate is authorized only to produce its own outcome,
+	// so only its own role's leader gives it writing work (01 rule 17).
+	if only, ok := onlyRole[j.Mandate]; ok && !req.ReadOnly && role != only {
+		return store.Assignment{}, store.Dispatch{}, refuse("job %d has the %s mandate, which authorizes only its %s outcome: only %s may give its writing work", j.Number, j.Mandate, strings.TrimSuffix(j.Mandate, "-only"), roles.LeaderOf(only))
+	}
+	scratch := j.Repository == ""
+	if scratch && req.ReadOnly {
+		return store.Assignment{}, store.Dispatch{}, refuse("job %d has no repository, so it has no commit for Quality to validate", j.Number)
 	}
 	// A skill that starts only on request starts only when the mandate calls
 	// for it or the user's own decision does, which goes to the worker too.
@@ -178,6 +186,9 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	}
 	if err := d.store.CheckRecords(j.Number, records); err != nil {
 		return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
+	}
+	if scratch {
+		return d.assignScratch(ref, req, j, role, skillList, records)
 	}
 	repository, err := d.store.Repository(j.Repository)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -263,6 +274,60 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("recording the assignment: %w", err)
 	}
 	d.log.Info("assignment created", "assignment", a.ID, "job", j.Number, "worker", a.Worker, "slot", slot, "branch", workspace.Branch, "workspace", workspace.Path, "read_only", a.ReadOnly, "commit", workspace.Base)
+	if err := d.ensureAgent(worker); err != nil {
+		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("starting worker %s for assignment %d: %w", worker, a.ID, err)
+	}
+	return a, dispatch, nil
+}
+
+// scratchName is the name of an assignment's scratch workspace within the
+// assignment's directory.
+const scratchName = "scratch"
+
+// assignScratch gives the writing assignment req describes, of the job j that
+// has no repository, to the lowest free worker of role: an empty scratch
+// workspace of its own, with no clone, no job branch and no assignment branch
+// to make it from (05 rule 8). It records the assignment with its dispatch and
+// starts the worker in the workspace. skillList is the worker's narrowed
+// list, if any, and records the decision records it is given. assignMu is
+// held.
+func (d *daemon) assignScratch(ref sessionRef, req Request, j store.Job, role string, skillList []string, records []int64) (store.Assignment, store.Dispatch, error) {
+	id, err := d.store.NextAssignmentID()
+	if err != nil {
+		return store.Assignment{}, store.Dispatch{}, err
+	}
+	number, slot, err := d.store.Allocate(role)
+	if err != nil {
+		return store.Assignment{}, store.Dispatch{}, err
+	}
+	worker := roles.WorkerOf(role, number)
+	dir := filepath.Join(d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", j.Number), fmt.Sprintf("assignment-%d", id))
+	workspace := store.Workspace{Slot: slot, Path: filepath.Join(dir, scratchName), Tmp: filepath.Join(dir, "tmp")}
+	if err := os.MkdirAll(workspace.Path, 0o700); err != nil {
+		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("making the scratch workspace: %w", err)
+	}
+	undo := func() {
+		if err := os.RemoveAll(dir); err != nil {
+			d.log.Error("undoing an assignment's scratch workspace", "assignment", id, "error", err.Error())
+		}
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// The credential is checked again, as the checks took time.
+	if _, _, err := d.caller(req); err != nil {
+		undo()
+		return store.Assignment{}, store.Dispatch{}, err
+	}
+	a, dispatch, err := d.store.AssignmentCreated(store.NewAssignment{
+		ID: id, Job: j.Number, Owner: ref.address.String(), Worker: worker.String(),
+		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, Skill: req.Skill, Skills: skillList, Records: records,
+	}, time.Now())
+	if err != nil {
+		undo()
+		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("recording the assignment: %w", err)
+	}
+	d.log.Info("assignment created", "assignment", a.ID, "job", j.Number, "worker", a.Worker, "slot", slot, "workspace", workspace.Path, "scratch", true)
 	if err := d.ensureAgent(worker); err != nil {
 		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("starting worker %s for assignment %d: %w", worker, a.ID, err)
 	}
@@ -470,21 +535,27 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	if err := checkRan(req.Report.SkillsRun, a); err != nil {
 		return store.Report{}, store.Dispatch{}, err
 	}
-	branch, err := d.store.JobBranch(a.Job)
-	if err != nil {
-		return store.Report{}, store.Dispatch{}, err
-	}
-
-	// What the daemon sees of the workspace is the commit the report is at.
+	input := *req.Report
+	var branch store.JobBranch
+	var commit string
+	var tookIn bool
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
-	commit, err := repos.Commit(ctx, a.Workspace.Path, "HEAD")
-	if err != nil {
-		return store.Report{}, store.Dispatch{}, fmt.Errorf("reading the commit of %s: %w", a.Workspace.Path, err)
+	if a.Scratch {
+		// A scratch workspace is no repository: there is no commit to see,
+		// no job branch to take in and no assignment branch to push.
+		input.Artifacts = append([]string{"scratch workspace " + a.Workspace.Path}, input.Artifacts...)
+	} else {
+		if branch, err = d.store.JobBranch(a.Job); err != nil {
+			return store.Report{}, store.Dispatch{}, err
+		}
+		// What the daemon sees of the workspace is the commit the report is at.
+		if commit, err = repos.Commit(ctx, a.Workspace.Path, "HEAD"); err != nil {
+			return store.Report{}, store.Dispatch{}, fmt.Errorf("reading the commit of %s: %w", a.Workspace.Path, err)
+		}
 	}
-	input := *req.Report
-	var tookIn bool
-	if a.ReadOnly {
+	switch {
+	case a.ReadOnly:
 		// A validation is fixed at one commit, and its evidence names it.
 		// It has no branch to push, so only the commit it is at is checked.
 		if commit != a.Commit {
@@ -494,7 +565,7 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 			return store.Report{}, store.Dispatch{}, err
 		}
 		input.Artifacts = append([]string{fmt.Sprintf("validated commit %s of job branch %s, in a read-only workspace", commit, branch.Name)}, input.Artifacts...)
-	} else {
+	case !a.Scratch:
 		if tookIn, err = d.checkWritingReport(ctx, a, branch, commit); err != nil {
 			return store.Report{}, store.Dispatch{}, err
 		}

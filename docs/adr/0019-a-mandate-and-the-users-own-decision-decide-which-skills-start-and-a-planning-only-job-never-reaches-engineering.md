@@ -16,5 +16,5 @@ Upstream marks some skills, such as wayfinder, to-spec, to-tickets, implement, t
 
 ## Consequences
 
-- Another mandate, such as research-only, adds its own entry to `calledFor` and to `store.Mandates`.
+- Another mandate adds its own entry to `calledFor` and to `store.Mandates`. Research-only is the second ([ADR 0020](0020-a-job-without-a-repository-ends-on-its-leaders-acceptance-of-the-outcome-and-keeps-its-scratch-workspaces-until-the-user-cleans-them.md)): it covers research and to-questionnaire and goes only to Research.
 - A skill upstream newly marks as user-invoked is refused for every job until a mandate covers it or the user approves it.

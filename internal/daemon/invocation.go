@@ -14,11 +14,14 @@ import (
 
 // calledFor are the skills that start only on request which each mandate
 // calls for: a tested-PR mandate covers to-spec, to-tickets, implement and
-// code-review, and a planning-only one the skills that make its outcome,
-// notes that plan (08 rule 14).
+// code-review, a planning-only one the skills that make its outcome, notes
+// that plan, and a research-only one the skills that make its own, findings:
+// research and to-questionnaire, neither of which starts only on request, so
+// that it covers every skill Research's workers have (08 rule 14).
 var calledFor = map[string][]string{
 	store.MandateTestedPR:     {"to-spec", "to-tickets", "implement", "code-review"},
 	store.MandatePlanningOnly: {"wayfinder", "grill-me", "grill-with-docs", "to-spec", "to-tickets"},
+	store.MandateResearchOnly: {"research", "to-questionnaire"},
 }
 
 // checkInvocation checks that the skill an assignment of job j names may

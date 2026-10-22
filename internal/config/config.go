@@ -1095,6 +1095,12 @@ leader_model = "opus"
 worker_provider = "claude"
 worker_model = "opus"
 
+[roles.research]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
 [roles.quality]
 leader_provider = "claude"
 leader_model = "opus"

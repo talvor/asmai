@@ -140,24 +140,40 @@ type planningJob struct {
 
 func newPlanningJob(t *testing.T, mandate string) planningJob {
 	t.Helper()
+	return newJobFactory(t, mandate, true)
+}
+
+// newJobFactory is newPlanningJob for a job that targets the fixture
+// repository, or with repository false for a job that targets none, which has
+// no clone and no job branch.
+func newJobFactory(t *testing.T, mandate string, repository bool) planningJob {
+	t.Helper()
 	out := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(out, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("ASMAI_TEST_OUT", out)
 	paths := stateDir(t)
-	origin := remote(t)
-	clone := filepath.Join(paths.Repositories, "fixture")
-	if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+	if err := os.MkdirAll(paths.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	git(t, filepath.Dir(clone), "clone", origin, clone)
+	var origin, clone string
+	if repository {
+		origin = remote(t)
+		clone = filepath.Join(paths.Repositories, "fixture")
+		if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		git(t, filepath.Dir(clone), "clone", origin, clone)
+	}
 	configFile := filepath.Join(paths.Dir, "config.toml")
 	var config strings.Builder
-	for _, role := range []string{roles.Coordination, roles.Planning, roles.Engineering, roles.Quality} {
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
 		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
 	}
-	fmt.Fprintf(&config, "[repositories.fixture]\norigin = %q\ndefault_branch = \"trunk\"\n", origin)
+	if repository {
+		fmt.Fprintf(&config, "[repositories.fixture]\norigin = %q\ndefault_branch = \"trunk\"\n", origin)
+	}
 	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +181,7 @@ func newPlanningJob(t *testing.T, mandate string) planningJob {
 	if err := os.MkdirAll(filepath.Dir(provider), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "printf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
+	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.part\"\nmv \"$ASMAI_TEST_OUT/args.part\" \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
 	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +194,12 @@ func newPlanningJob(t *testing.T, mandate string) planningJob {
 	if _, err := s.ProviderInstalled(store.ProviderInstall{Name: providers.ClaudeCode, Version: "v", Path: provider, SHA256: strings.Repeat("a", 64), InstalledAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
-		t.Fatal(err)
+	repositoryName := ""
+	if repository {
+		repositoryName = "fixture"
+		if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
 		t.Fatal(err)
@@ -188,7 +208,7 @@ func newPlanningJob(t *testing.T, mandate string) planningJob {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Plan a greeting", Mandate: mandate, Criteria: []string{"a plan"}}, false, at)
+	job, err := s.JobOpened(store.Job{Repository: repositoryName, Witness: witness, Reading: "Plan a greeting", Mandate: mandate, Criteria: []string{"a plan"}}, false, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,19 +219,21 @@ func newPlanningJob(t *testing.T, mandate string) planningJob {
 	}
 	d.applied = readApplied(configFile)
 	stand := map[*session.Session]bool{}
-	for _, role := range []string{roles.Coordination, roles.Planning, roles.Engineering, roles.Quality} {
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
 		address := roles.LeaderOf(role)
 		standIn := &session.Session{}
 		stand[standIn] = true
 		d.leaders[address.String()] = &leader{address: address, session: standIn, generation: 1}
 		d.sessions[role] = sessionRef{address: address, generation: 1}
 	}
-	repository, err := s.Repository("fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.ensureJobBranch(context.Background(), job, repository); err != nil {
-		t.Fatal(err)
+	if repository {
+		repository, err := s.Repository("fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.ensureJobBranch(context.Background(), job, repository); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() {
 		d.mu.Lock()
@@ -473,116 +495,122 @@ var grillingQuestions = []store.Question{
 // decision request through its owning leader and Coordination, and only the
 // user's own answer returns to the worker.
 func TestAWorkersGrillingOrWayfinderQuestionReachesTheUserInLavishThroughItsLeaderAndOnlyTheUsersOwnAnswerReturns(t *testing.T) {
-	for _, kind := range []string{store.RequestGrilling, store.RequestWayfinder} {
-		t.Run(kind, func(t *testing.T) {
-			f := newLavishFactoryOf(t, roles.Planning)
-			owner := roles.LeaderOf(roles.Planning).String()
+	for _, role := range []string{roles.Planning, roles.Research} {
+		for _, kind := range []string{store.RequestGrilling, store.RequestWayfinder} {
+			t.Run(role+"/"+kind, func(t *testing.T) {
+				workersQuestionReachesTheUserThroughItsLeader(t, role, kind)
+			})
+		}
+	}
+}
 
-			// The worker asks its owning leader, never the user, and its
-			// assignment's work waits.
-			asked, dispatch, err := f.d.decisionRequest(Request{Session: "worker0", Command: CommandDecisionRequest, Kind: kind, Questions: grillingQuestions, Content: "I read the spec."})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if asked.Recipient != owner || asked.Kind != kind || dispatch == nil || dispatch.Agent != owner || asked.Surface != store.SurfaceLavish {
-				t.Fatalf("the worker's request is %+v, dispatch %+v, want a %s request to %s", asked, dispatch, kind, owner)
-			}
-			if pending, err := f.s.PendingDecisions(); err != nil || len(pending) != 0 {
-				t.Fatalf("the user is listed what a worker asks its leader: %+v (%v)", pending, err)
-			}
+func workersQuestionReachesTheUserThroughItsLeader(t *testing.T, role, kind string) {
+	f := newLavishFactoryOf(t, role)
+	owner := roles.LeaderOf(role).String()
 
-			// The leader never answers it from the records or in words of its
-			// own, however it relies on them.
-			for name, in := range map[string]Request{
-				"in words of its own":      {Answer: "everyone", ReliedOn: "the job's decisions"},
-				"from a delegated record":  {Answer: "everyone", ReliedOn: "decision record 1, a delegated decision"},
-				"with no answer of anyone": {},
-			} {
-				in.Session, in.Command, in.Request, in.Version = "credential", CommandDecisionAnswer, asked.Request, 1
-				if _, _, err := f.d.decisionAnswer(in); err == nil || !strings.Contains(err.Error(), "needs the user's own answer") {
-					t.Errorf("the leader's answer %s returned %v, want it refused: the user's own answer is needed", name, err)
-				}
-			}
-			if current, err := f.s.DecisionRequest(asked.Request); err != nil || current.State != store.RequestPending {
-				t.Fatalf("the worker's request is %+v (%v), want it pending still", current, err)
-			}
+	// The worker asks its owning leader, never the user, and its
+	// assignment's work waits.
+	asked, dispatch, err := f.d.decisionRequest(Request{Session: "worker0", Command: CommandDecisionRequest, Kind: kind, Questions: grillingQuestions, Content: "I read the spec."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked.Recipient != owner || asked.Kind != kind || dispatch == nil || dispatch.Agent != owner || asked.Surface != store.SurfaceLavish {
+		t.Fatalf("the worker's request is %+v, dispatch %+v, want a %s request to %s", asked, dispatch, kind, owner)
+	}
+	if pending, err := f.s.PendingDecisions(); err != nil || len(pending) != 0 {
+		t.Fatalf("the user is listed what a worker asks its leader: %+v (%v)", pending, err)
+	}
 
-			// The leader carries it to the user, through Coordination, in Lavish.
-			carried, dispatch, err := f.d.decisionRequest(Request{Session: "credential", Command: CommandDecisionRequest, Job: f.job.Number, Kind: kind, Carries: asked.Request, Questions: grillingQuestions, Content: "I read the spec.", Blocks: []int64{f.assignments[0].ID}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if carried.Recipient != store.ToUser || carried.Surface != store.SurfaceLavish || carried.Carries != asked.Request || carried.CarriesVersion != 1 || dispatch == nil || dispatch.Agent != "leader@coordination" {
-				t.Fatalf("the leader's request is %+v, dispatch %+v, want a Lavish request to the user through Coordination that carries request %d", carried, dispatch, asked.Request)
-			}
-			page := f.waitFor(t, carried, "the page to be opened", func(r store.DecisionRequest) bool { return r.PageURL != "" })
-			html, err := os.ReadFile(page.PageFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, want := range []string{"Who are the users?", "What is out of scope?", "I read the spec."} {
-				if !strings.Contains(string(html), want) {
-					t.Errorf("the page lacks %q", want)
-				}
-			}
+	// The leader never answers it from the records or in words of its
+	// own, however it relies on them.
+	for name, in := range map[string]Request{
+		"in words of its own":      {Answer: "everyone", ReliedOn: "the job's decisions"},
+		"from a delegated record":  {Answer: "everyone", ReliedOn: "decision record 1, a delegated decision"},
+		"with no answer of anyone": {},
+	} {
+		in.Session, in.Command, in.Request, in.Version = "credential", CommandDecisionAnswer, asked.Request, 1
+		if _, _, err := f.d.decisionAnswer(in); err == nil || !strings.Contains(err.Error(), "needs the user's own answer") {
+			t.Errorf("the leader's answer %s returned %v, want it refused: the user's own answer is needed", name, err)
+		}
+	}
+	if current, err := f.s.DecisionRequest(asked.Request); err != nil || current.State != store.RequestPending {
+		t.Fatalf("the worker's request is %+v (%v), want it pending still", current, err)
+	}
 
-			// Until the user has answered, nothing returns to the worker, and
-			// neither the answer nor a recorded decision of the leader's stands in.
-			relay := Request{Session: "credential", Command: CommandDecisionAnswer, Request: asked.Request, Version: 1, UserAnswer: carried.Request}
-			if _, _, err := f.d.decisionAnswer(relay); err == nil || !strings.Contains(err.Error(), "pending") {
-				t.Fatalf("returning the user's answer before they gave it returned %v", err)
-			}
-			if _, _, err := f.d.decisionAnswer(Request{Session: "credential", Command: CommandDecisionAnswer, Request: asked.Request, Version: 1, UserAnswer: carried.Request, Answer: "everyone"}); err == nil || !strings.Contains(err.Error(), "needs the user's own answer") {
-				t.Fatalf("typing an answer beside the user's returned %v", err)
-			}
-			f.userSends(t, page, false, answer(page, "q1", "admins", "only them"))
-			f.waitFor(t, page, "the first answer", func(r store.DecisionRequest) bool { return len(r.Answered) == 1 })
-			if _, _, err := f.d.decisionAnswer(relay); err == nil || !strings.Contains(err.Error(), "partly answered") {
-				t.Fatalf("returning a partly answered page's answer returned %v", err)
-			}
-			f.userSends(t, page, true, answer(page, "q2", "", "billing"))
-			done := f.waitFor(t, page, "the user's answer", func(r store.DecisionRequest) bool { return r.State == store.RequestAnswered })
-			if done.AnsweredBy != store.ToUser || done.Cites == 0 {
-				t.Fatalf("the user's answer is %+v", done)
-			}
+	// The leader carries it to the user, through Coordination, in Lavish.
+	carried, dispatch, err := f.d.decisionRequest(Request{Session: "credential", Command: CommandDecisionRequest, Job: f.job.Number, Kind: kind, Carries: asked.Request, Questions: grillingQuestions, Content: "I read the spec.", Blocks: []int64{f.assignments[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if carried.Recipient != store.ToUser || carried.Surface != store.SurfaceLavish || carried.Carries != asked.Request || carried.CarriesVersion != 1 || dispatch == nil || dispatch.Agent != "leader@coordination" {
+		t.Fatalf("the leader's request is %+v, dispatch %+v, want a Lavish request to the user through Coordination that carries request %d", carried, dispatch, asked.Request)
+	}
+	page := f.waitFor(t, carried, "the page to be opened", func(r store.DecisionRequest) bool { return r.PageURL != "" })
+	html, err := os.ReadFile(page.PageFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Who are the users?", "What is out of scope?", "I read the spec."} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
 
-			// The leader's own decisions never answer it, and another leader
-			// never returns it.
-			if _, _, err := f.d.decisionAnswer(Request{Session: "coordination", Command: CommandDecisionAnswer, Request: asked.Request, Version: 1, UserAnswer: carried.Request}); err == nil || !strings.Contains(err.Error(), "goes to "+owner) {
-				t.Errorf("another leader returning the user's answer returned %v", err)
-			}
+	// Until the user has answered, nothing returns to the worker, and
+	// neither the answer nor a recorded decision of the leader's stands in.
+	relay := Request{Session: "credential", Command: CommandDecisionAnswer, Request: asked.Request, Version: 1, UserAnswer: carried.Request}
+	if _, _, err := f.d.decisionAnswer(relay); err == nil || !strings.Contains(err.Error(), "pending") {
+		t.Fatalf("returning the user's answer before they gave it returned %v", err)
+	}
+	if _, _, err := f.d.decisionAnswer(Request{Session: "credential", Command: CommandDecisionAnswer, Request: asked.Request, Version: 1, UserAnswer: carried.Request, Answer: "everyone"}); err == nil || !strings.Contains(err.Error(), "needs the user's own answer") {
+		t.Fatalf("typing an answer beside the user's returned %v", err)
+	}
+	f.userSends(t, page, false, answer(page, "q1", "admins", "only them"))
+	f.waitFor(t, page, "the first answer", func(r store.DecisionRequest) bool { return len(r.Answered) == 1 })
+	if _, _, err := f.d.decisionAnswer(relay); err == nil || !strings.Contains(err.Error(), "partly answered") {
+		t.Fatalf("returning a partly answered page's answer returned %v", err)
+	}
+	f.userSends(t, page, true, answer(page, "q2", "", "billing"))
+	done := f.waitFor(t, page, "the user's answer", func(r store.DecisionRequest) bool { return r.State == store.RequestAnswered })
+	if done.AnsweredBy != store.ToUser || done.Cites == 0 {
+		t.Fatalf("the user's answer is %+v", done)
+	}
 
-			// Then the leader returns it to the worker, as the user gave it.
-			returned, back, err := f.d.decisionAnswer(relay)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if returned.State != store.RequestAnswered || returned.AnsweredBy != owner || back.Agent != f.assignments[0].Worker {
-				t.Fatalf("the returned answer is %+v, dispatch %+v", returned, back)
-			}
-			for _, want := range []string{"admins", "only them", "billing"} {
-				if !strings.Contains(returned.Answer, want) {
-					t.Errorf("the worker's answer lacks the user's words %q: %q", want, returned.Answer)
-				}
-			}
-			if returned.Answer != done.Answer || !strings.Contains(returned.ReliedOn, "the user's own answer") || !strings.Contains(returned.ReliedOn, fmt.Sprint(done.Cites)) {
-				t.Errorf("the worker's answer is %q relying on %q, want the user's words %q and the Lavish answer %d", returned.Answer, returned.ReliedOn, done.Answer, done.Cites)
-			}
-			inbox, err := f.s.Inbox(f.assignments[0].Worker, 0, time.Now())
-			if err != nil {
-				t.Fatal(err)
-			}
-			var reached bool
-			for _, m := range inbox {
-				reached = reached || m.Kind == store.MessageDecisionAnswer && strings.Contains(m.Body, "billing")
-			}
-			if !reached {
-				t.Errorf("the worker's inbox lacks the user's answer: %+v", inbox)
-			}
-			if blocking, err := f.s.BlockingDecisions(f.assignments[0].ID); err != nil || len(blocking) != 0 {
-				t.Errorf("the assignment still waits for %+v (%v)", blocking, err)
-			}
-		})
+	// The leader's own decisions never answer it, and another leader
+	// never returns it.
+	if _, _, err := f.d.decisionAnswer(Request{Session: "coordination", Command: CommandDecisionAnswer, Request: asked.Request, Version: 1, UserAnswer: carried.Request}); err == nil || !strings.Contains(err.Error(), "goes to "+owner) {
+		t.Errorf("another leader returning the user's answer returned %v", err)
+	}
+
+	// Then the leader returns it to the worker, as the user gave it.
+	returned, back, err := f.d.decisionAnswer(relay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if returned.State != store.RequestAnswered || returned.AnsweredBy != owner || back.Agent != f.assignments[0].Worker {
+		t.Fatalf("the returned answer is %+v, dispatch %+v", returned, back)
+	}
+	for _, want := range []string{"admins", "only them", "billing"} {
+		if !strings.Contains(returned.Answer, want) {
+			t.Errorf("the worker's answer lacks the user's words %q: %q", want, returned.Answer)
+		}
+	}
+	if returned.Answer != done.Answer || !strings.Contains(returned.ReliedOn, "the user's own answer") || !strings.Contains(returned.ReliedOn, fmt.Sprint(done.Cites)) {
+		t.Errorf("the worker's answer is %q relying on %q, want the user's words %q and the Lavish answer %d", returned.Answer, returned.ReliedOn, done.Answer, done.Cites)
+	}
+	inbox, err := f.s.Inbox(f.assignments[0].Worker, 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reached bool
+	for _, m := range inbox {
+		reached = reached || m.Kind == store.MessageDecisionAnswer && strings.Contains(m.Body, "billing")
+	}
+	if !reached {
+		t.Errorf("the worker's inbox lacks the user's answer: %+v", inbox)
+	}
+	if blocking, err := f.s.BlockingDecisions(f.assignments[0].ID); err != nil || len(blocking) != 0 {
+		t.Errorf("the assignment still waits for %+v (%v)", blocking, err)
 	}
 }
 
@@ -680,6 +708,7 @@ func TestWhatTheInstructionsSayEachMandateCoversIsWhatTheDaemonEnforces(t *testi
 	for mandate, phrase := range map[string]string{
 		store.MandateTestedPR:     "a tested-pull-request mandate covers ",
 		store.MandatePlanningOnly: "a planning-only mandate covers ",
+		store.MandateResearchOnly: "a research-only mandate covers ",
 	} {
 		want := phrase + list(calledFor[mandate])
 		for name, text := range map[string]string{"the operating guide": skills.Guide(), "Coordination's instructions": coordination} {
@@ -688,8 +717,18 @@ func TestWhatTheInstructionsSayEachMandateCoversIsWhatTheDaemonEnforces(t *testi
 			}
 		}
 	}
+	research, err := roles.LeaderInstructions(roles.Research)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if want := "a planning-only mandate covers " + list(calledFor[store.MandatePlanningOnly]); !strings.Contains(planning, want) {
 		t.Errorf("Planning's instructions lack %q", want)
+	}
+	if want := "a research-only mandate covers " + list(calledFor[store.MandateResearchOnly]); !strings.Contains(research, want) {
+		t.Errorf("Research's instructions lack %q", want)
+	}
+	if want := "a tested-pull-request mandate covers " + list(calledFor[store.MandateTestedPR]); !strings.Contains(research, want) {
+		t.Errorf("Research's instructions lack %q", want)
 	}
 	if want := "a tested-pull-request mandate covers " + list(calledFor[store.MandateTestedPR]); !strings.Contains(planning, want) {
 		t.Errorf("Planning's instructions lack %q", want)

@@ -69,7 +69,7 @@ _Avoid_: Pause (when the factory stopped the work)
 A request for another leader to take responsibility for a defined outcome, carrying the context and acceptance criteria needed to accept, clarify, or decline it.
 
 **Mandate**:
-The authority to pursue a requested outcome within its agreed scope, constraints, and acceptance criteria. A tested-PR mandate covers delivering a tested pull request; a planning-only mandate covers only producing its planning outcome, never code.
+The authority to pursue a requested outcome within its agreed scope, constraints, and acceptance criteria. A tested-PR mandate covers delivering a tested pull request; a planning-only mandate covers only producing its planning outcome, and a research-only mandate only its research outcome, never code.
 
 **Grant**:
 An explicit authorization for a decision or action within a recorded scope and set of conditions, reusable while those conditions hold. The user gives it in words, and a leader records it at its scope citing them. A job's own approval stays with that job unless granted at a wider scope, spending is zero unless a grant names the amount and the scope, and no grant can authorize a merge. It ends only when the user revokes it or a leader reports that a condition no longer holds; actions it already authorized are reported as they stand, never undone.
@@ -105,6 +105,10 @@ _Avoid_: Worker branch
 **Workspace**:
 The directory set aside for one assignment, where its worker works: the factory's own checkout of the job's repository, or an empty scratch directory for a job without one. A writing assignment's workspace has its own branch; a read-only one is fixed at the commit it examines. Writes outside it are effects.
 _Avoid_: Worktree, sandbox, checkout (when meaning an assignment's working copy)
+
+**Scratch workspace**:
+The empty directory a job without a repository gives each assignment, with no clone, no git and no branch, where its worker writes its findings. It is kept after the job ends, with the results in it, until the user removes it with `asmai job clean`, which is refused while the job is open.
+_Avoid_: Temp directory, sandbox
 
 **Write guard**:
 Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in permitted folders, including a worker's repository-declared writable folders when it has them; `asmai`, git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt in Coordination's leader's session and is denied in every other agent's. It guards against mistakes; it is not a security boundary. See the [write guard](README.md#the-write-guard-commits-and-repository-files) for its bounds.
@@ -217,7 +221,7 @@ The role responsible for the user's conversation with the factory and overall de
 The role responsible for requirements, decision maps, and specifications. It prepares and interprets planning questions, and its leader carries each question its workers ask to the user as a decision request; Coordination presents the exchange to the user, and a grilling or Wayfinder question is resolved only by the user's own answer.
 
 **Research**:
-The role responsible for gathering evidence that informs the factory's work.
+The role responsible for gathering evidence that informs the factory's work. Its findings tie every claim to a cited source and never stand in for the user's answers.
 
 **Engineering**:
 The role responsible for implementation and technical diagnosis.

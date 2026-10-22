@@ -330,7 +330,7 @@ func TestEngineeringsInstructionsHandleRedCIWithAtMostOneJudgedReRunOrAFix(t *te
 
 func TestEveryAgentIsToldToRunEachAsmaiCommandAsItsOwnBashCall(t *testing.T) {
 	want := "Run each `asmai` command as its own single command in its own Bash call, never chained or compounded with other commands"
-	for _, role := range []string{Coordination, Planning, Engineering, Quality} {
+	for _, role := range []string{Coordination, Planning, Research, Engineering, Quality} {
 		leader, err := LeaderInstructions(role)
 		if err != nil {
 			t.Fatal(err)
@@ -339,7 +339,7 @@ func TestEveryAgentIsToldToRunEachAsmaiCommandAsItsOwnBashCall(t *testing.T) {
 			t.Errorf("%s's leader's instructions lack %q", Title(role), want)
 		}
 	}
-	for _, role := range []string{Planning, Engineering, Quality} {
+	for _, role := range []string{Planning, Research, Engineering, Quality} {
 		worker, err := WorkerInstructions(role)
 		if err != nil {
 			t.Fatal(err)
@@ -355,7 +355,7 @@ func TestEveryAgentIsToldToRunEachAsmaiCommandAsItsOwnBashCall(t *testing.T) {
 // worker is told to write files with the tools its permissions allow.
 func TestAgentsWithoutTheUsersTerminalAreToldADenialReplacesThePrompt(t *testing.T) {
 	denied := "anything your permissions do not allow is denied, and you are told so"
-	for _, role := range []string{Planning, Engineering, Quality} {
+	for _, role := range []string{Planning, Research, Engineering, Quality} {
 		leader, err := LeaderInstructions(role)
 		if err != nil {
 			t.Fatal(err)
@@ -440,7 +440,7 @@ func TestEveryAgentsInstructionsCarryTheOperatingGuideAndLeadersTheirIndex(t *te
 }
 
 func TestEveryLeadersInstructionsRecordDecisionsAndPassThemOn(t *testing.T) {
-	for _, role := range []string{Coordination, Planning, Engineering, Quality} {
+	for _, role := range []string{Coordination, Planning, Research, Engineering, Quality} {
 		leader, err := LeaderInstructions(role)
 		if err != nil {
 			t.Fatal(err)
@@ -465,7 +465,7 @@ func TestEveryLeadersInstructionsRecordDecisionsAndPassThemOn(t *testing.T) {
 }
 
 func TestEveryLeadersInstructionsSayWhatCountsAsDistinctAndWhenToAsk(t *testing.T) {
-	for _, role := range []string{Coordination, Planning, Engineering, Quality} {
+	for _, role := range []string{Coordination, Planning, Research, Engineering, Quality} {
 		text, err := LeaderInstructions(role)
 		if err != nil {
 			t.Fatal(err)
@@ -485,7 +485,7 @@ func TestEveryLeadersInstructionsSayWhatCountsAsDistinctAndWhenToAsk(t *testing.
 			}
 		}
 	}
-	for _, role := range []string{Planning, Engineering, Quality} {
+	for _, role := range []string{Planning, Research, Engineering, Quality} {
 		text, _ := LeaderInstructions(role)
 		for _, want := range []string{"Ask when distinct viable approaches remain", "asmai decision request --job", "`decision.answer`", "Coordination's reading"} {
 			if !strings.Contains(text, want) {
@@ -519,7 +519,7 @@ func TestCoordinationPresentsAChoiceOnceAndRecordsTheUsersOwnMessageWithItsReadi
 }
 
 func TestLeadersSendSeveralQuestionsToLavishAndCoordinationConfirmsWhatTheUserSentInOneLine(t *testing.T) {
-	for _, role := range []string{Planning, Engineering, Quality} {
+	for _, role := range []string{Planning, Research, Engineering, Quality} {
 		text, err := LeaderInstructions(role)
 		if err != nil {
 			t.Fatal(err)
@@ -791,5 +791,226 @@ func TestInstructionsSatisfyASkillsHumanStepsFromTheRecordsThroughTheOwningLeade
 				t.Errorf("%s's workers' instructions lack %q", role, want)
 			}
 		}
+	}
+}
+
+func TestResearchIsAStaffedRole(t *testing.T) {
+	if !slices.Contains(Staffed, Research) {
+		t.Errorf("the staffed roles are %v, want Research among them", Staffed)
+	}
+}
+
+// The required content of 08 rule 37, as Research's instructions carry it. A
+// phrase stands for each item of the rule, and the rule sets the content, not
+// its wording: a rewording of an item changes its phrase here.
+func TestResearchsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
+	leader, err := LeaderInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := WorkerInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyAgent := []string{
+		"Coordinate only through the `asmai` command",
+		"fetch your inbox with `asmai inbox --dispatch <id>`",
+		"treat only work correlated to the current dispatch as current",
+		"Load the job's brief with `asmai brief <job>` at every start and whenever you switch jobs",
+		"Never ask the user directly",
+		"never supply the user's side of a decision",
+		"Bring a choice between distinct viable approaches to the user",
+		"Proceed on routine choices and settled routes",
+		"Use only the skills on your list",
+		"They never widen your mandate; escalate a conflict",
+		"Record each consequential effect with `asmai effect` immediately after making it",
+		"Never run factory-changing commands",
+	}
+	for name, text := range map[string]string{"leader": leader, "worker": worker} {
+		for _, want := range everyAgent {
+			if !strings.Contains(text, want) {
+				t.Errorf("Research's %s's instructions lack %q", name, want)
+			}
+		}
+	}
+	for _, want := range []string{
+		"Do substantive research work only through worker assignments",
+		"inspect, reason, converse, accept and keep records yourself",
+		"An assignment always has an outcome and acceptance criteria",
+		"--skill <name>",
+		"narrow the worker's list",
+		"Answer each handoff explicitly",
+		"Decide on every result against the assignment's acceptance criteria, never on \"done\" alone",
+		"asmai accept --assignment <id>",
+		"asmai reject --assignment <id>",
+		"Record decisions that affect later work",
+		"`--record <id>` on `asmai assign`",
+		"Answer a worker's other requests from the records, or escalate them",
+		"a message of kind `reconciliation`",
+		"nothing is retried",
+		"side-effect-free",
+		"escalate it through Coordination with what was tried",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Research's leader's instructions lack %q", want)
+		}
+	}
+	for _, want := range []string{
+		"You carry that one assignment for one owning leader",
+		"stay inside the workspace",
+		"Link your artifacts and evidence",
+		"disclose every gap",
+		"Name the record each step of a skill relied on",
+		"Take in the job branch's tip before you submit",
+		"commit and push your assignment branch",
+		"AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit",
+		"put the notes where the repository keeps them, or under `docs/<kind>/`",
+	} {
+		if !strings.Contains(strings.ToLower(worker), strings.ToLower(want)) {
+			t.Errorf("Research's workers' instructions lack %q", want)
+		}
+	}
+	// The leaders of Planning and Research.
+	for _, want := range []string{
+		"Assign each question to investigate, and each questionnaire to write, to a worker with the skill that fits",
+		"Carry each one to the user",
+		"you deliver your own notes-only jobs",
+		"short body that says the pull request is notes only",
+		"written without the pr skill",
+	} {
+		if !strings.Contains(strings.ToLower(leader), strings.ToLower(want)) {
+			t.Errorf("Research's leader's instructions lack %q", want)
+		}
+	}
+	// Research's findings tie every claim to a cited source and never stand in
+	// for the user's answers.
+	for name, text := range map[string]string{"leader": leader, "worker": worker} {
+		for _, want := range []string{
+			"tied to a cited source",
+			"never stand in for the user's answers",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("Research's %s's instructions lack %q", name, want)
+			}
+		}
+	}
+}
+
+func TestResearchsInstructionsSayWhatTheScratchWorkspaceOfAJobWithNoRepositoryIsAndHowSuchAJobEnds(t *testing.T) {
+	leader, err := LeaderInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"each assignment gets an empty scratch workspace",
+		"no clone, no git and no branch",
+		"A job with no repository ends when you accept its outcome against the mandate",
+		"`asmai accept --assignment <id> --reason <how the outcome meets a criterion> --ends-job`",
+		"without `--ends-job` an acceptance ends only its assignment",
+		"the daemon tells Coordination where the results are",
+		"kept until the user removes them with `asmai job clean <number>`, which is refused while the job is open",
+		"You never run it",
+		"A research-only job is authorized only to produce its outcome",
+		"nothing in it hands work to Planning or Engineering",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Research's leader's instructions lack %q", want)
+		}
+	}
+	worker, err := WorkerInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"an empty scratch workspace",
+		"nothing is committed or pushed",
+		"In a scratch workspace there is nothing to commit, to take in or to push",
+		"never run commands that change the factory, such as `asmai start`, `asmai stop` or `asmai job clean`",
+		"In a scratch workspace there is no pull request, so give no PR section",
+	} {
+		if !strings.Contains(strings.ToLower(worker), strings.ToLower(want)) {
+			t.Errorf("Research's workers' instructions lack %q", want)
+		}
+	}
+	coordination, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"--mandate <tested-pr|planning-only|research-only>",
+		"is `research-only`",
+		"leaves out `--repository`",
+		"`asmai handoff send --job <number> --to research",
+		"A message of kind `delivery` for a job with no repository",
+		"says where the results are, in the scratch workspaces of its assignments",
+		"`asmai job clean <number>` removes them, which is refused while the job is open",
+		"never run it yourself",
+	} {
+		if !strings.Contains(coordination, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+}
+
+func TestResearchsFindingsNeverLetAnAgentSupplyTheUsersAnswer(t *testing.T) {
+	leader, err := LeaderInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Findings inform decisions and never stand in for the user's answers",
+		"no finding, recommendation or earlier answer is taken for the user's answer",
+		"a delegated decision never resolves one",
+		"`asmai decision request --job <number> --kind <grilling|wayfinder|questions> --carries <the worker's request ID>",
+		"never put the questions to the user in a terminal",
+		"`asmai decision answer --request <the worker's request ID> --version <n> --user-answer <the ID of your request that carried it>`",
+		"you never type the user's answer, and the daemon refuses one",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Research's leader's instructions lack %q", want)
+		}
+	}
+	worker, err := WorkerInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Your findings never stand in for the user's answers",
+		"you never take your own recommendation or a finding as the answer",
+		"end your turn after you send the request and wait",
+		"a message of kind `decision.answer`",
+		"You never put a question to the user in your terminal",
+	} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("Research's workers' instructions lack %q", want)
+		}
+	}
+}
+
+func TestResearchsLeaderAndWorkersAreGivenTheirSkills(t *testing.T) {
+	leader, err := LeaderInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := WorkerInstructions(Research)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := skills.WorkerList(Research); !slices.Equal(got, []string{"research", "to-questionnaire"}) {
+		t.Errorf("Research's workers' skills are %v, want research and to-questionnaire", got)
+	}
+	for _, name := range skills.WorkerList(Research) {
+		if !strings.Contains(worker, name) {
+			t.Errorf("Research's workers' instructions do not name their skill %s", name)
+		}
+		if !strings.Contains(leader, "## "+name+"\n\n- Purpose:") {
+			t.Errorf("Research's leader's index lacks the skill %s", name)
+		}
+	}
+	if !strings.Contains(leader, skills.Index(Research)) || strings.Contains(worker, "## Your workers' skills") {
+		t.Error("Research's leader lacks the index of its workers' skills, or its workers carry it")
+	}
+	if got := skills.LeaderList(Research); len(got) != 0 {
+		t.Errorf("Research's leader has skills %v besides its index", got)
 	}
 }

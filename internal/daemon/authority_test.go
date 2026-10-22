@@ -59,8 +59,10 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"quality", CommandHandoffSend, ""},
 		{"current", CommandAssign, "only leader@engineering, leader@planning or leader@research"},
 		{"worker", CommandAssign, "only leader@engineering, leader@planning or leader@research"},
-		// Only the delivery owner of a code job pushes, so Planning does not.
-		{"planning", CommandPush, "only leader@engineering, the delivery owner"},
+		// The delivery owners push and record their pull requests: Engineering's
+		// leader for a code job, and Planning's or Research's for a notes job.
+		{"planning", CommandPush, ""},
+		{"planning", CommandEffect, ""},
 		{"planning", CommandJobOpen, "only leader@coordination"},
 		{"planning", CommandHandoffSend, ""},
 		{"planning", CommandDecisionRequest, ""},

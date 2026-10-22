@@ -140,6 +140,10 @@ type Assignment struct {
 	// workspace is an empty scratch directory, with no job branch, no
 	// assignment branch and no commit (05 rule 8).
 	Scratch bool `json:"scratch,omitempty"`
+	// Prototype is set, in a job's list of assignments, on an assignment
+	// whose result its leader accepted as a prototype that stays on its own
+	// assignment branch (05 rule 31).
+	Prototype *Prototype `json:"prototype,omitempty"`
 	// Skill is the skill the owning leader named for the worker to run, and
 	// Skills the explicit narrowing, if any; otherwise the current role list
 	// is delivered at each start.
@@ -590,11 +594,20 @@ func (s *Store) AssignmentsForJob(job int64) ([]Assignment, error) {
 	if err != nil {
 		return nil, err
 	}
+	kept, err := s.PrototypesKept(job)
+	if err != nil {
+		return nil, err
+	}
 	var assignments []Assignment
 	for _, id := range ids {
 		a, err := s.Assignment(id)
 		if err != nil {
 			return nil, err
+		}
+		for _, p := range kept {
+			if p.Assignment == a.ID {
+				a.Prototype = &p
+			}
 		}
 		assignments = append(assignments, a)
 	}

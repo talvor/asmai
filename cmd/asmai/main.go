@@ -161,13 +161,15 @@ commands agents run:
                               a Quality worker submits its validation report
   asmai blocked --reason <text> [--needs <text>]
                               a worker reports that it cannot go on
-  asmai accept --assignment <id> --reason <text> [--ends-job]
-                              Engineering's leader accepts the result of an assignment it owns, and the
-                              daemon fast-forwards the job branch to it; Quality's leader accepts a validation
-                              report, and the daemon delivers it to Engineering's leader. Repeat --reason
+  asmai accept --assignment <id> --reason <text> [--ends-job] [--prototype]
+                              a leader accepts the result of an assignment it owns, and the daemon
+                              fast-forwards the job branch to it; Quality's leader accepts a validation
+                              report, and the daemon delivers it to the job's delivery owner. Repeat --reason
                               for each reason. For a job with no repository nothing moves, and --ends-job is
                               the owning leader accepting the job's outcome against its mandate: the job ends
-                              and Coordination is told where the results are
+                              and Coordination is told where the results are. --prototype accepts a result
+                              as a prototype that stays on its own assignment branch on origin: the job
+                              branch does not move, and the verdict is a note on it that points to that branch
   asmai reject --assignment <id> --reason <text>
                               a leader returns the result to the same worker, in a new dispatch
   asmai cancel --assignment <id> --reason <text>
@@ -351,7 +353,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var assignNarrow listFlags
 	var assignOutcome, blockedReason, blockedNeeds string
 	var decidedAssignment int64
-	var endsJob bool
+	var endsJob, prototype bool
 	var reasons listFlags
 	var repoOptions repoSettings
 	var role roleChoices
@@ -437,6 +439,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
 		flags.BoolVar(&endsJob, "ends-job", false, "with accept, the owning leader accepts the outcome of a job with no repository against its mandate, which ends the job")
+		flags.BoolVar(&prototype, "prototype", false, "with accept, the owning leader accepts a result as a prototype that stays on its own assignment branch: the job branch does not move")
 	case "decision record":
 		flags.Int64Var(&decision.job, "job", 0, "job number")
 		flags.StringVar(&decision.choice, "choice", "", "what the decision chose")
@@ -609,7 +612,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "blocked":
 		return blocked(o, paths, blockedReason, blockedNeeds)
 	case "accept", "reject", "cancel":
-		return decide(o, paths, name, decidedAssignment, reasons, endsJob)
+		return decide(o, paths, name, decidedAssignment, reasons, endsJob, prototype)
 	case "push":
 		return push(o, paths, arg)
 	case "decision record":

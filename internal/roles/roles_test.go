@@ -620,7 +620,8 @@ func TestPlanningsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"Take in the job branch's tip before you submit",
 		"commit and push your assignment branch",
 		"AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit",
-		"Put the notes where the repository keeps them, or under `docs/<kind>/`",
+		"Put the notes where the repository keeps them, according to its repository instructions or its existing folders, or under `docs/<kind>/`",
+		"Never copy what the repository's tracker workflow already records",
 		"--pr-section",
 		"refuses a result while changes are uncommitted",
 	} {
@@ -632,9 +633,8 @@ func TestPlanningsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"Assign grilling, Wayfinder, specification and ticket work to a worker with the skill that fits",
 		"carry their questions to the user",
 		"Carry each one to the user",
-		"deliver your own notes-only jobs",
-		"short body that says the pull request is notes only",
-		"written without the pr skill",
+		"delivered like code, by you",
+		"Write a short notes-only body, without the pr skill",
 	} {
 		if !strings.Contains(leader, want) {
 			t.Errorf("Planning's leader's instructions lack %q", want)
@@ -864,7 +864,8 @@ func TestResearchsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"Take in the job branch's tip before you submit",
 		"commit and push your assignment branch",
 		"AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit",
-		"put the notes where the repository keeps them, or under `docs/<kind>/`",
+		"put the notes where the repository keeps them, according to its repository instructions or its existing folders, or under `docs/<kind>/`",
+		"Never copy what the repository's tracker workflow already records",
 	} {
 		if !strings.Contains(strings.ToLower(worker), strings.ToLower(want)) {
 			t.Errorf("Research's workers' instructions lack %q", want)
@@ -874,9 +875,8 @@ func TestResearchsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 	for _, want := range []string{
 		"Assign each question to investigate, and each questionnaire to write, to a worker with the skill that fits",
 		"Carry each one to the user",
-		"you deliver your own notes-only jobs",
-		"short body that says the pull request is notes only",
-		"written without the pr skill",
+		"delivered like code, by you",
+		"Write a short notes-only body, without the pr skill",
 	} {
 		if !strings.Contains(strings.ToLower(leader), strings.ToLower(want)) {
 			t.Errorf("Research's leader's instructions lack %q", want)
@@ -1012,5 +1012,62 @@ func TestResearchsLeaderAndWorkersAreGivenTheirSkills(t *testing.T) {
 	}
 	if got := skills.LeaderList(Research); len(got) != 0 {
 		t.Errorf("Research's leader has skills %v besides its index", got)
+	}
+}
+
+func TestPlanningsAndResearchsLeadersDeliverTheirNotesJobsLikeCodeWithAShortBodyAndNoQuality(t *testing.T) {
+	for _, role := range []string{Planning, Research} {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			// The delivery is the leader's own, with no validation.
+			"You ask Quality for nothing and the daemon runs no validation of a notes job",
+			"a mandate that asks for an independent check is something to bring to Coordination",
+			"The daemon refuses the push while an assignment of the job has not ended",
+			"`asmai push <job>`",
+			"Only the daemon pushes the job branch",
+			// The pull request is a draft, its body short and notes only, written
+			// without the pr skill.
+			"`gh pr create --draft --repo <owner/name> --base <default branch> --head <job branch> --title <title> --body-file <file>`",
+			"Say that the pull request is notes only and changes no code",
+			"no Summary, Evidence or Merge Danger sections",
+			"`Closes #<n>` only when the job's mandate is to resolve that issue, and with `Refs #<n>` otherwise",
+			"`asmai effect pull-request <the URL gh printed>`",
+			// The daemon marks it ready, on green CI or straight away.
+			"unless the repository is declared as having no CI, and then it marks the pull request ready straight away",
+			"You never mark it ready, and nothing merges it",
+			"message of kind `checks-red`",
+			"--choice rerun-failed",
+			// Notes the tracker records are not copied, and a prototype stays.
+			"are not copied into the repository",
+			"`asmai accept --assignment <id> --prototype",
+			"the prototype's code never reaches the job's pull request",
+			"a verdict note that points to that branch",
+		} {
+			if !strings.Contains(leader, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+		if strings.Contains(leader, "arrive with notes delivery") || strings.Contains(leader, "you push nothing and open no pull request") {
+			t.Errorf("%s's leader's instructions still say notes delivery is to come", role)
+		}
+	}
+	engineering, err := LeaderInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"`asmai accept --assignment <id> --prototype", "the prototype's code never reaches the job's pull request"} {
+		if !strings.Contains(engineering, want) {
+			t.Errorf("Engineering's leader's instructions lack %q", want)
+		}
+	}
+	worker, err := WorkerInstructions(Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "a prototype that stays on its own branch"; !strings.Contains(worker, want) {
+		t.Errorf("Engineering's workers' instructions lack %q", want)
 	}
 }

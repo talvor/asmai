@@ -18,4 +18,4 @@ A job that targets no repository has no job branch, no pull request and no deliv
 
 - Research's and Planning's instructions say how a job with no repository ends, and Coordination's tell the user where the results are and the command that removes them. The operating guide's list of the skills each mandate covers gains the research-only mandate.
 - Nothing in a scratch workspace is committed, so nothing of it is on origin: the user's `asmai job clean` is the one place their results are deleted.
-- A repository job's notes still stay on its job branch until notes delivery arrives.
+- A repository job's notes are delivered with the job branch as a notes pull request ([ADR 0021](0021-a-notes-job-is-delivered-by-its-own-leader-through-the-code-delivery-with-no-validation-and-a-prototype-stays-on-its-branch.md)).

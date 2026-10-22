@@ -149,8 +149,9 @@ func (d *daemon) watched(job int64) (store.PullRequest, string, bool) {
 // AsmAI's clone, records each check's state when they changed, tells the
 // delivery owner when the checks on the head the daemon pushed are red, and
 // delivers the job when every check on that head is green. A head with
-// no checks is never green: the daemon keeps waiting. It returns whether what
-// it saw changed.
+// no checks is never green: the daemon keeps waiting, unless the job is a
+// notes job in a repository declared as having no CI, whose pull request is
+// delivered straight away. It returns whether what it saw changed.
 func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
 	repository, err := d.store.Repository(j.Repository)
 	if err != nil {
@@ -159,6 +160,9 @@ func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
 	}
 	ctx, cancel := context.WithTimeout(d.work, ghTimeout)
 	defer cancel()
+	if j.Notes() && d.noCI(j.Number) {
+		return d.lookAtNoCI(ctx, j, pr, repository, w)
+	}
 	found, err := github.ViewChecks(ctx, repository.Clone, pr.Number)
 	if err != nil {
 		if d.work.Err() == nil {
@@ -192,15 +196,60 @@ func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
 		return changed
 	}
 	d.assignMu.Lock()
-	if err := d.store.TestedPR(j.Number, w.head); err != nil {
+	if err := d.store.Deliverable(j.Number, w.head); err != nil {
 		d.assignMu.Unlock()
 		if why := err.Error(); why != w.unmet {
 			w.unmet = why
-			d.log.Warn("every check is green, but the head is not a tested pull request, so it is not marked ready", "job", j.Number, "head", w.head, "reason", why)
+			d.log.Warn("every check is green, but the head is not deliverable, so it is not marked ready", "job", j.Number, "head", w.head, "reason", why)
 		}
 		return changed
 	}
-	dispatch, ok := d.deliver(ctx, j, repository, found, o)
+	dispatch, ok := d.deliver(ctx, j, repository, found.PullRequest, o.Checks, false)
+	d.assignMu.Unlock()
+	if ok {
+		d.nudge(dispatch.Agent)
+		d.removeJobLocal(j.Number)
+	}
+	return true
+}
+
+// noCI reports whether the repository of job is declared, in the
+// configuration the user applied, as having no CI (06 rule 30).
+func (d *daemon) noCI(job int64) bool {
+	d.configMu.Lock()
+	cfg := d.applied
+	d.configMu.Unlock()
+	return d.repositoryOptions(cfg, job).NoCI
+}
+
+// lookAtNoCI delivers the notes pull request of j, whose repository is
+// declared as having no CI, straight away: there is no check to wait for, so
+// once GitHub has the head the daemon pushed on the pull request, and the
+// head is deliverable, the daemon marks it ready. It returns whether it saw
+// the pull request at a new head.
+func (d *daemon) lookAtNoCI(ctx context.Context, j store.Job, pr store.PullRequest, repository store.Repository, w *watch) bool {
+	found, err := github.ViewPullRequest(ctx, repository.Clone, pr.URL)
+	if err != nil {
+		if d.work.Err() == nil {
+			d.log.Warn("the daemon could not read the pull request of a notes job whose repository has no CI with gh; it looks again", "job", j.Number, "number", pr.Number, "error", err.Error())
+		}
+		return false
+	}
+	if found.State != "OPEN" || found.HeadCommit != w.head {
+		// GitHub does not have the pushed head on the pull request yet, or
+		// has another.
+		return false
+	}
+	d.assignMu.Lock()
+	if err := d.store.Deliverable(j.Number, w.head); err != nil {
+		d.assignMu.Unlock()
+		if why := err.Error(); why != w.unmet {
+			w.unmet = why
+			d.log.Warn("the repository has no CI, but the head is not deliverable, so it is not marked ready", "job", j.Number, "head", w.head, "reason", why)
+		}
+		return false
+	}
+	dispatch, ok := d.deliver(ctx, j, repository, found, []store.CheckState{}, true)
 	d.assignMu.Unlock()
 	if ok {
 		d.nudge(dispatch.Agent)
@@ -213,10 +262,11 @@ func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
 // ready and one opened with "[not ready]" by taking that out of its title,
 // records the delivery of j with its pull request, head and time, and ends j
 // with a dispatch telling Coordination's leader, which it returns with whether
-// j was delivered. AsmAI never merges: ready never means merged. assignMu is
-// held.
-func (d *daemon) deliver(ctx context.Context, j store.Job, repository store.Repository, found github.Checks, o store.ChecksObservation) (store.Dispatch, bool) {
-	if err := github.MarkReady(ctx, repository.Clone, found.PullRequest); err != nil {
+// j was delivered. The checks are the ones green on its head, none when noCI
+// says a notes pull request of a repository with no CI is delivered straight
+// away. AsmAI never merges: ready never means merged. assignMu is held.
+func (d *daemon) deliver(ctx context.Context, j store.Job, repository store.Repository, found github.PullRequest, checks []store.CheckState, noCI bool) (store.Dispatch, bool) {
+	if err := github.MarkReady(ctx, repository.Clone, found); err != nil {
 		d.log.Error("marking a job's pull request ready; the daemon tries again", "job", j.Number, "number", found.Number, "error", err.Error())
 		return store.Dispatch{}, false
 	}
@@ -229,7 +279,7 @@ func (d *daemon) deliver(ctx context.Context, j store.Job, repository store.Repo
 		d.log.Error("a pull request just marked ready is not ready at the head", "job", j.Number, "number", ready.Number, "draft", ready.Draft, "title", ready.Title, "state", ready.State, "head", ready.HeadCommit)
 		return store.Dispatch{}, false
 	}
-	delivery := store.Delivery{Job: j.Number, Number: ready.Number, URL: ready.URL, Head: ready.HeadCommit, Checks: o.Checks}
+	delivery := store.Delivery{Job: j.Number, Number: ready.Number, URL: ready.URL, Head: ready.HeadCommit, Checks: checks, NoCI: noCI}
 	delivery, dispatch, err := d.store.JobDelivered(delivery, deliveryBody(j, delivery), time.Now())
 	if err != nil {
 		d.log.Error("recording a job's delivery", "job", j.Number, "error", err.Error())
@@ -241,6 +291,18 @@ func (d *daemon) deliver(ctx context.Context, j store.Job, repository store.Repo
 
 // deliveryBody is what Coordination's leader is told of a job's delivery.
 func deliveryBody(j store.Job, p store.Delivery) string {
+	if j.Notes() {
+		ready := fmt.Sprintf("with every check green (%s)", store.CheckNames(p.Checks))
+		if p.NoCI {
+			ready = "straight away, as its repository is declared as having no CI"
+		}
+		return fmt.Sprintf("Job %d is delivered: its notes pull request #%d, %s, is ready for review at head %s, %s. "+
+			"It holds only the job's notes, which its own leader accepted against the mandate: Quality validated nothing. "+
+			"The job has ended: its workspaces and view are removed, and its branches stay on origin. "+
+			"AsmAI never merges: ready is not merged, and the user reviews and merges it. "+
+			"Tell the user, in a line tagged with job %d, with the link.",
+			j.Number, p.Number, p.URL, p.Head, ready, j.Number)
+	}
 	return fmt.Sprintf("Job %d is delivered: its pull request #%d, %s, is ready for review at head %s, with every check green (%s). "+
 		"The job has ended: its workspaces and view are removed, and its branches stay on origin. "+
 		"AsmAI never merges: ready is not merged, and the user reviews and merges it. "+

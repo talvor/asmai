@@ -16,12 +16,12 @@ import (
 	"github.com/talvor/asmai/internal/store"
 )
 
-// tellRed tells the delivery owner, Engineering's leader, that the checks of
-// o, on the head of j's pull request the daemon pushed, are red, naming the
-// failing ones, once each time they turn red. The leader is started if it is
-// not running.
+// tellRed tells the delivery owner of j, Engineering's leader or, for a notes
+// job, Planning's or Research's, that the checks of o, on the head of j's
+// pull request the daemon pushed, are red, naming the failing ones, once each
+// time they turn red. The leader is started if it is not running.
 func (d *daemon) tellRed(j store.Job, o store.ChecksObservation) {
-	owner := roles.LeaderOf(roles.Engineering)
+	owner := deliveryOwner(j)
 	earlier, err := d.store.RerunOf(j.Number, o.Head)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		d.log.Error("reading the re-runs of a job's head", "job", j.Number, "error", err.Error())
@@ -67,7 +67,11 @@ func redBody(j store.Job, o store.ChecksObservation, rerun *store.Rerun) string 
 	} else {
 		fmt.Fprintf(&b, "If you judge the failure unrelated to the change, you may re-run the failed jobs once for this head, recording your judgment: `asmai decision record --job %d --choice %s --rationale <why the failure is unrelated to the change> --evidence <what shows it>`. Otherwise, assign", j.Number, store.ChoiceRerunFailed)
 	}
-	b.WriteString(" a fix as a new writing assignment naming the failing checks; accept its result, hand validation of the new head to Quality, and once Quality passes it ask for the push with `asmai push`. The daemon then watches the new head and drops the wait on this one. ")
+	if j.Notes() {
+		b.WriteString(" a fix as a new writing assignment naming the failing checks; accept its result, and ask for the push with `asmai push`: a notes job has no Quality validation to wait for. The daemon then watches the new head and drops the wait on this one. ")
+	} else {
+		b.WriteString(" a fix as a new writing assignment naming the failing checks; accept its result, hand validation of the new head to Quality, and once Quality passes it ask for the push with `asmai push`. The daemon then watches the new head and drops the wait on this one. ")
+	}
 	b.WriteString("Update the pull request body with the CI results, and record each update with `asmai effect pull-request <url>`.")
 	return b.String()
 }
@@ -98,8 +102,8 @@ func (d *daemon) decisionRecordCommand(conn *net.UnixConn, req Request) {
 // conditions that would reopen it, and its source. Any choice is recorded as
 // it is, tagged with the dispatch the leader is working on, if it is working
 // on one, and a record is made only when the leader chooses to make one:
-// routine edits need none. The choice rerun-failed is Engineering's leader's
-// judged re-run of a head's red checks, one kind of decision, on which the
+// routine edits need none. The choice rerun-failed is a job's delivery
+// owner's judged re-run of a head's red checks, one kind of decision, on which the
 // daemon also re-runs the failed jobs.
 func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun, error) {
 	d.mu.Lock()
@@ -145,7 +149,7 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 	return record, store.Rerun{}, nil
 }
 
-// recordRerun records record, Engineering's leader's judgment that the red
+// recordRerun records record, the delivery owner's judgment that the red
 // checks on the head of req.Job's pull request the daemon pushed failed for a
 // reason unrelated to the change, as a delegated decision. On it, the daemon
 // re-runs the failed jobs of those checks with gh, in AsmAI's clone, and
@@ -153,10 +157,9 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 // a second re-run of the same head is refused, and nothing is recorded when
 // nothing was re-run.
 func (d *daemon) recordRerun(req Request, ref sessionRef, record store.DecisionRecord) (store.DecisionRecord, store.Rerun, error) {
-	owner := roles.LeaderOf(roles.Engineering)
 	dispatch := record.Dispatch
-	if ref.address != owner {
-		return store.DecisionRecord{}, store.Rerun{}, refuse("only %s, judging a red head's checks, may record --choice %s", owner, store.ChoiceRerunFailed)
+	if !deliveryOwners(ref.address) {
+		return store.DecisionRecord{}, store.Rerun{}, refuse("only a delivery owner, %s for a code job and %s or %s for a notes job, judging a red head's checks, may record --choice %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), store.ChoiceRerunFailed)
 	}
 	if dispatch == 0 {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("%s has no current dispatch to tag the decision with; record it while working on a dispatch you fetched with `asmai inbox`", ref.address)
@@ -177,6 +180,9 @@ func (d *daemon) recordRerun(req Request, ref sessionRef, record store.DecisionR
 	}
 	if j.State != store.JobOpen {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("job %d is %s, so its checks are not re-run", j.Number, j.State)
+	}
+	if owner := deliveryOwner(j); ref.address != owner {
+		return store.DecisionRecord{}, store.Rerun{}, refuse("only %s, the delivery owner of job %d, judging a red head's checks, may record --choice %s", owner, j.Number, store.ChoiceRerunFailed)
 	}
 	if job, err := d.store.WorkingOn(dispatch, ref.address.String(), ref.generation); err != nil {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("%v", err)

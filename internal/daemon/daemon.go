@@ -211,6 +211,10 @@ type Request struct {
 	// EndsJob is the owning leader of a job with no repository accepting,
 	// with an accept, the job's outcome against its mandate, which ends the job.
 	EndsJob bool `json:"ends_job,omitempty"`
+	// Prototype is the owning leader of a writing assignment in a repository
+	// accepting, with an accept, its result as a prototype that stays on its
+	// own assignment branch, so that the job branch does not move.
+	Prototype bool `json:"prototype,omitempty"`
 	// Approved is the decision record of the user's own decision that
 	// starts the skill an assign names, a skill that starts only on request
 	// which the job's mandate does not call for.
@@ -320,6 +324,7 @@ type Response struct {
 	Report           *store.Report           `json:"report,omitempty"`
 	Decision         *store.Decision         `json:"decision,omitempty"`
 	JobBranch        *store.JobBranch        `json:"job_branch,omitempty"`
+	Prototype        *store.Prototype        `json:"prototype,omitempty"`
 	Push             *store.Push             `json:"push,omitempty"`
 	// PullRequest is the pull request the delivery owner's effect named,
 	// as the daemon recorded it.

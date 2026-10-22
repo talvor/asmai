@@ -462,6 +462,10 @@ const (
 	KindJobDelivered    = "job.delivered"
 	KindJobEnded        = "job.ended"
 	KindJobLocalRemoved = "job.local.removed"
+	// KindPrototypeKept records the owning leader's acceptance of a result
+	// as a prototype that stays on its own assignment branch: the job
+	// branch does not move.
+	KindPrototypeKept = "prototype.kept"
 	// KindScratchCleaned records the daemon removing the scratch workspaces
 	// of a job with no repository that ended, on the user's command.
 	KindScratchCleaned = "job.scratch.cleaned"

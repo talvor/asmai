@@ -47,6 +47,7 @@ func TestStartAndSetupRefuseUnderAManagedPolicyWhereAsmaiCannotRunUnprompted(t *
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(fakeprovider.ManagedRulesOnlyEnv, "1")
 			t.Setenv(env, "1")
+			t.Setenv(fakeprovider.PlatformEnv, "darwin")
 			readyFactory(t, idleLeader)
 
 			_, stderr, code := runAsmai(t, "start")

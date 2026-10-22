@@ -33,7 +33,9 @@ const (
 
 // The kinds of decision request. A choice and a provider change are
 // single-choice escalations, answered in the conversation; every other kind
-// is answered in Lavish.
+// is answered in Lavish. A step is a worker's request for the human step of
+// a skill, which its owning leader answers only from the user's recorded
+// decisions and grants or carries to the user.
 const (
 	RequestChoice    = "choice"
 	RequestProvider  = "provider"
@@ -41,10 +43,11 @@ const (
 	RequestGrilling  = "grilling"
 	RequestWayfinder = "wayfinder"
 	RequestQuestions = "questions"
+	RequestStep      = "step"
 )
 
 // RequestKinds are the kinds a decision request can be.
-var RequestKinds = []string{RequestChoice, RequestProvider, RequestReview, RequestGrilling, RequestWayfinder, RequestQuestions}
+var RequestKinds = []string{RequestChoice, RequestProvider, RequestReview, RequestGrilling, RequestWayfinder, RequestQuestions, RequestStep}
 
 // The messages about decision requests: a request carried to the leader that
 // answers it or to Coordination, which presents it, and an answer returned
@@ -89,6 +92,10 @@ type DecisionRequest struct {
 	Carries        int64  `json:"carries,omitempty"`
 	CarriesVersion int    `json:"carries_version,omitempty"`
 	Kind           string `json:"kind"`
+	// Skill and Step say whose human step a request of kind step asks for,
+	// such as tdd and its test seams.
+	Skill string `json:"skill,omitempty"`
+	Step  string `json:"step,omitempty"`
 	// Surface is the one answer surface of this version, fixed when it is
 	// made.
 	Surface string `json:"answer_surface"`
@@ -106,6 +113,11 @@ type DecisionRequest struct {
 	Answer     string `json:"answer,omitempty"`
 	AnsweredBy string `json:"answered_by,omitempty"`
 	ReliedOn   string `json:"relied_on,omitempty"`
+	// ReliedRecords and ReliedGrants are the user's decision records and the
+	// grants that satisfied the human step a request of kind step asks for:
+	// the records the worker names in its result.
+	ReliedRecords []int64 `json:"relied_records,omitempty"`
+	ReliedGrants  []int64 `json:"relied_grants,omitempty"`
 	// Cites, Reading and Record are, for the user's answer in the
 	// conversation, the witnessed message that holds their words (which are
 	// Answer), Coordination's reading of them, and the decision record that
@@ -157,11 +169,13 @@ type DecisionRequestInput struct {
 	// Carries is the worker's request that a leader's request to the user
 	// carries, which is the owning leader's to carry: its new versions go on
 	// carrying it.
-	Carries   int64
-	Kind      string
-	Content   string
-	Questions []Question
-	Blocks    []int64
+	Carries int64
+	Kind    string
+	// Skill and Step are the human step a request of kind step asks for.
+	Skill, Step string
+	Content     string
+	Questions   []Question
+	Blocks      []int64
 }
 
 // DecisionAnswer is an answer to one version of a decision request.
@@ -171,8 +185,12 @@ type DecisionAnswer struct {
 	Version  int
 	Answerer string
 	Text     string
-	// ReliedOn names the record the answer rests on.
+	// ReliedOn names the record the answer rests on. A step's answer rests
+	// on Records, the user's decision records of the job, and Grants, the
+	// grants whose scope covers it, which the store checks.
 	ReliedOn string
+	Records  []int64
+	Grants   []int64
 	// Carried is the answerer's own request to the user that carried the
 	// worker's request, whose answer by the user in Lavish is the answer:
 	// the daemon takes its words from there. A grilling or Wayfinder
@@ -224,6 +242,9 @@ func validateRequest(in DecisionRequestInput) error {
 			return fmt.Errorf("the recommendation of question %q is not one of its options", q.ID)
 		}
 	}
+	if in.Kind != RequestStep && (strings.TrimSpace(in.Skill) != "" || strings.TrimSpace(in.Step) != "") {
+		return fmt.Errorf("only a step request names a skill and a step, not a %s request", in.Kind)
+	}
 	if in.Kind == RequestChoice || in.Kind == RequestProvider {
 		if len(in.Questions) != 1 || len(in.Questions[0].Options) < 2 {
 			return fmt.Errorf("a %s request is a single choice: one question with at least two options; ask several questions as kind %s", in.Kind, RequestQuestions)
@@ -232,18 +253,24 @@ func validateRequest(in DecisionRequestInput) error {
 	return nil
 }
 
-const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), carries, carries_version, kind, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, cites, reading, record, answered, page_file, page_url, page_closed, created_at, settled_at`
+const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), carries, carries_version, kind, skill, step, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, relied_records, relied_grants, cites, reading, record, answered, page_file, page_url, page_closed, created_at, settled_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanDecisionRequest(row rowScanner) (DecisionRequest, error) {
 	var r DecisionRequest
-	var questions, blocks, answered, created string
+	var questions, blocks, answered, created, reliedRecords, reliedGrants string
 	var settled sql.NullString
-	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Carries, &r.CarriesVersion, &r.Kind, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &r.Cites, &r.Reading, &r.Record, &answered, &r.PageFile, &r.PageURL, &r.PageClosed, &created, &settled); err != nil {
+	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Carries, &r.CarriesVersion, &r.Kind, &r.Skill, &r.Step, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &reliedRecords, &reliedGrants, &r.Cites, &r.Reading, &r.Record, &answered, &r.PageFile, &r.PageURL, &r.PageClosed, &created, &settled); err != nil {
 		return DecisionRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(answered), &r.Answered); err != nil {
+		return DecisionRequest{}, err
+	}
+	if err := json.Unmarshal([]byte(reliedRecords), &r.ReliedRecords); err != nil {
+		return DecisionRequest{}, err
+	}
+	if err := json.Unmarshal([]byte(reliedGrants), &r.ReliedGrants); err != nil {
 		return DecisionRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(questions), &r.Questions); err != nil {
@@ -332,9 +359,22 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		// A grilling or Wayfinder question stays one: a new version cannot
 		// turn it into a kind of request that its leader answers from the
 		// records.
-		if needsTheUser(replaced) && in.Kind != replaced.Kind {
+		// A step stays one, of the same skill, in every version.
+		if (needsTheUser(replaced) || replaced.Kind == RequestStep || in.Kind == RequestStep) && in.Kind != replaced.Kind {
 			return DecisionRequest{}, nil, fmt.Errorf("decision request %d stays a %s request in every version: a new version of it is not a %s request", replaced.Request, replaced.Kind, in.Kind)
 		}
+		if in.Kind == RequestStep {
+			in.Skill, in.Step = replaced.Skill, replaced.Step
+		}
+	}
+	if in.Kind == RequestStep {
+		switch {
+		case in.Recipient == ToUser:
+			return DecisionRequest{}, nil, errors.New("a step request is a worker's, to its owning leader: a leader escalates a step no record covers with a request of its own that carries it, such as a question or a choice, never as a step")
+		case blank(in.Skill) || blank(in.Step):
+			return DecisionRequest{}, nil, errors.New("a step request names the skill and the step it asks for, such as tdd and its test seams")
+		}
+		in.Skill, in.Step = strings.TrimSpace(in.Skill), strings.TrimSpace(in.Step)
 	}
 	carriesVersion, err := carriedVersion(tx, in)
 	if err != nil {
@@ -363,8 +403,8 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 	if err != nil {
 		return DecisionRequest{}, nil, err
 	}
-	result, err := tx.Exec(`INSERT INTO decision_requests (request, version, job, requester, recipient, assignment, carries, carries_version, kind, surface, content, questions, blocks, state, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Carries, carriesVersion, in.Kind, AnswerSurface(in.Kind, in.Questions), in.Content, string(questions), string(blocks), RequestPending, timestamp(at))
+	result, err := tx.Exec(`INSERT INTO decision_requests (request, version, job, requester, recipient, assignment, carries, carries_version, kind, skill, step, surface, content, questions, blocks, state, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Carries, carriesVersion, in.Kind, in.Skill, in.Step, AnswerSurface(in.Kind, in.Questions), in.Content, string(questions), string(blocks), RequestPending, timestamp(at))
 	if err != nil {
 		return DecisionRequest{}, nil, err
 	}
@@ -505,6 +545,10 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 		return DecisionRequest{}, Dispatch{}, fmt.Errorf("job %d is %s, so it takes no answer", latest.Job, state)
 	}
 	text, reliedOn := in.Text, in.ReliedOn
+	var records, grants []int64
+	if len(in.Records)+len(in.Grants) > 0 && (latest.Kind != RequestStep || in.Carried != 0) {
+		return DecisionRequest{}, Dispatch{}, fmt.Errorf("decision request %d is answered with no record or grant of yours: only a step is answered from them, and the user's own answer, returned with the request that carried it, is recorded for you", latest.Request)
+	}
 	switch {
 	case in.Carried != 0 && strings.TrimSpace(text) != "":
 		return DecisionRequest{}, Dispatch{}, fmt.Errorf("decision request %d needs the user's own answer, which no agent types: return the answer the user gave, and nothing of your own beside it", latest.Request)
@@ -514,12 +558,35 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 			return DecisionRequest{}, Dispatch{}, err
 		}
 		text, reliedOn = e.Answer, fmt.Sprintf("the user's own answer to decision request %d, version %d, in Lavish (Lavish answer %d)", e.Request, e.Version, e.Cites)
+		if latest.Kind == RequestStep {
+			// The user's answer to an uncovered step is recorded as their
+			// decision of the job, so that it covers the step for the rest
+			// of the job.
+			record, err := stepAnswerRecorded(tx, latest, e, in.Answerer, at)
+			if err != nil {
+				return DecisionRequest{}, Dispatch{}, err
+			}
+			records, reliedOn = []int64{record.ID}, fmt.Sprintf("decision record %d, the user's own answer to decision request %d, version %d, in Lavish (Lavish answer %d)", record.ID, e.Request, e.Version, e.Cites)
+		}
 	case needsTheUser(latest):
 		return DecisionRequest{}, Dispatch{}, fmt.Errorf("decision request %d is a %s question, which needs the user's own answer: no record, recommendation or earlier answer stands in for it, and a delegated decision never resolves it. Carry it to the user with a request of your own that carries it (--carries %d), and return their answer with --user-answer <the ID of your request>", latest.Request, latest.Kind, latest.Request)
 	case strings.TrimSpace(text) == "":
 		return DecisionRequest{}, Dispatch{}, errors.New("an answer has text")
+	case latest.Kind == RequestStep:
+		if reliedOn, err = stepCovered(tx, latest, in.Records, in.Grants); err != nil {
+			return DecisionRequest{}, Dispatch{}, err
+		}
+		records, grants = in.Records, in.Grants
 	}
-	if _, err := tx.Exec(`UPDATE decision_requests SET state = ?, answer = ?, answered_by = ?, relied_on = ?, settled_at = ? WHERE id = ?`, RequestAnswered, text, in.Answerer, reliedOn, timestamp(at), latest.ID); err != nil {
+	reliedRecords, err := json.Marshal(nonNilIDs(records))
+	if err != nil {
+		return DecisionRequest{}, Dispatch{}, err
+	}
+	reliedGrants, err := json.Marshal(nonNilIDs(grants))
+	if err != nil {
+		return DecisionRequest{}, Dispatch{}, err
+	}
+	if _, err := tx.Exec(`UPDATE decision_requests SET state = ?, answer = ?, answered_by = ?, relied_on = ?, relied_records = ?, relied_grants = ?, settled_at = ? WHERE id = ?`, RequestAnswered, text, in.Answerer, reliedOn, string(reliedRecords), string(reliedGrants), timestamp(at), latest.ID); err != nil {
 		return DecisionRequest{}, Dispatch{}, err
 	}
 	r, err := decisionRequestVersion(tx, latest.ID)
@@ -529,7 +596,7 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 	if _, err := appendEntry(tx, at, KindDecisionAnswered, r); err != nil {
 		return DecisionRequest{}, Dispatch{}, err
 	}
-	d, err := createMessage(tx, messageRef{assignment: r.Assignment, request: r.ID}, r.Job, in.Answerer, r.Requester, MessageDecisionAnswer, text, at)
+	d, err := createMessage(tx, messageRef{assignment: r.Assignment, request: r.ID}, r.Job, in.Answerer, r.Requester, MessageDecisionAnswer, stepAnswerBody(r, text), at)
 	if err != nil {
 		return DecisionRequest{}, Dispatch{}, err
 	}
@@ -556,6 +623,9 @@ func (r DecisionRequest) Text() string {
 	if r.Carries != 0 {
 		fmt.Fprintf(&b, "Carries its worker's decision request %d, version %d, to the user: their own answer to it is the worker's answer\n", r.Carries, r.CarriesVersion)
 	}
+	if r.Kind == RequestStep {
+		fmt.Fprintf(&b, "Asks for the step of %s: %s; a decision of the user's or a grant whose scope covers it satisfies it, and where none does it goes to the user\n", r.Skill, r.Step)
+	}
 	if r.Content != "" {
 		fmt.Fprintf(&b, "Content: %s\n", r.Content)
 	}
@@ -578,7 +648,9 @@ func (r DecisionRequest) Text() string {
 	if len(r.Blocks) > 0 && r.State == RequestPending {
 		fmt.Fprintf(&b, "The work of assignments %v waits for the answer.\n", r.Blocks)
 	}
-	if r.Cites != 0 && r.Surface == SurfaceLavish {
+	if r.Kind == RequestStep && r.State == RequestAnswered {
+		fmt.Fprintf(&b, "Answered by %s, relying on %s:\n%s\n", r.AnsweredBy, r.ReliedOn, r.Answer)
+	} else if r.Cites != 0 && r.Surface == SurfaceLavish {
 		fmt.Fprintf(&b, "Answered by the user in Lavish, completed by Lavish answer %d:\n%s\n", r.Cites, r.Answer)
 	} else if r.Cites != 0 {
 		fmt.Fprintf(&b, "Answered by the user in witnessed message %d: %s\nCoordination's reading: %s\n", r.Cites, r.Answer, r.Reading)

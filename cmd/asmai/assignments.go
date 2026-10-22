@@ -133,6 +133,9 @@ type resultFlags struct {
 	findings, resolved, unresolved listFlags
 	// skills are the skills of the worker's list that it ran.
 	skills listFlags
+	// records and grants are the user's decision records and the grants that
+	// the human steps of those skills relied on.
+	records, grants listFlags
 }
 
 // validationFinding reads the value of --finding, '<kind>: <text>'.
@@ -204,6 +207,12 @@ func result(o *output, paths statedir.Paths, f resultFlags) int {
 		if name = strings.TrimSpace(name); name != "" && name != none {
 			input.SkillsRun = append(input.SkillsRun, name)
 		}
+	}
+	if input.RecordsRelied, err = idFlag("record", "decision record", f.records); err != nil {
+		return o.fail(err)
+	}
+	if input.GrantsRelied, err = idFlag("grant", "grant", f.grants); err != nil {
+		return o.fail(err)
 	}
 	if input.Evidence = f.evidence; len(input.Evidence) == 0 {
 		return o.fail(errors.New("result needs --evidence: what shows the work does"))
@@ -357,6 +366,18 @@ func printAssignment(w io.Writer, a store.Assignment) {
 	fmt.Fprintf(w, "Workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nAssignment branch: %s, made from the job branch %s at %s\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Workspace.Branch, a.JobBranch, a.Workspace.Base)
 }
 
+// reliedList says the records a result relied on, each by its ID.
+func reliedList(r store.Report) []string {
+	var list []string
+	for _, id := range r.RecordsRelied {
+		list = append(list, fmt.Sprintf("decision record %d", id))
+	}
+	for _, id := range r.GrantsRelied {
+		list = append(list, fmt.Sprintf("grant %d", id))
+	}
+	return list
+}
+
 // printReport writes a worker's result or blocked report.
 func printReport(w io.Writer, r store.Report) {
 	fmt.Fprintf(w, "%s %d | assignment %d | %s | commit %s\n", r.Kind, r.ID, r.Assignment, r.Agent, r.Commit)
@@ -393,6 +414,7 @@ func printReport(w io.Writer, r store.Report) {
 		list("Checks run", checks)
 		list("Gaps", r.Gaps)
 		list("Skills run", r.SkillsRun)
+		list("Records relied on", reliedList(r))
 	}
 	if v := r.Validation; v != nil {
 		var found []string
@@ -465,11 +487,16 @@ type decisionFlags struct {
 
 // recordIDs reads the values of --record, decision record IDs.
 func recordIDs(values []string) ([]int64, error) {
+	return idFlag("record", "decision record", values)
+}
+
+// idFlag reads the values of --name, each the ID of a thing the flag names.
+func idFlag(name, what string, values []string) ([]int64, error) {
 	var ids []int64
 	for _, v := range values {
 		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("--record %q is not a decision record ID, as `asmai brief` lists them", v)
+			return nil, fmt.Errorf("--%s %q is not a %s ID", name, v, what)
 		}
 		ids = append(ids, id)
 	}

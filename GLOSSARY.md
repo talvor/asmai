@@ -187,6 +187,10 @@ _Avoid_: Turn, prompt (when meaning the user's attributable words)
 A leader's or worker's request for a choice that is not theirs to make. A worker's goes to its owning leader, never to the user, which answers it from the records or escalates it through Coordination; a leader's goes to the user through Coordination. Every request is versioned, and is pending, answered, replaced by a newer version, or withdrawn when its job is cancelled. An answer applies only to the version it answers, work that depends on the choice waits for it, and silence is never approval.
 _Avoid_: Question (a request holds questions), Escalation (when meaning the request itself rather than its being carried to the user)
 
+**Human step**:
+The part of a skill only the user can settle, such as the test seams of tdd and to-spec, the approval of to-tickets' breakdown, code-review's comparison point and spec, or wizard's stages. The user's own recorded decision of the job, or a grant of a decision whose scope covers the job, satisfies it. A worker never asks the user: it sends the step to its owning leader as a decision request, which answers from those records or carries the step to the user, whose answer is recorded for the rest of the job, and the worker's result names the records it relied on. A decision of another job, a delegated decision and a grant of a narrower scope never satisfy one.
+_Avoid_: Approval gate, checkpoint
+
 **Answer surface**:
 The one place where a given version of a decision request can be answered: the conversation or Lavish. A single choice, such as a choice between two viable approaches, is answered in the conversation: Coordination presents it once, and the user's next message is the answer. Everything else is answered in Lavish.
 

@@ -148,8 +148,11 @@ commands agents run:
   asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch;
                               the delivery owner's "asmai effect pull-request <url>" also records the pull
                               request as gh shows it, its number and whether it is a draft or "[not ready]"
-  asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>]
-                              a worker submits its assignment's result; repeat a flag for each value
+  asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>] [--record <id>] [--grant <id>]
+                              a worker submits its assignment's result; repeat a flag for each value. A result
+                              names the record each human step of its skills relied on: --record for the user's
+                              decision record, --grant for a grant, as the answer to the step gave them; the
+                              daemon refuses a result that leaves one out
   asmai result --evidence <text> --check '<command> -> <outcome>'|none --gap <text>|none --finding '<blocking|advisory|needs-you>: <text>'|none [--resolved <id>] [--unresolved <id>]
                               a Quality worker submits its validation report
   asmai blocked --reason <text> [--needs <text>]
@@ -218,6 +221,10 @@ commands agents run:
                               brings back what the user sends, word for word. --carries has a leader's request
                               carry its worker's request to the user: a worker's grilling or Wayfinder question
                               is answered only by the user's own answer to it
+  asmai decision request --kind step --skill <skill> --step <text> --title <text>
+                              a worker asks its owning leader for the human step of a skill, such as the test
+                              seams of tdd: a recorded decision of the user's, or a grant, whose scope covers
+                              the job satisfies it, and where none does the leader carries it to the user
   asmai decision answer --request <id> --version <n> --answer <text> [--relied-on <text>]
   asmai decision answer --request <id> --version <n> --user-answer <your request>
                               a worker's owning leader answers one version of its request from the records; an
@@ -225,6 +232,11 @@ commands agents run:
                               question is never answered in an agent's words: --user-answer returns the
                               user's own answer to the leader's request that carried it, as they gave it in
                               Lavish, once every question of it is answered
+  asmai decision answer --request <id> --version <n> --answer <text> --record <id> [--grant <id>]
+                              answer a worker's step from the records: --record is the user's own decision
+                              record of the job that names the skill, --grant a grant of a decision, active, whose
+                              scope covers the job and that names the skill; the daemon refuses a decision of
+                              another job, a delegated decision and a grant of a narrower scope
   asmai hook                  report a hook event to the daemon; agent sessions' hooks run it
 
 Every command accepts --json to print JSON instead of tables, or --toon to print the same data as
@@ -405,6 +417,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&resultArgs.resolved, "resolved", "an earlier blocking finding's ID that is resolved at this commit; may be repeated")
 		flags.Var(&resultArgs.skills, "skill", "a skill from your list that you ran, or none; may be repeated")
 		flags.Var(&resultArgs.unresolved, "unresolved", "an earlier blocking finding's ID that is still open at this commit; may be repeated")
+		flags.Var(&resultArgs.records, "record", "the ID of a decision record of the user's that a human step of a skill you ran relied on; may be repeated")
+		flags.Var(&resultArgs.grants, "grant", "the ID of a grant that a human step of a skill you ran relied on; may be repeated")
 	case "blocked":
 		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
 		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker")
@@ -436,7 +450,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "decision request":
 		flags.Int64Var(&request.job, "job", 0, "job number; a leader's request names its job, and a worker's is about its assignment's")
 		flags.Int64Var(&request.request, "request", 0, "the request this is a new version of, which it replaces")
-		flags.StringVar(&request.kind, "kind", "", "choice or provider (one question with options), review, grilling, wayfinder or questions; the default is choice for one question with options, questions otherwise")
+		flags.StringVar(&request.kind, "kind", "", "choice or provider (one question with options), review, grilling, wayfinder, questions or step (a worker's request for the human step of a skill); the default is choice for one question with options, questions otherwise")
+		flags.StringVar(&request.skill, "skill", "", "with --kind step, the skill whose human step you ask for, such as tdd")
+		flags.StringVar(&request.step, "step", "", "with --kind step, the human step you ask for, such as the test seams")
 		flags.StringVar(&request.content, "content", "", "your own content above the questions, such as a prototype, a diff or a report")
 		flags.StringVar(&request.title, "title", "", "the title of the one question")
 		flags.StringVar(&request.body, "body", "", "the body of the one question")
@@ -462,6 +478,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.IntVar(&request.version, "version", 0, "the version the answer is to")
 		flags.StringVar(&request.answer, "answer", "", "the answer")
 		flags.StringVar(&request.reliedOn, "relied-on", "", "the record the answer rests on")
+		flags.Var(&request.records, "record", "the ID of the user's decision record of the job that satisfies the step the request asks for; may be repeated")
+		flags.Var(&request.grants, "grant", "the ID of a grant of a decision, whose scope covers the job, that satisfies the step the request asks for; may be repeated")
 		flags.Int64Var(&request.userAnswer, "user-answer", 0, "instead of --answer, your request that carried the worker's question to the user, which the user answered in Lavish: its words are the worker's answer, as the user gave them")
 	case "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:

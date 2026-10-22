@@ -28,8 +28,16 @@ Every question a skill would put to the user, and every one of grilling's and Wa
 
 - Send the questions with `asmai decision request --kind <grilling|wayfinder|questions|choice> --question '<json with id, title, body, options and recommendation>'`, repeating `--question` for each question you have ready, and `--content <your own context above the questions>` for anything the user needs to see first. Each question has an id, a title, a body that gives the context, its options and your recommendation. Use kind `grilling` for a grilling skill's questions and `wayfinder` for Wayfinder's. A request takes no job and no `--blocks`: it is about your assignment, and your assignment's work that depends on the answer waits.
 - **Grilling and Wayfinder questions always need the user's own answer.** You never answer one yourself, you never take your own recommendation as the answer, and you never decide for the user because the answer seems obvious or a record seems to cover it. A grilling or Wayfinder exchange is resolved only by the user's own answer, which reaches you from your leader. If the interview or the map cannot go on without it, end your turn after you send the request and wait: the answer arrives as a message of kind `decision.answer`, word for word, which you fetch with `asmai inbox --dispatch <id>` when nudged. Then continue the skill from it, and ask the next questions the same way.
-- A step of another skill, such as the seams of to-spec or the approval of to-tickets' breakdown, goes to the leader the same way. A decision record or a grant of the user's whose scope covers it may satisfy it: your leader answers from the records and names the record, and you name it in your result. Where it does not, it goes to the user.
+- A step of another skill, such as the seams of to-spec or the approval of to-tickets' breakdown, is a human step: send it with `asmai decision request --kind step --skill <skill> --step <the step> --title <what you need settled>` and wait, as the next section says.
 - If a newer fact changes a question you already sent, send a new version with `--request <id>`; an answer applies only to the version it answers, and an answer to an older version answers nothing.
+
+## A skill's human steps
+
+Some skills have a step only the user can settle: the test seams of tdd and to-spec, the approval of to-tickets' breakdown, code-review's comparison point and spec, and wizard's stages. You never put one to the user, and you never settle one yourself, however obvious it seems or whatever record you think covers it: your owning leader judges that.
+
+- Before you take such a step, send it to your owning leader with `asmai decision request --kind step --skill <skill> --step <the step> --title <what you need settled> [--body <the context>] [--option <an option>]`, naming the skill by its bare name from your list. A request takes no job and no `--blocks`: it is about your assignment, and the work that depends on it waits. Then end your turn and wait for the answer.
+- The answer arrives as a message of kind `decision.answer`, which you fetch with `asmai inbox --dispatch <id>` when nudged. Your leader answers from the user's recorded decisions of the job or from a grant whose scope covers it, or carries the step to the user, whose own answer is recorded for the rest of the job. Either way the answer names the records it rests on, as the flags to give in your result. Follow it and carry on.
+- Name every record each step relied on in your result: `--record <id>` for each decision record and `--grant <id>` for each grant the answer named. The daemon refuses a result that leaves one out, one of another job, a delegated decision, and a grant that does not cover your job. A decision of another job, or a grant of a narrower scope, never settles a step.
 
 ## Doing the assignment
 
@@ -53,12 +61,15 @@ asmai result \
   --check '<command> -> <outcome at your commit>'                                  (repeat, or --check none) \
   --gap <an unresolved gap>                                                        (repeat, or --gap none) \
   --skill <a skill from your list that you ran>                                    (repeat, or --skill none) \
+  --record <a decision record that a human step relied on>          (repeat for each its answer named, or leave out) \
+  --grant <a grant that a human step relied on>                     (repeat for each its answer named, or leave out) \
   --pr-section <your part of the notes: what changed and what each note settles>
 ```
 
 - Link your artifacts and evidence, and disclose every gap: a question the user has not answered, a source you could not read, anything you are unsure of. Name the record each step of a skill relied on, and each of the user's answers, by its ID.
 - Name each skill you ran with `--skill`, by its bare name from your list: your assignment says which skill to run and may narrow your list, and the daemon refuses a skill that is not on it.
 - The PR section is your own part of the notes: what changed, and what the user settled that it records. If you merged the job branch's tip in or resolved conflicts, write a section for those changes too.
+- Name the records your human steps relied on with `--record` and `--grant`, as the answer to each step gave them: an answer from the user's recorded decision or a grant needs its ID in your result, and the daemon refuses a result without it.
 - The daemon records the commit your workspace is at, and refuses a result while changes are uncommitted.
 
 If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>` after you commit and push your assignment branch.

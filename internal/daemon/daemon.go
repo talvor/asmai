@@ -225,6 +225,11 @@ type Request struct {
 	Questions []store.Question `json:"questions,omitempty"`
 	Blocks    []int64          `json:"blocks,omitempty"`
 	ReliedOn  string           `json:"relied_on,omitempty"`
+	// Step, with Skill, is the human step of a skill that a worker's step
+	// request asks for. An answer to it rests on Records, the user's decision
+	// records of the job, and Grants, the grants whose scope covers it.
+	Step   string  `json:"step,omitempty"`
+	Grants []int64 `json:"grants,omitempty"`
 	// Carries is the worker's decision request that a leader's request
 	// carries to the user, and UserAnswer the leader's request, answered by
 	// the user, whose answer the leader returns to the worker.

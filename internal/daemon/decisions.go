@@ -37,6 +37,9 @@ func (d *daemon) decide(req Request) (resp Response, notify string, err error) {
 	if req.EndsJob && req.Command != CommandAccept {
 		return Response{}, "", refuse("--ends-job belongs to asmai accept: only an acceptance is the leader accepting the job's outcome")
 	}
+	if req.Prototype && req.Command != CommandAccept {
+		return Response{}, "", refuse("--prototype belongs to asmai accept: only an acceptance can leave a prototype on its own branch")
+	}
 	if req.Assignment <= 0 || len(req.Reasons) == 0 {
 		return Response{}, "", refuse("asmai %s needs an assignment and its reasons", req.Command)
 	}
@@ -87,6 +90,9 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 	} else if len(pending) > 0 {
 		return Response{}, refuse("assignment %d waits for decision request %d (version %d), which is pending, so its result is not accepted yet; independent work goes on", a.ID, pending[0].Request, pending[0].Version)
 	}
+	if req.Prototype && (a.Scratch || a.ReadOnly) {
+		return Response{}, refuse("assignment %d is a validation or works in a scratch workspace, so it has no assignment branch for a prototype to stay on", a.ID)
+	}
 	if a.Scratch {
 		return d.acceptScratch(req, ref, a)
 	}
@@ -95,6 +101,9 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 	}
 	if a.ReadOnly {
 		return d.acceptValidation(req, ref, a)
+	}
+	if req.Prototype {
+		return d.acceptPrototype(req, ref, a)
 	}
 	result, err := d.store.LatestResult(a.ID)
 	if err != nil {
@@ -187,6 +196,70 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 		return Response{}, err
 	}
 	return Response{Assignment: &a, Decision: &decision, JobBranch: &branch}, nil
+}
+
+// acceptPrototype records the acceptance of the result of the writing
+// assignment a as a prototype that stays on its own assignment branch on
+// origin, which must hold the result's commit: the job branch does not move,
+// so the prototype never reaches the job's pull request, and the leader gives
+// its verdict as a note on the job branch, with a pointer to that branch,
+// through an assignment of its own. The assignment ends, its worker is
+// stopped and its workspace removed. assignMu is held.
+func (d *daemon) acceptPrototype(req Request, ref sessionRef, a store.Assignment) (Response, error) {
+	result, err := d.store.LatestResult(a.ID)
+	if err != nil {
+		return Response{}, refuse("%v", err)
+	}
+	j, err := d.store.Job(a.Job)
+	if err != nil {
+		return Response{}, err
+	}
+	repository, err := d.store.Repository(j.Repository)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Response{}, notRegistered(j.Repository)
+	}
+	if err != nil {
+		return Response{}, err
+	}
+	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
+	defer cancel()
+	if err := repos.Fetch(ctx, repository.Clone); err != nil {
+		return Response{}, err
+	}
+	if _, err := repos.OriginTip(ctx, repository.Clone, a.Workspace.Branch); err != nil {
+		return Response{}, refuse("origin does not have the assignment branch %s, where a prototype stays; the worker pushes it and submits again, so reject the result", a.Workspace.Branch)
+	}
+	pushed, err := repos.Contains(ctx, repository.Clone, "refs/remotes/origin/"+a.Workspace.Branch, result.Commit)
+	if err != nil {
+		return Response{}, err
+	}
+	if !pushed {
+		return Response{}, refuse("origin's assignment branch %s does not contain the result's commit %s, so the prototype is not on its branch yet; the worker pushes it and submits again, so reject the result", a.Workspace.Branch, result.Commit)
+	}
+	d.mu.Lock()
+	if _, _, err := d.caller(req); err != nil {
+		d.mu.Unlock()
+		return Response{}, err
+	}
+	decision, prototype, err := d.store.PrototypeKept(store.Acceptance{Assignment: a.ID, Leader: ref.address.String(), Reasons: req.Reasons}, time.Now())
+	d.mu.Unlock()
+	if err != nil {
+		return Response{}, refuse("%v", err)
+	}
+	d.log.Info("result accepted as a prototype that stays on its assignment branch; the job branch did not move", "assignment", a.ID, "job", a.Job, "branch", prototype.Branch, "commit", prototype.Commit, "leader", ref.address.String())
+	d.stopWorker(a)
+	if err := d.removeWorkspace(ctx, a, repository); err != nil {
+		return Response{}, err
+	}
+	a, err = d.store.Assignment(a.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	branch, err := d.store.JobBranch(a.Job)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{Assignment: &a, Decision: &decision, JobBranch: &branch, Prototype: &prototype}, nil
 }
 
 // acceptScratch records the acceptance of the result of the assignment a, which

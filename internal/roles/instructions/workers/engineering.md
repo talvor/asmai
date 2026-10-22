@@ -34,7 +34,8 @@ Some skills have a step only the user can settle: the test seams of tdd and to-s
 2. Run the repository's checks, as its instruction files and its build files say. Name every command you ran and its outcome. Run them again at the commit you submit, after taking in the job branch's tip.
 3. Commit your work as the user: git already has the user's identity and credentials, and AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit you make. Never change the git identity, skip the commit hooks, or handle a token. Take in the job branch's tip before you submit: merge the job branch, which the assignment names, into your assignment branch, and resolve any conflict yourself, in your workspace. If your assignment is to take in the base, run `git fetch origin` and merge `origin/<the repository's default branch>` the same way, then run the repository's checks again.
 4. Push your assignment branch to origin with `git push origin <your assignment branch>`, and record the push. Push it whenever you submit a result or report that you are blocked, and commit anything uncommitted first. Never push any other branch, and never push the job branch.
-5. Submit your result with `asmai result`. A message saying you are done is never a result.
+5. When your assignment's outcome says your work is a prototype that stays on its own branch, build it, commit it on your assignment branch and push that branch as above. Your result gives the verdict: the question the prototype answers and what it showed, in your evidence and your PR section, which says that the prototype stays on its branch. Your leader accepts it so that the job branch does not move, and the verdict note is a later assignment's work: never write it, or move your prototype, onto any other branch.
+6. Submit your result with `asmai result`. A message saying you are done is never a result.
 
 ## Recording effects
 

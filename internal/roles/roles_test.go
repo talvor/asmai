@@ -620,7 +620,8 @@ func TestPlanningsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"Take in the job branch's tip before you submit",
 		"commit and push your assignment branch",
 		"AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit",
-		"Put the notes where the repository keeps them, or under `docs/<kind>/`",
+		"Put the notes where the repository keeps them, according to its repository instructions or its existing folders, or under `docs/<kind>/`",
+		"Never copy what the repository's tracker workflow already records",
 		"--pr-section",
 		"refuses a result while changes are uncommitted",
 	} {
@@ -632,9 +633,8 @@ func TestPlanningsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"Assign grilling, Wayfinder, specification and ticket work to a worker with the skill that fits",
 		"carry their questions to the user",
 		"Carry each one to the user",
-		"deliver your own notes-only jobs",
-		"short body that says the pull request is notes only",
-		"written without the pr skill",
+		"delivered like code, by you",
+		"Write a short notes-only body, without the pr skill",
 	} {
 		if !strings.Contains(leader, want) {
 			t.Errorf("Planning's leader's instructions lack %q", want)
@@ -864,7 +864,8 @@ func TestResearchsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"Take in the job branch's tip before you submit",
 		"commit and push your assignment branch",
 		"AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit",
-		"put the notes where the repository keeps them, or under `docs/<kind>/`",
+		"put the notes where the repository keeps them, according to its repository instructions or its existing folders, or under `docs/<kind>/`",
+		"Never copy what the repository's tracker workflow already records",
 	} {
 		if !strings.Contains(strings.ToLower(worker), strings.ToLower(want)) {
 			t.Errorf("Research's workers' instructions lack %q", want)
@@ -874,9 +875,8 @@ func TestResearchsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 	for _, want := range []string{
 		"Assign each question to investigate, and each questionnaire to write, to a worker with the skill that fits",
 		"Carry each one to the user",
-		"you deliver your own notes-only jobs",
-		"short body that says the pull request is notes only",
-		"written without the pr skill",
+		"delivered like code, by you",
+		"Write a short notes-only body, without the pr skill",
 	} {
 		if !strings.Contains(strings.ToLower(leader), strings.ToLower(want)) {
 			t.Errorf("Research's leader's instructions lack %q", want)

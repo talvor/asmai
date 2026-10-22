@@ -33,7 +33,9 @@ func (d *daemon) pushCommand(conn *net.UnixConn, req Request) {
 }
 
 // push pushes the job branch of req.Job to origin for its delivery owner,
-// Engineering's leader, who asks while working on a dispatch. The daemon
+// who asks while working on a dispatch: Engineering's leader for a job that
+// changes code, and the leader whose notes they are, Planning's or Research's,
+// for a notes job, once none of its assignments is still live. The daemon
 // first fetches the branch from origin. If origin's branch has commits AsmAI
 // did not make, nothing is pushed: the refusal is recorded as an outside
 // change, for a worker to merge in. Otherwise the branch is pushed with a
@@ -41,7 +43,6 @@ func (d *daemon) pushCommand(conn *net.UnixConn, req Request) {
 // effect, tagged with the leader's dispatch, with the earlier outside changes
 // it took in. Nothing the repository says changes how the branch is pushed.
 func (d *daemon) push(req Request) (store.Push, error) {
-	owner := roles.LeaderOf(roles.Engineering)
 	d.mu.Lock()
 	ref, l, err := d.caller(req)
 	dispatch := int64(0)
@@ -52,8 +53,8 @@ func (d *daemon) push(req Request) (store.Push, error) {
 	if err != nil {
 		return store.Push{}, err
 	}
-	if ref.address != owner {
-		return store.Push{}, refuse("only %s, the delivery owner of a code job, may run asmai push", owner)
+	if !isDeliveryOwner(ref.address) {
+		return store.Push{}, refuse("only %s, the delivery owner of a code job, %s or %s, the delivery owner of a notes job, may run asmai push", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research))
 	}
 	if dispatch == 0 {
 		return store.Push{}, refuse("%s has no current dispatch to tag the push with; ask for the push while working on a dispatch you fetched with `asmai inbox`", ref.address)
@@ -71,6 +72,20 @@ func (d *daemon) push(req Request) (store.Push, error) {
 	}
 	if j.State != store.JobOpen {
 		return store.Push{}, refuse("job %d is %s, so its job branch is not pushed", j.Number, j.State)
+	}
+	if owner := deliveryOwner(j); ref.address != owner {
+		return store.Push{}, refuse("%s owns the delivery of job %d, a %s job, so %s does not ask for its push", owner, j.Number, j.Mandate, ref.address)
+	}
+	if j.Notes() {
+		// No Quality validation stands between a notes job and its push: its
+		// accepted work is what is pushed, once all of it is accepted.
+		live, err := d.store.LiveAssignment(j.Number)
+		if err != nil {
+			return store.Push{}, err
+		}
+		if live != 0 {
+			return store.Push{}, refuse("assignment %d of job %d has not ended, so its job branch is not pushed yet: accept or cancel it first", live, j.Number)
+		}
 	}
 	branch, err := d.store.JobBranch(j.Number)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -105,13 +120,17 @@ func (d *daemon) push(req Request) (store.Push, error) {
 		return store.Push{}, fmt.Errorf("%w; nothing is recorded as pushed. If origin's branch moved since the fetch, ask for the push again", err)
 	}
 	if len(outside) > 0 {
+		validate := "have Quality validate the new head, and "
+		if j.Notes() {
+			validate = "and "
+		}
 		p.Outside = outside
 		if p, err = d.store.OutsideChangeFound(p, ref.generation, time.Now()); err != nil {
 			return store.Push{}, err
 		}
 		d.log.Info("push refused over outside commits", "job", j.Number, "branch", branch.Name, "outside", len(outside))
-		return store.Push{}, refuse("nothing was pushed: %s has %d commit(s) AsmAI did not make, %s, recorded as outside change %d. Assign a worker to merge origin/%s into its assignment branch, keeping them, accept its result, have Quality validate the new head, and ask for the push again",
-			p.Found, len(outside), strings.Join(outside, ", "), p.ID, branch.Name)
+		return store.Push{}, refuse("nothing was pushed: %s has %d commit(s) AsmAI did not make, %s, recorded as outside change %d. Assign a worker to merge origin/%s into its assignment branch, keeping them, accept its result, %sask for the push again",
+			p.Found, len(outside), strings.Join(outside, ", "), p.ID, branch.Name, validate)
 	}
 	if p, err = d.store.JobBranchPushed(p, ref.generation, tookIn, time.Now()); err != nil {
 		return store.Push{}, err

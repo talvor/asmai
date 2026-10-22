@@ -42,14 +42,17 @@ type ChecksObservation struct {
 }
 
 // Delivery is a job delivered: its pull request, marked ready for review
-// once every check on its head was green, the head commit and the time. AsmAI
-// never merges: ready never means merged.
+// once every check on its head was green, the head commit and the time. A
+// notes pull request of a repository declared as having no CI is marked
+// ready straight away, with no checks and NoCI set. AsmAI never merges:
+// ready never means merged.
 type Delivery struct {
 	Job    int64        `json:"job"`
 	Number int          `json:"number"`
 	URL    string       `json:"url"`
 	Head   string       `json:"head"`
 	Checks []CheckState `json:"checks"`
+	NoCI   bool         `json:"no_ci,omitempty"`
 	At     time.Time    `json:"at"`
 }
 
@@ -121,6 +124,59 @@ func (s *Store) TestedPR(job int64, head string) error {
 }
 
 func testedPR(q querier, number int64, head string) error {
+	if err := pushedHead(q, number, head); err != nil {
+		return err
+	}
+	var validated int64
+	if err := q.QueryRow(`SELECT COALESCE(MAX(a.id), 0) FROM assignments a JOIN workspaces w ON w.assignment = a.id WHERE a.job = ? AND a.read_only = 1 AND a.state = ? AND w.base = ?`, number, AssignmentAccepted, head).Scan(&validated); err != nil {
+		return err
+	}
+	if validated == 0 {
+		return fmt.Errorf("Quality has not validated %s, the head of job %d", head, number)
+	}
+	open, err := openBlocking(q, number)
+	if err != nil {
+		return err
+	}
+	if len(open) > 0 {
+		return fmt.Errorf("blocking finding %d of job %d is still open", open[0].ID, number)
+	}
+	return nil
+}
+
+// Deliverable returns nil when head is the head of job to deliver, once its
+// pull request's CI allows: for a notes job, one whose job is open, with no
+// assignment still live, and whose latest push by the daemon pushed head,
+// with no Quality validation, which a notes job gets only when its mandate
+// asks (06 rule 37); for any other job, a tested pull request (TestedPR).
+// Otherwise it says which condition is not met.
+func (s *Store) Deliverable(job int64, head string) error {
+	return deliverable(s.db, job, head)
+}
+
+func deliverable(q querier, number int64, head string) error {
+	j, err := job(q, number)
+	if err != nil {
+		return err
+	}
+	if !j.Notes() {
+		return testedPR(q, number, head)
+	}
+	return pushedHead(q, number, head)
+}
+
+// LiveAssignment returns the first assignment of job that has not ended, or
+// zero when every assignment of it has been accepted or cancelled.
+func (s *Store) LiveAssignment(job int64) (int64, error) {
+	var live int64
+	err := s.db.QueryRow(`SELECT COALESCE(MIN(id), 0) FROM assignments WHERE job = ? AND NOT `+endedAssignment, job).Scan(&live)
+	return live, err
+}
+
+// pushedHead returns nil when job is open, with no assignment still live, and
+// the daemon's latest push of its job branch pushed head. Otherwise it says
+// which condition is not met.
+func pushedHead(q querier, number int64, head string) error {
 	j, err := job(q, number)
 	if err != nil {
 		return err
@@ -146,32 +202,21 @@ func testedPR(q querier, number int64, head string) error {
 	if result != PushPushed || pushed != head {
 		return fmt.Errorf("the daemon's latest push of job %d's branch is %s at %s, not pushed at %s", number, result, pushed, head)
 	}
-	var validated int64
-	if err := q.QueryRow(`SELECT COALESCE(MAX(a.id), 0) FROM assignments a JOIN workspaces w ON w.assignment = a.id WHERE a.job = ? AND a.read_only = 1 AND a.state = ? AND w.base = ?`, number, AssignmentAccepted, head).Scan(&validated); err != nil {
-		return err
-	}
-	if validated == 0 {
-		return fmt.Errorf("Quality has not validated %s, the head of job %d", head, number)
-	}
-	open, err := openBlocking(q, number)
-	if err != nil {
-		return err
-	}
-	if len(open) > 0 {
-		return fmt.Errorf("blocking finding %d of job %d is still open", open[0].ID, number)
-	}
 	return nil
 }
 
 // JobDelivered records d, the delivery of d.Job, once the daemon has marked
 // its pull request ready for review with every check on d.Head green. In the
 // same step it checks that d.Head meets every other condition of the job's
-// tested pull request (TestedPR), ends the job, and tells Coordination's
+// delivery (Deliverable), ends the job, and tells Coordination's
 // leader, with a message of kind MessageDelivery with body, whose dispatch is
 // returned. It journals the delivery and the job's end.
 func (s *Store) JobDelivered(d Delivery, body string, at time.Time) (Delivery, Dispatch, error) {
-	if d.Number <= 0 || d.URL == "" || d.Head == "" || len(d.Checks) == 0 {
+	if d.Number <= 0 || d.URL == "" || d.Head == "" || (len(d.Checks) == 0 && !d.NoCI) {
 		return Delivery{}, Dispatch{}, errors.New("a delivery has its pull request, its head and the checks green on it")
+	}
+	if d.NoCI && len(d.Checks) > 0 {
+		return Delivery{}, Dispatch{}, errors.New("a delivery with no CI has no checks")
 	}
 	for _, c := range d.Checks {
 		if c.State != "passed" {
@@ -183,7 +228,14 @@ func (s *Store) JobDelivered(d Delivery, body string, at time.Time) (Delivery, D
 		return Delivery{}, Dispatch{}, err
 	}
 	defer tx.Rollback()
-	if err := testedPR(tx, d.Job, d.Head); err != nil {
+	if d.NoCI {
+		if j, err := job(tx, d.Job); err != nil {
+			return Delivery{}, Dispatch{}, err
+		} else if !j.Notes() {
+			return Delivery{}, Dispatch{}, fmt.Errorf("job %d is not a notes job, so its pull request waits for its checks: only a notes pull request is delivered with no CI", d.Job)
+		}
+	}
+	if err := deliverable(tx, d.Job, d.Head); err != nil {
 		return Delivery{}, Dispatch{}, err
 	}
 	var number int
@@ -228,6 +280,8 @@ func (s *Store) JobDelivery(job int64) (Delivery, error) {
 	if err := json.Unmarshal([]byte(checks), &d.Checks); err != nil {
 		return Delivery{}, err
 	}
+	// Only a delivery with no CI has no checks.
+	d.NoCI = len(d.Checks) == 0
 	d.At, err = time.Parse(time.RFC3339Nano, at)
 	return d, err
 }

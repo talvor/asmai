@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/store"
 )
 
 // authorize fences a caller against the currently running session. This
@@ -55,17 +56,17 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return fmt.Errorf("only leader@engineering, leader@planning, leader@research or leader@quality may run asmai %s", req.Command)
 	case CommandPush:
-		if ref.address == roles.LeaderOf(roles.Engineering) {
+		if isDeliveryOwner(ref.address) {
 			return nil
 		}
-		return errors.New("only leader@engineering, the delivery owner of a code job, may run asmai push")
+		return errors.New("only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, may run asmai push")
 	case CommandDecisionRecord:
 		if ref.address.Name == roles.Leader {
 			return nil
 		}
 		return errors.New("only a role's leader may run asmai decision record: a worker's decision goes to its owning leader")
 	case CommandEffect:
-		if ref.address.Name != roles.Leader || ref.address == roles.LeaderOf(roles.Engineering) {
+		if ref.address.Name != roles.Leader || isDeliveryOwner(ref.address) {
 			return nil
 		}
 		return fmt.Errorf("only a worker, or the delivery owner of a job, may run asmai effect")
@@ -164,4 +165,23 @@ func commandName(command string) string {
 // Planning's and Research's for writing work, Quality's for validation.
 func ownsWorkers(address roles.Address) bool {
 	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Quality)}, address)
+}
+
+// isDeliveryOwner reports whether address is a leader that can own the delivery
+// of a job: Engineering's, for a job that changes code, and Planning's and
+// Research's, for a job whose outcome is notes (06 rule 16). Which of them
+// owns a given job is deliveryOwner's.
+func isDeliveryOwner(address roles.Address) bool {
+	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research)}, address)
+}
+
+// deliveryOwner returns the leader that owns the delivery of j: the leader
+// whose notes they are when its outcome is notes, Planning's for a
+// planning-only job and Research's for a research-only job in a repository,
+// and Engineering's for any other (06 rule 16).
+func deliveryOwner(j store.Job) roles.Address {
+	if j.Notes() {
+		return roles.LeaderOf(onlyRole[j.Mandate])
+	}
+	return roles.LeaderOf(roles.Engineering)
 }

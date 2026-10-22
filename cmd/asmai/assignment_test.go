@@ -55,6 +55,13 @@ func registerWritingFixture(t *testing.T) writingFixture {
 // main also holds files, by path.
 func registerWritingFixtureWith(t *testing.T, files map[string]string) writingFixture {
 	t.Helper()
+	return registerWritingFixtureAs(t, files)
+}
+
+// registerWritingFixtureAs is registerWritingFixtureWith for a repository
+// registered with the further arguments of `asmai repo add`, such as --no-ci.
+func registerWritingFixtureAs(t *testing.T, files map[string]string, addArgs ...string) writingFixture {
+	t.Helper()
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +90,7 @@ func registerWritingFixtureWith(t *testing.T, files map[string]string) writingFi
 		t.Fatal(err)
 	}
 	f.untouched = checkoutState(t, f.checkout)
-	if _, stderr, code := runAsmai(t, "repo", "add", f.checkout, "--name", "fixture"); code != 0 {
+	if _, stderr, code := runAsmai(t, append([]string{"repo", "add", f.checkout, "--name", "fixture"}, addArgs...)...); code != 0 {
 		t.Fatal(stderr)
 	}
 	return f

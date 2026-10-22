@@ -76,3 +76,11 @@ A worker never opens a pull request. When your assignment changes code, your res
 - **Merge Danger**: whether the change is a one-way or two-way door, and its blast radius.
 
 If you took the job branch's tip in or resolved conflicts, write a section for those changes too. The Engineering leader composes the pull request's body from the workers' sections.
+
+## Notes and prototypes
+
+A job whose outcome is notes is delivered like code, by the leader whose notes they are, Planning's or Research's: its job branch is pushed and opened as a draft pull request, and the daemon marks it ready when CI is green on its head, or straight away in a repository declared as having no CI. Its body is short and says it is notes only: the leader writes it without the pr skill, and Quality validates nothing unless the mandate asks.
+
+- A note that the workflow already records in the issue tracker, such as a resolution comment or a pull request review, is not copied anywhere.
+- Any other note, such as research findings or a diagnosis log, is committed to the job branch by a writing assignment. It goes where the repository already keeps such notes, according to its repository instructions or its existing folders, and otherwise under `docs/<kind>/`; the result says where.
+- A prototype stays on its own assignment branch on origin, and its owning leader accepts it with `asmai accept --prototype`, so the job branch does not move. Its verdict, with a pointer to that branch, is a note on the job branch.

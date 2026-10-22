@@ -133,7 +133,7 @@ A problem that validation reports. A blocking finding must be fixed before deliv
 _Avoid_: Issue, comment (when meaning a validation result)
 
 **Delivery owner**:
-The leader that delivers a job: for a code job, Engineering's leader. Only it asks the daemon to push the job branch, and only the daemon pushes it. It opens the job's pull request itself, and records it as its effect.
+The leader that delivers a job: for a code job, Engineering's leader, and for a job whose outcome is notes in a repository, the leader whose notes they are, Planning's or Research's. Only it asks the daemon to push the job branch, and only the daemon pushes it. It opens the job's pull request itself, and records it as its effect.
 
 **Outside change**:
 Commits on origin's job branch that AsmAI did not make, found when the daemon fetches the branch before a push. The push is refused, and a worker merges them in; they are never force-pushed over.
@@ -147,8 +147,15 @@ _Avoid_: WIP
 A job's pull request whose exact head commit has passed validation and the repository's CI, with its base taken in and its evidence and gaps stated. It is ready for the user to review and merge, and the factory never merges it.
 _Avoid_: Ready PR, finished PR
 
+**Notes pull request**:
+The pull request of a job whose outcome is notes, delivered like a tested pull request by the leader whose notes they are, with a short body that says it is notes only, and no Quality validation unless the mandate asks. It holds notes, never a prototype's code.
+_Avoid_: Docs PR
+
+**Prototype**:
+A throwaway program that answers a design question, which stays on its own assignment branch on origin: its leader accepts it with `asmai accept --prototype`, so the job branch does not move. Its verdict, with a pointer to that branch, is a note on the job branch.
+
 **Delivery**:
-The daemon marking a job's tested pull request ready for review, once every check on the head it pushed is green, recorded with the pull request, the head commit and the time. The job ends with it: what was local to it is removed, and its branches stay on origin. A head with no checks is never green. Ready never means merged.
+The daemon marking a job's tested pull request, or notes pull request, ready for review, once every check on the head it pushed is green, recorded with the pull request, the head commit and the time. A notes pull request of a repository declared as having no CI is marked ready straight away. The job ends with it: what was local to it is removed, and its branches stay on origin. A head with no checks is never green, unless that notes pull request's repository is declared as having no CI. Ready never means merged.
 _Avoid_: Merge, completion
 
 **Judged re-run**:

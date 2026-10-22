@@ -295,7 +295,7 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 
 // decide makes the owning leader's decision on an assignment: to accept or
 // reject its result, or to cancel it.
-func decide(o *output, paths statedir.Paths, command string, assignment int64, reasons []string, endsJob bool) int {
+func decide(o *output, paths statedir.Paths, command string, assignment int64, reasons []string, endsJob, prototype bool) int {
 	if assignment <= 0 {
 		return o.fail(fmt.Errorf("%s needs --assignment", command))
 	}
@@ -310,7 +310,10 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 	if endsJob && command != daemon.CommandAccept {
 		return o.fail(fmt.Errorf("%s takes no --ends-job: only an acceptance is the leader accepting the job's outcome", command))
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: command, Assignment: assignment, Reasons: reasons, EndsJob: endsJob})
+	if prototype && command != daemon.CommandAccept {
+		return o.fail(fmt.Errorf("%s takes no --prototype: only an acceptance can leave a prototype on its own branch", command))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: command, Assignment: assignment, Reasons: reasons, EndsJob: endsJob, Prototype: prototype})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -335,6 +338,12 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 			return 0
 		}
 		b := resp.JobBranch
+		if p := resp.Prototype; p != nil {
+			fmt.Fprintf(o.stdout, "assignment %d accepted by %s as a prototype that stays on its own branch %s at commit %s on origin; the assignment has ended\n", a.ID, d.Leader, p.Branch, p.Commit)
+			fmt.Fprintf(o.stdout, "job branch %s did not move: it is at %s, and the prototype is not in the job's pull request\n", b.Name, b.Tip)
+			fmt.Fprintf(o.stdout, "next: the workspace is removed and %s stopped; its verdict is a note on the job branch, written by a new assignment that names branch %s and commit %s\n", a.Worker, p.Branch, p.Commit)
+			return 0
+		}
 		fmt.Fprintf(o.stdout, "assignment %d accepted by %s at commit %s; the assignment has ended\n", a.ID, d.Leader, d.Commit)
 		fmt.Fprintf(o.stdout, "job branch %s fast-forwarded to %s\nread-only view of the job refreshed: %s\n", b.Name, b.Tip, b.View)
 		fmt.Fprintf(o.stdout, "next: the workspace is removed and %s stopped; later work is a new assignment\n", a.Worker)

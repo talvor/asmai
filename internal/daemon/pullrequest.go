@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/github"
-	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -17,17 +16,16 @@ import (
 const ghTimeout = 2 * time.Minute
 
 // pullRequestEffect records an effect of kind store.EffectPullRequest that
-// req's session made in its current dispatch. Of the delivery owner of a code
-// job, Engineering's leader, it is how the daemon learns which pull request to
-// follow: the daemon looks the pull request req.Ref names up with gh, in the
+// req's session made in its current dispatch. Of the delivery owner of the
+// job the dispatch is about, Engineering's leader for a code job and
+// Planning's or Research's for a notes job, it is how the daemon learns which
+// pull request to follow: the daemon looks the pull request req.Ref names up with gh, in the
 // job's clone, and records it as GitHub has it, with its number and whether
 // it is a draft or opened with "[not ready]" at the start of its title, in
 // the same step as the effect. It must be open, in the job's repository, the
 // clone's origin, and from the job branch. When it cannot be looked up,
-// nothing is recorded. Anyone else's is an effect like any
-// other.
+// nothing is recorded. Anyone else's is an effect like any other.
 func (d *daemon) pullRequestEffect(req Request) (store.Effect, *store.PullRequest, error) {
-	owner := roles.LeaderOf(roles.Engineering)
 	d.mu.Lock()
 	ref, l, err := d.caller(req)
 	dispatch := int64(0)
@@ -38,7 +36,7 @@ func (d *daemon) pullRequestEffect(req Request) (store.Effect, *store.PullReques
 	if err != nil {
 		return store.Effect{}, nil, err
 	}
-	if ref.address != owner {
+	if !isDeliveryOwner(ref.address) {
 		e, err := d.effect(req)
 		return e, nil, err
 	}
@@ -52,6 +50,12 @@ func (d *daemon) pullRequestEffect(req Request) (store.Effect, *store.PullReques
 	j, err := d.store.Job(job)
 	if err != nil {
 		return store.Effect{}, nil, err
+	}
+	// Another leader's effect about a job it does not deliver is an effect
+	// like any other.
+	if ref.address != deliveryOwner(j) {
+		e, err := d.effect(req)
+		return e, nil, err
 	}
 	branch, err := d.store.JobBranch(j.Number)
 	if errors.Is(err, sql.ErrNoRows) {

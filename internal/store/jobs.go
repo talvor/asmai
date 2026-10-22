@@ -32,6 +32,14 @@ const (
 // Mandates are the mandates a job may have.
 var Mandates = []string{MandateTestedPR, MandatePlanningOnly, MandateResearchOnly}
 
+// Notes reports whether the job is a notes job: a job in a repository whose
+// mandate is planning-only or research-only, so that its outcome is notes and
+// its delivery is its own leader's, Planning's or Research's, not
+// Engineering's (06 rule 16).
+func (j Job) Notes() bool {
+	return j.Repository != "" && (j.Mandate == MandatePlanningOnly || j.Mandate == MandateResearchOnly)
+}
+
 // Job holds the user's witnessed request beside Coordination's reading.
 type Job struct {
 	Number     int64     `json:"number"`

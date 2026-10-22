@@ -238,6 +238,10 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 			fmt.Fprintf(&b, "- %d %s (owner %s) %s in scratch workspace %s: %s%s\n", a.ID, a.Worker, a.Owner, a.State, a.Workspace.Path, a.Outcome, passedOn(a.Records))
 			continue
 		}
+		if p := a.Prototype; p != nil {
+			fmt.Fprintf(&b, "- %d %s (owner %s) %s as a prototype that stays on its own branch %s at %s on origin, not on the job branch: %s%s\n", a.ID, a.Worker, a.Owner, a.State, p.Branch, p.Commit, a.Outcome, passedOn(a.Records))
+			continue
+		}
 		fmt.Fprintf(&b, "- %d %s (owner %s) %s on branch %s: %s%s\n", a.ID, a.Worker, a.Owner, a.State, a.Workspace.Branch, a.Outcome, passedOn(a.Records))
 	}
 	fmt.Fprintln(&b, "Findings:")
@@ -299,7 +303,11 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	if delivery == nil {
 		fmt.Fprintln(&b, "- not delivered")
 	} else {
-		fmt.Fprintf(&b, "- pull request #%d %s marked ready for review at %s, %s, with every check green; the job ended. AsmAI never merges\n", delivery.Number, delivery.URL, delivery.Head, delivery.At.Format(time.RFC3339))
+		ready := "with every check green"
+		if delivery.NoCI {
+			ready = "straight away, as the repository is declared as having no CI"
+		}
+		fmt.Fprintf(&b, "- pull request #%d %s marked ready for review at %s, %s, %s; the job ended. AsmAI never merges\n", delivery.Number, delivery.URL, delivery.Head, delivery.At.Format(time.RFC3339), ready)
 	}
 	fmt.Fprintln(&b, "Decisions:")
 	if len(records) == 0 {

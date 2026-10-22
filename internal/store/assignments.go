@@ -302,12 +302,35 @@ func (s *Store) JobBranchMade(b JobBranch, at time.Time) (JobBranch, error) {
 		} else if holder != 0 && holder != b.Continues {
 			return "", nil, fmt.Errorf("branch %s belongs to open job %d, and a job branch belongs to one open job at a time", b.Name, holder)
 		} else if holder != 0 {
-			var live int64
-			if err := tx.QueryRow(`SELECT COALESCE(MIN(id), 0) FROM assignments WHERE job = ? AND NOT `+endedAssignment, holder).Scan(&live); err != nil {
+			rows, err := tx.Query(`SELECT id, worker FROM assignments WHERE job = ? AND NOT `+endedAssignment+` ORDER BY id`, holder)
+			if err != nil {
 				return "", nil, err
 			}
-			if live != 0 {
-				return "", nil, fmt.Errorf("job %d still has assignment %d in progress, so its branch cannot pass to job %d", holder, live, b.Job)
+			type replacedAssignment struct {
+				id     int64
+				worker string
+			}
+			var assignments []replacedAssignment
+			for rows.Next() {
+				var a replacedAssignment
+				if err := rows.Scan(&a.id, &a.worker); err != nil {
+					rows.Close()
+					return "", nil, err
+				}
+				assignments = append(assignments, a)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return "", nil, err
+			}
+			for _, a := range assignments {
+				if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelled, a.id); err != nil {
+					return "", nil, err
+				}
+				if _, err := appendEntry(tx, at, KindAssignmentCancelled, map[string]any{"assignment": a.id, "job": holder, "worker": a.worker, "by": "replacement", "replaced_by": b.Job}); err != nil {
+					return "", nil, err
+				}
 			}
 			if _, err := tx.Exec(`UPDATE jobs SET state = ? WHERE number = ?`, JobEnded, holder); err != nil {
 				return "", nil, err

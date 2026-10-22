@@ -4,7 +4,9 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,10 +36,10 @@ type deliveredFirstJob struct {
 }
 
 func newDeliveredFirstJob(t *testing.T) deliveredFirstJob {
-	return newFirstJobWithPullRequest(t, true)
+	return newFirstJobWithPullRequest(t, true, false)
 }
 
-func newFirstJobWithPullRequest(t *testing.T, delivered bool) deliveredFirstJob {
+func newFirstJobWithPullRequest(t *testing.T, delivered, keepSecond bool) deliveredFirstJob {
 	t.Helper()
 	f := newTwoResultsOf(t, "planning")
 	testDir := t.TempDir()
@@ -55,16 +57,17 @@ func newFirstJobWithPullRequest(t *testing.T, delivered bool) deliveredFirstJob 
 		t.Fatal(err)
 	}
 
-	// The first result is accepted and the second assignment cancelled, so
-	// that no assignment is left live.
+	// The first result is accepted; the second can remain live for handover.
 	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "file-1.txt is there"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.decide(CommandCancel, f.assignments[1].ID, "not needed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.s.AssignmentCancelled(f.assignments[1].ID, store.Cancellation{Commit: f.commits[1], Pushed: true}, time.Now()); err != nil {
-		t.Fatal(err)
+	if !keepSecond {
+		if _, err := f.decide(CommandCancel, f.assignments[1].ID, "not needed"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.s.AssignmentCancelled(f.assignments[1].ID, store.Cancellation{Commit: f.commits[1], Pushed: true}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// The daemon pushes the job branch, and the delivery owner opens the pull
@@ -191,7 +194,7 @@ func TestAFollowUpToAJobWithAnOpenPullRequestContinuesItsBranchAndPullRequestFro
 }
 
 func TestAFollowUpReplacesAnOpenJobWithAnOpenPullRequest(t *testing.T) {
-	f := newFirstJobWithPullRequest(t, false)
+	f := newFirstJobWithPullRequest(t, false, false)
 	if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte("OPEN"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +239,90 @@ func TestAFollowUpReplacesAnOpenJobWithAnOpenPullRequest(t *testing.T) {
 	}
 	if !replaced {
 		t.Errorf("predecessor has no journaled replacement: %+v", entries)
+	}
+}
+
+func TestAFollowUpReplacesAnOpenJobAndItsLiveAssignment(t *testing.T) {
+	for _, state := range []string{store.AssignmentSubmitted, store.AssignmentActive, store.AssignmentCancelling} {
+		t.Run(state, func(t *testing.T) {
+			f := newFirstJobWithPullRequest(t, false, true)
+			live := f.assignments[1]
+			switch state {
+			case store.AssignmentActive:
+				if _, _, err := f.s.ResultRejected(live.ID, live.Owner, []string{"revise the result"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			case store.AssignmentCancelling:
+				if _, _, err := f.s.CancellationRequested(live.ID, live.Owner, []string{"no longer needed"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte("OPEN"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			j, resp, err := f.followUp(t, f.job.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Continues == nil || resp.Continues.Number != 7 {
+				t.Errorf("continuation = %+v, want open pull request #7", resp.Continues)
+			}
+			if got, err := f.s.Assignment(live.ID); err != nil || got.State != store.AssignmentCancelled {
+				t.Errorf("replaced assignment = %+v (%v), want cancelled", got, err)
+			}
+			if got, err := f.s.Job(f.job.Number); err != nil || got.State != store.JobEnded {
+				t.Errorf("predecessor = %+v (%v), want ended", got, err)
+			}
+			if holder, err := f.s.BranchHeldByOpenJob("fixture", f.branch, f.job.Number); err != nil || holder != j.Number {
+				t.Errorf("branch holder = %d (%v), want job %d", holder, err, j.Number)
+			}
+			if _, err := f.s.LiveAssignmentOf(live.Worker); !errors.Is(err, sql.ErrNoRows) {
+				t.Errorf("replaced worker still has a live assignment: %v", err)
+			}
+			linked, err := f.s.JobLinked(j.Number, f.job.Number, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var again Response
+			if err := f.d.settleFollowUp(linked, &again); err != nil || again.Continues == nil || again.Continues.Number != 7 {
+				t.Errorf("repeated link = %+v (%v), want the same continuation", again, err)
+			}
+			entries, err := f.s.JobEntries(f.job.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cancelled, ended int
+			for _, entry := range entries {
+				switch entry.Kind {
+				case store.KindAssignmentCancelled:
+					var event struct {
+						Assignment int64  `json:"assignment"`
+						By         string `json:"by"`
+						ReplacedBy int64  `json:"replaced_by"`
+					}
+					if err := json.Unmarshal(entry.Data, &event); err != nil {
+						t.Fatal(err)
+					}
+					if event.Assignment == live.ID && event.By == "replacement" && event.ReplacedBy == j.Number {
+						cancelled++
+					}
+				case store.KindJobEnded:
+					var event struct {
+						By         string `json:"by"`
+						ReplacedBy int64  `json:"replaced_by"`
+					}
+					if err := json.Unmarshal(entry.Data, &event); err != nil {
+						t.Fatal(err)
+					}
+					if event.By == "replaced" && event.ReplacedBy == j.Number {
+						ended++
+					}
+				}
+			}
+			if cancelled != 1 || ended != 1 {
+				t.Errorf("journaled replacement: assignment %d times, job %d times", cancelled, ended)
+			}
+		})
 	}
 }
 

@@ -73,13 +73,6 @@ func (d *daemon) continuationOf(ctx context.Context, j store.Job, repository sto
 	} else if holder != 0 && holder != pred.Number {
 		return nil, fmt.Sprintf("open job %d holds the job branch %s", holder, branch.Name), nil
 	}
-	if pred.State != store.JobEnded {
-		if live, err := d.store.LiveAssignment(pred.Number); err != nil {
-			return nil, "", err
-		} else if live != 0 {
-			return nil, "", fmt.Errorf("job %d still has assignment %d in progress, so its branch cannot pass to job %d", pred.Number, live, j.Number)
-		}
-	}
 	gitCtx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 	if err := repos.Fetch(gitCtx, repository.Clone); err != nil {

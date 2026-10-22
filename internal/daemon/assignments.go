@@ -394,9 +394,30 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 	if err := repos.EnsureView(ctx, repository.Clone, view, startedFrom); err != nil {
 		return store.JobBranch{}, err
 	}
+	var replaced []store.Assignment
+	if continues != 0 {
+		predecessor, err := d.store.Job(continues)
+		if err != nil {
+			return store.JobBranch{}, err
+		}
+		if predecessor.State != store.JobEnded {
+			assignments, err := d.store.AssignmentsForJob(continues)
+			if err != nil {
+				return store.JobBranch{}, err
+			}
+			for _, a := range assignments {
+				if a.State != store.AssignmentAccepted && a.State != store.AssignmentCancelled {
+					replaced = append(replaced, a)
+				}
+			}
+		}
+	}
 	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view, Continues: continues}, time.Now())
 	if err != nil {
 		return store.JobBranch{}, fmt.Errorf("recording the job branch: %w", err)
+	}
+	for _, a := range replaced {
+		d.stopWorker(a)
 	}
 	d.log.Info("job branch made", "job", j.Number, "branch", name, "started_from", startedFrom, "view", view)
 	return branch, nil

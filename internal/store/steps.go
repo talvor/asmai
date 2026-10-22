@@ -5,6 +5,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -18,9 +19,15 @@ import (
 // checks that the owning leader's answer rests on such a record, and that the
 // worker's result names the records it relied on.
 
-// namesSkill says whether text, a decision or a grant, names skill.
-func namesSkill(text, skill string) bool {
-	return strings.Contains(strings.ToLower(text), strings.ToLower(skill))
+// namesStep says whether text, a decision or a grant, names the skill as a
+// whole word and the step.
+func namesStep(text, skill, step string) bool {
+	word := regexp.MustCompile(`(?i)(^|[^\w-])` + regexp.QuoteMeta(skill) + `($|[^\w-])`)
+	name := strings.TrimSpace(strings.ToLower(step))
+	for _, article := range []string{"the ", "a ", "an "} {
+		name = strings.TrimPrefix(name, article)
+	}
+	return word.MatchString(text) && strings.Contains(strings.ToLower(text), name)
 }
 
 // stepCovered checks that the decision records and grants an owning leader
@@ -80,7 +87,7 @@ func recordCoversStep(q querier, r DecisionRecord, step DecisionRequest) error {
 		return fmt.Errorf("decision record %d is of job %d, not job %d: a decision of another job does not satisfy this job's step, which only the job's own decisions, or a grant whose scope covers the job, do", r.ID, r.Job, step.Job)
 	case r.Source != SourceHuman:
 		return fmt.Errorf("decision record %d is a delegated decision of %s, not the user's own decision: a skill's human step is satisfied only by the user's decision or a grant", r.ID, r.Leader)
-	case namesSkill(r.Choice, step.Skill):
+	case namesStep(r.Choice, step.Skill, step.Step):
 		return nil
 	case r.Request != 0:
 		asked, err := latestRequestVersion(q, r.Request)
@@ -91,11 +98,11 @@ func recordCoversStep(q querier, r DecisionRecord, step DecisionRequest) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("decision record %d does not name %s: it is the user's decision about something else (%q), so it does not satisfy the %s step; carry the step to the user and record their answer, naming the skill in the choice", r.ID, step.Skill, r.Choice, step.Skill)
+	return fmt.Errorf("decision record %d does not name %s and its %s step: it is the user's decision about something else (%q), so it does not satisfy the step; carry the step to the user and record their answer, naming the skill and the step in the choice", r.ID, step.Skill, step.Step, r.Choice)
 }
 
 // grantCoversStep checks that the grant g is an active grant of a decision
-// that names the step's skill, and whose scope covers job j.
+// that names the step's skill and step, and whose scope covers job j.
 func grantCoversStep(g Grant, j Job, step DecisionRequest) error {
 	switch {
 	case !g.Covers(j):
@@ -106,8 +113,8 @@ func grantCoversStep(g Grant, j Job, step DecisionRequest) error {
 		return fmt.Errorf("grant %d was invalidated by %s: %s; a condition that no longer holds needs a new decision", g.ID, g.EndedBy, g.EndedReason)
 	case g.Action != ActionDecision:
 		return fmt.Errorf("grant %d approves %s, not a decision: only a grant of a decision satisfies a skill's human step", g.ID, g.Action)
-	case !namesSkill(g.Approved, step.Skill):
-		return fmt.Errorf("grant %d does not name %s: it approves %q, which is not the user's grant of that skill's step", g.ID, step.Skill, g.Approved)
+	case !namesStep(g.Approved, step.Skill, step.Step):
+		return fmt.Errorf("grant %d does not name %s and its %s step: it approves %q, which is not the user's grant of that step", g.ID, step.Skill, step.Step, g.Approved)
 	}
 	return nil
 }

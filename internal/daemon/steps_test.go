@@ -42,7 +42,7 @@ func (f lavishFactory) step(t *testing.T, skill, step string) store.DecisionRequ
 
 func TestAStepTheUsersRecordedDecisionCoversIsAnsweredFromItWithoutAskingTheUser(t *testing.T) {
 	f := newLavishFactory(t)
-	seams := f.userDecided(t, "tdd test seams: the handler and the parser")
+	seams := f.userDecided(t, "tdd: the test seams are the handler and the parser")
 	asked := f.step(t, "tdd", "the test seams")
 	if pending, err := f.s.PendingDecisions(); err != nil || len(pending) != 0 {
 		t.Fatalf("the user is asked what a worker asks its leader: %+v (%v)", pending, err)

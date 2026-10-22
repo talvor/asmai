@@ -170,7 +170,7 @@ func TestAStepRequestNamesTheSkillAndTheStepAndOnlyAWorkerAsksIt(t *testing.T) {
 
 func TestAStepTheUsersDecisionOfTheJobCoversIsSatisfiedWithoutAskingTheUser(t *testing.T) {
 	st := newSteps(t)
-	seams := st.userDecided("tdd test seams: the handler and the parser")
+	seams := st.userDecided("tdd: the test seams are the handler and the parser")
 	r := st.mustAsk("tdd", "the test seams")
 
 	answered, dispatch, err := st.answer(r, []int64{seams.ID}, nil)
@@ -217,9 +217,12 @@ func mustPending(t *testing.T, s *Store) []DecisionRequest {
 
 func TestAStepIsSatisfiedOnlyByTheUsersOwnRecordOfItsJobThatNamesItsSkill(t *testing.T) {
 	st := newSteps(t)
-	delegated := st.delegated("tdd test seams: the leader chose the handler")
-	elsewhere := st.userDecidedElsewhere("tdd test seams: somewhere else")
+	delegated := st.delegated("tdd: the test seams are the leader chose the handler")
+	elsewhere := st.userDecidedElsewhere("tdd: the test seams are somewhere else")
 	other := st.userDecided("the cache is in-memory")
+	skillOnly := st.userDecided("do not use tdd")
+	scoped := st.userDecided("tdd for module A")
+	inWord := st.userDecided("the methodtdd test seams are the handler")
 	r := st.mustAsk("tdd", "the test seams")
 
 	for name, tt := range map[string]struct {
@@ -229,6 +232,9 @@ func TestAStepIsSatisfiedOnlyByTheUsersOwnRecordOfItsJobThatNamesItsSkill(t *tes
 		"a decision of another job":           {elsewhere.ID, "is of job"},
 		"a delegated decision":                {delegated.ID, "delegated decision"},
 		"the user's decision about something": {other.ID, "does not name tdd"},
+		"a record that only names the skill":  {skillOnly.ID, "does not name tdd"},
+		"a record of the skill's other scope": {scoped.ID, "does not name tdd"},
+		"a skill inside another word":         {inWord.ID, "does not name tdd"},
 		"a record that is not there":          {999, "does not exist"},
 	} {
 		_, _, err := st.answer(r, []int64{tt.record}, nil)
@@ -254,12 +260,13 @@ func TestAStepIsSatisfiedByAGrantOfADecisionWhoseScopeCoversItsJob(t *testing.T)
 	}
 	r := st.mustAsk("to-tickets", "the approval of the breakdown")
 
-	factory := st.granted(ScopeFactory, "", ActionDecision, "to-tickets breakdowns are approved")
-	repo := st.granted(ScopeRepository, "fixture", ActionDecision, "to-tickets breakdowns are approved for fixture")
-	elsewhere := st.granted(ScopeRepository, "other", ActionDecision, "to-tickets breakdowns are approved for other")
-	spend := st.granted(ScopeJob, "", ActionSpend, "to-tickets spend")
+	factory := st.granted(ScopeFactory, "", ActionDecision, "to-tickets: the approval of the breakdown is given")
+	repo := st.granted(ScopeRepository, "fixture", ActionDecision, "to-tickets: the approval of the breakdown is given for fixture")
+	elsewhere := st.granted(ScopeRepository, "other", ActionDecision, "to-tickets: the approval of the breakdown is given for other")
+	spend := st.granted(ScopeJob, "", ActionSpend, "to-tickets: the approval of the breakdown is spent")
+	skillOnly := st.granted(ScopeFactory, "", ActionDecision, "to-tickets is allowed")
 	unnamed := st.granted(ScopeFactory, "", ActionDecision, "the cache is in-memory")
-	revoked := st.granted(ScopeFactory, "", ActionDecision, "to-tickets breakdowns are approved until revoked")
+	revoked := st.granted(ScopeFactory, "", ActionDecision, "to-tickets: the approval of the breakdown is given until revoked")
 	if _, err := st.s.GrantEnded(revoked.ID, GrantRevoked, "user", "", st.tick()); err != nil {
 		t.Fatal(err)
 	}
@@ -268,11 +275,12 @@ func TestAStepIsSatisfiedByAGrantOfADecisionWhoseScopeCoversItsJob(t *testing.T)
 		grant int64
 		want  string
 	}{
-		"a grant of another repository":   {elsewhere.ID, "does not cover job"},
-		"a grant of spending":             {spend.ID, "not a decision"},
-		"a grant that names another step": {unnamed.ID, "does not name to-tickets"},
-		"a revoked grant":                 {revoked.ID, "revoked"},
-		"a grant that is not there":       {999, "does not exist"},
+		"a grant of another repository":     {elsewhere.ID, "does not cover job"},
+		"a grant of spending":               {spend.ID, "not a decision"},
+		"a grant that names another step":   {unnamed.ID, "does not name to-tickets"},
+		"a grant that names only the skill": {skillOnly.ID, "does not name to-tickets"},
+		"a revoked grant":                   {revoked.ID, "revoked"},
+		"a grant that is not there":         {999, "does not exist"},
 	} {
 		if _, _, err := st.answer(r, nil, []int64{tt.grant}); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("answering from %s returned %v, want it refused: %q", name, err, tt.want)
@@ -345,10 +353,10 @@ func TestAnUncoveredStepGoesToTheUserAndTheirAnswerIsRecordedForTheRestOfTheJob(
 
 func TestAWorkersResultNamesTheRecordsItsStepsRelied(t *testing.T) {
 	st := newSteps(t)
-	seams := st.userDecided("tdd test seams: the handler and the parser")
-	grant := st.granted(ScopeFactory, "", ActionDecision, "code-review compares against the job branch")
-	elsewhere := st.userDecidedElsewhere("tdd test seams: elsewhere")
-	delegated := st.delegated("tdd test seams: the leader's own choice")
+	seams := st.userDecided("tdd: the test seams are the handler and the parser")
+	grant := st.granted(ScopeFactory, "", ActionDecision, "code-review: the comparison point is the job branch")
+	elsewhere := st.userDecidedElsewhere("tdd: the test seams are elsewhere")
+	delegated := st.delegated("tdd: the test seams are the leader's own choice")
 	spend := st.granted(ScopeJob, "", ActionSpend, "spend on tdd")
 	if _, err := st.s.EffectRecorded(st.assignment.Worker, 1, st.dispatch.ID, "push", "origin/asmai/job-1/1", assignmentsAt); err != nil {
 		t.Fatal(err)
@@ -416,7 +424,7 @@ func TestAWorkersResultNamesTheRecordsItsStepsRelied(t *testing.T) {
 
 func TestAResultOfAWorkerWhoAskedNoStepNamesNoRecord(t *testing.T) {
 	st := newSteps(t)
-	seams := st.userDecided("tdd test seams: the handler and the parser")
+	seams := st.userDecided("tdd: the test seams are the handler and the parser")
 	if _, err := st.s.EffectRecorded(st.assignment.Worker, 1, st.dispatch.ID, "push", "origin/asmai/job-1/1", assignmentsAt); err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +501,7 @@ func TestTheUsersAnswerToAnUncoveredStepIsReturnedAndRecordedWhileTheJobIsPaused
 
 func TestOnlyAStepIsAnsweredFromRecordsAndTheUsersOwnAnswerBringsNoneOfTheLeaders(t *testing.T) {
 	st := newSteps(t)
-	seams := st.userDecided("tdd test seams: the handler")
+	seams := st.userDecided("tdd: the test seams are the handler")
 	choice, _, err := st.s.DecisionRequested(workerRequest(st.assignment), st.tick())
 	if err != nil {
 		t.Fatal(err)

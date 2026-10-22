@@ -31,14 +31,26 @@ const (
 	SurfaceLavish       = "lavish"
 )
 
-// The kinds of decision request. A choice and a provider change are
+// The kinds of decision request. A choice, a provider change and the four
+// decisions the user always makes besides a choice between approaches are
 // single-choice escalations, answered in the conversation; every other kind
 // is answered in Lavish. A step is a worker's request for the human step of
 // a skill, which its owning leader answers only from the user's recorded
 // decisions and grants or carries to the user.
+//
+// A finding is a needs-you finding, quoted to the user word for word, and a
+// dispute is a blocking finding the two leaders could not settle. A mandate
+// request asks for an action outside the mandate, and a conflict for a ruling
+// on a repository instruction that conflicts with it. The user's own answer
+// resolves each, and no record, recommendation or earlier answer stands in
+// for it.
 const (
 	RequestChoice    = "choice"
 	RequestProvider  = "provider"
+	RequestFinding   = "finding"
+	RequestDispute   = "dispute"
+	RequestMandate   = "outside-mandate"
+	RequestConflict  = "conflict"
 	RequestReview    = "review"
 	RequestGrilling  = "grilling"
 	RequestWayfinder = "wayfinder"
@@ -47,7 +59,7 @@ const (
 )
 
 // RequestKinds are the kinds a decision request can be.
-var RequestKinds = []string{RequestChoice, RequestProvider, RequestReview, RequestGrilling, RequestWayfinder, RequestQuestions, RequestStep}
+var RequestKinds = []string{RequestChoice, RequestProvider, RequestFinding, RequestDispute, RequestMandate, RequestConflict, RequestReview, RequestGrilling, RequestWayfinder, RequestQuestions, RequestStep}
 
 // The messages about decision requests: a request carried to the leader that
 // answers it or to Coordination, which presents it, and an answer returned
@@ -56,6 +68,22 @@ const (
 	MessageDecisionRequest = "decision.request"
 	MessageDecisionAnswer  = "decision.answer"
 )
+
+// The two options of a dispute, in the order they are offered. Overruling
+// the finding is the user's decision that clears it; upholding it leaves it
+// open until Quality's re-validation clears it.
+const (
+	DisputeUphold   = "Uphold the finding"
+	DisputeOverrule = "Overrule the finding"
+)
+
+// QuotedFinding is a finding as the user is given it: copied by the store
+// from the finding's record, so that no leader's words stand in for it.
+type QuotedFinding struct {
+	ID   int64  `json:"id"`
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
 
 // ToUser is the recipient of a leader's decision request: the user, through
 // Coordination, which presents it and returns the answer.
@@ -100,8 +128,11 @@ type DecisionRequest struct {
 	// made.
 	Surface string `json:"answer_surface"`
 	// Content is the requesting agent's own content above the questions.
-	Content   string     `json:"content,omitempty"`
-	Questions []Question `json:"questions"`
+	Content string `json:"content,omitempty"`
+	// Quoted are the findings a request of kind finding or dispute is about,
+	// word for word as their validation reported them.
+	Quoted    []QuotedFinding `json:"quoted,omitempty"`
+	Questions []Question      `json:"questions"`
 	// Blocks are the assignments whose work depends on the choice: they wait
 	// while the version is pending.
 	Blocks []int64 `json:"blocks,omitempty"`
@@ -176,6 +207,10 @@ type DecisionRequestInput struct {
 	Content     string
 	Questions   []Question
 	Blocks      []int64
+	// Findings are the findings of the job a request of kind finding or
+	// dispute is about: the needs-you findings it quotes, or the open blocking
+	// findings it disputes.
+	Findings []int64
 }
 
 // DecisionAnswer is an answer to one version of a decision request.
@@ -198,10 +233,19 @@ type DecisionAnswer struct {
 	Carried int64
 }
 
-// needsTheUser says whether the request r is a grilling or Wayfinder
-// question of a worker, which only the user's own answer resolves.
+// needsTheUser says whether the request r is a worker's grilling or Wayfinder
+// question, a request for an action outside the mandate, or a repository
+// instruction that conflicts with it, which only the user's own answer
+// resolves.
 func needsTheUser(r DecisionRequest) bool {
-	return r.Recipient != ToUser && (r.Kind == RequestGrilling || r.Kind == RequestWayfinder)
+	return r.Recipient != ToUser && slices.Contains([]string{RequestGrilling, RequestWayfinder, RequestMandate, RequestConflict}, r.Kind)
+}
+
+// userDecides says whether kind is one of the decisions the user always makes
+// besides a choice between approaches (01 rule 41): each is a single choice
+// answered in the conversation.
+func userDecides(kind string) bool {
+	return slices.Contains([]string{RequestFinding, RequestDispute, RequestMandate, RequestConflict}, kind)
 }
 
 // jobTakesDecisions reports whether a job in state still takes decision
@@ -216,7 +260,7 @@ func jobTakesDecisions(state string) bool {
 // everything else, reviews, all grilling and Wayfinder questions and requests
 // with several questions, in Lavish.
 func AnswerSurface(kind string, questions []Question) string {
-	if (kind == RequestChoice || kind == RequestProvider) && len(questions) == 1 {
+	if (kind == RequestChoice || kind == RequestProvider || userDecides(kind)) && len(questions) == 1 {
 		return SurfaceConversation
 	}
 	return SurfaceLavish
@@ -242,10 +286,21 @@ func validateRequest(in DecisionRequestInput) error {
 			return fmt.Errorf("the recommendation of question %q is not one of its options", q.ID)
 		}
 	}
+	if len(in.Findings) > 0 && in.Kind != RequestFinding && in.Kind != RequestDispute {
+		return fmt.Errorf("only a finding or a dispute names findings, not a %s request", in.Kind)
+	}
+	if in.Kind == RequestDispute {
+		if !slices.Equal(in.Questions[0].Options, []string{DisputeUphold, DisputeOverrule}) {
+			return fmt.Errorf("a dispute offers the user two options, %q and %q, in that order", DisputeUphold, DisputeOverrule)
+		}
+	}
+	if (in.Kind == RequestMandate || in.Kind == RequestConflict) && blank(in.Content) {
+		return fmt.Errorf("a %s request says in its content what is asked and what in the mandate or the repository's instruction it rests on", in.Kind)
+	}
 	if in.Kind != RequestStep && (strings.TrimSpace(in.Skill) != "" || strings.TrimSpace(in.Step) != "") {
 		return fmt.Errorf("only a step request names a skill and a step, not a %s request", in.Kind)
 	}
-	if in.Kind == RequestChoice || in.Kind == RequestProvider {
+	if in.Kind == RequestChoice || in.Kind == RequestProvider || userDecides(in.Kind) {
 		if len(in.Questions) != 1 || len(in.Questions[0].Options) < 2 {
 			return fmt.Errorf("a %s request is a single choice: one question with at least two options; ask several questions as kind %s", in.Kind, RequestQuestions)
 		}
@@ -253,18 +308,21 @@ func validateRequest(in DecisionRequestInput) error {
 	return nil
 }
 
-const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), carries, carries_version, kind, skill, step, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, relied_records, relied_grants, cites, reading, record, answered, page_file, page_url, page_closed, created_at, settled_at`
+const decisionRequestColumns = `id, request, version, job, requester, recipient, COALESCE(assignment, 0), carries, carries_version, kind, skill, step, surface, content, questions, blocks, shown, state, answer, answered_by, relied_on, relied_records, relied_grants, cites, reading, record, answered, quoted, page_file, page_url, page_closed, created_at, settled_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanDecisionRequest(row rowScanner) (DecisionRequest, error) {
 	var r DecisionRequest
-	var questions, blocks, answered, created, reliedRecords, reliedGrants string
+	var questions, blocks, answered, quoted, created, reliedRecords, reliedGrants string
 	var settled sql.NullString
-	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Carries, &r.CarriesVersion, &r.Kind, &r.Skill, &r.Step, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &reliedRecords, &reliedGrants, &r.Cites, &r.Reading, &r.Record, &answered, &r.PageFile, &r.PageURL, &r.PageClosed, &created, &settled); err != nil {
+	if err := row.Scan(&r.ID, &r.Request, &r.Version, &r.Job, &r.Requester, &r.Recipient, &r.Assignment, &r.Carries, &r.CarriesVersion, &r.Kind, &r.Skill, &r.Step, &r.Surface, &r.Content, &questions, &blocks, &r.Shown, &r.State, &r.Answer, &r.AnsweredBy, &r.ReliedOn, &reliedRecords, &reliedGrants, &r.Cites, &r.Reading, &r.Record, &answered, &quoted, &r.PageFile, &r.PageURL, &r.PageClosed, &created, &settled); err != nil {
 		return DecisionRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(answered), &r.Answered); err != nil {
+		return DecisionRequest{}, err
+	}
+	if err := json.Unmarshal([]byte(quoted), &r.Quoted); err != nil {
 		return DecisionRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(reliedRecords), &r.ReliedRecords); err != nil {
@@ -376,6 +434,10 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		}
 		in.Skill, in.Step = strings.TrimSpace(in.Skill), strings.TrimSpace(in.Step)
 	}
+	quoted, err := quotedFindings(tx, in, replaced)
+	if err != nil {
+		return DecisionRequest{}, nil, err
+	}
 	carriesVersion, err := carriedVersion(tx, in)
 	if err != nil {
 		return DecisionRequest{}, nil, err
@@ -414,8 +476,12 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 	if err != nil {
 		return DecisionRequest{}, nil, err
 	}
-	result, err := tx.Exec(`INSERT INTO decision_requests (request, version, job, requester, recipient, assignment, carries, carries_version, kind, skill, step, surface, content, questions, blocks, state, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Carries, carriesVersion, in.Kind, in.Skill, in.Step, surface, in.Content, string(questions), string(blocks), RequestPending, timestamp(at))
+	quotedJSON, err := json.Marshal(quoted)
+	if err != nil {
+		return DecisionRequest{}, nil, err
+	}
+	result, err := tx.Exec(`INSERT INTO decision_requests (request, version, job, requester, recipient, assignment, carries, carries_version, kind, skill, step, surface, content, questions, blocks, quoted, state, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Carries, carriesVersion, in.Kind, in.Skill, in.Step, surface, in.Content, string(questions), string(blocks), string(quotedJSON), RequestPending, timestamp(at))
 	if err != nil {
 		return DecisionRequest{}, nil, err
 	}
@@ -452,6 +518,53 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		dispatch = &d
 	}
 	return r, dispatch, tx.Commit()
+}
+
+// quotedFindings returns the findings a request of kind finding or dispute is
+// about, copied from their records so that they reach the user word for word,
+// and checks the request is one its requester may make. A needs-you finding is
+// quoted by the leader that reports it to the user. A blocking finding is
+// disputed by Engineering's or Quality's leader, and only while no validation
+// or decision of the user's has cleared it. A new version of a request keeps
+// its findings unless it names others. Every other kind quotes none.
+func quotedFindings(tx *sql.Tx, in DecisionRequestInput, replaced DecisionRequest) ([]QuotedFinding, error) {
+	if in.Kind != RequestFinding && in.Kind != RequestDispute {
+		return nil, nil
+	}
+	if in.Recipient != ToUser {
+		return nil, fmt.Errorf("a %s request is a leader's, to the user through Coordination: a worker's findings reach its leader in its validation report", in.Kind)
+	}
+	ids := in.Findings
+	if len(ids) == 0 {
+		for _, q := range replaced.Quoted {
+			ids = append(ids, q.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("a %s request names the findings it is about: give each finding's ID", in.Kind)
+	}
+	if in.Kind == RequestDispute && in.Requester != "leader@engineering" && in.Requester != "leader@quality" {
+		return nil, fmt.Errorf("a blocking finding is disputed by Engineering's leader or Quality's, which reconcile it first: %s does not", in.Requester)
+	}
+	quoted := []QuotedFinding{}
+	for _, id := range ids {
+		list, err := findings(tx, `id = ? AND job = ?`, id, in.Job)
+		if err != nil {
+			return nil, err
+		}
+		if len(list) != 1 {
+			return nil, fmt.Errorf("finding %d is not a finding of job %d", id, in.Job)
+		}
+		f := list[0]
+		switch {
+		case in.Kind == RequestFinding && f.Kind != FindingNeedsYou:
+			return nil, fmt.Errorf("finding %d is a %s finding, not a needs-you finding: only a needs-you finding goes to the user word for word", f.ID, f.Kind)
+		case in.Kind == RequestDispute && !f.Open():
+			return nil, fmt.Errorf("finding %d is not an open blocking finding, so there is nothing to dispute", f.ID)
+		}
+		quoted = append(quoted, QuotedFinding{ID: f.ID, Kind: f.Kind, Text: f.Text})
+	}
+	return quoted, nil
 }
 
 // sameQuestion says whether a and b are the same question.
@@ -513,7 +626,7 @@ func carriedAnswer(q queryer, worker DecisionRequest, request int64, leader stri
 		return DecisionRequest{}, fmt.Errorf("decision request %d is pending: the user has not answered it, and nobody answers for them", e.Request)
 	case e.State != RequestAnswered:
 		return DecisionRequest{}, fmt.Errorf("version %d of decision request %d is %s, so it holds no answer of the user's", e.Version, e.Request, e.State)
-	case e.AnsweredBy != ToUser || e.Surface != SurfaceLavish || e.Cites == 0:
+	case e.AnsweredBy != ToUser || e.Cites == 0 || (e.Surface != SurfaceLavish && !userDecides(worker.Kind)):
 		return DecisionRequest{}, fmt.Errorf("decision request %d was not answered by the user in Lavish", e.Request)
 	}
 	return e, nil
@@ -569,6 +682,9 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 			return DecisionRequest{}, Dispatch{}, err
 		}
 		text, reliedOn = e.Answer, fmt.Sprintf("the user's own answer to decision request %d, version %d, in Lavish (Lavish answer %d)", e.Request, e.Version, e.Cites)
+		if e.Surface == SurfaceConversation {
+			text, reliedOn = e.Answer, fmt.Sprintf("the user's own answer to decision request %d, version %d, in the conversation (witnessed message %d, decision record %d)", e.Request, e.Version, e.Cites, e.Record)
+		}
 		if latest.Kind == RequestStep {
 			// The user's answer to an uncovered step is recorded as their
 			// decision of the job, so that it covers the step for the rest
@@ -639,6 +755,12 @@ func (r DecisionRequest) Text() string {
 	}
 	if r.Content != "" {
 		fmt.Fprintf(&b, "Content: %s\n", r.Content)
+	}
+	if len(r.Quoted) > 0 {
+		fmt.Fprintln(&b, "The findings below are quoted from their records and shown to the user exactly as written, word for word; neither a leader's nor Coordination's summary stands in for them:")
+		for _, q := range r.Quoted {
+			fmt.Fprintf(&b, "Finding %d (%s):\n%s\n", q.ID, q.Kind, q.Text)
+		}
 	}
 	for _, q := range r.Questions {
 		answered := ""

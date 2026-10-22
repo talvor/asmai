@@ -39,6 +39,9 @@ type requestFlags struct {
 	// userAnswer the leader's request whose answer by the user returns to
 	// the worker.
 	carries, userAnswer int64
+	// findings are the findings of the job a leader's request of kind finding
+	// or dispute is about.
+	findings listFlags
 }
 
 // questionsOf returns the questions the flags give: the one question of the
@@ -72,6 +75,14 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 	if len(questions) == 0 {
 		return o.fail(errors.New("decision request needs its question: --title (with --option for each choice), or --question"))
 	}
+	findings, err := idFlag("finding", "finding", f.findings)
+	if err != nil {
+		return o.fail(err)
+	}
+	// A dispute offers the user the same two options every time.
+	if f.kind == store.RequestDispute && len(questions) == 1 && len(questions[0].Options) == 0 {
+		questions[0].Options = []string{store.DisputeUphold, store.DisputeOverrule}
+	}
 	kind := f.kind
 	if kind == "" {
 		kind = store.RequestQuestions
@@ -87,7 +98,7 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 		}
 		blocks = append(blocks, id)
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRequest, Session: os.Getenv(daemon.SessionCredential), Job: f.job, Request: f.request, Kind: kind, Skill: f.skill, Step: f.step, Content: f.content, Questions: questions, Blocks: blocks, Carries: f.carries})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandDecisionRequest, Session: os.Getenv(daemon.SessionCredential), Job: f.job, Request: f.request, Kind: kind, Skill: f.skill, Step: f.step, Content: f.content, Questions: questions, Blocks: blocks, Carries: f.carries, Findings: findings})
 	if err != nil {
 		return o.fail(err)
 	}

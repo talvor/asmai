@@ -332,6 +332,10 @@ ALTER TABLE assignments ADD COLUMN since TEXT NOT NULL DEFAULT '';
 ALTER TABLE assignments ADD COLUMN reviews INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE assignments ADD COLUMN requester TEXT NOT NULL DEFAULT '';
 `,
+	`
+ALTER TABLE decision_requests ADD COLUMN quoted TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE findings ADD COLUMN cleared_decision INTEGER REFERENCES decision_records(id);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -503,6 +507,9 @@ const (
 	// KindSetupAnswered records the user's answer to a question of a
 	// repository's setup, recorded for that repository at once.
 	KindSetupAnswered = "setup.answered"
+	// KindFindingsOverruled records the user's decision, answering a leader's
+	// dispute of blocking findings, that they stand cleared.
+	KindFindingsOverruled = "findings.overruled"
 )
 
 // The states an agent can be in.

@@ -295,6 +295,8 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		switch {
 		case f.Open():
 			state = " (open)"
+		case f.Kind == store.FindingBlocking && f.ClearedByDecision != 0:
+			state = fmt.Sprintf(" (cleared by the user's decision %d)", f.ClearedByDecision)
 		case f.Kind == store.FindingBlocking:
 			state = fmt.Sprintf(" (cleared by report %d)", f.ClearedBy)
 		}

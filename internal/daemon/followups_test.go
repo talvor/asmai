@@ -242,6 +242,111 @@ func TestAFollowUpReplacesAnOpenJobWithAnOpenPullRequest(t *testing.T) {
 	}
 }
 
+func TestAFollowUpContinuesAnInheritedPullRequest(t *testing.T) {
+	f := newDeliveredFirstJob(t)
+	if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte("OPEN"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := f.followUp(t, f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prs, err := f.s.PullRequests(b.Number); err != nil || len(prs) != 0 {
+		t.Fatalf("job %d's direct pull request records = %+v (%v), want none", b.Number, prs, err)
+	}
+	c, resp, err := f.followUp(t, b.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := f.s.JobBranch(c.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch.Name != f.branch || branch.Continues != b.Number || resp.Continues == nil || resp.Continues.URL != "https://github.com/talvor/asmai-fixture/pull/7" {
+		t.Errorf("chained branch = %+v, pull request = %+v", branch, resp.Continues)
+	}
+	if earlier, err := f.s.Job(b.Number); err != nil || earlier.State != store.JobEnded {
+		t.Errorf("intermediate job = %+v (%v), want ended", earlier, err)
+	}
+	shown := callWith(t, f.d.jobCommand, Request{Command: CommandBrief, Job: c.Number})
+	if shown.Error != "" || !strings.Contains(shown.Brief, "Continues job 2's pull request #7 https://github.com/talvor/asmai-fixture/pull/7") {
+		t.Errorf("chained brief = %+v", shown)
+	}
+}
+
+func TestAFollowUpKeepsItsOwnBranchUntilLiveWorkIsCommittedAndPushed(t *testing.T) {
+	f := newFirstJobWithPullRequest(t, false, true)
+	if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte("OPEN"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	live := f.assignments[1]
+	file := filepath.Join(live.Workspace.Path, "unfinished.txt")
+	if err := os.WriteFile(file, []byte("unfinished\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	j, resp, err := f.followUp(t, f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFresh := func(want string) {
+		t.Helper()
+		branch, err := f.s.JobBranch(j.Number)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if branch.Name != JobBranchName(j) || branch.Continues != 0 || resp.Continues != nil || !strings.Contains(resp.Starts, want) {
+			t.Errorf("unsafe handover: branch = %+v, response = %+v, want %q", branch, resp, want)
+		}
+		if predecessor, err := f.s.Job(f.job.Number); err != nil || predecessor.State != store.JobOpen {
+			t.Errorf("predecessor = %+v (%v), want open", predecessor, err)
+		}
+		if assignment, err := f.s.Assignment(live.ID); err != nil || assignment.State != store.AssignmentSubmitted {
+			t.Errorf("assignment = %+v (%v), want submitted", assignment, err)
+		}
+	}
+	assertFresh("uncommitted work")
+	if _, err := f.s.JobBranchDropped(j.Number, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.JobBranchMade(store.JobBranch{Job: j.Number, Repository: "fixture", Name: f.branch, StartedFrom: f.started, View: "view", Continues: f.job.Number}, time.Now()); err == nil {
+		t.Error("the store transferred the branch without checked live work")
+	}
+	linked, err := f.s.JobLinked(j.Number, f.job.Number, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp = Response{}
+	if err := f.d.settleFollowUp(linked, &resp); err != nil {
+		t.Fatal(err)
+	}
+	assertFresh("uncommitted work")
+	git(t, live.Workspace.Path, "add", "unfinished.txt")
+	git(t, live.Workspace.Path, "commit", "-m", "finish pending work")
+	resp = Response{}
+	if err := f.d.settleFollowUp(linked, &resp); err != nil {
+		t.Fatal(err)
+	}
+	assertFresh("not pushed")
+	git(t, live.Workspace.Path, "push", "origin", live.Workspace.Branch)
+	resp = Response{}
+	if err := f.d.settleFollowUp(linked, &resp); err != nil {
+		t.Fatal(err)
+	}
+	branch, err := f.s.JobBranch(j.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch.Name != f.branch || branch.Continues != f.job.Number || resp.Continues == nil || resp.Continues.Number != 7 {
+		t.Errorf("safe handover: branch = %+v, response = %+v", branch, resp)
+	}
+	if predecessor, err := f.s.Job(f.job.Number); err != nil || predecessor.State != store.JobEnded {
+		t.Errorf("predecessor = %+v (%v), want ended", predecessor, err)
+	}
+	if assignment, err := f.s.Assignment(live.ID); err != nil || assignment.State != store.AssignmentCancelled {
+		t.Errorf("assignment = %+v (%v), want cancelled", assignment, err)
+	}
+}
+
 func TestAFollowUpReplacesAnOpenJobAndItsLiveAssignment(t *testing.T) {
 	for _, state := range []string{store.AssignmentSubmitted, store.AssignmentActive, store.AssignmentCancelling} {
 		t.Run(state, func(t *testing.T) {

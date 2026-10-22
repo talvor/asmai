@@ -266,7 +266,7 @@ type Report struct {
 // JobBranchMade records the branch the daemon made for job, and journals it.
 // A job has one: recording one it already has changes nothing and returns
 // the one it has.
-func (s *Store) JobBranchMade(b JobBranch, at time.Time) (JobBranch, error) {
+func (s *Store) JobBranchMade(b JobBranch, at time.Time, checked ...int64) (JobBranch, error) {
 	var made JobBranch
 	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
 		existing, err := jobBranch(tx, b.Job)
@@ -323,6 +323,13 @@ func (s *Store) JobBranchMade(b JobBranch, at time.Time) (JobBranch, error) {
 			rows.Close()
 			if err != nil {
 				return "", nil, err
+			}
+			var liveIDs []int64
+			for _, a := range assignments {
+				liveIDs = append(liveIDs, a.id)
+			}
+			if !slices.Equal(liveIDs, checked) {
+				return "", nil, fmt.Errorf("job %d's live assignments must have their work checked before its branch passes to job %d", holder, b.Job)
 			}
 			for _, a := range assignments {
 				if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelled, a.id); err != nil {

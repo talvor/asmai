@@ -55,7 +55,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 			err = refuse("%v", err)
 		} else {
 			resp.Job = &j
-			conn.SetDeadline(time.Now().Add(2*(gitTimeout+ghTimeout) + time.Minute))
+			conn.SetDeadline(time.Now().Add(2*(2*gitTimeout+ghTimeout) + time.Minute))
 			if j.Repository != "" {
 				err = d.settleFollowUp(j, &resp)
 			}
@@ -111,7 +111,11 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					}
 					var continued []store.PullRequest
 					if branch != nil && branch.Continues != 0 && err == nil {
-						continued, err = d.store.PullRequests(branch.Continues)
+						var pr store.PullRequest
+						pr, err = d.continuedPullRequest(branch.Continues)
+						if err == nil {
+							continued = []store.PullRequest{pr}
+						}
 					}
 					var checks *store.ChecksObservation
 					if o, e := d.store.LatestChecks(j.Number); e == nil {

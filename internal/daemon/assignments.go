@@ -33,7 +33,7 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 	var notify string
 	switch req.Command {
 	case CommandAssign:
-		conn.SetDeadline(time.Now().Add(2*gitTimeout + ghTimeout + time.Minute))
+		conn.SetDeadline(time.Now().Add(3*gitTimeout + ghTimeout + time.Minute))
 		var a store.Assignment
 		var dispatch store.Dispatch
 		if a, dispatch, err = d.assign(req); err == nil {
@@ -204,7 +204,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(d.work, 2*gitTimeout+ghTimeout)
+	ctx, cancel := context.WithTimeout(d.work, 3*gitTimeout+ghTimeout)
 	defer cancel()
 	if req.ReadOnly {
 		if _, err := d.store.JobBranch(j.Number); errors.Is(err, sql.ErrNoRows) {
@@ -395,6 +395,7 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		return store.JobBranch{}, err
 	}
 	var replaced []store.Assignment
+	var checked []int64
 	if continues != 0 {
 		predecessor, err := d.store.Job(continues)
 		if err != nil {
@@ -408,11 +409,12 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 			for _, a := range assignments {
 				if a.State != store.AssignmentAccepted && a.State != store.AssignmentCancelled {
 					replaced = append(replaced, a)
+					checked = append(checked, a.ID)
 				}
 			}
 		}
 	}
-	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view, Continues: continues}, time.Now())
+	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view, Continues: continues}, time.Now(), checked...)
 	if err != nil {
 		return store.JobBranch{}, fmt.Errorf("recording the job branch: %w", err)
 	}

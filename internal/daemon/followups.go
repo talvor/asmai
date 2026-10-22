@@ -27,6 +27,59 @@ type continuation struct {
 	PullRequest store.PullRequest
 }
 
+func (d *daemon) continuedPullRequest(job int64) (store.PullRequest, error) {
+	for {
+		prs, err := d.store.PullRequests(job)
+		if err != nil {
+			return store.PullRequest{}, err
+		}
+		if len(prs) != 0 {
+			return prs[len(prs)-1], nil
+		}
+		branch, err := d.store.JobBranch(job)
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.PullRequest{}, sql.ErrNoRows
+		}
+		if err != nil {
+			return store.PullRequest{}, err
+		}
+		if branch.Continues == 0 {
+			return store.PullRequest{}, sql.ErrNoRows
+		}
+		job = branch.Continues
+	}
+}
+
+func (d *daemon) replaceableAssignments(ctx context.Context, job int64) (string, error) {
+	assignments, err := d.store.AssignmentsForJob(job)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range assignments {
+		if a.State == store.AssignmentAccepted || a.State == store.AssignmentCancelled {
+			continue
+		}
+		uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
+		if err != nil {
+			return fmt.Sprintf("job %d's assignment %d workspace could not be checked: %v; retry `asmai job link` after its work is safe on origin", job, a.ID, err), nil
+		}
+		if len(uncommitted) != 0 {
+			return fmt.Sprintf("job %d's assignment %d has uncommitted work; commit and push it before retrying `asmai job link`", job, a.ID), nil
+		}
+		if a.ReadOnly {
+			continue
+		}
+		commit, err := repos.Commit(ctx, a.Workspace.Path, "HEAD")
+		if err != nil {
+			return fmt.Sprintf("job %d's assignment %d commit could not be checked: %v; retry `asmai job link` after its work is safe on origin", job, a.ID, err), nil
+		}
+		if !d.pushed(ctx, a, commit) {
+			return fmt.Sprintf("job %d's assignment %d has work not pushed to origin/%s; push it before retrying `asmai job link`", job, a.ID, a.Workspace.Branch), nil
+		}
+	}
+	return "", nil
+}
+
 // continuationOf decides how the follow-up j starts: it continues the job
 // branch and the pull request of the job it follows when that pull request is
 // still open and no unrelated open job holds the branch, and otherwise starts
@@ -48,14 +101,13 @@ func (d *daemon) continuationOf(ctx context.Context, j store.Job, repository sto
 	if err != nil {
 		return nil, "", err
 	}
-	prs, err := d.store.PullRequests(pred.Number)
+	recorded, err := d.continuedPullRequest(pred.Number)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Sprintf("job %d has no pull request", pred.Number), nil
+	}
 	if err != nil {
 		return nil, "", err
 	}
-	if len(prs) == 0 {
-		return nil, fmt.Sprintf("job %d has no pull request", pred.Number), nil
-	}
-	recorded := prs[len(prs)-1]
 	ghCtx, cancel := context.WithTimeout(ctx, ghTimeout)
 	found, err := github.ViewPullRequest(ghCtx, repository.Clone, recorded.URL)
 	cancel()
@@ -72,6 +124,14 @@ func (d *daemon) continuationOf(ctx context.Context, j store.Job, repository sto
 		return nil, "", err
 	} else if holder != 0 && holder != pred.Number {
 		return nil, fmt.Sprintf("open job %d holds the job branch %s", holder, branch.Name), nil
+	}
+	if pred.State != store.JobEnded {
+		checkCtx, cancel := context.WithTimeout(ctx, gitTimeout)
+		why, err := d.replaceableAssignments(checkCtx, pred.Number)
+		cancel()
+		if err != nil || why != "" {
+			return nil, why, err
+		}
 	}
 	gitCtx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
@@ -101,7 +161,7 @@ func (d *daemon) settleFollowUp(j store.Job, resp *Response) error {
 	}
 	d.assignMu.Lock()
 	defer d.assignMu.Unlock()
-	ctx, cancel := context.WithTimeout(d.work, 2*(gitTimeout+ghTimeout))
+	ctx, cancel := context.WithTimeout(d.work, 2*(2*gitTimeout+ghTimeout))
 	defer cancel()
 	if branch, err := d.store.JobBranch(j.Number); err == nil {
 		if branch.Continues != 0 {
@@ -125,6 +185,14 @@ func (d *daemon) settleFollowUp(j store.Job, resp *Response) error {
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
+	} else {
+		c, why, err := d.continuationOf(ctx, j, repository)
+		if err != nil {
+			return refuse("job %d now follows job %d, but whether its pull request is still open was not read: %v. Run `asmai job link` again", j.Number, j.Follows, err)
+		}
+		if c == nil {
+			resp.Starts = why
+		}
 	}
 	branch, err := d.ensureJobBranch(ctx, j, repository)
 	if err != nil {
@@ -138,15 +206,15 @@ func (d *daemon) settleFollowUp(j store.Job, resp *Response) error {
 func (d *daemon) reportStart(j store.Job, branch store.JobBranch, resp *Response) error {
 	resp.JobBranch = &branch
 	if branch.Continues == 0 {
-		resp.Starts = fmt.Sprintf("job %d's pull request is not open for it to continue, so it starts from the base", j.Follows)
+		if resp.Starts == "" {
+			resp.Starts = fmt.Sprintf("job %d's pull request is not open for it to continue, so it starts from the base", j.Follows)
+		}
 		return nil
 	}
-	prs, err := d.store.PullRequests(branch.Continues)
+	pr, err := d.continuedPullRequest(branch.Continues)
 	if err != nil {
 		return err
 	}
-	if len(prs) > 0 {
-		resp.Continues = &prs[len(prs)-1]
-	}
+	resp.Continues = &pr
 	return nil
 }

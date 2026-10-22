@@ -327,21 +327,20 @@ func (d *daemon) earlyTarget(ctx context.Context, j store.Job, repository store.
 // as no earlier blocking finding is left for Quality to confirm. A head that
 // Quality already validated has nothing new to validate.
 func (d *daemon) reviewPlan(ctx context.Context, j store.Job, repository store.Repository, tip string) (review, since string, err error) {
-	validated, err := d.store.ValidatedCommits(j.Number)
+	since, err = d.store.LastValidated(j.Number)
 	if err != nil {
 		return "", "", err
 	}
-	for _, commit := range validated {
-		if commit == tip {
-			return "", "", fmt.Errorf("Quality has already validated %s, the head of job %d, and nothing has changed since: validation follows a fix or a merge, which gives the job branch a new head", tip, j.Number)
-		}
-		in, err := repos.Contains(ctx, repository.Clone, tip, commit)
+	if since == tip {
+		return "", "", fmt.Errorf("Quality has already validated %s, the head of job %d, and nothing has changed since: validation follows a fix or a merge, which gives the job branch a new head", tip, j.Number)
+	}
+	if since != "" {
+		in, err := repos.Contains(ctx, repository.Clone, tip, since)
 		if err != nil {
 			return "", "", err
 		}
-		if in {
-			since = commit
-			break
+		if !in {
+			since = ""
 		}
 	}
 	if since == "" {
@@ -353,6 +352,12 @@ func (d *daemon) reviewPlan(ctx context.Context, j store.Job, repository store.R
 	}
 	if len(open) > 0 {
 		return store.ReviewChanges, since, nil
+	}
+	base := "refs/remotes/origin/" + repository.DefaultBranch
+	if inBase, err := repos.Contains(ctx, repository.Clone, base, tip); err != nil {
+		return "", "", err
+	} else if inBase {
+		return store.ReviewChecks, since, nil
 	}
 	steps, err := repos.Steps(ctx, repository.Clone, since, tip)
 	if err != nil {
@@ -367,7 +372,7 @@ func (d *daemon) reviewPlan(ctx context.Context, j store.Job, repository store.R
 			return store.ReviewChanges, since, nil
 		}
 		// A merge of the base, not of outside commits or of another branch.
-		onBase, err := repos.Contains(ctx, repository.Clone, "refs/remotes/origin/"+repository.DefaultBranch, step.Parents[1])
+		onBase, err := repos.Contains(ctx, repository.Clone, base, step.Parents[1])
 		if err != nil {
 			return "", "", err
 		}

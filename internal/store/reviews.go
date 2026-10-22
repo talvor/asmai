@@ -28,25 +28,17 @@ const (
 // validated.
 var JobReviews = []string{ReviewFull, ReviewChanges, ReviewChecks}
 
-// ValidatedCommits returns the commits of job's job branch that Quality's
-// leader accepted a validation of, newest first. An early review of an
-// assignment's result validates no head and is not among them.
-func (s *Store) ValidatedCommits(job int64) ([]string, error) {
-	rows, err := s.db.Query(`SELECT w.base FROM assignments a JOIN workspaces w ON w.assignment = a.id
-		WHERE a.job = ? AND a.read_only = 1 AND a.state = ? AND a.review != ? ORDER BY a.id DESC`, job, AssignmentAccepted, ReviewEarly)
-	if err != nil {
-		return nil, err
+// LastValidated returns the commit of job's job branch that Quality's leader
+// last accepted a validation of, empty when there is none. An early review of
+// an assignment's result validates no head and is not it.
+func (s *Store) LastValidated(job int64) (string, error) {
+	var commit string
+	err := s.db.QueryRow(`SELECT w.base FROM assignments a JOIN workspaces w ON w.assignment = a.id
+		WHERE a.job = ? AND a.read_only = 1 AND a.state = ? AND a.review != ? ORDER BY a.id DESC LIMIT 1`, job, AssignmentAccepted, ReviewEarly).Scan(&commit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
 	}
-	defer rows.Close()
-	var commits []string
-	for rows.Next() {
-		var commit string
-		if err := rows.Scan(&commit); err != nil {
-			return nil, err
-		}
-		commits = append(commits, commit)
-	}
-	return commits, rows.Err()
+	return commit, err
 }
 
 // ValidatedHead returns nil when Quality validated head, the head of job's

@@ -229,8 +229,12 @@ func (s *Store) ValidationAccepted(in Acceptance, deliverTo string, at time.Time
 		}
 		recorded = append(recorded, Finding{ID: id, Job: a.Job, Assignment: a.ID, Report: r.ID, Kind: f.Kind, Text: f.Text, Commit: r.Commit})
 	}
+	var tip string
+	if err := tx.QueryRow(`SELECT tip FROM job_branches WHERE job = ?`, a.Job).Scan(&tip); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Decision{}, Dispatch{}, err
+	}
 	cleared := r.Validation.Resolved
-	if a.Review == ReviewEarly {
+	if a.Review == ReviewEarly || r.Commit != tip {
 		cleared = nil
 	}
 	for _, id := range cleared {

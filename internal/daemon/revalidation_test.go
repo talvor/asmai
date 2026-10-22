@@ -228,8 +228,8 @@ func TestACleanMergeOfAMovedBaseNeedsOnlyTheChecksAndAResolvedConflictIsReviewed
 	if err := f.s.ValidatedHead(f.job.Number, merged); err != nil {
 		t.Errorf("a head whose checks Quality re-ran is not validated: %v", err)
 	}
-	if commits, err := f.s.ValidatedCommits(f.job.Number); err != nil || len(commits) != 2 || commits[0] != merged || commits[1] != f.commits[0] {
-		t.Errorf("the validated commits are %v (%v), want the merge and then the first head", commits, err)
+	if commit, err := f.s.LastValidated(f.job.Number); err != nil || commit != merged {
+		t.Errorf("the last validated commit is %q (%v), want the merge", commit, err)
 	}
 }
 
@@ -396,8 +396,8 @@ func TestAnyLeaderMayAskQualityToReviewAnAssignmentEarlierAtItsResult(t *testing
 	if open, err := f.s.OpenFindings(f.job.Number); err != nil || len(open) != 1 || open[0].Commit != f.commits[1] {
 		t.Errorf("the open findings are %+v (%v)", open, err)
 	}
-	if commits, err := f.s.ValidatedCommits(f.job.Number); err != nil || len(commits) != 0 {
-		t.Errorf("an early review validated %v (%v), want no head", commits, err)
+	if commit, err := f.s.LastValidated(f.job.Number); err != nil || commit != "" {
+		t.Errorf("an early review validated %q (%v), want no head", commit, err)
 	}
 	if err := f.s.ValidatedHead(f.job.Number, f.commits[1]); err == nil {
 		t.Error("the commit of an early review reads as a validated head")

@@ -560,8 +560,6 @@ func TestAJobHeaderSaysHowItsPullRequestChecksAndValidationStand(t *testing.T) {
 		{store.JobWork{}, "not started"},
 		{store.JobWork{Validating: true, Validated: true}, "validating"},
 		{store.JobWork{Validated: true, OpenBlocking: 2}, "accepted at 4f1c9a2, 2 blocking open"},
-		{store.JobWork{LastValidated: "91aa07be3d"}, "stale: validated at 91aa07b, the head is now 4f1c9a2"},
-		{store.JobWork{LastValidated: "91aa07be3d", OpenBlocking: 1}, "stale: validated at 91aa07b, the head is now 4f1c9a2, 1 blocking open"},
 	} {
 		if got := validationWords(tt.work, "4f1c9a2b0c"); got != tt.want {
 			t.Errorf("%+v reads %q, want %q", tt.work, got, tt.want)

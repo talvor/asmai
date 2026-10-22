@@ -132,8 +132,8 @@ func TestOnlyAValidationOfTheFinishedJobBranchValidatesAHeadAndAnEarlyReviewOfAn
 	if _, _, err := s.ValidationAccepted(Acceptance{Assignment: v.ID, Leader: qualityOwner, Reasons: []string{"x"}}, "leader@coordination", assignmentsAt); err != nil {
 		t.Fatal(err)
 	}
-	if commits, err := s.ValidatedCommits(job); err != nil || len(commits) != 0 {
-		t.Errorf("an early review validated %v (%v)", commits, err)
+	if commit, err := s.LastValidated(job); err != nil || commit != "" {
+		t.Errorf("an early review validated %q (%v)", commit, err)
 	}
 	if err := s.ValidatedHead(job, otherCommit); err == nil {
 		t.Error("the commit of an early review reads as a validated head")

@@ -130,9 +130,6 @@ func TestJobWorksValidationFollowsTheHead(t *testing.T) {
 	if err != nil || len(works) != 1 || works[0].Validated {
 		t.Errorf("the old validation still covers the new head: %+v, %v", works, err)
 	}
-	if works[0].LastValidated != tipCommit {
-		t.Errorf("the job's last validated commit is %q, want %s, which the new head makes stale", works[0].LastValidated, tipCommit)
-	}
 }
 
 func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {

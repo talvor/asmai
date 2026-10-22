@@ -33,7 +33,7 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 	var notify string
 	switch req.Command {
 	case CommandAssign:
-		conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
+		conn.SetDeadline(time.Now().Add(3*gitTimeout + ghTimeout + time.Minute))
 		var a store.Assignment
 		var dispatch store.Dispatch
 		if a, dispatch, err = d.assign(req); err == nil {
@@ -204,7 +204,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
+	ctx, cancel := context.WithTimeout(d.work, 3*gitTimeout+ghTimeout)
 	defer cancel()
 	if req.ReadOnly {
 		if _, err := d.store.JobBranch(j.Number); errors.Is(err, sql.ErrNoRows) {
@@ -355,28 +355,71 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 	case !errors.Is(err, sql.ErrNoRows):
 		return store.JobBranch{}, err
 	}
-	if err := repos.Fetch(ctx, repository.Clone); err != nil {
-		return store.JobBranch{}, err
-	}
-	tip, err := repos.OriginTip(ctx, repository.Clone, repository.DefaultBranch)
-	if err != nil {
-		return store.JobBranch{}, err
-	}
 	name := JobBranchName(j)
-	startedFrom, err := repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
-	if err != nil {
-		startedFrom = tip
-		if err := repos.CreateBranch(ctx, repository.Clone, name, startedFrom); err != nil {
+	var continues int64
+	var startedFrom string
+	// A follow-up to a job whose pull request is still open continues its
+	// job branch, starting from origin's copy of it (05 rule 16).
+	if j.Follows != 0 {
+		c, why, err := d.continuationOf(ctx, j, repository)
+		if err != nil {
 			return store.JobBranch{}, err
+		}
+		if c != nil {
+			name, startedFrom, continues = c.Branch, c.Tip, c.Predecessor
+			if err := repos.ResetBranch(ctx, repository.Clone, name, startedFrom); err != nil {
+				return store.JobBranch{}, err
+			}
+		} else {
+			d.log.Info("a follow-up starts from the base with a new job branch", "job", j.Number, "follows", j.Follows, "why", why)
+		}
+	}
+	if continues == 0 {
+		if err := repos.Fetch(ctx, repository.Clone); err != nil {
+			return store.JobBranch{}, err
+		}
+		tip, err := repos.OriginTip(ctx, repository.Clone, repository.DefaultBranch)
+		if err != nil {
+			return store.JobBranch{}, err
+		}
+		startedFrom, err = repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
+		if err != nil {
+			startedFrom = tip
+			if err := repos.CreateBranch(ctx, repository.Clone, name, startedFrom); err != nil {
+				return store.JobBranch{}, err
+			}
 		}
 	}
 	view := filepath.Join(d.cfg.Paths.Views, fmt.Sprintf("job-%d", j.Number))
 	if err := repos.EnsureView(ctx, repository.Clone, view, startedFrom); err != nil {
 		return store.JobBranch{}, err
 	}
-	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view}, time.Now())
+	var replaced []store.Assignment
+	var checked []int64
+	if continues != 0 {
+		predecessor, err := d.store.Job(continues)
+		if err != nil {
+			return store.JobBranch{}, err
+		}
+		if predecessor.State != store.JobEnded {
+			assignments, err := d.store.AssignmentsForJob(continues)
+			if err != nil {
+				return store.JobBranch{}, err
+			}
+			for _, a := range assignments {
+				if a.State != store.AssignmentAccepted && a.State != store.AssignmentCancelled {
+					replaced = append(replaced, a)
+					checked = append(checked, a.ID)
+				}
+			}
+		}
+	}
+	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view, Continues: continues}, time.Now(), checked...)
 	if err != nil {
 		return store.JobBranch{}, fmt.Errorf("recording the job branch: %w", err)
+	}
+	for _, a := range replaced {
+		d.stopWorker(a)
 	}
 	d.log.Info("job branch made", "job", j.Number, "branch", name, "started_from", startedFrom, "view", view)
 	return branch, nil

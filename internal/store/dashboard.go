@@ -308,7 +308,7 @@ type HandoffWork struct {
 // name it in their data's assignment field. Its own state is not stamped, so
 // when it last changed is the latest of these.
 var assignmentChanges = []string{
-	KindResultSubmitted, KindBlockedReported, KindResultAccepted, KindResultRejected,
+	KindResultSubmitted, KindBlockedReported, KindResultAccepted, KindResultRejected, KindResultReturned,
 	KindCancellationRequested, KindAssignmentCancelled, KindAssignmentResumed, KindAssignmentNeedsReconciliation,
 }
 

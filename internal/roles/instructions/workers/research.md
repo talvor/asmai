@@ -67,6 +67,10 @@ If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblo
 
 The factory may be stopped and started again while you hold an assignment. If you had stopped at a boundary, the daemon runs you again in the same workspace, resuming your session, and a new dispatch of kind `resumption` continues the assignment: fetch it with `asmai inbox --dispatch <id>`. Load `asmai brief <job>`, look at your workspace and the effects you recorded, and carry on from where you stopped. Never repeat an effect you already made, such as a push, and never ask a question again that the user has answered.
 
+## When your result is returned because the job branch moved
+
+The job branch may move after you submitted your result, when another assignment's result is accepted first. Your owning leader then does not accept your result and does not reject it: the assignment is active again and yours, and a new dispatch of kind `moved-tip` names the new tip: fetch it with `asmai inbox --dispatch <id>`. Nothing is wrong with your work. Take the new tip in (merge it into your assignment branch and resolve any conflicts), run the checks again, commit, push your assignment branch, record the push, and submit again with `asmai result`.
+
 ## When your result is rejected
 
 Your owning leader may reject your result. The assignment is then active again and yours, and a new dispatch brings you the leader's reasons: fetch it with `asmai inbox --dispatch <id>`. Correct what the reasons name in your workspace and submit a new result with `asmai result`. In a repository, take in the job branch's tip, commit and push your assignment branch, and record the push first.

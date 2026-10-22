@@ -172,7 +172,7 @@ func TestAPrototypeAcceptedToStayOnItsBranchMovesNoJobBranchAndItsOriginBranchSt
 	if err != nil {
 		t.Fatal(err)
 	}
-	if brief := brief(f.job, store.Repository{}, nil, nil, nil, listed, nil, nil, nil, nil, nil, nil, nil, nil, nil, ""); !strings.Contains(brief, "accepted as a prototype that stays on its own branch "+prototype.Workspace.Branch+" at "+f.commits[0]+" on origin, not on the job branch") {
+	if brief := brief(f.job, store.Repository{}, nil, nil, nil, nil, listed, nil, nil, nil, nil, nil, nil, nil, nil, nil, ""); !strings.Contains(brief, "accepted as a prototype that stays on its own branch "+prototype.Workspace.Branch+" at "+f.commits[0]+" on origin, not on the job branch") {
 		t.Errorf("the brief does not name where the prototype stays:\n%s", brief)
 	}
 
@@ -218,7 +218,7 @@ func TestTheBriefSaysAPullRequestWithNoCIWasMarkedReadyStraightAway(t *testing.T
 	j := store.Job{Number: 1, Role: "coordination", State: store.JobEnded, Repository: "fixture", Mandate: store.MandateResearchOnly}
 	at := time.Date(2026, 10, 12, 1, 2, 3, 0, time.UTC)
 	delivery := &store.Delivery{Job: 1, Number: 7, URL: "https://github.com/o/r/pull/7", Head: "bbb", NoCI: true, At: at}
-	got := brief(j, store.Repository{}, nil, nil, nil, nil, nil, nil, nil, nil, delivery, nil, nil, nil, nil, "")
+	got := brief(j, store.Repository{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, delivery, nil, nil, nil, nil, "")
 	want := "Delivery:\n- pull request #7 https://github.com/o/r/pull/7 marked ready for review at bbb, 2026-10-12T01:02:03Z, straight away, as the repository is declared as having no CI; the job ended. AsmAI never merges\n"
 	if !strings.Contains(got, want) {
 		t.Errorf("the brief lacks %q:\n%s", want, got)

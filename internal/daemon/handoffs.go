@@ -171,7 +171,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 // reconciliation for an assignment's owning leader are work at once too.
 func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
 	switch m.Kind {
-	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageCancellation, store.MessageValidation, store.ReportResult, store.ReportBlocked,
+	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageMovedTip, store.MessageCancellation, store.MessageValidation, store.ReportResult, store.ReportBlocked,
 		store.MessageResumption, store.MessageReconciliation, store.MessageRestoration, store.MessageDecisionRequest, store.MessageDecisionAnswer, store.MessageLavishSent, store.MessageSetup:
 	default:
 		return nil

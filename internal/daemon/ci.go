@@ -385,10 +385,18 @@ func (d *daemon) removeJobLocal(job int64) {
 				removed = append(removed, branch.View)
 			}
 		}
-		deleted, err := repos.DeleteBranch(ctx, repository.Clone, branch.Name)
-		failed = errors.Join(failed, err)
-		if deleted {
-			removed = append(removed, "refs/heads/"+branch.Name)
+		// A follow-up that continues this job's branch holds it in the
+		// clone now, and keeps it.
+		if holder, err := d.store.BranchHeldByOpenJob(repository.Name, branch.Name, job); err != nil {
+			failed = errors.Join(failed, err)
+		} else if holder != 0 {
+			d.log.Info("a job branch is kept in the clone: an open job continues it", "job", job, "branch", branch.Name, "continued_by", holder)
+		} else {
+			deleted, err := repos.DeleteBranch(ctx, repository.Clone, branch.Name)
+			failed = errors.Join(failed, err)
+			if deleted {
+				removed = append(removed, "refs/heads/"+branch.Name)
+			}
 		}
 	case !errors.Is(err, sql.ErrNoRows):
 		failed = errors.Join(failed, err)

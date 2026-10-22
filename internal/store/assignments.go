@@ -49,8 +49,11 @@ const (
 // assignment of a worker that had stopped at a boundary, and a reconciliation
 // tells the owning leader that its assignment needs it.
 const (
-	MessageAssignment     = "assignment"
-	MessageRejection      = "rejection"
+	MessageAssignment = "assignment"
+	MessageRejection  = "rejection"
+	// MessageMovedTip returns a submitted result to the same worker because
+	// the job branch moved after it was submitted. It is not a rejection.
+	MessageMovedTip       = "moved-tip"
 	MessageCancellation   = "cancellation"
 	MessageValidation     = "validation"
 	MessageResumption     = "resumption"
@@ -83,6 +86,10 @@ type JobBranch struct {
 	StartedFrom string `json:"started_from"`
 	// Tip is the job branch's current tip.
 	Tip string `json:"tip"`
+	// Continues is the earlier job whose branch, and open pull request, this
+	// job's branch continues, started from origin's copy; zero for a branch
+	// started from the base (05 rule 16).
+	Continues int64 `json:"continues,omitempty"`
 	// View is the leaders' read-only view of the job at its tip.
 	View      string    `json:"view"`
 	CreatedAt time.Time `json:"created_at"`
@@ -259,7 +266,7 @@ type Report struct {
 // JobBranchMade records the branch the daemon made for job, and journals it.
 // A job has one: recording one it already has changes nothing and returns
 // the one it has.
-func (s *Store) JobBranchMade(b JobBranch, at time.Time) (JobBranch, error) {
+func (s *Store) JobBranchMade(b JobBranch, at time.Time, checked ...int64) (JobBranch, error) {
 	var made JobBranch
 	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
 		existing, err := jobBranch(tx, b.Job)
@@ -280,15 +287,119 @@ func (s *Store) JobBranchMade(b JobBranch, at time.Time) (JobBranch, error) {
 		if b.Name == "" || b.StartedFrom == "" || b.View == "" {
 			return "", nil, errors.New("a job branch needs a name, the commit it started from and its view")
 		}
+		if b.Continues != 0 {
+			predecessor, err := jobBranch(tx, b.Continues)
+			if err != nil {
+				return "", nil, err
+			}
+			if j.Follows != b.Continues || predecessor.Repository != b.Repository || predecessor.Name != b.Name {
+				return "", nil, fmt.Errorf("job %d cannot continue job %d's branch %s", b.Job, b.Continues, b.Name)
+			}
+		}
+		// A job branch belongs to one open job at a time (05 rule 16).
+		if holder, err := openJobHolding(tx, b.Repository, b.Name, b.Job); err != nil {
+			return "", nil, err
+		} else if holder != 0 && holder != b.Continues {
+			return "", nil, fmt.Errorf("branch %s belongs to open job %d, and a job branch belongs to one open job at a time", b.Name, holder)
+		} else if holder != 0 {
+			rows, err := tx.Query(`SELECT id, worker FROM assignments WHERE job = ? AND NOT `+endedAssignment+` ORDER BY id`, holder)
+			if err != nil {
+				return "", nil, err
+			}
+			type replacedAssignment struct {
+				id     int64
+				worker string
+			}
+			var assignments []replacedAssignment
+			for rows.Next() {
+				var a replacedAssignment
+				if err := rows.Scan(&a.id, &a.worker); err != nil {
+					rows.Close()
+					return "", nil, err
+				}
+				assignments = append(assignments, a)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return "", nil, err
+			}
+			var liveIDs []int64
+			for _, a := range assignments {
+				liveIDs = append(liveIDs, a.id)
+			}
+			if !slices.Equal(liveIDs, checked) {
+				return "", nil, fmt.Errorf("job %d's live assignments must have their work checked before its branch passes to job %d", holder, b.Job)
+			}
+			for _, a := range assignments {
+				if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelled, a.id); err != nil {
+					return "", nil, err
+				}
+				if _, err := appendEntry(tx, at, KindAssignmentCancelled, map[string]any{"assignment": a.id, "job": holder, "worker": a.worker, "by": "replacement", "replaced_by": b.Job}); err != nil {
+					return "", nil, err
+				}
+			}
+			if _, err := tx.Exec(`UPDATE jobs SET state = ? WHERE number = ?`, JobEnded, holder); err != nil {
+				return "", nil, err
+			}
+			if _, err := appendEntry(tx, at, KindJobEnded, map[string]any{"job": holder, "state": JobEnded, "by": "replaced", "replaced_by": b.Job}); err != nil {
+				return "", nil, err
+			}
+		}
 		b.Tip, b.CreatedAt = b.StartedFrom, at.UTC()
-		if _, err := tx.Exec(`INSERT INTO job_branches (job, repository, name, started_from, tip, view, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			b.Job, b.Repository, b.Name, b.StartedFrom, b.Tip, b.View, timestamp(at)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO job_branches (job, repository, name, started_from, tip, view, created_at, continues) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			b.Job, b.Repository, b.Name, b.StartedFrom, b.Tip, b.View, timestamp(at), b.Continues); err != nil {
 			return "", nil, err
 		}
 		made = b
 		return KindJobBranchMade, b, nil
 	})
 	return made, err
+}
+
+// openJobHolding returns the open job other than except whose job branch in
+// repository is called name, or zero when none is.
+func openJobHolding(q queryer, repository, name string, except int64) (int64, error) {
+	var holder int64
+	err := q.QueryRow(`SELECT COALESCE(MIN(b.job), 0) FROM job_branches b JOIN jobs j ON j.number = b.job WHERE b.repository = ? AND b.name = ? AND b.job <> ? AND j.state <> ?`, repository, name, except, JobEnded).Scan(&holder)
+	return holder, err
+}
+
+// BranchHeldByOpenJob returns the open job other than except whose job
+// branch in repository is called name, or zero when none is: the one job a
+// job branch belongs to at a time.
+func (s *Store) BranchHeldByOpenJob(repository, name string, except int64) (int64, error) {
+	return openJobHolding(s.db, repository, name, except)
+}
+
+// JobBranchDropped drops the branch the daemon made for job, which is a
+// follow-up with no work on it yet, so that the daemon can make it again
+// from its predecessor's branch. It refuses a branch an assignment has been
+// given work from.
+func (s *Store) JobBranchDropped(job int64, at time.Time) (JobBranch, error) {
+	var dropped JobBranch
+	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
+		b, err := jobBranch(tx, job)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, nil
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		var n int
+		if err := tx.QueryRow(`SELECT (SELECT count(*) FROM assignments WHERE job = ?) + (SELECT count(*) FROM pushes WHERE job = ?)`, job, job).Scan(&n); err != nil {
+			return "", nil, err
+		}
+		if n > 0 || b.Tip != b.StartedFrom {
+			return "", nil, fmt.Errorf("job %d already has work on its job branch %s, so the branch is kept", job, b.Name)
+		}
+		if _, err := tx.Exec(`DELETE FROM job_branches WHERE job = ?`, job); err != nil {
+			return "", nil, err
+		}
+		dropped = b
+		return KindJobBranchDropped, b, nil
+	})
+	return dropped, err
 }
 
 // JobBranch returns the branch job has, or sql.ErrNoRows.
@@ -299,8 +410,8 @@ func (s *Store) JobBranch(job int64) (JobBranch, error) {
 func jobBranch(q queryer, job int64) (JobBranch, error) {
 	var b JobBranch
 	var created string
-	err := q.QueryRow(`SELECT job, repository, name, started_from, tip, view, created_at FROM job_branches WHERE job = ?`, job).
-		Scan(&b.Job, &b.Repository, &b.Name, &b.StartedFrom, &b.Tip, &b.View, &created)
+	err := q.QueryRow(`SELECT job, repository, name, started_from, tip, view, created_at, continues FROM job_branches WHERE job = ?`, job).
+		Scan(&b.Job, &b.Repository, &b.Name, &b.StartedFrom, &b.Tip, &b.View, &created, &b.Continues)
 	if err != nil {
 		return JobBranch{}, err
 	}
@@ -764,7 +875,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err := tx.QueryRow(`SELECT kind FROM messages m JOIN dispatches d ON d.message = m.id WHERE d.id = ?`, sub.Dispatch).Scan(&given); err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if given != MessageAssignment && given != MessageRejection && given != MessageResumption && given != MessageDecisionAnswer {
+	if given != MessageAssignment && given != MessageRejection && given != MessageMovedTip && given != MessageResumption && given != MessageDecisionAnswer {
 		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d does not give %s an assignment to report on", sub.Dispatch, sub.Agent)
 	}
 	if a.State != AssignmentActive {

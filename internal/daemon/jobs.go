@@ -44,6 +44,22 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 				d.makeJobBranch(j)
 			}
 		}
+	case CommandJobLink:
+		var j store.Job
+		d.mu.Lock()
+		if _, _, err = d.caller(req); err == nil {
+			j, err = d.store.JobLinked(req.Job, req.Follows, time.Now())
+		}
+		d.mu.Unlock()
+		if err != nil {
+			err = refuse("%v", err)
+		} else {
+			resp.Job = &j
+			conn.SetDeadline(time.Now().Add(2*(2*gitTimeout+ghTimeout) + time.Minute))
+			if j.Repository != "" {
+				err = d.settleFollowUp(j, &resp)
+			}
+		}
 	case CommandJobClean:
 		resp.Removed, err = d.cleanScratch(req.Job)
 	case CommandJobs:
@@ -93,6 +109,14 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					} else if !errors.Is(e, sql.ErrNoRows) {
 						err = e
 					}
+					var continued []store.PullRequest
+					if branch != nil && branch.Continues != 0 && err == nil {
+						var pr store.PullRequest
+						pr, err = d.continuedPullRequest(branch.Continues)
+						if err == nil {
+							continued = []store.PullRequest{pr}
+						}
+					}
 					var checks *store.ChecksObservation
 					if o, e := d.store.LatestChecks(j.Number); e == nil {
 						checks = &o
@@ -126,7 +150,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 						setup, err = d.setupSection(j)
 					}
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, grants, setup)
+						resp.Brief = brief(j, repository, entries, handoffs, branch, continued, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, grants, setup)
 					}
 				}
 			}
@@ -196,7 +220,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, grants []store.Grant, setup string) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, continued []store.PullRequest, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, grants []store.Grant, setup string) string {
 	var b strings.Builder
 	repositoryName := j.Repository
 	if repositoryName == "" {
@@ -210,12 +234,22 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	for _, criterion := range j.Criteria {
 		fmt.Fprintf(&b, "- %s\n", criterion)
 	}
+	if j.Follows != 0 {
+		fmt.Fprintf(&b, "Follow-up to job %d (linked with `asmai job link`)\n", j.Follows)
+	}
 	if repository.Clone != "" {
 		fmt.Fprintf(&b, "Repository origin: %s\nRepository clone: %s\nDefault branch (the base the job branch takes in): %s\n", repository.Origin, repository.Clone, repository.DefaultBranch)
 	}
 	switch {
 	case branch != nil && j.State == store.JobEnded:
 		fmt.Fprintf(&b, "Job branch: %s (started from %s, tip %s), kept on origin; the job ended, so its view and its branches in AsmAI's clone are removed\n", branch.Name, branch.StartedFrom, branch.Tip)
+	case branch != nil && branch.Continues != 0:
+		fmt.Fprintf(&b, "Job branch: %s (continues job %d's job branch, started from origin's copy at %s, tip %s)\n", branch.Name, branch.Continues, branch.StartedFrom, branch.Tip)
+		if len(continued) > 0 {
+			p := continued[len(continued)-1]
+			fmt.Fprintf(&b, "Continues job %d's pull request #%d %s, still open: it is this job's pull request, so never open another. Once the daemon has pushed the job branch, record it with `asmai effect pull-request %s` and update its body.\n", branch.Continues, p.Number, p.URL, p.URL)
+		}
+		fmt.Fprintf(&b, "Read-only view of the job at the job branch's tip: %s\nRead the job's code and the repository's instructions there. Never write in it: it is not a workspace.\n", branch.View)
 	case branch != nil:
 		fmt.Fprintf(&b, "Job branch: %s (started from %s, tip %s)\nRead-only view of the job at the job branch's tip: %s\nRead the job's code and the repository's instructions there. Never write in it: it is not a workspace.\n", branch.Name, branch.StartedFrom, branch.Tip, branch.View)
 	case j.Repository != "":

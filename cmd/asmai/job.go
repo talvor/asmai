@@ -53,6 +53,33 @@ func jobOpen(o *output, paths statedir.Paths, message, repository, reading, mand
 	return 0
 }
 
+// jobLink links the follow-up job to the job it follows. The daemon has the
+// follow-up continue its predecessor's job branch and pull request where the
+// pull request is still open, and otherwise start from the base.
+func jobLink(o *output, paths statedir.Paths, job, follows int64) int {
+	if job <= 0 || follows <= 0 {
+		return o.fail(fmt.Errorf("job link needs --job <the follow-up's number> and --follows <the number of the job it follows>; `asmai jobs` lists the jobs"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandJobLink, Job: job, Follows: follows})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(map[string]any{"job": resp.Job, "job_branch": resp.JobBranch, "continues": resp.Continues, "starts": resp.Starts})
+	}
+	fmt.Fprintf(o.stdout, "Job %d is linked as a follow-up to job %d.\n", job, follows)
+	switch {
+	case resp.Continues != nil:
+		fmt.Fprintf(o.stdout, "It continues job %d's job branch %s and its open pull request #%d %s, starting from origin's copy at %s.\n", follows, resp.JobBranch.Name, resp.Continues.Number, resp.Continues.URL, resp.JobBranch.StartedFrom)
+	case resp.Starts != "":
+		fmt.Fprintf(o.stdout, "It starts afresh: %s.\n", resp.Starts)
+	case resp.Job.Repository == "":
+		fmt.Fprintln(o.stdout, "It has no repository, so there is no job branch to continue.")
+	}
+	fmt.Fprintf(o.stdout, "Read its brief with `asmai brief %d`.\n", job)
+	return 0
+}
+
 func jobs(o *output, paths statedir.Paths) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandJobs})
 	if err != nil {

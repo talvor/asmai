@@ -136,6 +136,10 @@ commands agents run:
                               A planning-only or research-only job is authorized only to produce its outcome, and
                               is never handed to Engineering; a research-only job may target no repository, and
                               its assignments then work in scratch workspaces
+  asmai job link --job <number> --follows <number>
+                              Coordination's leader links a follow-up job to the job it follows; where the
+                              earlier job's pull request is still open the follow-up continues its job branch
+                              and pull request, and otherwise starts afresh
   asmai brief <number>        read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
   asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>]
@@ -319,6 +323,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		switch {
 		case len(args) > 0 && args[0] == "open":
 			name, args = "job open", args[1:]
+		case len(args) > 0 && args[0] == "link":
+			name, args = "job link", args[1:]
 		case len(args) > 0 && args[0] == "clean":
 			name, args = "job clean", args[1:]
 		default:
@@ -346,7 +352,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	foreground, follow, repoName, assumeYes := new(bool), new(bool), new(string), new(bool)
 	var message string
 	var reading, mandate, repository string
-	var handoffJob, handoffID, dispatchID int64
+	var handoffJob, handoffID, dispatchID, linkJob, linkFollows int64
 	var recipient, outcome, decisions, evidence, constraints, permissions, answer string
 	var criteria criteriaFlags
 	var assignJob int64
@@ -396,6 +402,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&reading, "reading", "", "Coordination's reading of the user's words")
 		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate: "+strings.Join(store.Mandates[:len(store.Mandates)-1], ", ")+" or "+store.Mandates[len(store.Mandates)-1])
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
+	case "job link":
+		flags.Int64Var(&linkJob, "job", 0, "the follow-up job's number")
+		flags.Int64Var(&linkFollows, "follows", 0, "the number of the job it follows")
 	case "handoff send":
 		flags.Int64Var(&handoffJob, "job", 0, "job number")
 		flags.StringVar(&recipient, "to", "", "receiving leader")
@@ -532,7 +541,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -596,6 +605,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return jobShow(o, paths, arg)
 	case "job clean":
 		return jobClean(o, paths, arg)
+	case "job link":
+		return jobLink(o, paths, linkJob, linkFollows)
 	case "job open":
 		return jobOpen(o, paths, message, repository, reading, mandate, criteria)
 	case "brief":

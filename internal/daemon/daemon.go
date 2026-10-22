@@ -77,7 +77,10 @@ const (
 	CommandJobOpen     = "job.open"
 	// CommandJobClean removes the scratch workspaces of a job with no
 	// repository that has ended, at the user's command.
-	CommandJobClean       = "job.clean"
+	CommandJobClean = "job.clean"
+	// CommandJobLink links a follow-up job to the job it follows (02 rule
+	// 20).
+	CommandJobLink        = "job.link"
 	CommandJobs           = "jobs"
 	CommandJob            = "job"
 	CommandBrief          = "brief"
@@ -178,6 +181,7 @@ type Request struct {
 	Preview       *ConfigApply `json:"preview,omitempty"`
 
 	Job           int64    `json:"job,omitempty"`
+	Follows       int64    `json:"follows,omitempty"`
 	Witness       int64    `json:"witness,omitempty"`
 	LatestWitness bool     `json:"latest_witness,omitempty"`
 	Reading       string   `json:"reading,omitempty"`
@@ -307,13 +311,22 @@ type Response struct {
 	// repository's workers may write.
 	Writable []config.Folder `json:"writable,omitempty"`
 	// Removed are the paths a job clean removed.
-	Removed  []string        `json:"removed,omitempty"`
-	Jobs     []store.Job     `json:"jobs,omitempty"`
-	Job      *store.Job      `json:"job,omitempty"`
-	Brief    string          `json:"brief,omitempty"`
-	Handoff  *store.Handoff  `json:"handoff,omitempty"`
-	Dispatch *store.Dispatch `json:"dispatch,omitempty"`
-	Messages []store.Message `json:"messages,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+	// Returned says an accept found the job branch moved after the result
+	// was submitted, so it returned the result to its worker instead of
+	// accepting it: not a rejection, and Decision is nil.
+	Returned bool `json:"returned,omitempty"`
+	// Continues says a job link had the follow-up continue the job branch
+	// and the pull request of the job it follows, and Starts why it starts
+	// afresh otherwise.
+	Continues *store.PullRequest `json:"continues,omitempty"`
+	Starts    string             `json:"starts,omitempty"`
+	Jobs      []store.Job        `json:"jobs,omitempty"`
+	Job       *store.Job         `json:"job,omitempty"`
+	Brief     string             `json:"brief,omitempty"`
+	Handoff   *store.Handoff     `json:"handoff,omitempty"`
+	Dispatch  *store.Dispatch    `json:"dispatch,omitempty"`
+	Messages  []store.Message    `json:"messages,omitempty"`
 	// DecisionRequest is the version of a decision request that a request or
 	// an answer made, and DecisionRequests the pending ones `asmai
 	// decisions` lists.
@@ -770,7 +783,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.repoCommand(conn, req)
 	case CommandConfigApply:
 		d.configApplyCommand(conn, req)
-	case CommandJobOpen, CommandJobClean, CommandJobs, CommandJob, CommandBrief:
+	case CommandJobOpen, CommandJobLink, CommandJobClean, CommandJobs, CommandJob, CommandBrief:
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)

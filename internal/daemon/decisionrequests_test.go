@@ -91,10 +91,12 @@ func TestAWorkersDecisionRequestGoesToItsOwningLeaderAndHoldsOnlyItsOwnWork(t *t
 	if err != nil || answered.State != store.RequestAnswered || back.Agent != f.assignments[0].Worker {
 		t.Fatalf("answer = %+v, %+v, %v", answered, back, err)
 	}
-	// The dependent work no longer waits: what refuses its acceptance now is
-	// the independent result accepted before it, which moved the job branch.
-	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "it works"); err == nil || strings.Contains(err.Error(), "waits for decision request") {
-		t.Fatalf("accepting the dependent result after the answer = %v", err)
+	// The dependent work no longer waits: what stops its acceptance now is
+	// the independent result accepted before it, which moved the job branch,
+	// so the work returns to its worker.
+	resp, err := f.decide(CommandAccept, f.assignments[0].ID, "it works")
+	if err != nil || !resp.Returned {
+		t.Fatalf("accepting the dependent result after the answer = %+v, %v, want it returned to its worker", resp, err)
 	}
 }
 

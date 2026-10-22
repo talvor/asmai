@@ -319,6 +319,10 @@ CREATE TABLE setup_answers (
 );
 CREATE INDEX setup_answers_repository ON setup_answers(repository, id);
 `,
+	`
+ALTER TABLE jobs ADD COLUMN follows INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE job_branches ADD COLUMN continues INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -380,6 +384,16 @@ const (
 	KindResultAccepted = "result.accepted"
 	KindResultRejected = "result.rejected"
 	KindJobBranchMoved = "job.branch.moved"
+	// KindResultReturned records a submitted result going back to its worker
+	// because the job branch moved after it was submitted: not a rejection,
+	// and no decision of the owning leader.
+	KindResultReturned = "result.returned"
+	// KindJobLinked records Coordination linking a follow-up job to the job
+	// it follows, and KindJobBranchDropped the daemon dropping the branch it
+	// made for a follow-up before any work was on it, so that the follow-up
+	// can continue its predecessor's.
+	KindJobLinked        = "job.linked"
+	KindJobBranchDropped = "job.branch.dropped"
 	// KindWorkspaceRemoved records the daemon removing a writing assignment's
 	// workspace once its work is on the job branch.
 	KindWorkspaceRemoved = "workspace.removed"

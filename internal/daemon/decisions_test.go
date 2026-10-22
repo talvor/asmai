@@ -32,6 +32,9 @@ type twoResults struct {
 	// assignments and commits are indexed from zero by assignment.
 	assignments [2]store.Assignment
 	commits     [2]string
+	// reported are the dispatches that brought each result to the owning
+	// leader.
+	reported [2]store.Dispatch
 }
 
 func newTwoResults(t *testing.T) twoResults {
@@ -142,13 +145,14 @@ func newTwoResultsOf(t *testing.T, role string) twoResults {
 		if _, err := s.EffectRecorded(worker.String(), 1, dispatch.ID, "push", "origin/"+w.Branch+"@"+commit, at); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := s.ReportSubmitted(store.Submission{
+		_, reported, err := s.ReportSubmitted(store.Submission{
 			Agent: worker.String(), Generation: 1, Dispatch: dispatch.ID, Kind: store.ReportResult, Commit: commit, JobTip: branch.Tip, TookInTip: true,
 			Input: store.ReportInput{Evidence: []string{"it works"}, PRSection: "Adds " + file},
-		}, at); err != nil {
+		}, at)
+		if err != nil {
 			t.Fatal(err)
 		}
-		f.assignments[i], f.commits[i] = a, commit
+		f.assignments[i], f.commits[i], f.reported[i] = a, commit, reported
 	}
 	return f
 }
@@ -158,7 +162,7 @@ func (f twoResults) decide(command string, assignment int64, reasons ...string) 
 	return resp, err
 }
 
-func TestAcceptingAResultThatIsNotAFastForwardOfTheJobBranchIsRefusedAndNothingMoves(t *testing.T) {
+func TestAResultSubmittedAgainstAnOldTipGoesBackToItsWorkerWithoutBeingRejected(t *testing.T) {
 	f := newTwoResults(t)
 	view := filepath.Join(f.d.cfg.Paths.Views, "job-1")
 	branchRef := "refs/heads/" + JobBranchName(f.job)
@@ -195,28 +199,79 @@ func TestAcceptingAResultThatIsNotAFastForwardOfTheJobBranchIsRefusedAndNothingM
 	}
 
 	// The second was made from the old tip: its commit does not contain the
-	// first's, so accepting it would not be a fast-forward.
-	_, err = f.decide(CommandAccept, f.assignments[1].ID, "file-2.txt is there")
-	if err == nil || !strings.Contains(err.Error(), "not a fast-forward") || !strings.Contains(err.Error(), "nothing moved") {
-		t.Fatalf("accepting a result that is not a fast-forward returned %v", err)
+	// first's, so the job branch moved after the result was submitted. The
+	// acceptance accepts nothing and rejects nothing: the work returns to its
+	// worker.
+	second := f.assignments[1]
+	resp, err = f.decide(CommandAccept, second.ID, "file-2.txt is there")
+	if err != nil {
+		t.Fatalf("accepting a result submitted against an old tip returned %v", err)
+	}
+	if !resp.Returned || resp.Decision != nil || resp.Assignment.State != store.AssignmentActive || resp.Dispatch == nil || resp.Dispatch.Agent != second.Worker {
+		t.Fatalf("the acceptance answered returned=%t, decision %+v, assignment %+v and dispatch %+v, want the work returned to %s", resp.Returned, resp.Decision, resp.Assignment, resp.Dispatch, second.Worker)
+	}
+	kind, about, err := f.s.DispatchKind(resp.Dispatch.ID)
+	if err != nil || kind != store.MessageMovedTip || about != second.ID {
+		t.Errorf("the worker's dispatch is of kind %q about assignment %d (%v), want %q about %d", kind, about, err, store.MessageMovedTip, second.ID)
 	}
 	if got := git(t, f.clone, "rev-parse", branchRef); got != f.commits[0] {
-		t.Errorf("the refused acceptance moved the job branch to %s", got)
+		t.Errorf("the returned work moved the job branch to %s", got)
 	}
 	if got := git(t, view, "rev-parse", "HEAD"); got != f.commits[0] {
-		t.Errorf("the refused acceptance moved the view to %s", got)
+		t.Errorf("the returned work moved the view to %s", got)
 	}
 	if b, _ := f.s.JobBranch(f.job.Number); b.Tip != f.commits[0] {
-		t.Errorf("the refused acceptance moved the recorded tip to %s", b.Tip)
+		t.Errorf("the returned work moved the recorded tip to %s", b.Tip)
 	}
-	if got, _ := f.s.Assignment(f.assignments[1].ID); got.State != store.AssignmentSubmitted {
-		t.Errorf("the refused acceptance left the assignment %s, want submitted", got.State)
+	if _, err := os.Stat(second.Workspace.Path); err != nil {
+		t.Errorf("returning the work removed the workspace: %v", err)
 	}
-	if _, err := os.Stat(f.assignments[1].Workspace.Path); err != nil {
-		t.Errorf("the refused acceptance removed the workspace: %v", err)
+	// It is not a rejection: no decision is recorded and the journal has no
+	// rejection, only the return.
+	if decisions, _ := f.s.Decisions(second.ID); len(decisions) != 0 {
+		t.Errorf("returning the work recorded a decision: %+v", decisions)
 	}
-	if decisions, _ := f.s.Decisions(f.assignments[1].ID); len(decisions) != 0 {
-		t.Errorf("the refused acceptance was recorded: %+v", decisions)
+	entries, err := f.s.JobEntries(f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	returned := 0
+	for _, e := range entries {
+		switch e.Kind {
+		case store.KindResultRejected:
+			t.Errorf("the journal records a rejection: %s", e.Data)
+		case store.KindResultReturned:
+			returned++
+		}
+	}
+	if returned != 1 {
+		t.Errorf("the journal records %d returns, want 1", returned)
+	}
+
+	// The same worker takes in the new tip and submits again, and the leader
+	// accepts it.
+	at := time.Now()
+	git(t, second.Workspace.Path, "merge", "--no-edit", f.commits[0])
+	git(t, second.Workspace.Path, "push", "origin", second.Workspace.Branch)
+	merged := git(t, second.Workspace.Path, "rev-parse", "HEAD")
+	if err := f.s.ChangeDispatch(resp.Dispatch.ID, 1, store.DispatchCreated, store.DispatchWorking, "", at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.EffectRecorded(second.Worker, 1, resp.Dispatch.ID, "push", "origin/"+second.Workspace.Branch+"@"+merged, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.s.ReportSubmitted(store.Submission{
+		Agent: second.Worker, Generation: 1, Dispatch: resp.Dispatch.ID, Kind: store.ReportResult, Commit: merged, JobTip: f.commits[0], TookInTip: true,
+		Input: store.ReportInput{Evidence: []string{"it works with the new tip"}, PRSection: "Adds file-2.txt"},
+	}, at); err != nil {
+		t.Fatalf("the worker's second result after the return: %v", err)
+	}
+	resp, err = f.decide(CommandAccept, second.ID, "file-2.txt is there on the new tip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Returned || resp.Decision == nil || resp.JobBranch.Tip != merged {
+		t.Errorf("the second acceptance answered returned=%t, %+v and %+v, want the job branch at %s", resp.Returned, resp.Decision, resp.JobBranch, merged)
 	}
 }
 

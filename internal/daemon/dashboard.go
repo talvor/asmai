@@ -462,7 +462,7 @@ func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings 
 // them by default and the whole journal on request.
 var TrafficKinds = []string{
 	store.KindHandoffSent, store.KindAssignmentCreated, store.KindResultSubmitted,
-	store.KindBlockedReported, store.KindResultAccepted, store.KindResultRejected,
+	store.KindBlockedReported, store.KindResultAccepted, store.KindResultRejected, store.KindResultReturned,
 }
 
 // The least and most entries a log read returns, and what it returns when the
@@ -579,6 +579,9 @@ func (d *daemon) logEntry(e store.Entry) LogEntry {
 	case store.KindResultRejected:
 		out.To = other().Worker
 		out.Summary = with(fmt.Sprintf("rejected assignment %d", f.Assignment), strings.Join(f.Reasons, " "))
+	case store.KindResultReturned:
+		out.To = other().Worker
+		out.Summary = fmt.Sprintf("returned assignment %d: the job branch moved after its result", f.Assignment)
 	case store.KindMessageCreated:
 		out.Summary = f.Kind + " message"
 	}

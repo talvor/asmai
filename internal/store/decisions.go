@@ -213,6 +213,60 @@ func (s *Store) ResultRejected(id int64, leader string, reasons []string, at tim
 	return d, dispatch, tx.Commit()
 }
 
+// ResultReturned returns the result its assignment is submitted with to the
+// same worker, because the job branch moved after the result was submitted:
+// the result's commit no longer has the branch's tip in its history, which is
+// now tip. The assignment is active again, and the worker is told with a
+// message and a new dispatch, which is returned, to take in the new tip and
+// submit again. It is not a rejection: it records no decision, and leader
+// only runs the acceptance that found the branch moved (02 rule 31, 05 rule
+// 19).
+func (s *Store) ResultReturned(id int64, leader, tip string, at time.Time) (Dispatch, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer tx.Rollback()
+	a, err := assignment(tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Dispatch{}, fmt.Errorf("assignment %d does not exist", id)
+	}
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if a.Owner != leader {
+		return Dispatch{}, fmt.Errorf("assignment %d is owned by %s, not %s", a.ID, a.Owner, leader)
+	}
+	if a.State != AssignmentSubmitted {
+		return Dispatch{}, fmt.Errorf("assignment %d is %s, so it has no result to return", a.ID, a.State)
+	}
+	r, err := latestResult(tx, a.ID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	b, err := jobBranch(tx, a.Job)
+	if err != nil {
+		return Dispatch{}, fmt.Errorf("job %d has no job branch: %w", a.Job, err)
+	}
+	if b.Tip != tip {
+		return Dispatch{}, fmt.Errorf("the job branch's tip is %s, not %s", b.Tip, tip)
+	}
+	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentActive, a.ID); err != nil {
+		return Dispatch{}, err
+	}
+	if _, err := appendEntry(tx, at, KindResultReturned, map[string]any{
+		"job": a.Job, "assignment": a.ID, "report": r.ID, "commit": r.Commit, "branch": b.Name, "reported_tip": r.JobTip, "tip": tip, "leader": leader,
+	}); err != nil {
+		return Dispatch{}, err
+	}
+	body := fmt.Sprintf("Job branch %s moved to %s after you submitted your result at %s, so your result does not have its tip in its history. This is not a rejection and nothing is wrong with your work: take the new tip in (merge it into your assignment branch, resolving any conflicts), run the checks again, commit, push your assignment branch, record the push, and submit again with `asmai result`.", b.Name, tip, r.Commit)
+	dispatch, err := createMessage(tx, messageRef{assignment: a.ID, report: r.ID}, a.Job, leader, a.Worker, MessageMovedTip, body, at)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	return dispatch, tx.Commit()
+}
+
 // CancellationRequested records the owning leader's cancellation of an
 // assignment that is active or submitted, with its reasons. The assignment
 // is cancelling, and still holds its worker and workspace, until the worker

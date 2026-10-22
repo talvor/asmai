@@ -3,6 +3,7 @@
 package store
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -144,5 +145,85 @@ func TestOnlyAValidationOfTheFinishedJobBranchValidatesAHeadAndAnEarlyReviewOfAn
 	}
 	if _, _, err := s.ReportSubmitted(validationOf(next, nd, tipCommit, ValidationInput{Findings: []FindingInput{}}), assignmentsAt); err == nil || !strings.Contains(err.Error(), "risky") {
 		t.Errorf("a validation that does not account for the early review's finding returned %v", err)
+	}
+}
+
+func TestAnEarlyReviewVerdictDoesNotClearAJobFinding(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	writing := submitted(t, s)
+	job := writing.Job
+	first, fd, err := validationWith(t, s, job, NewAssignment{Review: ReviewFull, Workspace: Workspace{Base: tipCommit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReportSubmitted(validationOf(first, fd, tipCommit, ValidationInput{Findings: []FindingInput{{Kind: FindingBlocking, Text: "the change is unsafe"}}}), assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ValidationAccepted(Acceptance{Assignment: first.ID, Leader: qualityOwner, Reasons: []string{"confirmed"}}, owner, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	open, err := s.OpenFindings(job)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open findings are %+v (%v)", open, err)
+	}
+	id := open[0].ID
+
+	early, ed, err := validationWith(t, s, job, NewAssignment{Review: ReviewEarly, Reviews: writing.ID, Requester: "leader@coordination", Workspace: Workspace{Base: otherCommit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReportSubmitted(validationOf(early, ed, otherCommit, ValidationInput{Findings: []FindingInput{}, Resolved: []int64{id}}), assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ValidationAccepted(Acceptance{Assignment: early.ID, Leader: qualityOwner, Reasons: []string{"confirmed at the assignment commit"}}, "leader@coordination", assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	reports, err := s.Reports(early.ID)
+	if err != nil || len(reports) != 1 || reports[0].Validation == nil || len(reports[0].Validation.Resolved) != 1 || reports[0].Validation.Resolved[0] != id {
+		t.Fatalf("the early verdict is %+v (%v)", reports, err)
+	}
+	open, err = s.OpenFindings(job)
+	if err != nil || len(open) != 1 || open[0].ID != id || open[0].ClearedBy != 0 {
+		t.Errorf("the early verdict cleared the job finding: %+v (%v)", open, err)
+	}
+	if err := s.ValidatedHead(job, tipCommit); err == nil {
+		t.Error("the previously validated job head became deliverable after an early review")
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Kind != KindValidationAccepted {
+			continue
+		}
+		var data struct {
+			Report  int64   `json:"report"`
+			Cleared []int64 `json:"cleared"`
+		}
+		if err := json.Unmarshal(entry.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		if data.Report == reports[0].ID && len(data.Cleared) != 0 {
+			t.Errorf("the early review journaled cleared findings %v", data.Cleared)
+		}
+	}
+	messages, err := s.Inbox("leader@coordination", 0, assignmentsAt)
+	if err != nil || len(messages) != 1 || !strings.Contains(messages[0].Body, "0 earlier blocking finding(s) cleared") {
+		t.Errorf("the early review summary is %+v (%v)", messages, err)
+	}
+
+	finished, finishedDispatch, err := validationWith(t, s, job, NewAssignment{Review: ReviewFull, Workspace: Workspace{Base: tipCommit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReportSubmitted(validationOf(finished, finishedDispatch, tipCommit, ValidationInput{Findings: []FindingInput{}, Resolved: []int64{id}}), assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ValidationAccepted(Acceptance{Assignment: finished.ID, Leader: qualityOwner, Reasons: []string{"confirmed on the job branch"}}, owner, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ValidatedHead(job, tipCommit); err != nil {
+		t.Errorf("the finished-branch validation did not clear the finding: %v", err)
 	}
 }

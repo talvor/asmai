@@ -143,6 +143,16 @@ type Assignment struct {
 	Commit       string    `json:"commit,omitempty"`
 	Intent       *Intent   `json:"intent,omitempty"`
 	OpenFindings []Finding `json:"open_findings,omitempty"`
+	// Review says how the validation goes (ReviewFull, ReviewChanges,
+	// ReviewChecks or ReviewEarly), and Since the last validated commit that
+	// a changes or checks review looks from. Reviews is the assignment an
+	// early review is of, and Requester the leader that asked for it, which
+	// its report goes to; the report of any other validation goes to the
+	// delivery owner.
+	Review    string `json:"review,omitempty"`
+	Since     string `json:"since,omitempty"`
+	Reviews   int64  `json:"reviews,omitempty"`
+	Requester string `json:"requester,omitempty"`
 	// Scratch says the assignment is of a job with no repository: its
 	// workspace is an empty scratch directory, with no job branch, no
 	// assignment branch and no commit (05 rule 8).
@@ -513,6 +523,12 @@ type NewAssignment struct {
 	// Records are the IDs of the decision records of the job that the owning
 	// leader passes to the worker.
 	Records []int64
+	// Review, Since, Reviews and Requester are those of a read-only
+	// assignment's Assignment; the daemon decides them.
+	Review    string
+	Since     string
+	Reviews   int64
+	Requester string
 }
 
 // AssignmentCreated records a writing assignment and its workspace, and the
@@ -557,9 +573,22 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 		if b, err = jobBranch(tx, n.Job); err != nil {
 			return Assignment{}, Dispatch{}, fmt.Errorf("job %d has no job branch: %w", n.Job, err)
 		}
-		if w.Base != b.Tip {
+		if n.ReadOnly && n.Review == ReviewEarly {
+			if n.Reviews <= 0 || n.Requester == "" || n.Since != "" {
+				return Assignment{}, Dispatch{}, errors.New("an early review is of an assignment, asked for by a leader")
+			}
+			if err := checkReviewed(tx, n.Job, n.Reviews, w.Base); err != nil {
+				return Assignment{}, Dispatch{}, err
+			}
+		} else if w.Base != b.Tip {
 			return Assignment{}, Dispatch{}, fmt.Errorf("the workspace was made at %s, but the job branch's tip is %s", w.Base, b.Tip)
 		}
+	}
+	if n.ReadOnly && n.Review == "" {
+		n.Review = ReviewFull
+	}
+	if n.ReadOnly != (n.Review != "") || (n.Review != "" && n.Review != ReviewEarly && !slices.Contains(JobReviews, n.Review)) || (n.Review == ReviewChanges || n.Review == ReviewChecks) != (n.Since != "") {
+		return Assignment{}, Dispatch{}, errors.New("a validation is a full review, a review of the changes since the last validated commit, a checks-only review of a clean merge since it, or an early review of an assignment; a writing assignment has none")
 	}
 	if n.ReadOnly {
 		if live, err := liveValidation(tx, n.Job); err != nil {
@@ -584,15 +613,15 @@ func (s *Store) AssignmentCreated(n NewAssignment, at time.Time) (Assignment, Di
 	if err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at, read_only, skill, skills, decision_records) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at), n.ReadOnly, n.Skill, string(skills), string(records)); err != nil {
+	if _, err := tx.Exec(`INSERT INTO assignments (id, job, owner, worker, outcome, criteria, state, created_at, read_only, skill, skills, decision_records, review, since, reviews, requester) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Job, n.Owner, n.Worker, n.Outcome, string(criteria), AssignmentActive, timestamp(at), n.ReadOnly, n.Skill, string(skills), string(records), n.Review, n.Since, n.Reviews, n.Requester); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
 	if _, err := tx.Exec(`INSERT INTO workspaces (assignment, slot, path, tmp, branch, base) VALUES (?, ?, ?, ?, ?, ?)`,
 		w.Assignment, w.Slot, w.Path, w.Tmp, w.Branch, w.Base); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
-	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w, Skill: n.Skill, Skills: n.Skills, Scratch: scratch}
+	a := Assignment{ID: n.ID, Job: n.Job, Owner: n.Owner, Worker: n.Worker, Outcome: n.Outcome, Criteria: n.Criteria, State: AssignmentActive, CreatedAt: at.UTC(), JobBranch: b.Name, Workspace: w, Skill: n.Skill, Skills: n.Skills, Scratch: scratch, Review: n.Review, Since: n.Since, Reviews: n.Reviews, Requester: n.Requester}
 	if len(passed) > 0 {
 		a.Records, a.DecisionRecords = recordIDs(passed), passed
 	}
@@ -626,7 +655,7 @@ func (s *Store) Assignment(id int64) (Assignment, error) {
 }
 
 const (
-	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, COALESCE(b.name, ''), w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria, a.skill, a.skills, a.decision_records, COALESCE(j.repository, '') = ''`
+	assignmentColumns = `a.id, a.job, a.owner, a.worker, a.outcome, a.criteria, a.state, a.created_at, COALESCE(b.name, ''), w.slot, w.path, w.tmp, w.branch, w.base, a.read_only, j.words, j.reading, j.mandate, j.criteria, a.skill, a.skills, a.decision_records, COALESCE(j.repository, '') = '', a.review, a.since, a.reviews, a.requester`
 	assignmentTables  = `assignments a JOIN workspaces w ON w.assignment = a.id LEFT JOIN job_branches b ON b.job = a.job JOIN jobs j ON j.number = a.job`
 )
 
@@ -651,7 +680,7 @@ func scanAssignment(row *sql.Row) (Assignment, error) {
 	var intent Intent
 	var jobCriteria, skills string
 	err := row.Scan(&a.ID, &a.Job, &a.Owner, &a.Worker, &a.Outcome, &criteria, &a.State, &created, &a.JobBranch, &a.Workspace.Slot, &a.Workspace.Path, &a.Workspace.Tmp, &a.Workspace.Branch, &a.Workspace.Base,
-		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria, &a.Skill, &skills, &a.recorded, &a.Scratch)
+		&a.ReadOnly, &intent.Words, &intent.Reading, &intent.Mandate, &jobCriteria, &a.Skill, &skills, &a.recorded, &a.Scratch, &a.Review, &a.Since, &a.Reviews, &a.Requester)
 	if err != nil {
 		return Assignment{}, err
 	}

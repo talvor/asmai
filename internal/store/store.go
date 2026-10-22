@@ -323,6 +323,15 @@ CREATE INDEX setup_answers_repository ON setup_answers(repository, id);
 ALTER TABLE jobs ADD COLUMN follows INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE job_branches ADD COLUMN continues INTEGER NOT NULL DEFAULT 0;
 `,
+	`
+ALTER TABLE handoffs ADD COLUMN review TEXT NOT NULL DEFAULT '';
+ALTER TABLE handoffs ADD COLUMN since TEXT NOT NULL DEFAULT '';
+ALTER TABLE handoffs ADD COLUMN assignment INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE assignments ADD COLUMN review TEXT NOT NULL DEFAULT '';
+ALTER TABLE assignments ADD COLUMN since TEXT NOT NULL DEFAULT '';
+ALTER TABLE assignments ADD COLUMN reviews INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE assignments ADD COLUMN requester TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

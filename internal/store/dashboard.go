@@ -146,7 +146,8 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 			FROM findings GROUP BY job
 		), validations AS (
 			SELECT m.job, r.commit_id, 1 validated FROM messages m
-			JOIN reports r ON r.id = m.report WHERE m.kind = ? GROUP BY m.job, r.commit_id
+			JOIN reports r ON r.id = m.report JOIN assignments va ON va.id = r.assignment
+			WHERE m.kind = ? AND va.review != ? GROUP BY m.job, r.commit_id
 		), pushed_heads AS (
 			SELECT job, commit_id, 1 pushed FROM pushes WHERE result = ? GROUP BY job, commit_id
 		)
@@ -161,7 +162,7 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 		LEFT JOIN finding_state f ON f.job = j.number
 		LEFT JOIN validations v ON v.job = j.number AND v.commit_id = b.tip
 		LEFT JOIN pushed_heads x ON x.job = j.number AND x.commit_id = b.tip
-		ORDER BY j.number`, AssignmentAccepted, AssignmentCancelled, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation, PushPushed, JobEnded)
+		ORDER BY j.number`, AssignmentAccepted, AssignmentCancelled, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation, ReviewEarly, PushPushed, JobEnded)
 	if err != nil {
 		return nil, err
 	}

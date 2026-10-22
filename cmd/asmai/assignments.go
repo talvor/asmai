@@ -62,7 +62,7 @@ func parseChecks(values []string) ([]store.Check, error) {
 	return checks, nil
 }
 
-func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit, skill string, narrow []string, approved int64, records []string) int {
+func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria []string, readOnly bool, commit, skill string, narrow []string, approved int64, records []string, of int64) int {
 	if job <= 0 || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(errors.New("assign needs --job, --outcome and --criterion"))
 	}
@@ -76,7 +76,7 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if err != nil {
 		return o.fail(err)
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit, Skill: skill, Skills: narrow, Approved: approved, Records: ids})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandAssign, Job: job, Outcome: outcome, Criteria: criteria, ReadOnly: readOnly, Commit: commit, Skill: skill, Skills: narrow, Approved: approved, Records: ids, Assignment: of})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -392,7 +392,12 @@ func printAssignment(w io.Writer, a store.Assignment) {
 		fmt.Fprintf(w, "Your skill list for this assignment: %s\n", strings.Join(list, ", "))
 	}
 	if a.ReadOnly {
-		fmt.Fprintf(w, "Read-only workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nFixed at commit: %s, the head of the job branch %s; it has no branch, and you never change the work\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Commit, a.JobBranch)
+		fixed := fmt.Sprintf("the head of the job branch %s", a.JobBranch)
+		if a.Review == store.ReviewEarly {
+			fixed = fmt.Sprintf("the result of assignment %d, which %s asked Quality to review earlier than the finished job branch", a.Reviews, a.Requester)
+		}
+		fmt.Fprintf(w, "Read-only workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nFixed at commit: %s, %s; it has no branch, and you never change the work\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Commit, fixed)
+		printReviewScope(w, a)
 		if i := a.Intent; i != nil {
 			fmt.Fprintf(w, "Job intent:\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nJob acceptance criteria:\n", i.Words, i.Reading, i.Mandate)
 			for _, c := range i.Criteria {
@@ -413,6 +418,20 @@ func printAssignment(w io.Writer, a store.Assignment) {
 		return
 	}
 	fmt.Fprintf(w, "Workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nAssignment branch: %s, made from the job branch %s at %s\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Workspace.Branch, a.JobBranch, a.Workspace.Base)
+}
+
+// printReviewScope says how a validation goes, and so what its worker does.
+func printReviewScope(w io.Writer, a store.Assignment) {
+	switch a.Review {
+	case store.ReviewFull:
+		fmt.Fprintln(w, "Review: full. This is the first validation of the finished job branch: re-run the repository's checks at the commit, and review the whole change on both axes, Standards and Spec.")
+	case store.ReviewChanges:
+		fmt.Fprintf(w, "Review: changes since %s, the last commit Quality validated. Later commits make that evidence stale: re-run the repository's checks at this commit, review what changed since %s on both axes, Standards and Spec, and say for each earlier blocking finding below whether it is resolved at this commit.\n", a.Since, a.Since)
+	case store.ReviewChecks:
+		fmt.Fprintf(w, "Review: checks only. What changed since %s, the last commit Quality validated, is a clean merge of the moved base, which needs no review: re-run the repository's checks at this commit and report their outcomes.\n", a.Since)
+	case store.ReviewEarly:
+		fmt.Fprintf(w, "Review: early. Re-run the repository's checks at this commit and review the result of assignment %d on both axes, Standards and Spec. This validates no head of the job: the finished job branch is validated again later. Say which earlier blocking findings below your review resolves; any you leave out stay open.\n", a.Reviews)
+	}
 }
 
 // reliedList says the records a result relied on, each by its ID.

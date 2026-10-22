@@ -12,7 +12,7 @@ import (
 	"github.com/talvor/asmai/internal/store"
 )
 
-func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisions, evidence, constraints, permissions string, criteria []string, records []string) int {
+func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisions, evidence, constraints, permissions string, criteria []string, records []string, assignment int64) int {
 	if job <= 0 || strings.TrimSpace(to) == "" || strings.TrimSpace(outcome) == "" || len(criteria) == 0 {
 		return o.fail(fmt.Errorf("handoff send needs --job, --to, --outcome and --criterion"))
 	}
@@ -23,7 +23,7 @@ func handoffSend(o *output, paths statedir.Paths, job int64, to, outcome, decisi
 	if err != nil {
 		return o.fail(err)
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandHandoffSend, Session: os.Getenv(daemon.SessionCredential), Job: job, Agent: to, Outcome: outcome, Decisions: decisions, Evidence: evidence, Constraints: constraints, Permissions: permissions, Criteria: criteria, Records: ids})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandHandoffSend, Session: os.Getenv(daemon.SessionCredential), Job: job, Agent: to, Outcome: outcome, Decisions: decisions, Evidence: evidence, Constraints: constraints, Permissions: permissions, Criteria: criteria, Records: ids, Assignment: assignment})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -82,6 +82,16 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 			}
 			if h.Head != "" {
 				fmt.Fprintf(o.stdout, "Head to validate: %s\n", h.Head)
+			}
+			switch h.Review {
+			case store.ReviewChanges:
+				fmt.Fprintf(o.stdout, "Review: changes since %s, the last commit Quality validated; later commits made that evidence stale\n", h.Since)
+			case store.ReviewChecks:
+				fmt.Fprintf(o.stdout, "Review: checks only; what changed since %s, the last commit Quality validated, is a clean merge of the moved base\n", h.Since)
+			case store.ReviewEarly:
+				fmt.Fprintf(o.stdout, "Review: early, of the result of assignment %d, which %s asked Quality to review before the job branch is finished\n", h.Assignment, h.Sender)
+			case store.ReviewFull:
+				fmt.Fprintln(o.stdout, "Review: full, the first validation of the finished job branch")
 			}
 			printRecords(o.stdout, "Decision records passed with the handoff", h.DecisionRecords)
 			printGrants(o.stdout, "Grants in force for this job, carried with the handoff; reuse one while its scope and conditions hold, and run `asmai authorize` before each consequential action it covers", h.Grants)

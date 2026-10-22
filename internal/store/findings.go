@@ -134,7 +134,10 @@ func checkValidation(q querier, a Assignment, in ReportInput) error {
 			missing = append(missing, fmt.Sprintf("%d (%s)", f.ID, f.Text))
 		}
 	}
-	if len(missing) > 0 {
+	// An early review is of one assignment's result: it names the earlier
+	// findings it can speak to, and leaves the rest for the validation of
+	// the finished job branch.
+	if len(missing) > 0 && a.Review != ReviewEarly {
 		return fmt.Errorf("a validation says whether each earlier blocking finding is resolved at its commit; name each with --resolved <id>, or --unresolved <id> when it is still open: %s", strings.Join(missing, "; "))
 	}
 	return nil
@@ -226,7 +229,15 @@ func (s *Store) ValidationAccepted(in Acceptance, deliverTo string, at time.Time
 		}
 		recorded = append(recorded, Finding{ID: id, Job: a.Job, Assignment: a.ID, Report: r.ID, Kind: f.Kind, Text: f.Text, Commit: r.Commit})
 	}
-	for _, id := range r.Validation.Resolved {
+	var tip string
+	if err := tx.QueryRow(`SELECT tip FROM job_branches WHERE job = ?`, a.Job).Scan(&tip); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Decision{}, Dispatch{}, err
+	}
+	cleared := r.Validation.Resolved
+	if a.Review == ReviewEarly || r.Commit != tip {
+		cleared = nil
+	}
+	for _, id := range cleared {
 		result, err := tx.Exec(`UPDATE findings SET cleared_by = ?, cleared_at = ? WHERE id = ? AND job = ? AND kind = 'blocking' AND cleared_by IS NULL`,
 			r.ID, timestamp(at), id, a.Job)
 		if err != nil {
@@ -241,7 +252,7 @@ func (s *Store) ValidationAccepted(in Acceptance, deliverTo string, at time.Time
 	}
 	if _, err := appendEntry(tx, at, KindValidationAccepted, map[string]any{
 		"job": a.Job, "assignment": a.ID, "report": r.ID, "commit": r.Commit,
-		"findings": recorded, "cleared": nonNilIDs(r.Validation.Resolved), "still_open": nonNilIDs(r.Validation.StillOpen),
+		"findings": recorded, "cleared": nonNilIDs(cleared), "still_open": nonNilIDs(r.Validation.StillOpen),
 	}); err != nil {
 		return Decision{}, Dispatch{}, err
 	}
@@ -249,7 +260,7 @@ func (s *Store) ValidationAccepted(in Acceptance, deliverTo string, at time.Time
 	if err != nil {
 		return Decision{}, Dispatch{}, err
 	}
-	dispatch, err := createMessage(tx, messageRef{assignment: a.ID, report: r.ID}, a.Job, in.Leader, deliverTo, MessageValidation, validationSummary(r, recorded), at)
+	dispatch, err := createMessage(tx, messageRef{assignment: a.ID, report: r.ID}, a.Job, in.Leader, deliverTo, MessageValidation, validationSummary(r, recorded, len(cleared)), at)
 	if err != nil {
 		return Decision{}, Dispatch{}, err
 	}
@@ -264,11 +275,11 @@ func nonNilIDs(ids []int64) []int64 {
 }
 
 // validationSummary is the line a validation report is delivered with.
-func validationSummary(r Report, recorded []Finding) string {
+func validationSummary(r Report, recorded []Finding, cleared int) string {
 	counts := map[string]int{}
 	for _, f := range recorded {
 		counts[f.Kind]++
 	}
-	return fmt.Sprintf("Validation of commit %s: %d blocking, %d advisory, %d needs-you finding(s); %d earlier blocking finding(s) resolved, %d still open",
-		r.Commit, counts[FindingBlocking], counts[FindingAdvisory], counts[FindingNeedsYou], len(r.Validation.Resolved), len(r.Validation.StillOpen))
+	return fmt.Sprintf("Validation of commit %s: %d blocking, %d advisory, %d needs-you finding(s); %d earlier blocking finding(s) cleared, %d still open",
+		r.Commit, counts[FindingBlocking], counts[FindingAdvisory], counts[FindingNeedsYou], cleared, len(r.Validation.StillOpen))
 }

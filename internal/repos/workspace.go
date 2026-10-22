@@ -282,3 +282,51 @@ func DeleteBranch(ctx context.Context, clone, name string) (deleted bool, err er
 	}
 	return true, nil
 }
+
+// Step is one commit on the path from an earlier commit to a branch's tip,
+// with its parents, the first of which is the commit before it on the path.
+type Step struct {
+	Commit  string
+	Parents []string
+}
+
+// Steps returns the commits on the first-parent path from since, which tip
+// has in its history, to tip, oldest first, each with its parents. It follows
+// only first parents, so a commit a merge brings in is not a step of its own.
+func Steps(ctx context.Context, dir, since, tip string) ([]Step, error) {
+	out, err := git(ctx, dir, "rev-list", "--first-parent", "--reverse", "--parents", since+".."+tip)
+	if err != nil {
+		return nil, fmt.Errorf("listing the commits from %s to %s in %s: %w", since, tip, dir, err)
+	}
+	var steps []Step
+	for _, line := range strings.Split(out, "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 {
+			steps = append(steps, Step{Commit: fields[0], Parents: fields[1:]})
+		}
+	}
+	return steps, nil
+}
+
+// CleanMerge reports whether step is a merge of two commits that git merges
+// without a conflict, and whose tree is exactly what git's merge makes: no
+// conflict was resolved by hand and nothing else was changed in it. A git that
+// cannot do the merge without a checkout answers false, so that the merge is
+// reviewed.
+func CleanMerge(ctx context.Context, dir string, step Step) (bool, error) {
+	if len(step.Parents) != 2 {
+		return false, nil
+	}
+	out, exit, err := gitStatus(ctx, dir, "merge-tree", "--write-tree", "--no-messages", step.Parents[0], step.Parents[1])
+	if err != nil {
+		if exit > 0 {
+			return false, nil
+		}
+		return false, fmt.Errorf("merging %s and %s in %s: %w", step.Parents[0], step.Parents[1], dir, err)
+	}
+	tree, _, _ := strings.Cut(out, "\n")
+	have, err := git(ctx, dir, "rev-parse", "--verify", "--quiet", step.Commit+"^{tree}")
+	if err != nil {
+		return false, fmt.Errorf("reading the tree of %s in %s: %w", step.Commit, dir, err)
+	}
+	return strings.TrimSpace(tree) == have, nil
+}

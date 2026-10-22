@@ -389,3 +389,88 @@ func TestUncommittedAndContainsReadAWorkspace(t *testing.T) {
 		t.Errorf("the workspace is at %s (%v), want %s", got, err, head)
 	}
 }
+
+func TestOnlyAMergeGitMakesWithoutHelpIsACleanMerge(t *testing.T) {
+	ctx := context.Background()
+	clone, _, first := cloned(t)
+	dir := realPath(t, t.TempDir())
+	ws := filepath.Join(dir, "ws")
+	if err := AddWorkspace(ctx, clone, ws, "asmai/job-1/1", first); err != nil {
+		t.Fatal(err)
+	}
+	commit := func(dir, file, text string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run(t, dir, "add", file)
+		run(t, dir, "commit", "-m", "write "+file)
+		return run(t, dir, "rev-parse", "HEAD")
+	}
+	// The base moves on a branch of its own, away from the work.
+	base := filepath.Join(dir, "base")
+	if err := AddWorkspace(ctx, clone, base, "base", first); err != nil {
+		t.Fatal(err)
+	}
+	moved := commit(base, "base.txt", "moved\n")
+	validated := commit(ws, "work.txt", "work\n")
+
+	// A merge git makes alone is clean.
+	run(t, ws, "merge", "--no-edit", moved)
+	clean := run(t, ws, "rev-parse", "HEAD")
+	steps, err := Steps(ctx, ws, validated, clean)
+	if err != nil || len(steps) != 1 || steps[0].Commit != clean || len(steps[0].Parents) != 2 || steps[0].Parents[0] != validated {
+		t.Fatalf("the steps from the validated commit are %+v (%v), want the one merge", steps, err)
+	}
+	if ok, err := CleanMerge(ctx, ws, steps[0]); err != nil || !ok {
+		t.Errorf("a merge git made alone reads as clean: %v (%v)", ok, err)
+	}
+
+	// A merge with a change made by hand in it is not.
+	run(t, ws, "reset", "--hard", validated)
+	run(t, ws, "merge", "--no-commit", "--no-ff", moved)
+	if err := os.WriteFile(filepath.Join(ws, "extra.txt"), []byte("by hand\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, ws, "add", "extra.txt")
+	run(t, ws, "commit", "-m", "merge with a change")
+	edited := run(t, ws, "rev-parse", "HEAD")
+	steps, err = Steps(ctx, ws, validated, edited)
+	if err != nil || len(steps) != 1 {
+		t.Fatalf("the steps are %+v (%v)", steps, err)
+	}
+	if ok, err := CleanMerge(ctx, ws, steps[0]); err != nil || ok {
+		t.Errorf("a merge with a hand-made change reads as clean: %v (%v)", ok, err)
+	}
+
+	// A merge that conflicts, whose conflict was resolved, is not clean, and
+	// a commit that is not a merge is not a merge at all.
+	conflict := filepath.Join(dir, "conflict")
+	if err := AddWorkspace(ctx, clone, conflict, "conflict", first); err != nil {
+		t.Fatal(err)
+	}
+	commit(conflict, "work.txt", "other\n")
+	run(t, ws, "reset", "--hard", validated)
+	cmd := exec.Command("git", "merge", "--no-edit", "conflict")
+	cmd.Dir = ws
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@example.test", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@example.test")
+	if err := cmd.Run(); err == nil {
+		t.Fatal("the merge did not conflict")
+	}
+	if err := os.WriteFile(filepath.Join(ws, "work.txt"), []byte("resolved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, ws, "add", "work.txt")
+	run(t, ws, "commit", "--no-edit")
+	resolved := run(t, ws, "rev-parse", "HEAD")
+	steps, err = Steps(ctx, ws, validated, resolved)
+	if err != nil || len(steps) != 1 {
+		t.Fatalf("the steps are %+v (%v)", steps, err)
+	}
+	if ok, err := CleanMerge(ctx, ws, steps[0]); err != nil || ok {
+		t.Errorf("a merge whose conflict was resolved reads as clean: %v (%v)", ok, err)
+	}
+	if ok, err := CleanMerge(ctx, ws, Step{Commit: validated, Parents: []string{first}}); err != nil || ok {
+		t.Errorf("a commit that is not a merge reads as clean: %v (%v)", ok, err)
+	}
+}

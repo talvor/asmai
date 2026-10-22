@@ -21,15 +21,19 @@ import (
 // handoffTo are the roles each role's leader may hand work to: Coordination
 // hands a job to Planning, for its plan, to Research, for its findings, or to
 // Engineering, and Engineering hands validation of the finished job branch to
-// Quality.
+// Quality. Any leader may ask Quality for an earlier review of an assignment
+// (06 rule 5), which is the only handoff to Quality but Engineering's of the
+// finished job branch.
 var handoffTo = map[string][]string{
-	roles.Coordination: {roles.Planning, roles.Research, roles.Engineering},
+	roles.Coordination: {roles.Planning, roles.Research, roles.Engineering, roles.Quality},
+	roles.Planning:     {roles.Quality},
+	roles.Research:     {roles.Quality},
 	roles.Engineering:  {roles.Quality},
 }
 
 // errNotALeader is the refusal of a handoff to anything but the leader of a
 // role its sender may hand work to.
-var errNotALeader = errors.New("send a handoff to another role's leader: Coordination hands a job to Planning, Research or Engineering, and Engineering hands validation to Quality")
+var errNotALeader = errors.New("send a handoff to another role's leader: Coordination hands a job to Planning, Research or Engineering, Engineering hands validation to Quality, and any leader asks Quality for an earlier review of an assignment")
 
 // jobOrZero returns job number, or the zero job when it cannot be read: the
 // handoff that names it is refused when it is recorded, so a job that does
@@ -73,12 +77,12 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 	var resp Response
 	// Validation is handed over at the job branch's exact head, which is
 	// read before the daemon's state is locked: it fetches from origin.
-	head := ""
+	var target validationTarget
 	if req.Command == CommandHandoffSend {
 		if address, err := roles.ParseAddress(req.Agent); err == nil && address == roles.LeaderOf(roles.Quality) {
 			conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
 			var err error
-			if head, err = d.validationHead(req); err != nil {
+			if target, err = d.validationTarget(req); err != nil {
 				reply(conn, Response{Error: err.Error()})
 				return
 			}
@@ -100,8 +104,10 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 			err = e
 		} else if address.Name != roles.Leader {
 			err = errNotALeader
+		} else if req.Assignment != 0 && address.Role != roles.Quality {
+			err = errors.New("--assignment asks Quality for an earlier review of an assignment, so it goes only with --to quality")
 		} else if err = checkHandoff(ref.address.Role, address.Role, d.jobOrZero(req.Job)); err == nil {
-			h := store.Handoff{Job: req.Job, Sender: ref.address.String(), Receiver: address.String(), Outcome: req.Outcome, Decisions: req.Decisions, Evidence: req.Evidence, Constraints: req.Constraints, Permissions: req.Permissions, Criteria: req.Criteria, Head: head, Records: req.Records}
+			h := store.Handoff{Job: req.Job, Sender: ref.address.String(), Receiver: address.String(), Outcome: req.Outcome, Decisions: req.Decisions, Evidence: req.Evidence, Constraints: req.Constraints, Permissions: req.Permissions, Criteria: req.Criteria, Head: target.head, Review: target.review, Since: target.since, Assignment: target.assignment, Records: req.Records}
 			var dispatch store.Dispatch
 			h, dispatch, err = d.store.SendHandoff(h, time.Now())
 			if err == nil {
@@ -186,72 +192,195 @@ func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) e
 	return nil
 }
 
-// validationHead is the exact commit of the job branch that req hands to
-// Quality for validation, once the branch is finished. The branch has taken in
-// the latest base: AsmAI's clone fetches origin, and the base's tip is in the
-// branch's history. If the base moved, nothing is handed over, and Engineering
-// assigns a worker to merge it in, through the normal accept path.
-func (d *daemon) validationHead(req Request) (string, error) {
+// validationTarget is what a handoff to Quality asks it to validate: the exact
+// commit, and how the validation goes.
+type validationTarget struct {
+	head string
+	// review is one of the store's reviews, since the last validated commit
+	// a changes or checks review looks from, and assignment the assignment
+	// an early review is of.
+	review     string
+	since      string
+	assignment int64
+}
+
+// validationTarget is the exact commit that req hands to Quality for
+// validation, and how the validation goes. Without req.Assignment it is the
+// job branch's tip, once the branch is finished: the branch has taken in the
+// latest base (AsmAI's clone fetches origin, and the base's tip is in the
+// branch's history), and only Engineering's leader hands it over. If the base
+// moved, nothing is handed over, and Engineering assigns a worker to merge it
+// in, through the normal accept path. Then the review follows from what
+// changed since Quality last validated the branch (06 rules 6 and 12). With
+// req.Assignment, any leader asks for an earlier review of that assignment's
+// result, at its commit, whatever the job branch is at.
+func (d *daemon) validationTarget(req Request) (validationTarget, error) {
 	engineering := roles.LeaderOf(roles.Engineering)
 	d.mu.Lock()
 	ref, _, err := d.caller(req)
 	d.mu.Unlock()
 	if err != nil {
-		return "", err
+		return validationTarget{}, err
 	}
-	if ref.address != engineering {
-		return "", fmt.Errorf("only %s hands a job branch to Quality for validation", engineering)
+	early := req.Assignment != 0
+	if !early && ref.address != engineering {
+		return validationTarget{}, fmt.Errorf("only %s hands a job branch to Quality for validation; any leader asks for an earlier review of an assignment with --assignment", engineering)
+	}
+	if ref.address.Name != roles.Leader || ref.address.Role == roles.Quality {
+		return validationTarget{}, fmt.Errorf("only the leader of another role asks Quality for an earlier review: Quality never asks itself")
 	}
 	d.assignMu.Lock()
 	defer d.assignMu.Unlock()
 	j, err := d.store.Job(req.Job)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("job %d does not exist; `asmai jobs` lists the jobs", req.Job)
+		return validationTarget{}, fmt.Errorf("job %d does not exist; `asmai jobs` lists the jobs", req.Job)
 	}
 	if err != nil {
-		return "", err
+		return validationTarget{}, err
 	}
 	if j.State != store.JobOpen {
-		return "", fmt.Errorf("job %d is %s, so it takes no validation", j.Number, j.State)
+		return validationTarget{}, fmt.Errorf("job %d is %s, so it takes no validation", j.Number, j.State)
 	}
 	branch, err := d.store.JobBranch(j.Number)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("job %d has no job branch, so there is nothing for Quality to validate", j.Number)
+		return validationTarget{}, fmt.Errorf("job %d has no job branch, so there is nothing for Quality to validate", j.Number)
 	}
 	if err != nil {
-		return "", err
+		return validationTarget{}, err
 	}
 	repository, err := d.store.Repository(j.Repository)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("repository %q is not registered", j.Repository)
+		return validationTarget{}, fmt.Errorf("repository %q is not registered", j.Repository)
 	}
 	if err != nil {
-		return "", err
+		return validationTarget{}, err
 	}
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
+	if early {
+		return d.earlyTarget(ctx, j, repository, req.Assignment)
+	}
 	current, err := repos.Commit(ctx, repository.Clone, "refs/heads/"+branch.Name)
 	if err != nil {
-		return "", fmt.Errorf("reading the job branch: %w", err)
+		return validationTarget{}, fmt.Errorf("reading the job branch: %w", err)
 	}
 	if current != branch.Tip {
-		return "", fmt.Errorf("the job branch %s is at %s, not at its recorded tip %s, so it is not handed over", branch.Name, current, branch.Tip)
+		return validationTarget{}, fmt.Errorf("the job branch %s is at %s, not at its recorded tip %s, so it is not handed over", branch.Name, current, branch.Tip)
 	}
 	if err := repos.Fetch(ctx, repository.Clone); err != nil {
-		return "", err
+		return validationTarget{}, err
 	}
 	base, err := repos.OriginTip(ctx, repository.Clone, repository.DefaultBranch)
 	if err != nil {
-		return "", err
+		return validationTarget{}, err
 	}
 	taken, err := repos.Contains(ctx, repository.Clone, "refs/heads/"+branch.Name, base)
 	if err != nil {
-		return "", err
+		return validationTarget{}, err
 	}
 	if !taken {
-		return "", fmt.Errorf("the job branch %s has not taken in the latest base: origin's %s is at %s, which the branch's tip %s does not contain. Assign a worker to merge origin/%s into its assignment branch, accept its result, and hand validation over at the new tip", branch.Name, repository.DefaultBranch, base, branch.Tip, repository.DefaultBranch)
+		return validationTarget{}, fmt.Errorf("the job branch %s has not taken in the latest base: origin's %s is at %s, which the branch's tip %s does not contain. Assign a worker to merge origin/%s into its assignment branch, accept its result, and hand validation over at the new tip", branch.Name, repository.DefaultBranch, base, branch.Tip, repository.DefaultBranch)
 	}
-	return branch.Tip, nil
+	review, since, err := d.reviewPlan(ctx, j, repository, branch.Tip)
+	if err != nil {
+		return validationTarget{}, err
+	}
+	return validationTarget{head: branch.Tip, review: review, since: since}, nil
+}
+
+// earlyTarget is the target of an early review of assignment, a writing
+// assignment of j with a result: the commit of its latest result, which AsmAI's
+// clone has fetched from origin.
+func (d *daemon) earlyTarget(ctx context.Context, j store.Job, repository store.Repository, assignment int64) (validationTarget, error) {
+	a, err := d.store.Assignment(assignment)
+	if errors.Is(err, sql.ErrNoRows) {
+		return validationTarget{}, fmt.Errorf("assignment %d does not exist", assignment)
+	}
+	if err != nil {
+		return validationTarget{}, err
+	}
+	switch {
+	case a.Job != j.Number:
+		return validationTarget{}, fmt.Errorf("assignment %d belongs to job %d, not job %d", a.ID, a.Job, j.Number)
+	case a.ReadOnly:
+		return validationTarget{}, fmt.Errorf("assignment %d is a validation, which has no result of its own to review", a.ID)
+	}
+	r, err := d.store.LatestResult(a.ID)
+	if err != nil {
+		return validationTarget{}, fmt.Errorf("assignment %d has no result to review yet: %w", a.ID, err)
+	}
+	if err := repos.Fetch(ctx, repository.Clone); err != nil {
+		return validationTarget{}, err
+	}
+	if _, err := repos.Commit(ctx, repository.Clone, r.Commit); err != nil {
+		return validationTarget{}, fmt.Errorf("AsmAI's clone does not have %s, the commit of assignment %d's result: %w", r.Commit, a.ID, err)
+	}
+	return validationTarget{head: r.Commit, review: store.ReviewEarly, assignment: a.ID}, nil
+}
+
+// reviewPlan decides how the validation of tip, the finished job branch of j,
+// goes, and the last validated commit it looks from. The first validation is
+// a full review. Any later one is at a head that makes the evidence stale: a
+// fix, or a merge whose conflicts a worker resolved, is reviewed for what
+// changed since the last validated commit, and confirms each earlier blocking
+// finding, while a clean merge of a moved base needs only the checks, as long
+// as no earlier blocking finding is left for Quality to confirm. A head that
+// Quality already validated has nothing new to validate.
+func (d *daemon) reviewPlan(ctx context.Context, j store.Job, repository store.Repository, tip string) (review, since string, err error) {
+	since, err = d.store.LastValidated(j.Number)
+	if err != nil {
+		return "", "", err
+	}
+	if since == tip {
+		return "", "", fmt.Errorf("Quality has already validated %s, the head of job %d, and nothing has changed since: validation follows a fix or a merge, which gives the job branch a new head", tip, j.Number)
+	}
+	if since != "" {
+		in, err := repos.Contains(ctx, repository.Clone, tip, since)
+		if err != nil {
+			return "", "", err
+		}
+		if !in {
+			since = ""
+		}
+	}
+	if since == "" {
+		return store.ReviewFull, "", nil
+	}
+	open, err := d.store.OpenFindings(j.Number)
+	if err != nil {
+		return "", "", err
+	}
+	if len(open) > 0 {
+		return store.ReviewChanges, since, nil
+	}
+	base := "refs/remotes/origin/" + repository.DefaultBranch
+	if inBase, err := repos.Contains(ctx, repository.Clone, base, tip); err != nil {
+		return "", "", err
+	} else if inBase {
+		return store.ReviewChecks, since, nil
+	}
+	steps, err := repos.Steps(ctx, repository.Clone, since, tip)
+	if err != nil {
+		return "", "", err
+	}
+	for _, step := range steps {
+		clean, err := repos.CleanMerge(ctx, repository.Clone, step)
+		if err != nil {
+			return "", "", err
+		}
+		if !clean {
+			return store.ReviewChanges, since, nil
+		}
+		// A merge of the base, not of outside commits or of another branch.
+		onBase, err := repos.Contains(ctx, repository.Clone, base, step.Parents[1])
+		if err != nil {
+			return "", "", err
+		}
+		if !onBase {
+			return store.ReviewChanges, since, nil
+		}
+	}
+	return store.ReviewChecks, since, nil
 }
 
 // ensureRoleLeader is called with d.mu held. One role address has one leader.

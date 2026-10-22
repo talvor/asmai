@@ -142,7 +142,7 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 			fakeRun(`asmai accept --assignment 2 --reason 'the checks re-ran at the exact head'`, 0, "delivered to leader@engineering as dispatch 9"),
 		),
 		turn(14, "handoff3",
-			fakeRun(`asmai inbox --dispatch 14`, 0, "(?s)handoff 3 .*Head to validate: "+sha+"\nDecision records passed with the handoff:\n  decision 2 \\| job 1 \\| delegated .*Assumptions: the failure is in the change"),
+			fakeRun(`asmai inbox --dispatch 14`, 0, "(?s)handoff 3 .*Head to validate: "+sha+"\nReview: changes since "+sha+"[^\n]*\nDecision records passed with the handoff:\n  decision 2 \\| job 1 \\| delegated .*Assumptions: the failure is in the change"),
 			fakeRun(`asmai handoff accept --handoff 3`, 0, "reply dispatch 15"),
 			fakeRun(`cp "$ASMAI_TEST_DIR/quality-worker-2.jsonl" "$ASMAI_TEST_DIR/quality-worker.jsonl"`, 0, ""),
 			fakeRun(`asmai assign --read-only --commit `+headOf(14)+` --job 1 --outcome 'Validate the new head' --criterion 'the checks re-ran at the commit'`, 0, "assignment 4 of job 1 given to worker1@quality; dispatch 16"),

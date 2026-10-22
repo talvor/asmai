@@ -129,8 +129,12 @@ _Avoid_: Workspace trust (it covers leaders' directories too), folder approval
 The `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` lines on every commit a worker makes, naming the job, the worker and the dispatch it worked on. The commit itself is the user's: their git identity and credentials.
 
 **Validation**:
-Quality's independent check of a job branch at one exact commit, re-running the repository's checks and reviewing the change against the repository instructions and the job's mandate. Validation never changes the work.
+Quality's independent check of a job branch at one exact commit. Validation never changes the work; a later commit makes its evidence stale. See [Validation](README.md#validation) for the review scope at each head.
 _Avoid_: QA, testing (when meaning Quality's check)
+
+**Early review**:
+A review of one assignment's result at its commit, before the job branch is finished, that a leader of a `tested-pr` job asks Quality for when the assignment is risky. It validates no head of the job. See [Validation](README.md#validation).
+_Avoid_: Pre-review, spot check
 
 **Finding**:
 A problem that validation reports. A blocking finding must be fixed before delivery. An advisory finding is reported, and no fix is required. A needs-you finding challenges the user's stated intent or a recorded decision, so it goes to the user.

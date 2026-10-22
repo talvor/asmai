@@ -136,7 +136,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 		),
 		turn(15, "accepted2", fakeRun(`asmai inbox --dispatch 15`, 0, "accepted from leader@quality")),
 		turn(18, "validation2",
-			fakeRun(`asmai inbox --dispatch 18`, 0, "(?s)validation from leader@quality.*0 blocking, 0 advisory, 0 needs-you finding\\(s\\); 1 earlier blocking finding\\(s\\) resolved, 0 still open.*Findings: none.*finding 1 resolved"),
+			fakeRun(`asmai inbox --dispatch 18 | tee "$ASMAI_TEST_DIR/final-inbox"`, 0, ""),
 			fakeRun(`asmai brief 1`, 0, "(?s)Findings:\n- 1 blocking \\(cleared by report [0-9]+\\)"),
 			touchFile("leader-done"),
 		),
@@ -160,7 +160,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 			fakeRun(`asmai accept --assignment 3 --reason x`, 1, "assignment 3 is accepted"),
 		),
 		turn(14, "handoff3",
-			fakeRun(`asmai inbox --dispatch 14`, 0, "(?s)handoff 3 \\| leader@engineering -> leader@quality.*Head to validate: "+sha),
+			fakeRun(`asmai inbox --dispatch 14`, 0, "(?s)handoff 3 \\| leader@engineering -> leader@quality.*Head to validate: "+sha+".*Review: changes since "+sha+", the last commit Quality validated"),
 			fakeRun(`asmai handoff accept --handoff 3`, 0, "reply dispatch 15"),
 			fakeRun(`cp "$ASMAI_TEST_DIR/quality-worker-2.jsonl" "$ASMAI_TEST_DIR/quality-worker.jsonl"`, 0, ""),
 			fakeRun(`asmai assign --read-only --commit `+headOf(14)+` --job 1 --outcome 'Validate the new head, and confirm finding 1 resolved' --criterion 'the checks re-ran at the commit' --criterion 'finding 1 is resolved or still open'`, 0, "assignment 5 of job 1 given to worker1@quality; dispatch 16"),
@@ -177,7 +177,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	// The first validation.
 	validator1 := concat(agentSession,
 		turn(9, "validate1",
-			fakeRun(`asmai inbox --dispatch 9`, 0, "(?s)assignment 3 \\| job 1 \\| leader@quality -> worker1@quality \\| active.*Read-only workspace: \\S+/assignment-3/repo.*Fixed at commit: "+sha+", the head of the job branch "+jobBranch+"; it has no branch.*Job intent:.*User's words: Please add a greeting.*Coordination's reading: Add a greeting.*Mandate: tested-pr.*Greeting is printed.*Earlier blocking findings still open.*- none"),
+			fakeRun(`asmai inbox --dispatch 9`, 0, "(?s)assignment 3 \\| job 1 \\| leader@quality -> worker1@quality \\| active.*Read-only workspace: \\S+/assignment-3/repo.*Fixed at commit: "+sha+", the head of the job branch "+jobBranch+"; it has no branch.*Review: full\\. This is the first validation.*Job intent:.*User's words: Please add a greeting.*Coordination's reading: Add a greeting.*Mandate: tested-pr.*Greeting is printed.*Earlier blocking findings still open.*- none"),
 			fakeRun(`asmai assign --job 1 --outcome x --criterion y`, 1, "only leader@engineering"),
 			fakeRun(`pwd -P > "$ASMAI_TEST_DIR/validation-workspace"; git rev-parse HEAD > "$ASMAI_TEST_DIR/validated-head"; git branch --show-current > "$ASMAI_TEST_DIR/validation-branch"; git status --porcelain > "$ASMAI_TEST_DIR/validation-status"`, 0, ""),
 			fakeRun(`test "$(git rev-parse HEAD)" = "$(asmai inbox --dispatch 9 | sed -n 's/^Fixed at commit: \([0-9a-f]*\),.*/\1/p')"`, 0, ""),
@@ -196,7 +196,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	// The second validation says what became of the blocking finding.
 	validator2 := concat(agentSession,
 		turn(16, "validate2",
-			fakeRun(`asmai inbox --dispatch 16`, 0, "(?s)assignment 5 \\| job 1 \\| leader@quality -> worker1@quality.*Earlier blocking findings still open.*- finding 1, found at "+sha+": greeting.txt says hello"),
+			fakeRun(`asmai inbox --dispatch 16`, 0, "(?s)assignment 5 \\| job 1 \\| leader@quality -> worker1@quality.*Review: changes since "+sha+", the last commit Quality validated.*Earlier blocking findings still open.*- finding 1, found at "+sha+": greeting.txt says hello"),
 			fakeRun(`./check.sh`, 0, ""),
 			fakeRun(`asmai result --evidence x --check './check.sh -> passed' --gap none --finding none`, 1, "(?s)says whether each earlier blocking finding is resolved.*1 \\(greeting.txt says hello"),
 			fakeRun(`asmai result --evidence x --check './check.sh -> passed' --gap none --finding none --resolved 1 --resolved 7`, 1, "finding 7 is not an open blocking finding of job 1"),
@@ -259,6 +259,8 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 		if t.Failed() {
 			log, _, _ := runAsmai(t, "log")
 			t.Logf("the daemon's log:\n%s", log)
+			data, _ := os.ReadFile(filepath.Join(testDir, "final-inbox"))
+			t.Logf("final inbox:\n%s", data)
 		}
 	})
 	if _, stderr, code := runAsmai(t, "start"); code != 0 {
@@ -273,6 +275,16 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	terminal.ptmx.WriteString("Please add a greeting\r")
 	waitFor(t, "Quality's leader accepting the second validation", touched(testDir, "quality-done"))
 	waitFor(t, "Engineering's leader reading it", touched(testDir, "leader-done"))
+	finalInbox, err := os.ReadFile(filepath.Join(testDir, "final-inbox"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"0 blocking, 0 advisory, 0 needs-you finding(s); 1 earlier blocking finding(s) cleared, 0 still open", "Findings: none", "finding 1 resolved"} {
+		if !strings.Contains(string(finalInbox), want) {
+			t.Errorf("Engineering's final inbox does not say %q:\n%s", want, finalInbox)
+		}
+	}
+	t.Logf("Engineering's final inbox:\n%s", finalInbox)
 
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
 	clone := filepath.Join(stateDir, "repositories", "fixture")

@@ -68,8 +68,9 @@ func TestValidationIsHandedToQualityOnlyOnceTheJobBranchHasTakenInTheLatestBase(
 	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "file-1.txt is there"); err != nil {
 		t.Fatal(err)
 	}
-	head, err := f.d.validationHead(handoff)
-	if err != nil || head != f.commits[0] {
+	target, err := f.d.validationTarget(handoff)
+	head := target.head
+	if err != nil || head != f.commits[0] || target.review != store.ReviewFull {
 		t.Fatalf("with the base taken in, the head to validate is %q (%v), want the tip %s", head, err, f.commits[0])
 	}
 
@@ -84,7 +85,7 @@ func TestValidationIsHandedToQualityOnlyOnceTheJobBranchHasTakenInTheLatestBase(
 	git(t, other, "commit", "-m", "Move the base")
 	git(t, other, "push", "origin", "trunk")
 	moved := git(t, other, "rev-parse", "HEAD")
-	_, err = f.d.validationHead(handoff)
+	_, err = f.d.validationTarget(handoff)
 	if err == nil || !strings.Contains(err.Error(), "has not taken in the latest base") || !strings.Contains(err.Error(), moved) || !strings.Contains(err.Error(), "merge origin/trunk") {
 		t.Fatalf("with the base moved, handing validation over returned %v", err)
 	}
@@ -99,7 +100,8 @@ func TestValidationIsHandedToQualityOnlyOnceTheJobBranchHasTakenInTheLatestBase(
 	if err != nil {
 		t.Fatal(err)
 	}
-	head, err = f.d.validationHead(handoff)
+	target, err = f.d.validationTarget(handoff)
+	head = target.head
 	if err != nil || head != resp.JobBranch.Tip || head == f.commits[0] {
 		t.Fatalf("after the merge, the head to validate is %q (%v), want the new tip %s", head, err, resp.JobBranch.Tip)
 	}
@@ -112,11 +114,11 @@ func TestValidationIsHandedToQualityOnlyOnceTheJobBranchHasTakenInTheLatestBase(
 	f.d.leaders[quality.String()] = &leader{address: quality, session: &session.Session{}, generation: 1}
 	f.d.sessions["quality"] = sessionRef{address: quality, generation: 1}
 	handoff.Session = "quality"
-	if _, err := f.d.validationHead(handoff); err == nil || !strings.Contains(err.Error(), "only leader@engineering") {
+	if _, err := f.d.validationTarget(handoff); err == nil || !strings.Contains(err.Error(), "only leader@engineering") {
 		t.Errorf("Quality's leader handing a branch over returned %v", err)
 	}
 	handoff.Session, handoff.Job = "credential", 99
-	if _, err := f.d.validationHead(handoff); err == nil || !strings.Contains(err.Error(), "does not exist") {
+	if _, err := f.d.validationTarget(handoff); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Errorf("a job that does not exist returned %v", err)
 	}
 }

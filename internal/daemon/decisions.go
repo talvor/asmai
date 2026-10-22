@@ -402,7 +402,14 @@ func (d *daemon) acceptValidation(req Request, ref sessionRef, a store.Assignmen
 	if err != nil {
 		return Response{}, err
 	}
+	// The report goes to the delivery owner, or for an early review to the
+	// leader that asked for it.
 	delivery := roles.LeaderOf(roles.Engineering)
+	if a.Requester != "" {
+		if delivery, err = roles.ParseAddress(a.Requester); err != nil {
+			return Response{}, err
+		}
+	}
 	d.mu.Lock()
 	if _, _, err := d.caller(req); err != nil {
 		d.mu.Unlock()

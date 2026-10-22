@@ -127,21 +127,7 @@ func testedPR(q querier, number int64, head string) error {
 	if err := pushedHead(q, number, head); err != nil {
 		return err
 	}
-	var validated int64
-	if err := q.QueryRow(`SELECT COALESCE(MAX(a.id), 0) FROM assignments a JOIN workspaces w ON w.assignment = a.id WHERE a.job = ? AND a.read_only = 1 AND a.state = ? AND w.base = ?`, number, AssignmentAccepted, head).Scan(&validated); err != nil {
-		return err
-	}
-	if validated == 0 {
-		return fmt.Errorf("Quality has not validated %s, the head of job %d", head, number)
-	}
-	open, err := openBlocking(q, number)
-	if err != nil {
-		return err
-	}
-	if len(open) > 0 {
-		return fmt.Errorf("blocking finding %d of job %d is still open", open[0].ID, number)
-	}
-	return nil
+	return validatedHead(q, number, head)
 }
 
 // Deliverable returns nil when head is the head of job to deliver, once its

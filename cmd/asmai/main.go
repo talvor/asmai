@@ -241,6 +241,17 @@ commands agents run:
                               brings back what the user sends, word for word. --carries has a leader's request
                               carry its worker's request to the user: a worker's grilling or Wayfinder question
                               is answered only by the user's own answer to it
+  asmai decision request --kind finding|dispute --finding <id> [--title <text> --option <text> ...] [--content <text>]
+                              a leader takes a decision the user always makes to them, word for word: a needs-you
+                              finding, which the daemon quotes from its record, or a blocking finding the two
+                              leaders could not settle, whose options are to uphold it or overrule it. Overruling
+                              is the user's decision and clears the finding; nothing else but Quality's
+                              re-validation does
+  asmai decision request --kind outside-mandate|conflict --title <text> --option <text> --content <text>
+                              asks for an action outside the mandate, or for a ruling on a repository instruction
+                              that conflicts with it: the work waits for the user's own answer, which no record
+                              or recommendation stands in for, and the instruction is never followed against
+                              the mandate
   asmai decision request --kind step --skill <skill> --step <text> --title <text>
                               a worker asks its owning leader for the human step of a skill, such as the test
                               seams of tdd: a recorded decision of the user's, or a grant, whose scope covers
@@ -484,7 +495,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "decision request":
 		flags.Int64Var(&request.job, "job", 0, "job number; a leader's request names its job, and a worker's is about its assignment's")
 		flags.Int64Var(&request.request, "request", 0, "the request this is a new version of, which it replaces")
-		flags.StringVar(&request.kind, "kind", "", "choice or provider (one question with options), review, grilling, wayfinder, questions or step (a worker's request for the human step of a skill); the default is choice for one question with options, questions otherwise")
+		flags.StringVar(&request.kind, "kind", "", "choice or provider (one question with options), finding (a needs-you finding, quoted word for word), dispute (a blocking finding the leaders could not settle), outside-mandate (an action the mandate does not cover), conflict (a repository instruction that conflicts with the mandate), review, grilling, wayfinder, questions or step (a worker's request for the human step of a skill); the default is choice for one question with options, questions otherwise")
+		flags.Var(&request.findings, "finding", "with --kind finding or dispute, the ID of a finding of the job the request is about; may be repeated. The daemon quotes it to the user from its record")
 		flags.StringVar(&request.skill, "skill", "", "with --kind step, the skill whose human step you ask for, such as tdd")
 		flags.StringVar(&request.step, "step", "", "with --kind step, the human step you ask for, such as the test seams")
 		flags.StringVar(&request.content, "content", "", "your own content above the questions, such as a prototype, a diff or a report")

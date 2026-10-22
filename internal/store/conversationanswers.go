@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -177,6 +178,9 @@ func (s *Store) ConversationAnswerRecorded(d DecisionRecord, generation int, at 
 	if d.Cites < latest.Shown {
 		return refuse(fmt.Sprintf("witnessed message %d was given before version %d of decision request %d was shown (entry %d), so it was typed against an older version", d.Cites, latest.Version, latest.Request, latest.Shown))
 	}
+	if latest.Kind == RequestDispute && !slices.Contains(latest.Questions[0].Options, d.Choice) {
+		return fail(fmt.Errorf("the user's choice on a dispute is one of its options, %q or %q, not %q", DisputeUphold, DisputeOverrule, d.Choice))
+	}
 	words := cited.Text
 	if blank(d.ReliedOn) {
 		d.ReliedOn = fmt.Sprintf("the user's answer to version %d of decision request %d", latest.Version, latest.Request)
@@ -193,6 +197,11 @@ func (s *Store) ConversationAnswerRecorded(d DecisionRecord, generation int, at 
 	if _, err := tx.Exec(`UPDATE decision_requests SET state = ?, answer = ?, answered_by = ?, relied_on = ?, cites = ?, reading = ?, record = ?, settled_at = ? WHERE id = ?`,
 		RequestAnswered, words, ToUser, d.ReliedOn, d.Cites, d.Reading, d.ID, timestamp(at), latest.ID); err != nil {
 		return fail(err)
+	}
+	if latest.Kind == RequestDispute && d.Choice == DisputeOverrule {
+		if err := findingsOverruled(tx, latest, d, at); err != nil {
+			return fail(err)
+		}
 	}
 	r, err := decisionRequestVersion(tx, latest.ID)
 	if err != nil {
@@ -222,4 +231,26 @@ func (s *Store) LatestWitnessed(agent string) (int64, error) {
 		return 0, fmt.Errorf("the user has submitted no message to %s to cite", agent)
 	}
 	return id, err
+}
+
+// findingsOverruled clears the blocking findings the user's answer d overruled
+// in the dispute request: the user's decision clears a disputed blocking
+// finding, and only that or a later validation does (06 rule 9). A finding a
+// validation cleared meanwhile stays cleared by it. The decision is journaled.
+func findingsOverruled(tx *sql.Tx, dispute DecisionRequest, d DecisionRecord, at time.Time) error {
+	cleared := []int64{}
+	for _, q := range dispute.Quoted {
+		result, err := tx.Exec(`UPDATE findings SET cleared_decision = ?, cleared_at = ? WHERE id = ? AND job = ? AND kind = 'blocking' AND cleared_by IS NULL AND cleared_decision IS NULL`,
+			d.ID, timestamp(at), q.ID, dispute.Job)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 1 {
+			cleared = append(cleared, q.ID)
+		}
+	}
+	_, err := appendEntry(tx, at, KindFindingsOverruled, map[string]any{"job": dispute.Job, "request": dispute.Request, "version": dispute.Version, "record": d.ID, "cites": d.Cites, "cleared": cleared})
+	return err
 }

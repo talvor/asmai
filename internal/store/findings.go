@@ -58,12 +58,15 @@ type Finding struct {
 	// ClearedBy is the validation report that confirmed a blocking finding
 	// resolved. It is zero while the finding is open.
 	ClearedBy int64 `json:"cleared_by,omitempty"`
+	// ClearedByDecision is the decision record of the user that cleared a
+	// disputed blocking finding. It is zero unless the user overruled it.
+	ClearedByDecision int64 `json:"cleared_by_decision,omitempty"`
 }
 
-// Open reports whether f is a blocking finding that no validation has
-// cleared.
+// Open reports whether f is a blocking finding that neither a validation nor
+// the user's decision has cleared.
 func (f Finding) Open() bool {
-	return f.Kind == FindingBlocking && f.ClearedBy == 0
+	return f.Kind == FindingBlocking && f.ClearedBy == 0 && f.ClearedByDecision == 0
 }
 
 // Intent is what a read-only assignment is given of its job, so that its
@@ -150,7 +153,7 @@ type querier interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-const findingColumns = `id, job, assignment, report, kind, text, commit_id, COALESCE(cleared_by, 0)`
+const findingColumns = `id, job, assignment, report, kind, text, commit_id, COALESCE(cleared_by, 0), COALESCE(cleared_decision, 0)`
 
 func findings(q querier, where string, args ...any) ([]Finding, error) {
 	rows, err := q.Query(`SELECT `+findingColumns+` FROM findings WHERE `+where+` ORDER BY id`, args...)
@@ -161,7 +164,7 @@ func findings(q querier, where string, args ...any) ([]Finding, error) {
 	list := []Finding{}
 	for rows.Next() {
 		var f Finding
-		if err := rows.Scan(&f.ID, &f.Job, &f.Assignment, &f.Report, &f.Kind, &f.Text, &f.Commit, &f.ClearedBy); err != nil {
+		if err := rows.Scan(&f.ID, &f.Job, &f.Assignment, &f.Report, &f.Kind, &f.Text, &f.Commit, &f.ClearedBy, &f.ClearedByDecision); err != nil {
 			return nil, err
 		}
 		list = append(list, f)
@@ -169,14 +172,14 @@ func findings(q querier, where string, args ...any) ([]Finding, error) {
 	return list, rows.Err()
 }
 
-// openBlocking returns the blocking findings of job that no validation has
-// cleared, oldest first.
+// openBlocking returns the blocking findings of job that neither a validation
+// nor the user's decision has cleared, oldest first.
 func openBlocking(q querier, job int64) ([]Finding, error) {
-	return findings(q, `job = ? AND kind = 'blocking' AND cleared_by IS NULL`, job)
+	return findings(q, `job = ? AND kind = 'blocking' AND cleared_by IS NULL AND cleared_decision IS NULL`, job)
 }
 
-// OpenFindings returns the blocking findings of job that no validation has
-// cleared, oldest first.
+// OpenFindings returns the blocking findings of job that neither a validation
+// nor the user's decision has cleared, oldest first.
 func (s *Store) OpenFindings(job int64) ([]Finding, error) {
 	return openBlocking(s.db, job)
 }
@@ -238,7 +241,7 @@ func (s *Store) ValidationAccepted(in Acceptance, deliverTo string, at time.Time
 		cleared = nil
 	}
 	for _, id := range cleared {
-		result, err := tx.Exec(`UPDATE findings SET cleared_by = ?, cleared_at = ? WHERE id = ? AND job = ? AND kind = 'blocking' AND cleared_by IS NULL`,
+		result, err := tx.Exec(`UPDATE findings SET cleared_by = ?, cleared_at = ? WHERE id = ? AND job = ? AND kind = 'blocking' AND cleared_by IS NULL AND cleared_decision IS NULL`,
 			r.ID, timestamp(at), id, a.Job)
 		if err != nil {
 			return Decision{}, Dispatch{}, err

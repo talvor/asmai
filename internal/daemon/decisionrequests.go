@@ -96,7 +96,7 @@ func (d *daemon) decisionRequest(req Request) (store.DecisionRequest, *store.Dis
 		if req.Job <= 0 {
 			return store.DecisionRequest{}, nil, refuse("a leader's decision request names its job: give --job")
 		}
-		in.Job, in.Recipient, in.Blocks, in.Carries = req.Job, store.ToUser, req.Blocks, req.Carries
+		in.Job, in.Recipient, in.Blocks, in.Carries, in.Findings = req.Job, store.ToUser, req.Blocks, req.Carries, req.Findings
 		if coordination := roles.LeaderOf(roles.Coordination); ref.address != coordination {
 			in.Notify = coordination.String()
 		}
@@ -115,6 +115,9 @@ func (d *daemon) decisionRequest(req Request) (store.DecisionRequest, *store.Dis
 	} else {
 		if len(req.Blocks) > 0 || req.Job != 0 {
 			return store.DecisionRequest{}, nil, refuse("a worker's decision request is about its own assignment: it takes no --job and no --blocks")
+		}
+		if len(req.Findings) > 0 {
+			return store.DecisionRequest{}, nil, refuse("a worker's decision request names no findings: only its owning leader quotes a finding to the user")
 		}
 		if req.Carries != 0 {
 			return store.DecisionRequest{}, nil, refuse("a worker's decision request carries nothing: only its owning leader carries it to the user")

@@ -142,7 +142,7 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 		), finding_state AS (
 			SELECT job,
 				SUM(CASE WHEN kind = ? THEN 1 ELSE 0 END) needs_you,
-				SUM(CASE WHEN kind = ? AND cleared_by IS NULL THEN 1 ELSE 0 END) open_blocking
+				SUM(CASE WHEN kind = ? AND cleared_by IS NULL AND cleared_decision IS NULL THEN 1 ELSE 0 END) open_blocking
 			FROM findings GROUP BY job
 		), validations AS (
 			SELECT m.job, r.commit_id, 1 validated FROM messages m
@@ -263,10 +263,10 @@ type JobDetail struct {
 // FindingWork is a finding with when it was recorded or, for a blocking
 // finding, cleared.
 type FindingWork struct {
-	ID, Assignment, Report, ClearedBy int64
-	Kind, Text, Commit                string
-	Cleared                           bool
-	CreatedAt, ClearedAt, At          time.Time
+	ID, Assignment, Report, ClearedBy, ClearedByDecision int64
+	Kind, Text, Commit                                   string
+	Cleared                                              bool
+	CreatedAt, ClearedAt, At                             time.Time
 }
 
 // AssignmentWork is an assignment with when it last changed, and the state of
@@ -392,7 +392,7 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 		return JobDetail{}, err
 	}
 
-	rows, err := tx.Query(`SELECT id, assignment, report, kind, text, commit_id, COALESCE(cleared_by, 0), cleared_at, created_at FROM findings WHERE job = ? ORDER BY id`, job)
+	rows, err := tx.Query(`SELECT id, assignment, report, kind, text, commit_id, COALESCE(cleared_by, 0), COALESCE(cleared_decision, 0), cleared_at, created_at FROM findings WHERE job = ? ORDER BY id`, job)
 	if err != nil {
 		return JobDetail{}, err
 	}
@@ -401,10 +401,10 @@ func jobDetail(tx *sql.Tx, job int64) (JobDetail, error) {
 		var f FindingWork
 		var cleared sql.NullString
 		var created string
-		if err := rows.Scan(&f.ID, &f.Assignment, &f.Report, &f.Kind, &f.Text, &f.Commit, &f.ClearedBy, &cleared, &created); err != nil {
+		if err := rows.Scan(&f.ID, &f.Assignment, &f.Report, &f.Kind, &f.Text, &f.Commit, &f.ClearedBy, &f.ClearedByDecision, &cleared, &created); err != nil {
 			return JobDetail{}, err
 		}
-		f.Cleared = f.ClearedBy != 0
+		f.Cleared = f.ClearedBy != 0 || f.ClearedByDecision != 0
 		if f.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
 			return JobDetail{}, err
 		}

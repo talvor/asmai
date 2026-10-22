@@ -249,6 +249,9 @@ type Request struct {
 	// the user, whose answer the leader returns to the worker.
 	Carries    int64 `json:"carries,omitempty"`
 	UserAnswer int64 `json:"user_answer,omitempty"`
+	// Findings are the findings of the job that a leader's request of kind
+	// finding or dispute is about, which the daemon quotes to the user.
+	Findings []int64 `json:"findings,omitempty"`
 	// DecisionSource and Cites say whether a recorded decision is delegated or
 	// human, and for a human one the witnessed message it cites. Assumptions and
 	// ReopenWhen are its material assumptions and the conditions that would

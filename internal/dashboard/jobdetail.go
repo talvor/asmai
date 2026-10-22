@@ -455,6 +455,9 @@ func (m model) itemLines() []string {
 		if item.ClearedBy != 0 {
 			meta = append(meta, fmt.Sprintf("cleared by report %d", item.ClearedBy))
 		}
+		if item.ClearedByDecision != 0 {
+			meta = append(meta, fmt.Sprintf("cleared by the user's decision %d", item.ClearedByDecision))
+		}
 		if !item.ClearedAt.IsZero() {
 			meta = append(meta, "cleared "+item.ClearedAt.Format(time.RFC3339Nano))
 		}

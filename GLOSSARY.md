@@ -137,7 +137,7 @@ A review of one assignment's result at its commit, before the job branch is fini
 _Avoid_: Pre-review, spot check
 
 **Finding**:
-A problem that validation reports. A blocking finding must be fixed before delivery. An advisory finding is reported, and no fix is required. A needs-you finding challenges the user's stated intent or a recorded decision, so it goes to the user.
+A problem that validation reports. A blocking finding must be fixed before delivery. An advisory finding is reported, and no fix is required. A needs-you finding challenges the user's stated intent or a recorded decision, so it goes to the user word for word, quoted from its record. A blocking finding the two leaders cannot settle goes to the user too, and only Quality's re-validation or the user's decision clears it.
 _Avoid_: Issue, comment (when meaning a validation result)
 
 **Delivery owner**:

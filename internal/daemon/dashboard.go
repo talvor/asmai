@@ -679,23 +679,26 @@ type JobItem struct {
 	Worker string `json:"worker,omitempty"`
 	// Criteria are acceptance criteria; Dispatch is an assignment's worker
 	// dispatch, and the other fields describe a handoff.
-	Criteria    []string  `json:"criteria,omitempty"`
-	Dispatch    string    `json:"dispatch,omitempty"`
-	Answer      string    `json:"answer,omitempty"`
-	Decisions   string    `json:"decisions,omitempty"`
-	Evidence    string    `json:"evidence,omitempty"`
-	Constraints string    `json:"constraints,omitempty"`
-	Permissions string    `json:"permissions,omitempty"`
-	Head        string    `json:"head,omitempty"`
-	Commit      string    `json:"commit,omitempty"`
-	Assignment  int64     `json:"assignment,omitempty"`
-	Report      int64     `json:"report,omitempty"`
-	ClearedBy   int64     `json:"cleared_by,omitempty"`
-	ReadOnly    bool      `json:"read_only,omitempty"`
-	Skill       string    `json:"skill,omitempty"`
-	Skills      []string  `json:"skills,omitempty"`
-	CreatedAt   time.Time `json:"created_at,omitzero"`
-	ClearedAt   time.Time `json:"cleared_at,omitzero"`
+	Criteria    []string `json:"criteria,omitempty"`
+	Dispatch    string   `json:"dispatch,omitempty"`
+	Answer      string   `json:"answer,omitempty"`
+	Decisions   string   `json:"decisions,omitempty"`
+	Evidence    string   `json:"evidence,omitempty"`
+	Constraints string   `json:"constraints,omitempty"`
+	Permissions string   `json:"permissions,omitempty"`
+	Head        string   `json:"head,omitempty"`
+	Commit      string   `json:"commit,omitempty"`
+	Assignment  int64    `json:"assignment,omitempty"`
+	Report      int64    `json:"report,omitempty"`
+	ClearedBy   int64    `json:"cleared_by,omitempty"`
+	// ClearedByDecision is the user's decision record that cleared a disputed
+	// blocking finding.
+	ClearedByDecision int64     `json:"cleared_by_decision,omitempty"`
+	ReadOnly          bool      `json:"read_only,omitempty"`
+	Skill             string    `json:"skill,omitempty"`
+	Skills            []string  `json:"skills,omitempty"`
+	CreatedAt         time.Time `json:"created_at,omitzero"`
+	ClearedAt         time.Time `json:"cleared_at,omitzero"`
 	// Needs marks a needs-you finding.
 	Needs bool `json:"needs,omitempty"`
 	// At is when the item last changed.
@@ -806,7 +809,7 @@ func jobItems(detail store.JobDetail, ended bool) []JobItem {
 		if f.Cleared {
 			label += " (cleared)"
 		}
-		items = append(items, JobItem{Kind: ItemFinding, ID: f.ID, Label: label, Text: f.Text, Commit: f.Commit, Assignment: f.Assignment, Report: f.Report, ClearedBy: f.ClearedBy, CreatedAt: f.CreatedAt, ClearedAt: f.ClearedAt, Needs: !ended && f.Kind == store.FindingNeedsYou, At: f.At})
+		items = append(items, JobItem{Kind: ItemFinding, ID: f.ID, Label: label, Text: f.Text, Commit: f.Commit, Assignment: f.Assignment, Report: f.Report, ClearedBy: f.ClearedBy, ClearedByDecision: f.ClearedByDecision, CreatedAt: f.CreatedAt, ClearedAt: f.ClearedAt, Needs: !ended && f.Kind == store.FindingNeedsYou, At: f.At})
 	}
 	for _, a := range detail.Assignments {
 		items = append(items, JobItem{Kind: ItemAssignment, ID: a.ID, Label: stateWords(a.State), Text: a.Outcome, From: a.Owner, Worker: a.Worker, Criteria: a.Criteria, Dispatch: a.Dispatch, ReadOnly: a.ReadOnly, Commit: a.Commit, Skill: a.Skill, Skills: a.Skills, CreatedAt: a.CreatedAt, At: a.At})

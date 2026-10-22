@@ -33,7 +33,7 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 	var notify string
 	switch req.Command {
 	case CommandAssign:
-		conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
+		conn.SetDeadline(time.Now().Add(2*gitTimeout + ghTimeout + time.Minute))
 		var a store.Assignment
 		var dispatch store.Dispatch
 		if a, dispatch, err = d.assign(req); err == nil {
@@ -204,7 +204,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
+	ctx, cancel := context.WithTimeout(d.work, 2*gitTimeout+ghTimeout)
 	defer cancel()
 	if req.ReadOnly {
 		if _, err := d.store.JobBranch(j.Number); errors.Is(err, sql.ErrNoRows) {
@@ -355,13 +355,6 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 	case !errors.Is(err, sql.ErrNoRows):
 		return store.JobBranch{}, err
 	}
-	if err := repos.Fetch(ctx, repository.Clone); err != nil {
-		return store.JobBranch{}, err
-	}
-	tip, err := repos.OriginTip(ctx, repository.Clone, repository.DefaultBranch)
-	if err != nil {
-		return store.JobBranch{}, err
-	}
 	name := JobBranchName(j)
 	var continues int64
 	var startedFrom string
@@ -382,7 +375,13 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		}
 	}
 	if continues == 0 {
-		var err error
+		if err := repos.Fetch(ctx, repository.Clone); err != nil {
+			return store.JobBranch{}, err
+		}
+		tip, err := repos.OriginTip(ctx, repository.Clone, repository.DefaultBranch)
+		if err != nil {
+			return store.JobBranch{}, err
+		}
 		startedFrom, err = repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
 		if err != nil {
 			startedFrom = tip

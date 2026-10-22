@@ -30,7 +30,7 @@ func TestCoordinationOpensAJobFromTheUsersWitnessedMessage(t *testing.T) {
 		fakeRun(`asmai jobs`, 0, "(?s)JOB.*1.*coordination.*fixture.*Fix the fixture"),
 		fakeRun(`asmai brief 1`, 0, "(?s)Witnessed message: [0-9]+.*User's words: Please fix the fixture.*Tests pass.*Open a reviewed PR"),
 		fakeRun(`asmai job open --message latest --repository fixture --reading 'Greet the user by name' --criterion 'Greets by name'`, 0, "Opened job 2"),
-		fakeRun(`asmai job link --job 2 --follows 1`, 0, "(?s)Job 2 is linked as a follow-up to job 1.*starts afresh: job 1 is still open"),
+		fakeRun(`asmai job link --job 2 --follows 1`, 0, "(?s)Job 2 is linked as a follow-up to job 1.*starts afresh: job 1 has no pull request"),
 		fakeRun(`asmai job link --job 2 --follows 1`, 0, "linked as a follow-up to job 1"),
 		fakeRun(`asmai job link --job 1 --follows 2`, 1, "not a follow-up to job 2|a follow-up is a new job linked to one opened before it"),
 		fakeRun(`asmai job link --job 2`, 1, "needs --job"),

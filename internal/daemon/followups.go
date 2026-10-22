@@ -29,7 +29,7 @@ type continuation struct {
 
 // continuationOf decides how the follow-up j starts: it continues the job
 // branch and the pull request of the job it follows when that pull request is
-// still open and no other open job holds the branch, and otherwise starts
+// still open and no unrelated open job holds the branch, and otherwise starts
 // from the base with a new job branch and pull request. It returns the
 // continuation, or nil with the reason j starts afresh. It looks the pull
 // request up on GitHub, as the daemon recorded it open and it may have been
@@ -48,9 +48,6 @@ func (d *daemon) continuationOf(ctx context.Context, j store.Job, repository sto
 	if err != nil {
 		return nil, "", err
 	}
-	if pred.State == store.JobOpen {
-		return nil, fmt.Sprintf("job %d is still open and a job branch belongs to one open job at a time", pred.Number), nil
-	}
 	prs, err := d.store.PullRequests(pred.Number)
 	if err != nil {
 		return nil, "", err
@@ -59,9 +56,9 @@ func (d *daemon) continuationOf(ctx context.Context, j store.Job, repository sto
 		return nil, fmt.Sprintf("job %d has no pull request", pred.Number), nil
 	}
 	recorded := prs[len(prs)-1]
-	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
-	defer cancel()
-	found, err := github.ViewPullRequest(ctx, repository.Clone, recorded.URL)
+	ghCtx, cancel := context.WithTimeout(ctx, ghTimeout)
+	found, err := github.ViewPullRequest(ghCtx, repository.Clone, recorded.URL)
+	cancel()
 	if err != nil {
 		return nil, "", fmt.Errorf("looking up job %d's pull request %s with gh: %w", pred.Number, recorded.URL, err)
 	}
@@ -73,13 +70,22 @@ func (d *daemon) continuationOf(ctx context.Context, j store.Job, repository sto
 	}
 	if holder, err := d.store.BranchHeldByOpenJob(repository.Name, branch.Name, j.Number); err != nil {
 		return nil, "", err
-	} else if holder != 0 {
+	} else if holder != 0 && holder != pred.Number {
 		return nil, fmt.Sprintf("open job %d holds the job branch %s", holder, branch.Name), nil
 	}
-	if err := repos.Fetch(ctx, repository.Clone); err != nil {
+	if pred.State != store.JobEnded {
+		if live, err := d.store.LiveAssignment(pred.Number); err != nil {
+			return nil, "", err
+		} else if live != 0 {
+			return nil, "", fmt.Errorf("job %d still has assignment %d in progress, so its branch cannot pass to job %d", pred.Number, live, j.Number)
+		}
+	}
+	gitCtx, cancel := context.WithTimeout(ctx, gitTimeout)
+	defer cancel()
+	if err := repos.Fetch(gitCtx, repository.Clone); err != nil {
 		return nil, "", err
 	}
-	tip, err := repos.OriginTip(ctx, repository.Clone, branch.Name)
+	tip, err := repos.OriginTip(gitCtx, repository.Clone, branch.Name)
 	if err != nil {
 		return nil, "", err
 	}
@@ -102,7 +108,7 @@ func (d *daemon) settleFollowUp(j store.Job, resp *Response) error {
 	}
 	d.assignMu.Lock()
 	defer d.assignMu.Unlock()
-	ctx, cancel := context.WithTimeout(d.work, gitTimeout+ghTimeout)
+	ctx, cancel := context.WithTimeout(d.work, 2*(gitTimeout+ghTimeout))
 	defer cancel()
 	if branch, err := d.store.JobBranch(j.Number); err == nil {
 		if branch.Continues != 0 {

@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,9 +25,8 @@ state=$(cat "$ASMAI_TEST_DIR/pr-state" 2>/dev/null) || { echo "no pull requests 
 printf '{"number":7,"url":"https://github.com/talvor/asmai-fixture/pull/7","title":"Add a greeting","isDraft":false,"headRefName":"%s","headRefOid":"abc","state":"%s"}\n' "$(cat "$ASMAI_TEST_DIR/pr-branch")" "$state"
 `
 
-// deliveredFirstJob is a fixture whose first job, a notes job whose branch
-// holds the accepted work of its first assignment, was pushed, delivered with
-// a pull request and ended, so that a follow-up can continue it.
+// deliveredFirstJob is a fixture whose first job has an accepted result and
+// an open pull request, so that a follow-up can continue it.
 type deliveredFirstJob struct {
 	twoResults
 	testDir string
@@ -34,6 +34,10 @@ type deliveredFirstJob struct {
 }
 
 func newDeliveredFirstJob(t *testing.T) deliveredFirstJob {
+	return newFirstJobWithPullRequest(t, true)
+}
+
+func newFirstJobWithPullRequest(t *testing.T, delivered bool) deliveredFirstJob {
 	t.Helper()
 	f := newTwoResultsOf(t, "planning")
 	testDir := t.TempDir()
@@ -79,8 +83,10 @@ func newDeliveredFirstJob(t *testing.T) deliveredFirstJob {
 	if _, _, err := f.s.PullRequestRecorded(pr, 1, pr.URL, at); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := f.s.JobDelivered(store.Delivery{Job: f.job.Number, Number: 7, URL: pr.URL, Head: tip, NoCI: true}, "delivered", at); err != nil {
-		t.Fatal(err)
+	if delivered {
+		if _, _, err := f.s.JobDelivered(store.Delivery{Job: f.job.Number, Number: 7, URL: pr.URL, Head: tip, NoCI: true}, "delivered", at); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return deliveredFirstJob{twoResults: f, testDir: testDir, branch: branch}
 }
@@ -184,7 +190,56 @@ func TestAFollowUpToAJobWithAnOpenPullRequestContinuesItsBranchAndPullRequestFro
 	}
 }
 
-func TestAFollowUpStartsAfreshOnceThePullRequestIsMergedOrClosedOrWhileTheEarlierJobIsOpen(t *testing.T) {
+func TestAFollowUpReplacesAnOpenJobWithAnOpenPullRequest(t *testing.T) {
+	f := newFirstJobWithPullRequest(t, false)
+	if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte("OPEN"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j, resp, err := f.followUp(t, f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := f.s.JobBranch(j.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch.Name != f.branch || branch.Continues != f.job.Number || resp.Continues == nil || resp.Continues.Number != 7 {
+		t.Errorf("follow-up branch = %+v, continuation = %+v", branch, resp.Continues)
+	}
+	predecessor, err := f.s.Job(f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if predecessor.State != store.JobEnded {
+		t.Errorf("predecessor state = %s, want ended", predecessor.State)
+	}
+	if holder, err := f.s.BranchHeldByOpenJob("fixture", f.branch, f.job.Number); err != nil || holder != j.Number {
+		t.Errorf("branch holder = %d (%v), want job %d", holder, err, j.Number)
+	}
+	entries, err := f.s.JobEntries(f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replaced bool
+	for _, entry := range entries {
+		if entry.Kind == store.KindJobEnded {
+			var end struct {
+				Job        int64  `json:"job"`
+				By         string `json:"by"`
+				ReplacedBy int64  `json:"replaced_by"`
+			}
+			if err := json.Unmarshal(entry.Data, &end); err != nil {
+				t.Fatal(err)
+			}
+			replaced = end.Job == f.job.Number && end.By == "replaced" && end.ReplacedBy == j.Number
+		}
+	}
+	if !replaced {
+		t.Errorf("predecessor has no journaled replacement: %+v", entries)
+	}
+}
+
+func TestAFollowUpStartsAfreshOnceThePullRequestIsMergedOrClosedOrMissing(t *testing.T) {
 	for _, state := range []string{"MERGED", "CLOSED"} {
 		t.Run(state, func(t *testing.T) {
 			f := newDeliveredFirstJob(t)
@@ -225,7 +280,7 @@ func TestAFollowUpStartsAfreshOnceThePullRequestIsMergedOrClosedOrWhileTheEarlie
 		if err := f.d.settleFollowUp(other, &resp); err != nil {
 			t.Fatal(err)
 		}
-		if b, _ := f.s.JobBranch(other.Number); b.Continues != 0 || !strings.Contains(resp.Starts, "job 1 is still open") {
+		if b, _ := f.s.JobBranch(other.Number); b.Continues != 0 || !strings.Contains(resp.Starts, "job 1 has no pull request") {
 			t.Errorf("the follow-up's branch is %+v and it says %q", b, resp.Starts)
 		}
 	})

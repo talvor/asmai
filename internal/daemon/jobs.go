@@ -55,7 +55,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 			err = refuse("%v", err)
 		} else {
 			resp.Job = &j
-			conn.SetDeadline(time.Now().Add(gitTimeout + ghTimeout + time.Minute))
+			conn.SetDeadline(time.Now().Add(2*(gitTimeout+ghTimeout) + time.Minute))
 			if j.Repository != "" {
 				err = d.settleFollowUp(j, &resp)
 			}

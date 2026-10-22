@@ -287,11 +287,34 @@ func (s *Store) JobBranchMade(b JobBranch, at time.Time) (JobBranch, error) {
 		if b.Name == "" || b.StartedFrom == "" || b.View == "" {
 			return "", nil, errors.New("a job branch needs a name, the commit it started from and its view")
 		}
+		if b.Continues != 0 {
+			predecessor, err := jobBranch(tx, b.Continues)
+			if err != nil {
+				return "", nil, err
+			}
+			if j.Follows != b.Continues || predecessor.Repository != b.Repository || predecessor.Name != b.Name {
+				return "", nil, fmt.Errorf("job %d cannot continue job %d's branch %s", b.Job, b.Continues, b.Name)
+			}
+		}
 		// A job branch belongs to one open job at a time (05 rule 16).
 		if holder, err := openJobHolding(tx, b.Repository, b.Name, b.Job); err != nil {
 			return "", nil, err
-		} else if holder != 0 {
+		} else if holder != 0 && holder != b.Continues {
 			return "", nil, fmt.Errorf("branch %s belongs to open job %d, and a job branch belongs to one open job at a time", b.Name, holder)
+		} else if holder != 0 {
+			var live int64
+			if err := tx.QueryRow(`SELECT COALESCE(MIN(id), 0) FROM assignments WHERE job = ? AND NOT `+endedAssignment, holder).Scan(&live); err != nil {
+				return "", nil, err
+			}
+			if live != 0 {
+				return "", nil, fmt.Errorf("job %d still has assignment %d in progress, so its branch cannot pass to job %d", holder, live, b.Job)
+			}
+			if _, err := tx.Exec(`UPDATE jobs SET state = ? WHERE number = ?`, JobEnded, holder); err != nil {
+				return "", nil, err
+			}
+			if _, err := appendEntry(tx, at, KindJobEnded, map[string]any{"job": holder, "state": JobEnded, "by": "replaced", "replaced_by": b.Job}); err != nil {
+				return "", nil, err
+			}
 		}
 		b.Tip, b.CreatedAt = b.StartedFrom, at.UTC()
 		if _, err := tx.Exec(`INSERT INTO job_branches (job, repository, name, started_from, tip, view, created_at, continues) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -308,7 +331,7 @@ func (s *Store) JobBranchMade(b JobBranch, at time.Time) (JobBranch, error) {
 // repository is called name, or zero when none is.
 func openJobHolding(q queryer, repository, name string, except int64) (int64, error) {
 	var holder int64
-	err := q.QueryRow(`SELECT COALESCE(MIN(b.job), 0) FROM job_branches b JOIN jobs j ON j.number = b.job WHERE b.repository = ? AND b.name = ? AND b.job <> ? AND j.state = ?`, repository, name, except, JobOpen).Scan(&holder)
+	err := q.QueryRow(`SELECT COALESCE(MIN(b.job), 0) FROM job_branches b JOIN jobs j ON j.number = b.job WHERE b.repository = ? AND b.name = ? AND b.job <> ? AND j.state <> ?`, repository, name, except, JobEnded).Scan(&holder)
 	return holder, err
 }
 

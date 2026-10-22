@@ -501,13 +501,13 @@ func TestTheDaemonStartsNoAgentUnderAManagedPolicyThatIgnoresAsmaisPermissionRul
 			rules = c
 		}
 	}
-	for _, want := range []string{"allowManagedPermissionRulesOnly", "Bash(asmai:*)"} {
+	for _, want := range []string{"allowManagedPermissionRulesOnly", "cannot run unprompted", "Bash(asmai *)", "sandbox.autoAllowBashIfSandboxed: true"} {
 		if rules.OK || !strings.Contains(rules.Problem+rules.Fix, want) {
 			t.Errorf("under the policy, the permission rules check is %+v, want it failed and naming %s", rules, want)
 		}
 	}
 	if !strings.Contains(rules.Fix, "administrator") || !strings.Contains(rules.Fix, "without that policy") {
-		t.Errorf("the fix is %q, want both: another account, or an administrator adding the rules", rules.Fix)
+		t.Errorf("the fix is %q, want both: another account, or an administrator adding the allow rule", rules.Fix)
 	}
 	if resp.Leaders[0].State != store.AgentStopped {
 		t.Errorf("under the policy, Coordination's leader is %s, want stopped", resp.Leaders[0].State)

@@ -67,6 +67,9 @@ type Check struct {
 	OK      bool   `json:"ok"`
 	Problem string `json:"problem,omitempty"`
 	Fix     string `json:"fix,omitempty"`
+	// Warning is what a passing check says the user should know, which is
+	// shown at every start and never silent.
+	Warning string `json:"warning,omitempty"`
 }
 
 // The input owners of an agent session.
@@ -371,39 +374,47 @@ func (d *daemon) versionCheck(path, pinned string) Check {
 func (d *daemon) permissionRulesCheck(path string) Check {
 	d.rulesMu.Lock()
 	defer d.rulesMu.Unlock()
-	if d.rulesOK == path {
-		return Check{Name: PermissionRulesName, OK: true}
+	if d.rulesOK.path == path {
+		return d.rulesOK.check
 	}
-	c := PermissionRulesCheck(path, d.cfg.Paths.Dir)
+	c := PermissionRulesCheck(path, d.cfg.Paths.Dir, d.cfg.Paths.Socket)
 	if c.OK {
-		d.rulesOK = path
+		d.rulesOK.path, d.rulesOK.check = path, c
 	}
 	return c
 }
 
-// PermissionRulesName is the name of the check that Claude Code applies the
-// permission rules AsmAI gives its agents.
+// PermissionRulesName is the name of the check that AsmAI's agents can run
+// `asmai` without a prompt on this account.
 const PermissionRulesName = "permission rules"
 
 // PermissionRulesCheck checks, with the Claude Code at path, started in dir,
-// that this account lets AsmAI's own permission rules take effect. Under a
-// managed policy that applies only the managed settings' permission rules,
-// an agent would stop at the first command that needs approval, which
-// nobody can give. The check asks Claude Code itself, and never reads or
-// writes any of its settings (ProbePermissionRules).
-func PermissionRulesCheck(path, dir string) Check {
-	verdict, err := providers.ProbePermissionRules(context.Background(), path, dir, os.Environ())
+// that an agent's `asmai` commands run without a prompt on this account,
+// where socket is the daemon's socket. Without a managed policy that applies
+// only the managed settings' permission rules, AsmAI's own rules apply. Under
+// it they are ignored, and the check passes when an administrator's allow rule
+// covers `asmai`, or when the sandbox's auto-allow and socket control are in
+// effect; otherwise an agent would stop at its first `asmai` command, which
+// nobody can approve. Where the sandbox route cannot be confirmed without
+// running it, the check passes with a warning. The check asks Claude Code
+// itself, and never reads or writes any of its settings
+// (ProbePermissionRules).
+func PermissionRulesCheck(path, dir, socket string) Check {
+	verdict, err := providers.ProbePermissionRules(context.Background(), path, dir, socket, os.Environ())
 	if err != nil {
 		return Check{Name: PermissionRulesName, Problem: err.Error(),
 			Fix: "run `asmai start` again; if it persists, run `asmai providers install` to reinstall the pinned Claude Code"}
 	}
-	if verdict.Honoured() {
-		return Check{Name: PermissionRulesName, OK: true}
+	switch verdict.Route(providers.HostPlatform) {
+	case providers.RouteNone:
+		return Check{Name: PermissionRulesName,
+			Problem: fmt.Sprintf("`asmai` cannot run unprompted: this account's managed settings set %s, so Claude Code ignores the permission rules AsmAI gives its agents, and neither a managed allow rule nor the sandbox's auto-allow covers `asmai`, so an agent would stop at its first `asmai` command, which nobody can approve", providers.ManagedPolicySetting),
+			Fix:     "ask an administrator to allow `Bash(asmai *)` in the managed settings' permissions.allow, or to set `sandbox.autoAllowBashIfSandboxed: true`, or run AsmAI under an account without that policy. Nothing is needed for git, gh or workspace edits. AsmAI never changes managed settings"}
+	case providers.RouteUnconfirmed:
+		return Check{Name: PermissionRulesName, OK: true,
+			Warning: "`asmai` may be prompted: this account's managed settings set " + providers.ManagedPolicySetting + ", and whether the sandbox lets an agent's `asmai` reach the daemon without a prompt cannot be confirmed on this platform. An agent that stops at a prompt is raised to Coordination for you to answer. An administrator can allow `Bash(asmai *)` in the managed settings to make sure"}
 	}
-	return Check{Name: PermissionRulesName,
-		Problem: fmt.Sprintf("Claude Code ignores the permission rules AsmAI gives its agents: this account's managed settings set %s, so an agent would stop at its first command that needs approval, which nobody can give. Ignored: %s", providers.ManagedPolicySetting, strings.Join(verdict.Ignored, ", ")),
-		Fix: fmt.Sprintf("run AsmAI under an account without that policy, or ask an administrator to add AsmAI's permission rules to the managed settings' permissions.allow: %s, and the Read and Edit rules for each workspace (see Under a Claude Code managed policy in the README). AsmAI never changes managed settings",
-			strings.Join(providers.CommandRules(), ", "))}
+	return Check{Name: PermissionRulesName, OK: true}
 }
 
 // trustName is the name of the check that the user trusts the directories

@@ -243,11 +243,7 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 		// Claude Code's guard checks the path a connection resolves to, so
 		// a socket under a symlink, such as macOS's /tmp, is allowed by the
 		// directory it links to.
-		socket := guard.Socket
-		if dir, err := filepath.EvalSymlinks(filepath.Dir(socket)); err == nil {
-			socket = filepath.Join(dir, filepath.Base(socket))
-		}
-		sandbox["network"] = map[string]any{"allowUnixSockets": []string{socket}}
+		sandbox["network"] = map[string]any{"allowUnixSockets": []string{resolvedSocket(guard.Socket)}}
 	}
 	overrides := map[string]string{}
 	for _, name := range claudeCodeOwnSkills {

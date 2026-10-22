@@ -791,6 +791,9 @@ func (o *output) started(st daemon.Status, already bool, paths statedir.Paths, r
 		for _, c := range resp.Checks {
 			if c.OK {
 				fmt.Fprintf(o.stderr, "  ok      %s\n", c.Name)
+				if c.Warning != "" {
+					fmt.Fprintf(o.stderr, "          warning: %s\n", c.Warning)
+				}
 				continue
 			}
 			fmt.Fprintf(o.stderr, "  failed  %s: %s\n", c.Name, c.Problem)
@@ -806,6 +809,11 @@ func (o *output) started(st daemon.Status, already bool, paths statedir.Paths, r
 		fmt.Fprintln(o.stdout, "The factory is already running; no second daemon was started.")
 	} else {
 		fmt.Fprintln(o.stdout, "Started the factory.")
+	}
+	for _, c := range resp.Checks {
+		if c.Warning != "" {
+			fmt.Fprintf(o.stderr, "asmai: warning, %s: %s\n", c.Name, c.Warning)
+		}
 	}
 	o.table(append(runningRows(st, paths), leaderRows(resp.Leaders)...))
 	return 0

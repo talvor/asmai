@@ -218,12 +218,15 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		func(path string) daemon.Check {
 			return daemon.Check(certify.Version(context.Background(), path, pinList.ClaudeCode.Version, providers.ClaudeCodeVersion))
 		}, daemon.SignInCheck,
-		func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir) }) {
+		func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir, paths.Socket) }) {
 		if check.Name == "Claude Code "+plan.Version && check.OK {
 			continue // The install, reported above.
 		}
 		if check.OK {
 			report(check.Name, stepAlreadyDone, fmt.Sprintf("%s passes", check.Name))
+			if check.Warning != "" {
+				fmt.Fprintf(w, "      warning  %s\n", check.Warning)
+			}
 			continue
 		}
 		report(check.Name, stepFailed, check.Problem)

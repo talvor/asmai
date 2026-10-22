@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -24,8 +26,12 @@ const ManagedPolicySetting = "allowManagedPermissionRulesOnly"
 // probeTimeout is how long the permission probe waits for Claude Code.
 const probeTimeout = 30 * time.Second
 
-// probeRequestID is the id of the probe's control request.
-const probeRequestID = "asmai-permission-rules"
+// probeRequestID and settingsRequestID are the ids of the probe's control
+// requests.
+const (
+	probeRequestID    = "asmai-permission-rules"
+	settingsRequestID = "asmai-effective-settings"
+)
 
 // PermissionVerdict is what Claude Code says of the permission rules AsmAI
 // gives its agent sessions, on this account.
@@ -35,6 +41,16 @@ type PermissionVerdict struct {
 	ManagedOnly bool
 	// Ignored are the rules of CommandRules that Claude Code does not apply.
 	Ignored []string
+	// AsmaiAllowed is set when an allow rule in effect covers `asmai`:
+	// under the policy, one an administrator added to the managed settings.
+	AsmaiAllowed bool
+	// SandboxAutoAllow is set when the session's effective sandbox settings
+	// have the sandbox on with auto-allow of the commands it runs, and
+	// SocketControl when they also allow the daemon's socket.
+	SandboxAutoAllow, SocketControl bool
+	// Platform is the platform Claude Code says it runs on, or empty when it
+	// does not say.
+	Platform string
 }
 
 // Honoured reports whether Claude Code applies every permission rule AsmAI
@@ -43,9 +59,77 @@ func (v PermissionVerdict) Honoured() bool {
 	return len(v.Ignored) == 0
 }
 
-// permissionRulesRequest is the control request that has Claude Code list
-// the permission rules its session applies, and which of them it ignores.
-const permissionRulesRequest = `{"type":"control_request","request_id":"` + probeRequestID + `","request":{"subtype":"list_permission_rules"}}`
+// Route is how an agent's `asmai` commands run unprompted on an account.
+type Route int
+
+const (
+	// RouteNone: under the managed policy, neither an administrator's allow
+	// rule nor the sandbox lets `asmai` run unprompted.
+	RouteNone Route = iota
+	// RouteRules: no policy, so AsmAI's own rules apply.
+	RouteRules
+	// RouteAllowRule: an administrator's allow rule covers `asmai`.
+	RouteAllowRule
+	// RouteSandbox: the sandbox auto-allows `asmai` and allows the socket.
+	RouteSandbox
+	// RouteUnconfirmed: the sandbox auto-allows commands, but whether it lets
+	// `asmai` reach the daemon's socket cannot be confirmed without running
+	// it, as on Linux, where Claude Code's own documentation is unclear.
+	RouteUnconfirmed
+)
+
+// Route returns how `asmai` runs unprompted for this verdict. goos is the
+// platform Claude Code runs on, unless Claude Code says so itself.
+func (v PermissionVerdict) Route(goos string) Route {
+	switch {
+	case v.Honoured() && !v.ManagedOnly:
+		return RouteRules
+	case v.AsmaiAllowed:
+		return RouteAllowRule
+	case !v.SandboxAutoAllow:
+		return RouteNone
+	}
+	if v.Platform != "" {
+		goos = v.Platform
+	}
+	switch {
+	case goos != "darwin":
+		return RouteUnconfirmed
+	case v.SocketControl:
+		return RouteSandbox
+	}
+	return RouteNone
+}
+
+// HostPlatform is the platform AsmAI runs on, for PermissionVerdict.Route.
+const HostPlatform = runtime.GOOS
+
+// coversAsmai reports whether a Bash allow rule covers every `asmai` command.
+func coversAsmai(rule string) bool {
+	switch rule {
+	case "Bash", "Bash(*)", "Bash(asmai:*)", "Bash(asmai *)", "Bash(asmai*)":
+		return true
+	}
+	return false
+}
+
+// resolvedSocket is the path Claude Code's guard sees a connection to socket
+// resolve to: a socket under a symlink, such as macOS's /tmp, is allowed by
+// the directory it links to.
+func resolvedSocket(socket string) string {
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(socket)); err == nil {
+		return filepath.Join(dir, filepath.Base(socket))
+	}
+	return socket
+}
+
+// The control requests that have Claude Code list the permission rules its
+// session applies, and which of them it ignores, and the session's effective
+// merged settings.
+const (
+	permissionRulesRequest = `{"type":"control_request","request_id":"` + probeRequestID + `","request":{"subtype":"list_permission_rules"}}`
+	settingsRequest        = `{"type":"control_request","request_id":"` + settingsRequestID + `","request":{"subtype":"get_settings"}}`
+)
 
 // ProbePermissionRules asks the Claude Code at path, started in dir, which of
 // AsmAI's permission rules it applies on this account. It starts Claude Code
@@ -56,12 +140,21 @@ const permissionRulesRequest = `{"type":"control_request","request_id":"` + prob
 // The rules AsmAI passes are ignored when managed settings pin
 // allowManagedPermissionRulesOnly: Claude Code then lists them as not in
 // effect. A rule an administrator added to the managed settings is in effect.
+// It also asks for the effective settings, to see whether the sandbox
+// settings AsmAI passes, with auto-allow and the daemon's socket, are in
+// effect, which an administrator's managed settings can override.
 // The probe writes nothing. environ is the environment Claude Code starts
 // with, less any provider API-key variable.
-func ProbePermissionRules(ctx context.Context, path, dir string, environ []string) (PermissionVerdict, error) {
+func ProbePermissionRules(ctx context.Context, path, dir, socket string, environ []string) (PermissionVerdict, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	settings, _ := json.Marshal(map[string]any{"permissions": map[string]any{"allow": CommandRules()}})
+	sandbox := map[string]any{"enabled": true, "autoAllowBashIfSandboxed": true}
+	probeSocket := ""
+	if socket != "" {
+		probeSocket = resolvedSocket(socket)
+		sandbox["network"] = map[string]any{"allowUnixSockets": []string{probeSocket}}
+	}
+	settings, _ := json.Marshal(map[string]any{"permissions": map[string]any{"allow": CommandRules()}, "sandbox": sandbox})
 	cmd := exec.CommandContext(ctx, path, "-p",
 		"--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--settings", string(settings), "--setting-sources", "", "--strict-mcp-config")
@@ -73,14 +166,14 @@ func ProbePermissionRules(ctx context.Context, path, dir string, environ []strin
 	}
 	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
 	// Claude Code answers each request it reads and ends when its stdin does.
-	cmd.Stdin = strings.NewReader(permissionRulesRequest + "\n")
+	cmd.Stdin = strings.NewReader(permissionRulesRequest + "\n" + settingsRequest + "\n")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return PermissionVerdict{}, fmt.Errorf("Claude Code did not answer within %s", probeTimeout)
 	}
-	verdict, found, parseErr := parsePermissionRules(stdout.Bytes())
+	verdict, found, parseErr := parsePermissionRules(stdout.Bytes(), probeSocket)
 	if parseErr != nil {
 		return PermissionVerdict{}, parseErr
 	}
@@ -98,8 +191,10 @@ func ProbePermissionRules(ctx context.Context, path, dir string, environ []strin
 }
 
 // parsePermissionRules reads the stream-json output of the probe, and returns
-// the verdict its answer gives, with whether there was an answer.
-func parsePermissionRules(out []byte) (v PermissionVerdict, found bool, err error) {
+// the verdict its answers give, with whether the rules were answered. socket
+// is the daemon's socket as the probe passed it. An effective settings answer
+// that is missing or an error leaves the sandbox out of the verdict.
+func parsePermissionRules(out []byte, socket string) (v PermissionVerdict, found bool, err error) {
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(nil, 16<<20)
 	for sc.Scan() {
@@ -118,31 +213,53 @@ func parsePermissionRules(out []byte) (v PermissionVerdict, found bool, err erro
 						} `json:"rules"`
 						ManagedOnly bool `json:"managedOnly"`
 					} `json:"state"`
+					Platform  string `json:"platform"`
+					Effective struct {
+						Sandbox struct {
+							Enabled                  bool `json:"enabled"`
+							AutoAllowBashIfSandboxed bool `json:"autoAllowBashIfSandboxed"`
+							Network                  struct {
+								AllowUnixSockets []string `json:"allowUnixSockets"`
+							} `json:"network"`
+						} `json:"sandbox"`
+					} `json:"effective"`
 				} `json:"response"`
 			} `json:"response"`
 		}
-		if json.Unmarshal(sc.Bytes(), &msg) != nil || msg.Type != "control_response" || msg.Response.RequestID != probeRequestID {
+		if json.Unmarshal(sc.Bytes(), &msg) != nil || msg.Type != "control_response" {
 			continue
 		}
-		if msg.Response.Subtype != "success" {
-			return v, false, fmt.Errorf("Claude Code refused to list its permission rules: %s", msg.Response.Error)
-		}
-		var applied []string
-		for _, r := range msg.Response.Response.State.Rules {
-			if r.Behavior == "allow" && !r.NotInEffect {
-				applied = append(applied, r.Rule)
+		switch msg.Response.RequestID {
+		case settingsRequestID:
+			if msg.Response.Subtype != "success" {
+				continue
 			}
-		}
-		v.ManagedOnly = msg.Response.Response.State.ManagedOnly
-		for _, rule := range CommandRules() {
-			if !slices.Contains(applied, rule) {
-				v.Ignored = append(v.Ignored, rule)
+			sandbox := msg.Response.Response.Effective.Sandbox
+			v.Platform = msg.Response.Response.Platform
+			v.SandboxAutoAllow = sandbox.Enabled && sandbox.AutoAllowBashIfSandboxed
+			v.SocketControl = socket != "" && slices.Contains(sandbox.Network.AllowUnixSockets, socket)
+		case probeRequestID:
+			if msg.Response.Subtype != "success" {
+				return v, false, fmt.Errorf("Claude Code refused to list its permission rules: %s", msg.Response.Error)
 			}
+			var applied []string
+			for _, r := range msg.Response.Response.State.Rules {
+				if r.Behavior == "allow" && !r.NotInEffect {
+					applied = append(applied, r.Rule)
+					v.AsmaiAllowed = v.AsmaiAllowed || coversAsmai(r.Rule)
+				}
+			}
+			v.ManagedOnly = msg.Response.Response.State.ManagedOnly
+			for _, rule := range CommandRules() {
+				if !slices.Contains(applied, rule) {
+					v.Ignored = append(v.Ignored, rule)
+				}
+			}
+			found = true
 		}
-		return v, true, nil
 	}
 	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		return v, false, err
 	}
-	return v, false, nil
+	return v, found, nil
 }

@@ -136,7 +136,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 		),
 		turn(15, "accepted2", fakeRun(`asmai inbox --dispatch 15`, 0, "accepted from leader@quality")),
 		turn(18, "validation2",
-			fakeRun(`asmai inbox --dispatch 18`, 0, "(?s)validation from leader@quality.*0 blocking, 0 advisory, 0 needs-you finding\\(s\\); 1 earlier blocking finding\\(s\\) resolved, 0 still open.*Findings: none.*finding 1 resolved"),
+			fakeRun(`asmai inbox --dispatch 18 | tee "$ASMAI_TEST_DIR/final-inbox"`, 0, ""),
 			fakeRun(`asmai brief 1`, 0, "(?s)Findings:\n- 1 blocking \\(cleared by report [0-9]+\\)"),
 			touchFile("leader-done"),
 		),
@@ -259,6 +259,8 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 		if t.Failed() {
 			log, _, _ := runAsmai(t, "log")
 			t.Logf("the daemon's log:\n%s", log)
+			data, _ := os.ReadFile(filepath.Join(testDir, "final-inbox"))
+			t.Logf("final inbox:\n%s", data)
 		}
 	})
 	if _, stderr, code := runAsmai(t, "start"); code != 0 {
@@ -273,6 +275,16 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	terminal.ptmx.WriteString("Please add a greeting\r")
 	waitFor(t, "Quality's leader accepting the second validation", touched(testDir, "quality-done"))
 	waitFor(t, "Engineering's leader reading it", touched(testDir, "leader-done"))
+	finalInbox, err := os.ReadFile(filepath.Join(testDir, "final-inbox"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"0 blocking, 0 advisory, 0 needs-you finding(s); 1 earlier blocking finding(s) cleared, 0 still open", "Findings: none", "finding 1 resolved"} {
+		if !strings.Contains(string(finalInbox), want) {
+			t.Errorf("Engineering's final inbox does not say %q:\n%s", want, finalInbox)
+		}
+	}
+	t.Logf("Engineering's final inbox:\n%s", finalInbox)
 
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
 	clone := filepath.Join(stateDir, "repositories", "fixture")

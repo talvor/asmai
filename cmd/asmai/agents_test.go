@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -20,6 +19,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/talvor/asmai/internal/fakeprovider"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/vt"
 )
 
@@ -84,7 +84,14 @@ func trustFactory(t *testing.T, stateDir string) {
 // trustRecord is the record trustFactory writes: it trusts the agents and
 // workspaces folders and the clone of the tests' repository, fixture.
 func trustRecord(stateDir string) string {
-	return fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces"), filepath.Join(stateDir, "repositories", "fixture"))
+	projects := map[string]map[string]bool{}
+	for _, dir := range []string{filepath.Join(stateDir, "agents"), filepath.Join(stateDir, "workspaces"), filepath.Join(stateDir, "repositories", "fixture")} {
+		projects[dir] = map[string]bool{"hasTrustDialogAccepted": true}
+		folder, _ := providers.TrustFolder(dir)
+		projects[folder] = map[string]bool{"hasTrustDialogAccepted": true}
+	}
+	record, _ := json.Marshal(map[string]any{"projects": projects})
+	return string(record)
 }
 
 // startUnready runs `asmai start` in a factory not ready to run agents: it

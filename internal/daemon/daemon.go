@@ -73,8 +73,11 @@ const (
 	// CommandConfigApply validates the configuration file the request
 	// carries and shows what it changes and which running agents pick that
 	// up; with Confirm it also applies it, which journals it.
-	CommandConfigApply    = "config.apply"
-	CommandJobOpen        = "job.open"
+	CommandConfigApply = "config.apply"
+	CommandJobOpen     = "job.open"
+	// CommandJobClean removes the scratch workspaces of a job with no
+	// repository that has ended, at the user's command.
+	CommandJobClean       = "job.clean"
 	CommandJobs           = "jobs"
 	CommandJob            = "job"
 	CommandBrief          = "brief"
@@ -205,6 +208,9 @@ type Request struct {
 	// and narrow its skill list to Skills.
 	Skill  string   `json:"skill,omitempty"`
 	Skills []string `json:"skills,omitempty"`
+	// EndsJob is the owning leader of a job with no repository accepting,
+	// with an accept, the job's outcome against its mandate, which ends the job.
+	EndsJob bool `json:"ends_job,omitempty"`
 	// Approved is the decision record of the user's own decision that
 	// starts the skill an assign names, a skill that starts only on request
 	// which the job's mandate does not call for.
@@ -296,6 +302,8 @@ type Response struct {
 	// Writable are the folders outside their workspaces that the shown
 	// repository's workers may write.
 	Writable []config.Folder `json:"writable,omitempty"`
+	// Removed are the paths a job clean removed.
+	Removed  []string        `json:"removed,omitempty"`
 	Jobs     []store.Job     `json:"jobs,omitempty"`
 	Job      *store.Job      `json:"job,omitempty"`
 	Brief    string          `json:"brief,omitempty"`
@@ -757,7 +765,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.repoCommand(conn, req)
 	case CommandConfigApply:
 		d.configApplyCommand(conn, req)
-	case CommandJobOpen, CommandJobs, CommandJob, CommandBrief:
+	case CommandJobOpen, CommandJobClean, CommandJobs, CommandJob, CommandBrief:
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)

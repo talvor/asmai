@@ -21,14 +21,16 @@ const JobPaused = "paused"
 // The mandates a job has. A tested-PR job is authorized to inspect, plan,
 // research, make scoped edits, run checks, commit, push and open and update
 // its pull request. A planning-only job is authorized only to produce its
-// planning outcome: it is never handed to Engineering (01 rule 17).
+// planning outcome, and a research-only job only its research outcome: neither
+// is handed to Engineering, and each goes only to its own role (01 rule 17).
 const (
 	MandateTestedPR     = "tested-pr"
 	MandatePlanningOnly = "planning-only"
+	MandateResearchOnly = "research-only"
 )
 
 // Mandates are the mandates a job may have.
-var Mandates = []string{MandateTestedPR, MandatePlanningOnly}
+var Mandates = []string{MandateTestedPR, MandatePlanningOnly, MandateResearchOnly}
 
 // Job holds the user's witnessed request beside Coordination's reading.
 type Job struct {
@@ -49,7 +51,7 @@ type Job struct {
 // can never stand in for the user's words.
 func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 	if (job.Witness <= 0 && !latest) || strings.TrimSpace(job.Reading) == "" || !slices.Contains(Mandates, job.Mandate) || len(job.Criteria) == 0 {
-		return Job{}, fmt.Errorf("job open needs a witnessed message, a reading, a mandate (%s) and acceptance criteria", strings.Join(Mandates, " or "))
+		return Job{}, fmt.Errorf("job open needs a witnessed message, a reading, a mandate (%s or %s) and acceptance criteria", strings.Join(Mandates[:len(Mandates)-1], ", "), Mandates[len(Mandates)-1])
 	}
 	for _, criterion := range job.Criteria {
 		if strings.TrimSpace(criterion) == "" {
@@ -84,20 +86,26 @@ func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 	if witnessed.Role != "coordination" || witnessed.Agent != "leader@coordination" {
 		return Job{}, fmt.Errorf("witnessed message %d was not submitted to Coordination's leader", job.Witness)
 	}
-	if job.Repository == "" {
+	// Only a research-only job may target no repository, and its assignments
+	// then work in scratch workspaces (02 rule 19, 05 rule 8). A job that
+	// delivers a tested pull request needs one, and so does a planning-only
+	// job, whose workers write notes into a repository's clone.
+	if job.Repository == "" && job.Mandate != MandateResearchOnly {
 		return Job{}, fmt.Errorf("a %s job needs a registered repository", job.Mandate)
 	}
-	if _, err := repository(tx, job.Repository); errors.Is(err, sql.ErrNoRows) {
-		return Job{}, fmt.Errorf("repository %q is not registered; ask the user to run `asmai repo add <path-or-url>`", job.Repository)
-	} else if err != nil {
-		return Job{}, err
+	if job.Repository != "" {
+		if _, err := repository(tx, job.Repository); errors.Is(err, sql.ErrNoRows) {
+			return Job{}, fmt.Errorf("repository %q is not registered; ask the user to run `asmai repo add <path-or-url>`", job.Repository)
+		} else if err != nil {
+			return Job{}, err
+		}
 	}
 	job.Words, job.Role, job.State, job.OpenedAt = witnessed.Text, "coordination", JobOpen, at.UTC()
 	criteria, err := json.Marshal(job.Criteria)
 	if err != nil {
 		return Job{}, err
 	}
-	result, err := tx.Exec(`INSERT INTO jobs (repository, state, role, witness, words, reading, mandate, criteria, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, job.Repository, job.State, job.Role, job.Witness, job.Words, job.Reading, job.Mandate, string(criteria), timestamp(at))
+	result, err := tx.Exec(`INSERT INTO jobs (repository, state, role, witness, words, reading, mandate, criteria, opened_at) VALUES (NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`, job.Repository, job.State, job.Role, job.Witness, job.Words, job.Reading, job.Mandate, string(criteria), timestamp(at))
 	if err != nil {
 		return Job{}, err
 	}

@@ -6,8 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/talvor/asmai/internal/repos"
@@ -30,7 +32,10 @@ func (d *daemon) decide(req Request) (resp Response, notify string, err error) {
 		return Response{}, "", err
 	}
 	if !ownsWorkers(ref.address) {
-		return Response{}, "", refuse("only %s, %s or %s may run asmai %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Quality), req.Command)
+		return Response{}, "", refuse("only %s, %s, %s or %s may run asmai %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Quality), req.Command)
+	}
+	if req.EndsJob && req.Command != CommandAccept {
+		return Response{}, "", refuse("--ends-job belongs to asmai accept: only an acceptance is the leader accepting the job's outcome")
 	}
 	if req.Assignment <= 0 || len(req.Reasons) == 0 {
 		return Response{}, "", refuse("asmai %s needs an assignment and its reasons", req.Command)
@@ -81,6 +86,12 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 		return Response{}, err
 	} else if len(pending) > 0 {
 		return Response{}, refuse("assignment %d waits for decision request %d (version %d), which is pending, so its result is not accepted yet; independent work goes on", a.ID, pending[0].Request, pending[0].Version)
+	}
+	if a.Scratch {
+		return d.acceptScratch(req, ref, a)
+	}
+	if req.EndsJob {
+		return Response{}, refuse("job %d has a repository, so it does not end on its leader's acceptance: it ends in its delivery", a.Job)
 	}
 	if a.ReadOnly {
 		return d.acceptValidation(req, ref, a)
@@ -176,6 +187,95 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 		return Response{}, err
 	}
 	return Response{Assignment: &a, Decision: &decision, JobBranch: &branch}, nil
+}
+
+// acceptScratch records the acceptance of the result of the assignment a, which
+// works in a scratch workspace of a job with no repository, by its owning
+// leader. Nothing moves, as there is no job branch: the assignment ends, its
+// worker is stopped and its temporary directory removed, and its scratch
+// workspace is kept with the results in it. With req.EndsJob the owning
+// leader accepts the job's outcome against its mandate: the job ends, and
+// Coordination's leader is told where the results are, with the dispatch the
+// response carries. assignMu is held.
+func (d *daemon) acceptScratch(req Request, ref sessionRef, a store.Assignment) (Response, error) {
+	j, err := d.store.Job(a.Job)
+	if err != nil {
+		return Response{}, err
+	}
+	body := ""
+	if req.EndsJob {
+		if body, err = d.scratchOutcomeBody(j, a, ref.address.String(), req.Reasons); err != nil {
+			return Response{}, err
+		}
+	}
+	d.mu.Lock()
+	if _, _, err := d.caller(req); err != nil {
+		d.mu.Unlock()
+		return Response{}, err
+	}
+	decision, dispatch, err := d.store.ScratchResultAccepted(store.Acceptance{Assignment: a.ID, Leader: ref.address.String(), Reasons: req.Reasons, EndsJob: req.EndsJob}, body, time.Now())
+	d.mu.Unlock()
+	if err != nil {
+		return Response{}, refuse("%v", err)
+	}
+	d.log.Info("result accepted in a scratch workspace", "assignment", a.ID, "job", a.Job, "workspace", a.Workspace.Path, "leader", ref.address.String(), "ends_job", req.EndsJob)
+	d.stopWorker(a)
+	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
+		d.log.Error("removing an accepted assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
+		return Response{}, err
+	}
+	a, err = d.store.Assignment(a.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	resp := Response{Assignment: &a, Decision: &decision}
+	if dispatch != nil {
+		resp.Dispatch = dispatch
+		j, err = d.store.Job(a.Job)
+		if err != nil {
+			return Response{}, err
+		}
+		resp.Job = &j
+		d.log.Info("job ended on its leader's acceptance; its scratch workspaces are kept", "job", j.Number, "leader", ref.address.String(), "dispatch", dispatch.ID)
+	}
+	return resp, nil
+}
+
+// scratchOutcomeBody is what Coordination's leader is told when the owning
+// leader accepts the outcome of the job j, which has no repository, with
+// the result of the assignment a, and the reasons it gave: where the results
+// are, in which scratch workspaces, and how the user removes them (06 rule 39).
+func (d *daemon) scratchOutcomeBody(j store.Job, a store.Assignment, leader string, reasons []string) (string, error) {
+	assignments, err := d.store.AssignmentsForJob(j.Number)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Job %d has ended: its owning leader, %s, accepted its outcome against its %s mandate (%s). ", j.Number, leader, j.Mandate, strings.Join(reasons, "; "))
+	fmt.Fprintf(&b, "It has no repository, so it has no pull request: the results are in the scratch workspaces of its assignments, which stay until the user removes them with `asmai job clean %d`, which is refused while the job is open.\n", j.Number)
+	for _, other := range assignments {
+		// The assignment a is accepted in the same step that tells
+		// Coordination, so it is still submitted here.
+		if other.ID != a.ID && other.State != store.AssignmentAccepted {
+			continue
+		}
+		result, err := d.store.LatestResult(other.ID)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "- assignment %d (%s), %s: the results are in %s\n", other.ID, other.Worker, other.Outcome, other.Workspace.Path)
+		for _, artifact := range result.Artifacts {
+			fmt.Fprintf(&b, "  artifact: %s\n", artifact)
+		}
+		for _, evidence := range result.Evidence {
+			fmt.Fprintf(&b, "  evidence: %s\n", evidence)
+		}
+		for _, gap := range result.Gaps {
+			fmt.Fprintf(&b, "  gap: %s\n", gap)
+		}
+	}
+	fmt.Fprintf(&b, "Tell the user, in a line tagged with job %d, where the results are, and that `asmai job clean %d` removes them.", j.Number, j.Number)
+	return b.String(), nil
 }
 
 // acceptValidation records the acceptance of the validation report of the
@@ -359,6 +459,10 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	if err != nil || a.State != store.AssignmentCancelling || a.Worker != ref.address.String() {
 		return
 	}
+	if a.Scratch {
+		d.cancelledScratch(a)
+		return
+	}
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
 	if a.ReadOnly {
@@ -385,6 +489,25 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	}
 	d.log.Info("assignment cancelled", "assignment", id, "job", a.Job, "worker", a.Worker, "commit", left.Commit, "pushed", left.Pushed)
 	d.stopWorker(a)
+}
+
+// cancelledScratch ends the cancelling assignment a, of a job with no
+// repository, whose worker has stopped. It has no branch to push, so nothing
+// is waited for: the assignment ends and the worker is stopped. Whatever the
+// worker left in the scratch workspace is kept with the job's results.
+func (d *daemon) cancelledScratch(a store.Assignment) {
+	d.mu.Lock()
+	_, err := d.store.AssignmentCancelled(a.ID, store.Cancellation{}, time.Now())
+	d.mu.Unlock()
+	if err != nil {
+		d.log.Error("ending a cancelled scratch assignment", "assignment", a.ID, "error", err.Error())
+		return
+	}
+	d.log.Info("scratch assignment cancelled", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "workspace", a.Workspace.Path)
+	d.stopWorker(a)
+	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
+		d.log.Error("removing a cancelled assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
+	}
 }
 
 // cancelledValidation ends the cancelling read-only assignment a, whose worker

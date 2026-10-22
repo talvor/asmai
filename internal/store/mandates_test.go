@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestAJobOpensWithTheTestedPRMandateOrThePlanningOnlyOneAndNoOther(t *testing.T) {
+func TestAJobOpensWithTheTestedPRPlanningOnlyOrResearchOnlyMandateAndNoOther(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 	if err := s.ConversationEntered("leader@coordination", "coordination", 1, "/dev/pts/3", at); err != nil {
@@ -23,7 +23,7 @@ func TestAJobOpensWithTheTestedPRMandateOrThePlanningOnlyOneAndNoOther(t *testin
 	if err := s.RepositoryAdded(Repository{Name: "fixture", Origin: "https://example.test/fixture", DefaultBranch: "main", Clone: "/fixture", AddedAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	for _, mandate := range []string{MandateTestedPR, MandatePlanningOnly} {
+	for _, mandate := range []string{MandateTestedPR, MandatePlanningOnly, MandateResearchOnly} {
 		j, err := s.JobOpened(Job{Repository: "fixture", Witness: witness, Reading: "plan", Mandate: mandate, Criteria: []string{"a plan"}}, false, at)
 		if err != nil || j.Mandate != mandate {
 			t.Errorf("a job with the %s mandate = %+v, %v", mandate, j, err)
@@ -32,9 +32,9 @@ func TestAJobOpensWithTheTestedPRMandateOrThePlanningOnlyOneAndNoOther(t *testin
 			t.Errorf("job %d is read back with mandate %q (%v), want %q", j.Number, again.Mandate, err, mandate)
 		}
 	}
-	for _, mandate := range []string{"", "research-only", "everything"} {
+	for _, mandate := range []string{"", "everything"} {
 		_, err := s.JobOpened(Job{Repository: "fixture", Witness: witness, Reading: "plan", Mandate: mandate, Criteria: []string{"a plan"}}, false, at)
-		if err == nil || !strings.Contains(err.Error(), MandateTestedPR) || !strings.Contains(err.Error(), MandatePlanningOnly) {
+		if err == nil || !strings.Contains(err.Error(), MandateTestedPR) || !strings.Contains(err.Error(), MandatePlanningOnly) || !strings.Contains(err.Error(), MandateResearchOnly) {
 			t.Errorf("a job with the %q mandate = %v, want it refused, naming the mandates a job may have", mandate, err)
 		}
 	}

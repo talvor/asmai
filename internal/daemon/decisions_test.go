@@ -68,8 +68,11 @@ func newTwoResultsOf(t *testing.T, role string) twoResults {
 		t.Fatal(err)
 	}
 	mandate := store.MandateTestedPR
-	if role == roles.Planning {
+	switch role {
+	case roles.Planning:
 		mandate = store.MandatePlanningOnly
+	case roles.Research:
+		mandate = store.MandateResearchOnly
 	}
 	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Add a greeting", Mandate: mandate, Criteria: []string{"done"}}, false, at)
 	if err != nil {

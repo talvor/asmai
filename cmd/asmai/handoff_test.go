@@ -418,7 +418,7 @@ func TestAPlanningOnlyJobIsHandedToPlanningWhoseLeaderStartsOnDemandAndNeverToEn
 		`{"screen":"> "}`,
 		`{"expect":"Please plan the greeting\r"}`,
 		hookStep("UserPromptSubmit", "", "Please plan the greeting"),
-		fakeRun(`asmai job open --message latest --repository fixture --reading 'Plan the greeting' --mandate research-only --criterion 'A map of the greeting'`, 1, "(?s)tested-pr or planning-only"),
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Plan the greeting' --mandate everything --criterion 'A map of the greeting'`, 1, "(?s)tested-pr, planning-only or research-only"),
 		fakeRun(`asmai job open --message latest --repository fixture --reading 'Plan the greeting' --mandate planning-only --criterion 'A map of the greeting'`, 0, "Opened job 1"),
 		fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'Build the greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'A map of the greeting'`, 1, "authorizes only its planning outcome, never code"),
 		fakeRun(`asmai handoff send --job 1 --to planning --outcome 'Plan the greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'A map of the greeting'`, 0, "dispatch 1"),

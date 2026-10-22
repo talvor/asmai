@@ -43,6 +43,9 @@ type Acceptance struct {
 	// FromTip is the job branch's tip that the daemon fast-forwarded it
 	// from: the acceptance is recorded only while the store still holds it.
 	FromTip string
+	// EndsJob is the owning leader's acceptance of the job's outcome, which
+	// ends a job with no repository.
+	EndsJob bool
 }
 
 // decided checks that leader owns the assignment and gave reasons, and
@@ -132,6 +135,12 @@ func (s *Store) ResultAccepted(in Acceptance, at time.Time) (Decision, error) {
 	}
 	if a.State != AssignmentSubmitted {
 		return Decision{}, fmt.Errorf("assignment %d is %s, so it has no result to accept", a.ID, a.State)
+	}
+	if a.Scratch {
+		return Decision{}, fmt.Errorf("assignment %d works in a scratch workspace, so its acceptance moves no job branch: it is a scratch acceptance", a.ID)
+	}
+	if in.EndsJob {
+		return Decision{}, fmt.Errorf("job %d has a repository, so it does not end on its leader's acceptance: it ends in its delivery", a.Job)
 	}
 	pending, err := blockingDecisions(tx, a.ID)
 	if err != nil {
@@ -257,8 +266,9 @@ func (s *Store) AssignmentCancelled(id int64, left Cancellation, at time.Time) (
 		if a.State != AssignmentCancelling {
 			return "", nil, fmt.Errorf("assignment %d is %s, not cancelling", a.ID, a.State)
 		}
-		// A read-only assignment has no branch to push.
-		if !left.Pushed && !a.ReadOnly {
+		// A read-only assignment has no branch to push, and nor does a
+		// scratch one.
+		if !left.Pushed && !a.ReadOnly && !a.Scratch {
 			return "", nil, fmt.Errorf("assignment %d cannot be cancelled before its workspace commit is pushed", a.ID)
 		}
 		if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelled, a.ID); err != nil {

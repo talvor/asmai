@@ -261,6 +261,11 @@ func (d *daemon) removeJobLocal(job int64) {
 	if err != nil || j.State != store.JobEnded {
 		return
 	}
+	// A job with no repository has no clone, view or branches to remove, and
+	// its scratch workspaces are kept until the user cleans them.
+	if j.Repository == "" {
+		return
+	}
 	repository, err := d.store.Repository(j.Repository)
 	if err != nil {
 		d.log.Error("reading the repository of a job that ended", "job", job, "error", err.Error())

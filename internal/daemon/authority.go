@@ -48,12 +48,12 @@ func (d *daemon) authorize(req Request) error {
 		if ownsWorkers(ref.address) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering or leader@planning, for writing work, or leader@quality, for validation, may run asmai assign")
+		return fmt.Errorf("only leader@engineering, leader@planning or leader@research, for writing work, or leader@quality, for validation, may run asmai assign")
 	case CommandAccept, CommandReject, CommandCancel:
 		if ownsWorkers(ref.address) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering, leader@planning or leader@quality may run asmai %s", req.Command)
+		return fmt.Errorf("only leader@engineering, leader@planning, leader@research or leader@quality may run asmai %s", req.Command)
 	case CommandPush:
 		if ref.address == roles.LeaderOf(roles.Engineering) {
 			return nil
@@ -128,6 +128,8 @@ func commandName(command string) string {
 		return "lavish"
 	case CommandJobOpen:
 		return "job open"
+	case CommandJobClean:
+		return "job clean"
 	case CommandJob:
 		return "job <number>"
 	case CommandInbox:
@@ -158,8 +160,8 @@ func commandName(command string) string {
 }
 
 // ownsWorkers reports whether address is a leader that gives workers
-// assignments, and accepts, rejects and cancels them: Engineering's and
-// Planning's for writing work, Quality's for validation.
+// assignments, and accepts, rejects and cancels them: Engineering's,
+// Planning's and Research's for writing work, Quality's for validation.
 func ownsWorkers(address roles.Address) bool {
-	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Quality)}, address)
+	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Quality)}, address)
 }

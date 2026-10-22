@@ -75,6 +75,8 @@ commands you type:
   asmai grant revoke <id>     revoke a grant: every later action it would cover is refused, and what it
                               already authorized is reported as it stands, never undone
   asmai job <number>          show a job and its witnessed request
+  asmai job clean <number>    remove the scratch workspaces of a job with no repository, and the results in them;
+                              they are kept until you run this, and it is refused while the job is open
   asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai dashboard             show the factory live in this terminal: agents, jobs and the log in three
@@ -127,18 +129,20 @@ commands you type:
   asmai notices               print AsmAI's license and the third-party notices of what is compiled into it
 
 commands agents run:
-  asmai job open --message latest|<id> --repository <name> --reading <text> --mandate tested-pr|planning-only --criterion <text>
+  asmai job open --message latest|<id> [--repository <name>] --reading <text> --mandate tested-pr|planning-only|research-only --criterion <text>
                               Coordination's leader opens a job; repeat --criterion for each acceptance criterion.
-                              A planning-only job is authorized only to produce its planning outcome, and is never
-                              handed to Engineering
+                              A planning-only or research-only job is authorized only to produce its outcome, and
+                              is never handed to Engineering; a research-only job may target no repository, and
+                              its assignments then work in scratch workspaces
   asmai brief <number>        read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
   asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>]
                               repeat --record for each of the job's decision records that goes with the handoff
   asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
   asmai assign --job <number> --outcome <text> --criterion <text> [--skill <name>] [--narrow <name>] [--record <id>] [--approved <id>]
-                              Engineering's or Planning's leader gives a writing assignment to a worker of its
-                              role, in a workspace of AsmAI's clone on its own branch; repeat --criterion for
+                              Engineering's, Planning's or Research's leader gives a writing assignment to a worker
+                              of its role, in a workspace of AsmAI's clone on its own branch, or for a job with no
+                              repository in an empty scratch workspace; repeat --criterion for
                               each acceptance criterion. A skill that starts only on request starts only when
                               the job's mandate calls for it, or with --approved, the decision record of the
                               user's own answer to a proposal of it, which goes to the worker too
@@ -157,11 +161,13 @@ commands agents run:
                               a Quality worker submits its validation report
   asmai blocked --reason <text> [--needs <text>]
                               a worker reports that it cannot go on
-  asmai accept --assignment <id> --reason <text>
+  asmai accept --assignment <id> --reason <text> [--ends-job]
                               Engineering's leader accepts the result of an assignment it owns, and the
                               daemon fast-forwards the job branch to it; Quality's leader accepts a validation
                               report, and the daemon delivers it to Engineering's leader. Repeat --reason
-                              for each reason
+                              for each reason. For a job with no repository nothing moves, and --ends-job is
+                              the owning leader accepting the job's outcome against its mandate: the job ends
+                              and Coordination is told where the results are
   asmai reject --assignment <id> --reason <text>
                               a leader returns the result to the same worker, in a new dispatch
   asmai cancel --assignment <id> --reason <text>
@@ -267,6 +273,7 @@ var positional = map[string][]string{
 	"repo remove":      {"name the repository, as `asmai repo list` shows it"},
 	"role set":         {"name the role, one of " + strings.Join(roles.All, ", ")},
 	"job show":         {"name the job number, as `asmai jobs` shows it"},
+	"job clean":        {"name the job number, as `asmai jobs` shows it"},
 	"brief":            {"name the job number, as `asmai jobs` shows it"},
 	"push":             {"name the job number, as `asmai jobs` shows it"},
 	"grant revoke":     {"name the grant, as `asmai grants` lists them"},
@@ -304,9 +311,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		name = "init"
 	}
 	if name == "job" {
-		if len(args) > 0 && args[0] == "open" {
+		switch {
+		case len(args) > 0 && args[0] == "open":
 			name, args = "job open", args[1:]
-		} else {
+		case len(args) > 0 && args[0] == "clean":
+			name, args = "job clean", args[1:]
+		default:
 			name = "job show"
 		}
 	}
@@ -341,6 +351,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var assignNarrow listFlags
 	var assignOutcome, blockedReason, blockedNeeds string
 	var decidedAssignment int64
+	var endsJob bool
 	var reasons listFlags
 	var repoOptions repoSettings
 	var role roleChoices
@@ -378,7 +389,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&message, "message", "", "latest or the witnessed message's journal ID")
 		flags.StringVar(&repository, "repository", "", "registered repository name")
 		flags.StringVar(&reading, "reading", "", "Coordination's reading of the user's words")
-		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate: "+strings.Join(store.Mandates, " or "))
+		flags.StringVar(&mandate, "mandate", store.MandateTestedPR, "job mandate: "+strings.Join(store.Mandates[:len(store.Mandates)-1], ", ")+" or "+store.Mandates[len(store.Mandates)-1])
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
 	case "handoff send":
 		flags.Int64Var(&handoffJob, "job", 0, "job number")
@@ -425,6 +436,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "accept", "reject", "cancel":
 		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
+		flags.BoolVar(&endsJob, "ends-job", false, "with accept, the owning leader accepts the outcome of a job with no repository against its mandate, which ends the job")
 	case "decision record":
 		flags.Int64Var(&decision.job, "job", 0, "job number")
 		flags.StringVar(&decision.choice, "choice", "", "what the decision chose")
@@ -481,7 +493,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&request.records, "record", "the ID of the user's decision record of the job that satisfies the step the request asks for; may be repeated")
 		flags.Var(&request.grants, "grant", "the ID of a grant of a decision, whose scope covers the job, that satisfies the step the request asks for; may be repeated")
 		flags.Int64Var(&request.userAnswer, "user-answer", 0, "instead of --answer, your request that carried the worker's question to the user, which the user answered in Lavish: its words are the worker's answer, as the user gave them")
-	case "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
+	case "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "job clean", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -515,7 +527,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
-		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke"}, name) {
+		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -576,6 +588,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return jobs(o, paths)
 	case "job show":
 		return jobShow(o, paths, arg)
+	case "job clean":
+		return jobClean(o, paths, arg)
 	case "job open":
 		return jobOpen(o, paths, message, repository, reading, mandate, criteria)
 	case "brief":
@@ -595,7 +609,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "blocked":
 		return blocked(o, paths, blockedReason, blockedNeeds)
 	case "accept", "reject", "cancel":
-		return decide(o, paths, name, decidedAssignment, reasons)
+		return decide(o, paths, name, decidedAssignment, reasons, endsJob)
 	case "push":
 		return push(o, paths, arg)
 	case "decision record":

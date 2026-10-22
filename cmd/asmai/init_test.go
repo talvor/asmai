@@ -288,7 +288,7 @@ func TestSetupOnAFreshAccountMakesTheFactoryReadyToStart(t *testing.T) {
 
 	out := s.printed()
 	for prefix, want := range map[string]string{
-		"config:":            "config: done. Wrote " + configFile + ", staffing Coordination, Planning, Engineering and Quality",
+		"config:":            "config: done. Wrote " + configFile + ", staffing Coordination, Planning, Research, Engineering and Quality",
 		"folders:":           "folders: done.",
 		"Claude Code:":       "Claude Code: done. Installed the pinned Claude Code 2.1.292",
 		"trust agents/:":     "trust agents/: done. Claude Code trusts " + agents,

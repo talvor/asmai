@@ -49,6 +49,7 @@ const detachKeyByte = "\x1d"
 var (
 	coordinationLeader = roles.LeaderOf(roles.Coordination).String()
 	planningLeader     = roles.LeaderOf(roles.Planning).String()
+	researchLeader     = roles.LeaderOf(roles.Research).String()
 	qualityLeader      = roles.LeaderOf(roles.Quality).String()
 )
 
@@ -752,8 +753,8 @@ func (h *Harness) allowOnce(ctx context.Context, f *Factory) error {
 // show each leader as the journal says it is. It then requires, step by step:
 //
 //   - at rest, Coordination's leader Idle, the leaders of Planning,
-//     Engineering and Quality, which have not run, Stopped, and nothing
-//     waiting;
+//     Research, Engineering and Quality, which have not run, Stopped, and
+//     nothing waiting;
 //   - the user holding the leader's input (a started message) to put the
 //     leader in Waiting on you and in the banner, and leaving to clear both;
 //   - a native permission prompt, raised by the real Claude Code when it is
@@ -802,14 +803,14 @@ func (h *Harness) c53(ctx context.Context, f *Factory, r *Result) error {
 	w := newFactoryWatch(f, d)
 
 	// At rest.
-	if _, err := w.until(ctx, "the leaders at rest: Coordination's Idle, Planning's, Engineering's and Quality's Stopped, nothing waiting", func(v dashboardView, truth map[string]string) (bool, error) {
+	if _, err := w.until(ctx, "the leaders at rest: Coordination's Idle, Planning's, Research's, Engineering's and Quality's Stopped, nothing waiting", func(v dashboardView, truth map[string]string) (bool, error) {
 		return v.banner == "" &&
-			v.agents[coordinationLeader].Status == "Idle" && v.agents[planningLeader].Status == "Stopped" && v.agents[engineeringLeader].Status == "Stopped" && v.agents[qualityLeader].Status == "Stopped" &&
+			v.agents[coordinationLeader].Status == "Idle" && v.agents[planningLeader].Status == "Stopped" && v.agents[researchLeader].Status == "Stopped" && v.agents[engineeringLeader].Status == "Stopped" && v.agents[qualityLeader].Status == "Stopped" &&
 			truth[coordinationLeader] == "Idle", nil
 	}); err != nil {
 		return err
 	}
-	r.observe("at rest the dashboard showed %s Idle, and %s, %s and %s, which have not run, Stopped, with nothing in the Waiting on you banner", coordinationLeader, planningLeader, engineeringLeader, qualityLeader)
+	r.observe("at rest the dashboard showed %s Idle, and %s, %s, %s and %s, which have not run, Stopped, with nothing in the Waiting on you banner", coordinationLeader, planningLeader, researchLeader, engineeringLeader, qualityLeader)
 
 	// The user holds the leader's input.
 	leave, err := f.HoldInput()
@@ -952,7 +953,7 @@ func (h *Harness) c53(ctx context.Context, f *Factory, r *Result) error {
 		return err
 	}
 
-	leaders := []string{coordinationLeader, planningLeader, engineeringLeader, qualityLeader}
+	leaders := []string{coordinationLeader, planningLeader, researchLeader, engineeringLeader, qualityLeader}
 	if !slices.ContainsFunc(leaders, func(agent string) bool { return w.seen[agent]["Working"] }) {
 		return errors.New("inconclusive: no leader was seen Working while the journal said it worked on a dispatch, so the harness cannot show how the dashboard shows a Working agent")
 	}
@@ -973,6 +974,7 @@ func showsRunningLeaders(v dashboardView) bool {
 		len(v.order) == len(roles.Staffed) &&
 		slices.Contains(v.order, coordinationLeader) &&
 		slices.Contains(v.order, planningLeader) &&
+		slices.Contains(v.order, researchLeader) &&
 		slices.Contains(v.order, engineeringLeader) &&
 		slices.Contains(v.order, qualityLeader) &&
 		v.agents[coordinationLeader].Status != "Stopped"

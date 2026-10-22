@@ -99,7 +99,7 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 	root := t.TempDir()
 	configFile := filepath.Join(root, "config.toml")
 	var config strings.Builder
-	for _, role := range []string{roles.Coordination, roles.Planning, roles.Engineering, roles.Quality} {
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
 		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"opus\"\n")
 	}
 	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {

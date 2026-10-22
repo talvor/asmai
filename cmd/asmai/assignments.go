@@ -94,6 +94,11 @@ func assign(o *output, paths statedir.Paths, job int64, outcome string, criteria
 	if len(a.Records) > 0 {
 		fmt.Fprintf(o.stdout, "decision records passed on: %s\n", strings.Join(idList(a.Records), ", "))
 	}
+	if a.Scratch {
+		fmt.Fprintf(o.stdout, "scratch workspace, empty, with no repository, no branch and no commit\nworkspace: %s (slot %d)\n", a.Workspace.Path, a.Workspace.Slot)
+		fmt.Fprintf(o.stdout, "next: %s is started in its workspace and nudged; its result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
+		return 0
+	}
 	if a.ReadOnly {
 		fmt.Fprintf(o.stdout, "read-only workspace fixed at %s of %s, with no branch\nworkspace: %s (slot %d)\n", a.Commit, a.JobBranch, a.Workspace.Path, a.Workspace.Slot)
 		fmt.Fprintf(o.stdout, "next: %s is started in its workspace and nudged; its validation report comes back to you through `asmai inbox`\n", a.Worker)
@@ -228,19 +233,25 @@ func result(o *output, paths statedir.Paths, f resultFlags) int {
 		}
 		return report(o, paths, daemon.CommandResult, input)
 	}
-	if strings.TrimSpace(f.prSection) == "" {
-		return o.fail(errors.New("result needs --pr-section: your part of the pull request, what changed with before-and-after evidence; a Quality worker's validation report gives --finding instead"))
-	}
+	// The daemon refuses a result with no PR section, except one of a worker
+	// in a scratch workspace, which has no pull request: it alone knows which.
+	// The tests and checks of a result with none are the daemon's to ask for
+	// too, and a scratch workspace has no tests or checks to name.
 	input.Artifacts, input.PRSection = f.artifacts, f.prSection
-	if input.Tests, err = explicit("test", f.tests); err != nil {
-		return o.fail(err)
+	noPR := strings.TrimSpace(f.prSection) == ""
+	if len(f.tests) > 0 || !noPR {
+		if input.Tests, err = explicit("test", f.tests); err != nil {
+			return o.fail(err)
+		}
 	}
-	checks, err := explicit("check", f.checks)
-	if err != nil {
-		return o.fail(err)
-	}
-	if input.Checks, err = parseChecks(checks); err != nil {
-		return o.fail(err)
+	if len(f.checks) > 0 || !noPR {
+		checks, err := explicit("check", f.checks)
+		if err != nil {
+			return o.fail(err)
+		}
+		if input.Checks, err = parseChecks(checks); err != nil {
+			return o.fail(err)
+		}
 	}
 	if input.Gaps, err = explicit("gap", f.gaps); err != nil {
 		return o.fail(err)
@@ -264,6 +275,10 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 		return o.printData(resp)
 	}
 	r := resp.Report
+	if r.Commit == "" {
+		fmt.Fprintf(o.stdout, "%s recorded for assignment %d in its scratch workspace; sent to %s as dispatch %d\n", r.Kind, r.Assignment, resp.Dispatch.Agent, resp.Dispatch.ID)
+		return 0
+	}
 	if r.Validation != nil {
 		fmt.Fprintf(o.stdout, "validation report recorded for assignment %d at commit %s; sent to %s as dispatch %d\n", r.Assignment, r.Commit, resp.Dispatch.Agent, resp.Dispatch.ID)
 		return 0
@@ -280,7 +295,7 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 
 // decide makes the owning leader's decision on an assignment: to accept or
 // reject its result, or to cancel it.
-func decide(o *output, paths statedir.Paths, command string, assignment int64, reasons []string) int {
+func decide(o *output, paths statedir.Paths, command string, assignment int64, reasons []string, endsJob bool) int {
 	if assignment <= 0 {
 		return o.fail(fmt.Errorf("%s needs --assignment", command))
 	}
@@ -292,7 +307,10 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 			return o.fail(fmt.Errorf("%s --reason cannot be blank", command))
 		}
 	}
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: command, Assignment: assignment, Reasons: reasons})
+	if endsJob && command != daemon.CommandAccept {
+		return o.fail(fmt.Errorf("%s takes no --ends-job: only an acceptance is the leader accepting the job's outcome", command))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: command, Assignment: assignment, Reasons: reasons, EndsJob: endsJob})
 	if err != nil {
 		return o.fail(err)
 	}
@@ -308,6 +326,14 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 			fmt.Fprintf(o.stdout, "next: the read-only workspace is removed and %s stopped\n", a.Worker)
 			return 0
 		}
+		if a.Scratch {
+			fmt.Fprintf(o.stdout, "assignment %d accepted by %s; the assignment has ended, and nothing else moved: its job has no repository\n", a.ID, d.Leader)
+			fmt.Fprintf(o.stdout, "next: %s is stopped; the results stay in its scratch workspace %s\n", a.Worker, a.Workspace.Path)
+			if resp.Dispatch != nil {
+				fmt.Fprintf(o.stdout, "job %d has ended on your acceptance of its outcome: %s is told where the results are, in dispatch %d, and the scratch workspaces stay until the user runs `asmai job clean %d`\n", a.Job, resp.Dispatch.Agent, resp.Dispatch.ID, a.Job)
+			}
+			return 0
+		}
 		b := resp.JobBranch
 		fmt.Fprintf(o.stdout, "assignment %d accepted by %s at commit %s; the assignment has ended\n", a.ID, d.Leader, d.Commit)
 		fmt.Fprintf(o.stdout, "job branch %s fast-forwarded to %s\nread-only view of the job refreshed: %s\n", b.Name, b.Tip, b.View)
@@ -316,6 +342,11 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 		fmt.Fprintf(o.stdout, "assignment %d: result rejected by %s; it is active again with %s, in dispatch %d\n", a.ID, d.Leader, a.Worker, resp.Dispatch.ID)
 		fmt.Fprintf(o.stdout, "next: %s is nudged, and its next result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
 	default:
+		if a.Scratch {
+			fmt.Fprintf(o.stdout, "assignment %d: cancellation requested by %s; %s is told to stop, in dispatch %d\n", a.ID, d.Leader, a.Worker, resp.Dispatch.ID)
+			fmt.Fprintln(o.stdout, "next: the assignment is cancelled once the worker has stopped, and what it left stays in its scratch workspace")
+			return 0
+		}
 		fmt.Fprintf(o.stdout, "assignment %d: cancellation requested by %s; %s is told to push %s and stop, in dispatch %d\n", a.ID, d.Leader, a.Worker, a.Workspace.Branch, resp.Dispatch.ID)
 		fmt.Fprintln(o.stdout, "next: the assignment is cancelled once the worker has stopped")
 	}
@@ -363,6 +394,10 @@ func printAssignment(w io.Writer, a store.Assignment) {
 		}
 		return
 	}
+	if a.Scratch {
+		fmt.Fprintf(w, "Scratch workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nIt is empty: the job has no repository, so it has no clone, no branch and no commit. Write your findings in it.\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp)
+		return
+	}
 	fmt.Fprintf(w, "Workspace: %s (slot %d; ASMAI_SLOT and TMPDIR %s are set for you)\nAssignment branch: %s, made from the job branch %s at %s\n", a.Workspace.Path, a.Workspace.Slot, a.Workspace.Tmp, a.Workspace.Branch, a.JobBranch, a.Workspace.Base)
 }
 
@@ -380,7 +415,11 @@ func reliedList(r store.Report) []string {
 
 // printReport writes a worker's result or blocked report.
 func printReport(w io.Writer, r store.Report) {
-	fmt.Fprintf(w, "%s %d | assignment %d | %s | commit %s\n", r.Kind, r.ID, r.Assignment, r.Agent, r.Commit)
+	if r.Commit == "" {
+		fmt.Fprintf(w, "%s %d | assignment %d | %s | in a scratch workspace, no commit\n", r.Kind, r.ID, r.Assignment, r.Agent)
+	} else {
+		fmt.Fprintf(w, "%s %d | assignment %d | %s | commit %s\n", r.Kind, r.ID, r.Assignment, r.Agent, r.Commit)
+	}
 	if r.Kind == store.ReportBlocked {
 		fmt.Fprintf(w, "Reason: %s\n", r.Reason)
 		if r.Needs != "" {

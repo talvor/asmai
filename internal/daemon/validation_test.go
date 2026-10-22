@@ -195,7 +195,7 @@ func TestAValidationIsAssignedReadOnlyAtTheExactHeadInACleanWorkspaceWithNoBranc
 	}{
 		"a commit that is not the tip": {"quality", Request{Job: 1, ReadOnly: true, Commit: v.commits[1]}, "exact head"},
 		"no commit":                    {"quality", Request{Job: 1, ReadOnly: true}, "give --commit"},
-		"a writing assignment":         {"quality", Request{Job: 1}, "only leader@engineering or leader@planning may assign writing work"},
+		"a writing assignment":         {"quality", Request{Job: 1}, "only leader@engineering, leader@planning or leader@research may assign writing work"},
 		"a validation by Engineering":  {"credential", Request{Job: 1, ReadOnly: true, Commit: v.tip}, "only leader@quality may assign read-only validation"},
 		"a commit for writing work":    {"credential", Request{Job: 1, Commit: v.tip}, "takes no --commit"},
 	} {

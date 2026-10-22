@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -37,8 +39,13 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 			// Making the branch may fetch from origin, which takes longer
 			// than a request is usually given.
 			conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
-			d.makeJobBranch(j)
+			// A job with no repository has no job branch to make.
+			if j.Repository != "" {
+				d.makeJobBranch(j)
+			}
 		}
+	case CommandJobClean:
+		resp.Removed, err = d.cleanScratch(req.Job)
 	case CommandJobs:
 		resp.Jobs, err = d.store.Jobs()
 	case CommandJob, CommandBrief:
@@ -127,6 +134,45 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 	reply(conn, resp)
 }
 
+// cleanScratch removes the scratch workspaces of job, which has no repository
+// and has ended, at the user's command, and journals it. A job's scratch
+// workspaces are kept after it ends until then, and are refused while it is
+// open (05 rule 44). It returns the paths it removed, none when they are
+// already gone.
+func (d *daemon) cleanScratch(job int64) ([]string, error) {
+	d.assignMu.Lock()
+	defer d.assignMu.Unlock()
+	j, err := d.store.Job(job)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, refuse("job %d does not exist; `asmai jobs` lists the jobs", job)
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case j.Repository != "":
+		return nil, refuse("job %d targets repository %s, whose workspaces the daemon removes itself when the job ends: only a job with no repository has scratch workspaces to clean", job, j.Repository)
+	case j.State != store.JobEnded:
+		return nil, refuse("job %d is still open, so its scratch workspaces are kept: `asmai job clean %d` removes them once the job has ended", job, job)
+	}
+	if cleaned, err := d.store.CleanedScratch(job); err != nil || cleaned {
+		return nil, err
+	}
+	dir := filepath.Join(d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", job))
+	var removed []string
+	if exists(dir) {
+		if err := os.RemoveAll(dir); err != nil {
+			return nil, fmt.Errorf("removing %s: %w", dir, err)
+		}
+		removed = append(removed, dir)
+	}
+	if err := d.store.ScratchCleaned(job, removed, time.Now()); err != nil {
+		return nil, err
+	}
+	d.log.Info("job's scratch workspaces removed at the user's command", "job", job, "removed", len(removed))
+	return removed, nil
+}
+
 // makeJobBranch makes a repository job's branch and the leaders' view of it
 // as the job opens, so that the job's brief points to the code from the
 // start. If it cannot, the job is open all the same, and its first
@@ -148,7 +194,11 @@ func (d *daemon) makeJobBranch(j store.Job) {
 
 func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, grants []store.Grant) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, j.Repository, j.Witness, j.Words, j.Reading, j.Mandate)
+	repositoryName := j.Repository
+	if repositoryName == "" {
+		repositoryName = "none: its assignments work in scratch workspaces, which stay after the job ends until the user runs `asmai job clean " + strconv.FormatInt(j.Number, 10) + "`"
+	}
+	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, repositoryName, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
 		fmt.Fprintf(&b, "- %s\n", criterion)
 	}
@@ -182,6 +232,10 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	for _, a := range assignments {
 		if a.ReadOnly {
 			fmt.Fprintf(&b, "- %d %s (owner %s) %s, read-only at %s: %s%s\n", a.ID, a.Worker, a.Owner, a.State, a.Commit, a.Outcome, passedOn(a.Records))
+			continue
+		}
+		if a.Scratch {
+			fmt.Fprintf(&b, "- %d %s (owner %s) %s in scratch workspace %s: %s%s\n", a.ID, a.Worker, a.Owner, a.State, a.Workspace.Path, a.Outcome, passedOn(a.Records))
 			continue
 		}
 		fmt.Fprintf(&b, "- %d %s (owner %s) %s on branch %s: %s%s\n", a.ID, a.Worker, a.Owner, a.State, a.Workspace.Branch, a.Outcome, passedOn(a.Records))

@@ -31,6 +31,12 @@ leader_model = "opus"
 worker_provider = "claude"
 worker_model = "opus"
 
+[roles.research]
+leader_provider = "claude"
+leader_model = "opus"
+worker_provider = "claude"
+worker_model = "opus"
+
 [roles.engineering]
 leader_provider = "claude"
 leader_model = "opus"
@@ -165,7 +171,7 @@ func TestAddedRoleSkillsAreShownAsPendingAndJournaled(t *testing.T) {
 	if _, err := applyConfig(t, p.Socket, appliedStaffing, true); err != nil {
 		t.Fatal(err)
 	}
-	changed := appliedStaffing + fmt.Sprintf("\n[roles.research]\nleader_added_skills = [%q]\n", t.TempDir())
+	changed := strings.Replace(appliedStaffing, "[roles.research]\n", fmt.Sprintf("[roles.research]\nleader_added_skills = [%q]\n", t.TempDir()), 1)
 	if err := os.WriteFile(configFile, []byte(changed), 0o600); err != nil {
 		t.Fatal(err)
 	}

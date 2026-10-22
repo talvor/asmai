@@ -462,6 +462,9 @@ const (
 	KindJobDelivered    = "job.delivered"
 	KindJobEnded        = "job.ended"
 	KindJobLocalRemoved = "job.local.removed"
+	// KindScratchCleaned records the daemon removing the scratch workspaces
+	// of a job with no repository that ended, on the user's command.
+	KindScratchCleaned = "job.scratch.cleaned"
 )
 
 // The states an agent can be in.

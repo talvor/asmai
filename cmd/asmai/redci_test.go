@@ -191,7 +191,7 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 			hookStep("UserPromptSubmit", "", "Please add a greeting"),
 			fakeRun(`asmai job open --message latest --repository fixture --reading 'Add a greeting' --criterion 'Greeting is printed'`, 0, "Opened job 1"),
 			fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'Add a greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'Greeting is printed'`, 0, "dispatch 1"),
-			fakeRun(`asmai decision record --job 1 --choice rerun-failed --rationale x --evidence y`, 1, "only a delivery owner, leader@engineering for a code job and leader@planning or leader@research for a notes job, judging a red head's checks, may record --choice rerun-failed"),
+			fakeRun(`asmai decision record --job 1 --choice rerun-failed --rationale x --evidence y`, 1, "has no current dispatch to tag the decision with"),
 			hookStep("Stop", "", ""),
 		},
 		turn(2, "reply", fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering")),

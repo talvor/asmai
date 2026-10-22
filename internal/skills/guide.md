@@ -77,6 +77,13 @@ A worker never opens a pull request. When your assignment changes code, your res
 
 If you took the job branch's tip in or resolved conflicts, write a section for those changes too. The Engineering leader composes the pull request's body from the workers' sections.
 
+## Repository setup
+
+A repository the user registers with no `docs/agents/issue-tracker.md` is not set up for the skills, and that file alone decides. Its setup is a job of its own, with the setup mandate, which the daemon opens as the repository is registered. Coordination's leader runs it with one of its own workers, which runs `setup-matt-pocock-skills`: the worker's questions reach the user in Lavish, as decision requests carried by Coordination's leader, and the files it writes (`docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, `docs/agents/domain.md` and the `## Agent skills` block of the repository's `CLAUDE.md` or `AGENTS.md`) go on the job's branch and pull request, which Coordination's leader delivers like a notes-only job.
+
+- The user's answers are recorded for the repository the moment they send them. A job that starts before the setup pull request merges is given them as repository instructions, and `asmai brief <job>` lists them for any job in the repository. Where they cover a skill's human step, they are the user's own recorded decisions.
+- The setup also asks whether the repository has CI. A repository with no CI is declared in the configuration alone (`no_ci = true`), which only the user changes: Coordination gives them the change to make, and no agent edits the configuration.
+
 ## Notes and prototypes
 
 A job whose outcome is notes is delivered like code, by the leader whose notes they are, Planning's or Research's: its job branch is pushed and opened as a draft pull request, and the daemon marks it ready when CI is green on its head, or straight away in a repository declared as having no CI. Its body is short and says it is notes only: the leader writes it without the pr skill, and Quality validates nothing unless the mandate asks.

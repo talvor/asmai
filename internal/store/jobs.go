@@ -29,15 +29,18 @@ const (
 	MandateResearchOnly = "research-only"
 )
 
-// Mandates are the mandates a job may have.
+// Mandates are the mandates Coordination opens a job with. The setup mandate
+// is not among them: only the daemon opens that job, as a repository is
+// registered (MandateSetup).
 var Mandates = []string{MandateTestedPR, MandatePlanningOnly, MandateResearchOnly}
 
 // Notes reports whether the job is a notes job: a job in a repository whose
-// mandate is planning-only or research-only, so that its outcome is notes and
-// its delivery is its own leader's, Planning's or Research's, not
-// Engineering's (06 rule 16).
+// mandate is planning-only, research-only or setup, so that its outcome is
+// files that are no code change of the repository's and its delivery is its
+// own leader's, Planning's, Research's or Coordination's, not Engineering's
+// (06 rule 16, 08 rule 29).
 func (j Job) Notes() bool {
-	return j.Repository != "" && (j.Mandate == MandatePlanningOnly || j.Mandate == MandateResearchOnly)
+	return j.Repository != "" && (j.Mandate == MandatePlanningOnly || j.Mandate == MandateResearchOnly || j.Mandate == MandateSetup)
 }
 
 // Job holds the user's witnessed request beside Coordination's reading.

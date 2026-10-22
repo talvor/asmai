@@ -409,7 +409,7 @@ func fixtureOrigin(t *testing.T) string {
 	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
 	work := t.TempDir()
 	gitIn(t, work, "clone", "--quiet", origin, "fixture")
-	gitIn(t, filepath.Join(work, "fixture"), "commit", "--allow-empty", "-m", "initial")
+	commitSetUp(t, filepath.Join(work, "fixture"), "initial")
 	gitIn(t, filepath.Join(work, "fixture"), "push", "--quiet", "origin", "HEAD:main")
 	return origin
 }

@@ -395,6 +395,17 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 			return DecisionRequest{}, nil, fmt.Errorf("assignment %d is %s, so no work of it waits", id, assignmentState)
 		}
 	}
+	// Every question a repository's setup puts to the user is answered in
+	// Lavish, where the answers are collected and recorded for the
+	// repository (08 rule 29).
+	surface := AnswerSurface(in.Kind, in.Questions)
+	if in.Recipient == ToUser {
+		if j, err := job(tx, in.Job); err != nil {
+			return DecisionRequest{}, nil, err
+		} else if j.Mandate == MandateSetup {
+			surface = SurfaceLavish
+		}
+	}
 	questions, err := json.Marshal(in.Questions)
 	if err != nil {
 		return DecisionRequest{}, nil, err
@@ -404,7 +415,7 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		return DecisionRequest{}, nil, err
 	}
 	result, err := tx.Exec(`INSERT INTO decision_requests (request, version, job, requester, recipient, assignment, carries, carries_version, kind, skill, step, surface, content, questions, blocks, state, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Carries, carriesVersion, in.Kind, in.Skill, in.Step, AnswerSurface(in.Kind, in.Questions), in.Content, string(questions), string(blocks), RequestPending, timestamp(at))
+		in.Request, version, in.Job, in.Requester, in.Recipient, in.Assignment, in.Carries, carriesVersion, in.Kind, in.Skill, in.Step, surface, in.Content, string(questions), string(blocks), RequestPending, timestamp(at))
 	if err != nil {
 		return DecisionRequest{}, nil, err
 	}

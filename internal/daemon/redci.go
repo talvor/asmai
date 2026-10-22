@@ -163,7 +163,7 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 func (d *daemon) recordRerun(req Request, ref sessionRef, record store.DecisionRecord) (store.DecisionRecord, store.Rerun, error) {
 	dispatch := record.Dispatch
 	if !isDeliveryOwner(ref.address) {
-		return store.DecisionRecord{}, store.Rerun{}, refuse("only a delivery owner, %s for a code job and %s or %s for a notes job, judging a red head's checks, may record --choice %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), store.ChoiceRerunFailed)
+		return store.DecisionRecord{}, store.Rerun{}, refuse("only a delivery owner, %s for a code job, %s or %s for a notes job and %s for a repository's setup, judging a red head's checks, may record --choice %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Coordination), store.ChoiceRerunFailed)
 	}
 	if dispatch == 0 {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("%s has no current dispatch to tag the decision with; record it while working on a dispatch you fetched with `asmai inbox`", ref.address)

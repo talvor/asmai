@@ -53,12 +53,19 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"quality", CommandAccept, ""},
 		{"quality", CommandReject, ""},
 		{"quality", CommandCancel, ""},
-		{"current", CommandAccept, "only leader@engineering, leader@planning, leader@research or leader@quality"},
-		{"worker", CommandCancel, "only leader@engineering, leader@planning, leader@research or leader@quality"},
+		// Coordination's leader owns the workers that set a repository up, and
+		// delivers its setup; the job it does so for is checked where it is
+		// assigned.
+		{"current", CommandAccept, ""},
+		{"current", CommandReject, ""},
+		{"current", CommandCancel, ""},
+		{"current", CommandAssign, ""},
+		{"current", CommandPush, ""},
+		{"current", CommandEffect, ""},
+		{"worker", CommandCancel, "only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality"},
 		{"quality", CommandResult, "only a worker"},
 		{"quality", CommandHandoffSend, ""},
-		{"current", CommandAssign, "only leader@engineering, leader@planning or leader@research"},
-		{"worker", CommandAssign, "only leader@engineering, leader@planning or leader@research"},
+		{"worker", CommandAssign, "only leader@engineering, leader@planning, leader@research or leader@coordination"},
 		// The delivery owners push and record their pull requests: Engineering's
 		// leader for a code job, and Planning's or Research's for a notes job.
 		{"planning", CommandPush, ""},
@@ -71,7 +78,7 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"planning", CommandDecisionPresent, "only leader@coordination may run asmai decision present"},
 		{"worker", CommandEffect, ""},
 		{"engineering", CommandEffect, ""},
-		{"current", CommandEffect, "only a worker, or the delivery owner"},
+		{"quality", CommandEffect, "only a worker, or the delivery owner"},
 		{"worker", CommandResult, ""},
 		{"worker", CommandBlocked, ""},
 		{"engineering", CommandResult, "only a worker"},
@@ -83,7 +90,6 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"", CommandBlocked, "asmai blocked is an agent command"},
 		{"engineering", CommandPush, ""},
 		{"quality", CommandPush, "only leader@engineering, the delivery owner"},
-		{"current", CommandPush, "only leader@engineering, the delivery owner"},
 		{"worker", CommandPush, "only leader@engineering, the delivery owner"},
 		{"", CommandPush, "asmai push is an agent command"},
 		{"engineering", CommandDecisionRecord, ""},

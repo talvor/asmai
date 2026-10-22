@@ -336,6 +336,7 @@ func (p *pages) collect(ctx context.Context, r store.DecisionRequest, prompts []
 	if _, err := p.render(got.Request); err != nil {
 		d.log.Error("rendering a decision page with its answers failed", "request", r.Request, "version", r.Version, "error", err.Error())
 	}
+	d.noticeCI(got.Request, got.Answer.Answers)
 	var agents []string
 	d.mu.Lock()
 	for _, dispatch := range []*store.Dispatch{got.Owner, got.Confirm} {

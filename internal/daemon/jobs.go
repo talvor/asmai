@@ -121,8 +121,12 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					if err == nil {
 						grants, err = d.store.GrantsOf(j.Number)
 					}
+					var setup string
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, grants)
+						setup, err = d.setupSection(j)
+					}
+					if err == nil {
+						resp.Brief = brief(j, repository, entries, handoffs, branch, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, grants, setup)
 					}
 				}
 			}
@@ -192,13 +196,17 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, grants []store.Grant) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, grants []store.Grant, setup string) string {
 	var b strings.Builder
 	repositoryName := j.Repository
 	if repositoryName == "" {
 		repositoryName = "none: its assignments work in scratch workspaces, which stay after the job ends until the user runs `asmai job clean " + strconv.FormatInt(j.Number, 10) + "`"
 	}
-	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\nWitnessed message: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, repositoryName, j.Witness, j.Words, j.Reading, j.Mandate)
+	witnessed := "Witnessed message"
+	if j.Mandate == store.MandateSetup {
+		witnessed = "Registration the user ran (journal entry)"
+	}
+	fmt.Fprintf(&b, "Job %d | role: %s | state: %s\nRepository: %s\n%s: %d\nUser's words: %s\nCoordination's reading: %s\nMandate: %s\nAcceptance criteria:\n", j.Number, j.Role, j.State, repositoryName, witnessed, j.Witness, j.Words, j.Reading, j.Mandate)
 	for _, criterion := range j.Criteria {
 		fmt.Fprintf(&b, "- %s\n", criterion)
 	}
@@ -341,6 +349,7 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	if len(grants) == 0 {
 		fmt.Fprintln(&b, "- none")
 	}
+	b.WriteString(setup)
 	fmt.Fprintln(&b, "Recent journal:")
 	for _, entry := range entries {
 		fmt.Fprintf(&b, "- %d %s\n", entry.ID, entry.Kind)

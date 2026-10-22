@@ -80,7 +80,7 @@ func TestAsmaiDecisionsListsThePendingDecisionsWithTheirAnswerSurfaceAndAnswersN
 	work := t.TempDir()
 	gitIn(t, work, "clone", "--quiet", origin, "fixture")
 	checkout := filepath.Join(work, "fixture")
-	gitIn(t, checkout, "commit", "--allow-empty", "-m", "initial")
+	commitSetUp(t, checkout, "initial")
 	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:main")
 	if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
 		t.Fatalf("repo add: %s", stderr)
@@ -166,7 +166,7 @@ func TestAChoiceIsPresentedOnceAndOnlyTheUsersMessageAfterItAnswersWithCoordinat
 	work := t.TempDir()
 	gitIn(t, work, "clone", "--quiet", origin, "fixture")
 	checkout := filepath.Join(work, "fixture")
-	gitIn(t, checkout, "commit", "--allow-empty", "-m", "initial")
+	commitSetUp(t, checkout, "initial")
 	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:main")
 	if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
 		t.Fatalf("repo add: %s", stderr)

@@ -278,7 +278,11 @@ func (d *daemon) deliver(ctx context.Context, j store.Job, repository store.Repo
 		return store.Dispatch{}, false
 	}
 	delivery := store.Delivery{Job: j.Number, Number: ready.Number, URL: ready.URL, Head: ready.HeadCommit, Checks: checks, NoCI: noCI}
-	delivery, dispatch, err := d.store.JobDelivered(delivery, deliveryBody(j, delivery), time.Now())
+	body := deliveryBody(j, delivery)
+	if j.Mandate == store.MandateSetup {
+		body += d.setupDeliveryBody(j)
+	}
+	delivery, dispatch, err := d.store.JobDelivered(delivery, body, time.Now())
 	if err != nil {
 		d.log.Error("recording a job's delivery", "job", j.Number, "error", err.Error())
 		return store.Dispatch{}, false
@@ -293,6 +297,14 @@ func deliveryBody(j store.Job, p store.Delivery) string {
 		ready := fmt.Sprintf("with every check green (%s)", store.CheckNames(p.Checks))
 		if p.NoCI {
 			ready = "straight away, as its repository is declared as having no CI"
+		}
+		if j.Mandate == store.MandateSetup {
+			return fmt.Sprintf("Job %d is delivered: the setup pull request #%d of repository %s, %s, is ready for review at head %s, %s. "+
+				"It holds only the repository's setup files, which one of Coordination's workers wrote and its leader accepted against the mandate: Quality validated nothing. "+
+				"The job has ended: its workspaces and view are removed, and its branches stay on origin. "+
+				"AsmAI never merges: ready is not merged, and the user reviews and merges it. "+
+				"Tell the user, in a line tagged with job %d, with the link.",
+				j.Number, p.Number, j.Repository, p.URL, p.Head, ready, j.Number)
 		}
 		return fmt.Sprintf("Job %d is delivered: its notes pull request #%d, %s, is ready for review at head %s, %s. "+
 			"It holds only the job's notes, which its own leader accepted against the mandate: Quality validated nothing. "+

@@ -98,7 +98,7 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if m.Kind == store.MessageResumption {
 			fmt.Fprintf(o.stdout, "Resumes dispatch %d, which stopped at a boundary before the factory stopped.\n%s\n", m.Resumes, m.Body)
 		}
-		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed || m.Kind == store.MessageGrantEnded {
+		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed || m.Kind == store.MessageGrantEnded || m.Kind == store.MessageSetup {
 			fmt.Fprintf(o.stdout, "%s\n", m.Body)
 		}
 		if a := m.AssignmentData; a != nil {

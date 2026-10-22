@@ -88,12 +88,14 @@ func (d *daemon) caller(req Request) (sessionRef, *leader, error) {
 }
 
 // writingRoles are the roles whose workers carry writing assignments:
-// Engineering's change code, and Planning's and Research's write notes.
-var writingRoles = []string{roles.Engineering, roles.Planning, roles.Research}
+// Engineering's change code, Planning's and Research's write notes, and
+// Coordination's write a repository's setup files.
+var writingRoles = []string{roles.Engineering, roles.Planning, roles.Research, roles.Coordination}
 
 // assign gives the assignment req describes to a worker of the role of the
-// leader that makes it: a writing assignment to one of Engineering, Planning
-// or Research, or with req.ReadOnly a validation to one of Quality. It makes
+// leader that makes it: a writing assignment to one of Engineering, Planning,
+// Research or, for a repository's setup, Coordination, or with req.ReadOnly a
+// validation to one of Quality. It makes
 // the job's branch if it has none, takes the lowest free worker number and
 // slot, makes the worker's workspace of AsmAI's clone, which is on the
 // assignment's own branch from the job branch's tip for a writing assignment
@@ -116,7 +118,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	case req.ReadOnly && ref.address != roles.LeaderOf(roles.Quality):
 		return store.Assignment{}, store.Dispatch{}, refuse("only %s may assign read-only validation", roles.LeaderOf(roles.Quality))
 	case !req.ReadOnly && !slices.Contains(writingRoles, role):
-		return store.Assignment{}, store.Dispatch{}, refuse("only %s, %s or %s may assign writing work: Quality's validation is read-only, and never changes the work", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research))
+		return store.Assignment{}, store.Dispatch{}, refuse("only %s, %s, %s or %s may assign writing work: Quality's validation is read-only, and never changes the work", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Coordination))
 	}
 	if req.Job <= 0 || strings.TrimSpace(req.Outcome) == "" || len(req.Criteria) == 0 {
 		return store.Assignment{}, store.Dispatch{}, refuse("an assignment needs a job, an outcome and acceptance criteria")
@@ -162,6 +164,10 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	// so only its own role's leader gives it writing work (01 rule 17).
 	if only, ok := onlyRole[j.Mandate]; ok && !req.ReadOnly && role != only {
 		return store.Assignment{}, store.Dispatch{}, refuse("job %d has the %s mandate, which authorizes only its %s outcome: only %s may give its writing work", j.Number, j.Mandate, strings.TrimSuffix(j.Mandate, "-only"), roles.LeaderOf(only))
+	}
+	// Coordination's workers write only a repository's setup.
+	if role == roles.Coordination && j.Mandate != store.MandateSetup {
+		return store.Assignment{}, store.Dispatch{}, refuse("job %d has the %s mandate: only %s may give its writing work, and %s gives writing work only for the setup of a repository", j.Number, j.Mandate, roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Coordination))
 	}
 	scratch := j.Repository == ""
 	if scratch && req.ReadOnly {

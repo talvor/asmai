@@ -147,7 +147,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 		turn(7, "handoff2",
 			fakeRun(`asmai inbox --dispatch 7`, 0, "(?s)handoff 2 \\| leader@engineering -> leader@quality.*Validate the job branch at its exact head.*Head to validate: "+sha),
 			fakeRun(`asmai handoff accept --handoff 2`, 0, "reply dispatch 8"),
-			fakeRun(`asmai assign --job 1 --outcome x --criterion y`, 1, "only leader@engineering, leader@planning or leader@research may assign writing work"),
+			fakeRun(`asmai assign --job 1 --outcome x --criterion y`, 1, "only leader@engineering, leader@planning, leader@research or leader@coordination may assign writing work"),
 			fakeRun(`asmai assign --read-only --job 1 --outcome x --criterion y`, 1, "give --commit"),
 			fakeRun(`asmai assign --read-only --commit 0000000000000000000000000000000000000000 --job 1 --outcome x --criterion y`, 1, "validation is fixed at the exact head"),
 			fakeRun(`asmai assign --read-only --commit `+headOf(7)+` --job 1 --outcome 'Validate the job branch at its exact head' --criterion 'the repository checks re-ran at the commit, with their outcomes' --criterion 'the change is reviewed against the repository instructions and the job mandate'`, 0, "assignment 3 of job 1 given to worker1@quality; dispatch 9"),

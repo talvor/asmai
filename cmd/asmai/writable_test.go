@@ -92,7 +92,7 @@ func TestRepoAddSuggestsAGoRepositorysBuildCacheAndTakesFoldersByHand(t *testing
 	gitIn(t, work, "clone", "--quiet", origin, "seed")
 	seed := filepath.Join(work, "seed")
 	gitIn(t, seed, "checkout", "-b", "trunk")
-	gitIn(t, seed, "commit", "--allow-empty", "-m", "first")
+	commitSetUp(t, seed, "first")
 	gitIn(t, seed, "push", "--quiet", "origin", "trunk")
 	plain := filepath.Join(work, "plain.git")
 	gitIn(t, work, "clone", "--quiet", "--bare", origin, plain)

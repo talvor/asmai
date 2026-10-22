@@ -41,7 +41,19 @@ func (h *Harness) prepareHandoffRepository(ctx context.Context, f *Factory) erro
 			return err
 		}
 		checkout := filepath.Join(work, "fixture")
-		if _, err = gitAs(ctx, checkout, harnessAuthor, "commit", "--allow-empty", "-m", "Initial fixture"); err != nil {
+		// The fixture is set up for the skills, so that registering it opens
+		// no setup job for Coordination's leader, whose cases are the
+		// handoffs.
+		if err := os.MkdirAll(filepath.Join(checkout, "docs", "agents"), 0700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(checkout, "docs", "agents", "issue-tracker.md"), []byte("# Issue tracker\n\nIssues live in GitHub.\n"), 0o644); err != nil {
+			return err
+		}
+		if _, err = git(ctx, checkout, "add", "docs/agents/issue-tracker.md"); err != nil {
+			return err
+		}
+		if _, err = gitAs(ctx, checkout, harnessAuthor, "commit", "-m", "Initial fixture"); err != nil {
 			return err
 		}
 		if _, err = git(ctx, checkout, "push", "origin", "HEAD:main"); err != nil {

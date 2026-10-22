@@ -47,17 +47,33 @@ func (e *OpenJobsError) Error() string {
 func (s *Store) RepositoryAdded(r Repository) error {
 	r.AddedAt = r.AddedAt.UTC()
 	return s.change(r.AddedAt, func(tx *sql.Tx) (string, any, error) {
-		var exists int
-		if err := tx.QueryRow(`SELECT count(*) FROM repositories WHERE name = ?`, r.Name).Scan(&exists); err != nil {
+		if err := insertRepository(tx, r); err != nil {
 			return "", nil, err
 		}
-		if exists != 0 {
-			return "", nil, ErrRepositoryRegistered
-		}
-		_, err := tx.Exec(`INSERT INTO repositories (name, location, origin, default_branch, clone, added_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			r.Name, r.Location, r.Origin, r.DefaultBranch, r.Clone, timestamp(r.AddedAt))
-		return KindRepositoryAdded, r, err
+		return KindRepositoryAdded, r, nil
 	})
+}
+
+// repositoryAdded records and journals the registration of r in tx, and
+// returns the journal entry.
+func repositoryAdded(tx *sql.Tx, r Repository) (int64, error) {
+	if err := insertRepository(tx, r); err != nil {
+		return 0, err
+	}
+	return appendEntry(tx, r.AddedAt, KindRepositoryAdded, r)
+}
+
+func insertRepository(tx *sql.Tx, r Repository) error {
+	var exists int
+	if err := tx.QueryRow(`SELECT count(*) FROM repositories WHERE name = ?`, r.Name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return ErrRepositoryRegistered
+	}
+	_, err := tx.Exec(`INSERT INTO repositories (name, location, origin, default_branch, clone, added_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		r.Name, r.Location, r.Origin, r.DefaultBranch, r.Clone, timestamp(r.AddedAt))
+	return err
 }
 
 // RepositoryRemoved removes the registered repository name at at, and
@@ -91,6 +107,11 @@ func (s *Store) RepositoryRemoved(name string, at time.Time) (Repository, error)
 			return "", nil, &OpenJobsError{Repository: name, Jobs: open}
 		}
 		if _, err := tx.Exec(`DELETE FROM repositories WHERE name = ?`, name); err != nil {
+			return "", nil, err
+		}
+		// What the user answered about its setup is its own: a repository
+		// registered again under the name starts without it.
+		if _, err := tx.Exec(`DELETE FROM setup_answers WHERE repository = ?`, name); err != nil {
 			return "", nil, err
 		}
 		removed = r

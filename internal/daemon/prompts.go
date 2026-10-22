@@ -76,7 +76,7 @@ func (d *daemon) promptObserved(ref sessionRef, event string, payload json.RawMe
 		return
 	}
 	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now()}
-	if ref.address.Role != roles.Coordination {
+	if ref.address != roles.LeaderOf(roles.Coordination) {
 		d.log.Warn("an agent waits at a native permission prompt nobody can answer", "agent", l.prompt.Agent, "generation", l.prompt.Generation, "about", l.prompt.About)
 	}
 }
@@ -88,7 +88,7 @@ func (d *daemon) waitingPrompts() []WaitingPrompt {
 	defer d.mu.Unlock()
 	var prompts []WaitingPrompt
 	for _, l := range d.leaders {
-		if l.session != nil && l.address.Role != roles.Coordination && l.prompt != nil && l.prompt.Generation == l.generation {
+		if l.session != nil && l.address != roles.LeaderOf(roles.Coordination) && l.prompt != nil && l.prompt.Generation == l.generation {
 			prompts = append(prompts, *l.prompt)
 		}
 	}

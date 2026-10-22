@@ -333,6 +333,11 @@ func (s *Store) LavishCollected(id int64, prompts []json.RawMessage, at time.Tim
 		return LavishCollected{}, err
 	}
 	got.ID = entry
+	// The answers to a repository's setup apply at once, before its pull
+	// request merges: they are recorded for the repository.
+	if err := recordSetupAnswers(tx, page, entry, got.Answers, at); err != nil {
+		return LavishCollected{}, err
+	}
 	answers, err := json.Marshal(got.Answers)
 	if err != nil {
 		return LavishCollected{}, err

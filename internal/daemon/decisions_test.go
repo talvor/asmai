@@ -46,6 +46,10 @@ func newTwoResultsOf(t *testing.T, role string) twoResults {
 	t.Helper()
 	paths := stateDir(t)
 	origin := remote(t)
+	if role == roles.Coordination {
+		// A repository whose setup job is open has no setup yet.
+		origin = remoteWithoutSetup(t)
+	}
 	clone := filepath.Join(paths.Repositories, "fixture")
 	if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
 		t.Fatal(err)
@@ -57,26 +61,35 @@ func newTwoResultsOf(t *testing.T, role string) twoResults {
 	}
 	t.Cleanup(func() { s.Close() })
 	at := time.Now()
-	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
-		t.Fatal(err)
-	}
+	repository := store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}
 	if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
 		t.Fatal(err)
 	}
-	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "add a greeting"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"add a greeting"}`), at)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mandate := store.MandateTestedPR
-	switch role {
-	case roles.Planning:
-		mandate = store.MandatePlanningOnly
-	case roles.Research:
-		mandate = store.MandateResearchOnly
-	}
-	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Add a greeting", Mandate: mandate, Criteria: []string{"done"}}, false, at)
-	if err != nil {
-		t.Fatal(err)
+	var job store.Job
+	if role == roles.Coordination {
+		// Coordination's own workers carry the setup of a repository, whose
+		// job the daemon opens as the repository is registered.
+		if job, _, err = s.RepositoryAddedWithSetup(repository, store.SetupOpening{Words: "asmai repo add " + origin, Reading: "Set fixture up for the skills", Criteria: []string{"done"}, Body: "setup"}); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := s.RepositoryAdded(repository); err != nil {
+			t.Fatal(err)
+		}
+		_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "add a greeting"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"add a greeting"}`), at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mandate := store.MandateTestedPR
+		switch role {
+		case roles.Planning:
+			mandate = store.MandatePlanningOnly
+		case roles.Research:
+			mandate = store.MandateResearchOnly
+		}
+		if job, err = s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Add a greeting", Mandate: mandate, Criteria: []string{"done"}}, false, at); err != nil {
+			t.Fatal(err)
+		}
 	}
 	owner := roles.LeaderOf(role)
 	d := &daemon{
@@ -85,7 +98,7 @@ func newTwoResultsOf(t *testing.T, role string) twoResults {
 		sessions: map[string]sessionRef{"credential": {address: owner, generation: 1}},
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	repository, err := s.Repository("fixture")
+	repository, err = s.Repository("fixture")
 	if err != nil {
 		t.Fatal(err)
 	}

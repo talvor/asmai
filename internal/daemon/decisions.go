@@ -32,7 +32,7 @@ func (d *daemon) decide(req Request) (resp Response, notify string, err error) {
 		return Response{}, "", err
 	}
 	if !ownsWorkers(ref.address) {
-		return Response{}, "", refuse("only %s, %s, %s or %s may run asmai %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Quality), req.Command)
+		return Response{}, "", refuse("only %s, %s, %s, %s or %s may run asmai %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Coordination), roles.LeaderOf(roles.Quality), req.Command)
 	}
 	if req.EndsJob && req.Command != CommandAccept {
 		return Response{}, "", refuse("--ends-job belongs to asmai accept: only an acceptance is the leader accepting the job's outcome")

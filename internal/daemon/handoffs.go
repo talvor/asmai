@@ -46,6 +46,7 @@ func (d *daemon) jobOrZero(number int64) store.Job {
 var onlyRole = map[string]string{
 	store.MandatePlanningOnly: roles.Planning,
 	store.MandateResearchOnly: roles.Research,
+	store.MandateSetup:        roles.Coordination,
 }
 
 // checkHandoff checks that the leader of the role sender may hand the job j to
@@ -54,6 +55,9 @@ var onlyRole = map[string]string{
 func checkHandoff(sender, receiver string, j store.Job) error {
 	if !slices.Contains(handoffTo[sender], receiver) {
 		return errNotALeader
+	}
+	if j.Mandate == store.MandateSetup {
+		return fmt.Errorf("job %d is the setup of repository %s, which authorizes only its setup: %s gives it to one of its own workers, never to another role", j.Number, j.Repository, roles.LeaderOf(roles.Coordination))
 	}
 	if only, ok := onlyRole[j.Mandate]; ok && receiver != only {
 		outcome := strings.TrimSuffix(j.Mandate, "-only")
@@ -168,7 +172,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
 	switch m.Kind {
 	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageCancellation, store.MessageValidation, store.ReportResult, store.ReportBlocked,
-		store.MessageResumption, store.MessageReconciliation, store.MessageRestoration, store.MessageDecisionRequest, store.MessageDecisionAnswer, store.MessageLavishSent:
+		store.MessageResumption, store.MessageReconciliation, store.MessageRestoration, store.MessageDecisionRequest, store.MessageDecisionAnswer, store.MessageLavishSent, store.MessageSetup:
 	default:
 		return nil
 	}

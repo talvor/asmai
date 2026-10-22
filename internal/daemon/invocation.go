@@ -17,11 +17,14 @@ import (
 // code-review, a planning-only one the skills that make its outcome, notes
 // that plan, and a research-only one the skills that make its own, findings:
 // research and to-questionnaire, neither of which starts only on request, so
-// that it covers every skill Research's workers have (08 rule 14).
+// that it covers every skill Research's workers have (08 rule 14). A setup
+// mandate covers the one skill Coordination's workers have, which is not one
+// that starts only on request.
 var calledFor = map[string][]string{
 	store.MandateTestedPR:     {"to-spec", "to-tickets", "implement", "code-review"},
 	store.MandatePlanningOnly: {"wayfinder", "grill-me", "grill-with-docs", "to-spec", "to-tickets"},
 	store.MandateResearchOnly: {"research", "to-questionnaire"},
+	store.MandateSetup:        {"setup-matt-pocock-skills"},
 }
 
 // checkInvocation checks that the skill an assignment of job j names may

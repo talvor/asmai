@@ -159,11 +159,15 @@ func citableWitnessed(tx *sql.Tx, d DecisionRecord, j Job, data string) error {
 	if err := json.Unmarshal([]byte(data), &cited); err != nil {
 		return err
 	}
-	if err := tx.QueryRow(`SELECT data FROM journal WHERE id = ?`, j.Witness).Scan(&data); err != nil {
-		return fmt.Errorf("job %d's own request, message %d, cannot be read: %w", j.Number, j.Witness, err)
-	}
-	if err := json.Unmarshal([]byte(data), &request); err != nil {
-		return err
+	if j.Mandate == MandateSetup {
+		request.Agent = CoordinationLeader
+	} else {
+		if err := tx.QueryRow(`SELECT data FROM journal WHERE id = ?`, j.Witness).Scan(&data); err != nil {
+			return fmt.Errorf("job %d's own request, message %d, cannot be read: %w", j.Number, j.Witness, err)
+		}
+		if err := json.Unmarshal([]byte(data), &request); err != nil {
+			return err
+		}
 	}
 	if cited.Agent != request.Agent {
 		return fmt.Errorf("witnessed message %d was submitted to %s, not to %s, which job %d's request went to, so it is not in the job's conversation", d.Cites, cited.Agent, request.Agent, j.Number)

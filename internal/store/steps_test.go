@@ -377,15 +377,15 @@ func TestAWorkersResultNamesTheRecordsItsStepsRelied(t *testing.T) {
 		"only the grant named":    {func(in *ReportInput) { in.GrantsRelied = []int64{grant.ID} }, "names no record for the tdd step"},
 		"a record of another job": {func(in *ReportInput) {
 			in.RecordsRelied, in.GrantsRelied = []int64{seams.ID, elsewhere.ID}, []int64{grant.ID}
-		}, "is of job"},
-		"a grant that is not there":  {func(in *ReportInput) { in.RecordsRelied, in.GrantsRelied = []int64{seams.ID}, []int64{grant.ID, 999} }, "does not exist"},
-		"a record that is not there": {func(in *ReportInput) { in.RecordsRelied, in.GrantsRelied = []int64{seams.ID, 999}, []int64{grant.ID} }, "does not exist"},
+		}, "not one your steps relied on"},
+		"a grant that is not there":  {func(in *ReportInput) { in.RecordsRelied, in.GrantsRelied = []int64{seams.ID}, []int64{grant.ID, 999} }, "not one your steps relied on"},
+		"a record that is not there": {func(in *ReportInput) { in.RecordsRelied, in.GrantsRelied = []int64{seams.ID, 999}, []int64{grant.ID} }, "not one your steps relied on"},
 		"a delegated decision": {func(in *ReportInput) {
 			in.RecordsRelied, in.GrantsRelied = []int64{seams.ID, delegated.ID}, []int64{grant.ID}
-		}, "delegated decision"},
+		}, "not one your steps relied on"},
 		"a grant of spending": {func(in *ReportInput) {
 			in.RecordsRelied, in.GrantsRelied = []int64{seams.ID}, []int64{grant.ID, spend.ID}
-		}, "not a decision"},
+		}, "not one your steps relied on"},
 		"a record named twice or more": {func(in *ReportInput) {
 			in.RecordsRelied, in.GrantsRelied = []int64{seams.ID, seams.ID}, []int64{grant.ID}
 		}, "twice"},
@@ -488,5 +488,21 @@ func TestTheUsersAnswerToAnUncoveredStepIsReturnedAndRecordedWhileTheJobIsPaused
 	record, err := st.s.DecisionRecord(answered.ReliedRecords[0])
 	if err != nil || record.Request != carrying.Request || !strings.Contains(record.Text("", "  "), "in Lavish") {
 		t.Errorf("the record is %+v (%v), want it to say it answers the request that carried the step, in Lavish", record, err)
+	}
+}
+
+func TestOnlyAStepIsAnsweredFromRecordsAndTheUsersOwnAnswerBringsNoneOfTheLeaders(t *testing.T) {
+	st := newSteps(t)
+	seams := st.userDecided("tdd test seams: the handler")
+	choice, _, err := st.s.DecisionRequested(workerRequest(st.assignment), st.tick())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.s.DecisionAnswered(DecisionAnswer{Request: choice.Request, Version: 1, Answerer: owner, Text: "in-memory", Records: []int64{seams.ID}}, st.tick()); err == nil || !strings.Contains(err.Error(), "only a step is answered from them") {
+		t.Errorf("answering a choice from a record returned %v, want it refused", err)
+	}
+	step := st.mustAsk("tdd", "the test seams")
+	if _, _, err := st.s.DecisionAnswered(DecisionAnswer{Request: step.Request, Version: 1, Answerer: owner, Carried: 999, Records: []int64{seams.ID}}, st.tick()); err == nil || !strings.Contains(err.Error(), "only a step is answered from them") {
+		t.Errorf("answering with the user's answer and a record returned %v, want it refused", err)
 	}
 }

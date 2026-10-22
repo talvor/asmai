@@ -148,47 +148,33 @@ func stepAnswerBody(r DecisionRequest, text string) string {
 
 // checkRelied checks that the result in of assignment a names the records its
 // steps relied on: every record and grant that satisfied a step the worker
-// asked, and only records of the job and grants that cover it.
+// asked, and nothing else, so that a result never claims a record that no
+// answer to its steps gave.
 func checkRelied(q querier, a Assignment, in ReportInput) error {
-	j, err := openedJob(q, a.Job)
-	if err != nil {
-		return err
-	}
-	for i, id := range in.RecordsRelied {
-		if slices.Contains(in.RecordsRelied[:i], id) {
-			return fmt.Errorf("decision record %d is named twice", id)
-		}
-		found, err := scanDecisionRecords(q, `id = ?`, id)
-		if err != nil {
-			return err
-		}
-		switch {
-		case len(found) == 0:
-			return fmt.Errorf("decision record %d does not exist; `asmai inbox` shows the records your assignment's steps relied on", id)
-		case found[0].Job != a.Job:
-			return fmt.Errorf("decision record %d is of job %d, not job %d: name only the records of your own job that your steps relied on", id, found[0].Job, a.Job)
-		case found[0].Source != SourceHuman:
-			return fmt.Errorf("decision record %d is a delegated decision, not the user's own: a human step of a skill relies only on the user's decisions and on grants", id)
-		}
-	}
-	for i, id := range in.GrantsRelied {
-		if slices.Contains(in.GrantsRelied[:i], id) {
-			return fmt.Errorf("grant %d is named twice", id)
-		}
-		g, err := grantByID(q, id)
-		if err != nil {
-			return err
-		}
-		switch {
-		case !g.Covers(j):
-			return fmt.Errorf("grant %d is of %s, which does not cover job %d: name only the grants that cover your job and that your steps relied on", g.ID, g.ScopeText(), a.Job)
-		case g.Action != ActionDecision:
-			return fmt.Errorf("grant %d approves %s, not a decision: a human step of a skill relies only on a grant of a decision", g.ID, g.Action)
-		}
-	}
 	steps, err := decisionRequests(q, `assignment = ? AND kind = ? AND state = ?`, a.ID, RequestStep, RequestAnswered)
 	if err != nil {
 		return err
+	}
+	var records, grants []int64
+	for _, step := range steps {
+		records = append(records, step.ReliedRecords...)
+		grants = append(grants, step.ReliedGrants...)
+	}
+	for i, id := range in.RecordsRelied {
+		switch {
+		case slices.Contains(in.RecordsRelied[:i], id):
+			return fmt.Errorf("decision record %d is named twice", id)
+		case !slices.Contains(records, id):
+			return fmt.Errorf("decision record %d is not one your steps relied on: name only the records that the answers to your steps gave", id)
+		}
+	}
+	for i, id := range in.GrantsRelied {
+		switch {
+		case slices.Contains(in.GrantsRelied[:i], id):
+			return fmt.Errorf("grant %d is named twice", id)
+		case !slices.Contains(grants, id):
+			return fmt.Errorf("grant %d is not one your steps relied on: name only the grants that the answers to your steps gave", id)
+		}
 	}
 	for _, step := range steps {
 		for _, id := range step.ReliedRecords {

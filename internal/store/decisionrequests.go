@@ -546,6 +546,9 @@ func (s *Store) DecisionAnswered(in DecisionAnswer, at time.Time) (DecisionReque
 	}
 	text, reliedOn := in.Text, in.ReliedOn
 	var records, grants []int64
+	if len(in.Records)+len(in.Grants) > 0 && (latest.Kind != RequestStep || in.Carried != 0) {
+		return DecisionRequest{}, Dispatch{}, fmt.Errorf("decision request %d is answered with no record or grant of yours: only a step is answered from them, and the user's own answer, returned with the request that carried it, is recorded for you", latest.Request)
+	}
 	switch {
 	case in.Carried != 0 && strings.TrimSpace(text) != "":
 		return DecisionRequest{}, Dispatch{}, fmt.Errorf("decision request %d needs the user's own answer, which no agent types: return the answer the user gave, and nothing of your own beside it", latest.Request)

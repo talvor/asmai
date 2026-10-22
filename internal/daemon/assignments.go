@@ -363,18 +363,39 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		return store.JobBranch{}, err
 	}
 	name := JobBranchName(j)
-	startedFrom, err := repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
-	if err != nil {
-		startedFrom = tip
-		if err := repos.CreateBranch(ctx, repository.Clone, name, startedFrom); err != nil {
+	var continues int64
+	var startedFrom string
+	// A follow-up to a job whose pull request is still open continues its
+	// job branch, starting from origin's copy of it (05 rule 16).
+	if j.Follows != 0 {
+		c, why, err := d.continuationOf(ctx, j, repository)
+		if err != nil {
 			return store.JobBranch{}, err
+		}
+		if c != nil {
+			name, startedFrom, continues = c.Branch, c.Tip, c.Predecessor
+			if err := repos.ResetBranch(ctx, repository.Clone, name, startedFrom); err != nil {
+				return store.JobBranch{}, err
+			}
+		} else {
+			d.log.Info("a follow-up starts from the base with a new job branch", "job", j.Number, "follows", j.Follows, "why", why)
+		}
+	}
+	if continues == 0 {
+		var err error
+		startedFrom, err = repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
+		if err != nil {
+			startedFrom = tip
+			if err := repos.CreateBranch(ctx, repository.Clone, name, startedFrom); err != nil {
+				return store.JobBranch{}, err
+			}
 		}
 	}
 	view := filepath.Join(d.cfg.Paths.Views, fmt.Sprintf("job-%d", j.Number))
 	if err := repos.EnsureView(ctx, repository.Clone, view, startedFrom); err != nil {
 		return store.JobBranch{}, err
 	}
-	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view}, time.Now())
+	branch, err = d.store.JobBranchMade(store.JobBranch{Job: j.Number, Repository: repository.Name, Name: name, StartedFrom: startedFrom, View: view, Continues: continues}, time.Now())
 	if err != nil {
 		return store.JobBranch{}, fmt.Errorf("recording the job branch: %w", err)
 	}

@@ -321,6 +321,11 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 		return o.printData(resp)
 	}
 	a, d := resp.Assignment, resp.Decision
+	if resp.Returned {
+		fmt.Fprintf(o.stdout, "assignment %d: not accepted and not rejected: job branch %s moved to %s after the result was submitted, so the work is returned to %s, in dispatch %d, to take in the new tip and submit again\n", a.ID, resp.JobBranch.Name, resp.JobBranch.Tip, a.Worker, resp.Dispatch.ID)
+		fmt.Fprintf(o.stdout, "next: %s is nudged, and its next result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
+		return 0
+	}
 	switch command {
 	case daemon.CommandAccept:
 		if a.ReadOnly {

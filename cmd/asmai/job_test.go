@@ -29,6 +29,12 @@ func TestCoordinationOpensAJobFromTheUsersWitnessedMessage(t *testing.T) {
 		fakeRun(`asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass' --criterion 'Open a reviewed PR'`, 0, "Opened job 1"),
 		fakeRun(`asmai jobs`, 0, "(?s)JOB.*1.*coordination.*fixture.*Fix the fixture"),
 		fakeRun(`asmai brief 1`, 0, "(?s)Witnessed message: [0-9]+.*User's words: Please fix the fixture.*Tests pass.*Open a reviewed PR"),
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Greet the user by name' --criterion 'Greets by name'`, 0, "Opened job 2"),
+		fakeRun(`asmai job link --job 2 --follows 1`, 0, "(?s)Job 2 is linked as a follow-up to job 1.*starts afresh: job 1 is still open"),
+		fakeRun(`asmai job link --job 2 --follows 1`, 0, "linked as a follow-up to job 1"),
+		fakeRun(`asmai job link --job 1 --follows 2`, 1, "not a follow-up to job 2|a follow-up is a new job linked to one opened before it"),
+		fakeRun(`asmai job link --job 2`, 1, "needs --job"),
+		fakeRun(`asmai brief 2`, 0, "Follow-up to job 1"),
 		fakeRun(`asmai start`, 1, "ask the user to run.*asmai start"),
 		fakeRun(`asmai repo remove fixture`, 1, "ask the user to run.*asmai repo remove fixture"),
 		fakeRun(`asmai export`, 1, "an agent cannot run"),
@@ -57,6 +63,9 @@ func TestCoordinationOpensAJobFromTheUsersWitnessedMessage(t *testing.T) {
 	if _, stderr, code := runAsmai(t, "job", "open", "--message", "latest", "--repository", "fixture", "--reading", "Fix the fixture", "--criterion", "Tests pass"); code != 1 || !strings.Contains(stderr, "agent command") {
 		t.Fatalf("user opening a job: code %d, %s", code, stderr)
 	}
+	if _, stderr, code := runAsmai(t, "job", "link", "--job", "2", "--follows", "1"); code != 1 || !strings.Contains(stderr, "agent command") {
+		t.Fatalf("user linking a job: code %d, %s", code, stderr)
+	}
 	observations := journaled(t, "observation")
 	if err := os.WriteFile(filepath.Join(testDir, "observation"), []byte(strconv.FormatInt(observations[len(observations)-1].ID, 10)), 0o600); err != nil {
 		t.Fatal(err)
@@ -82,7 +91,7 @@ func TestCoordinationOpensAJobFromTheUsersWitnessedMessage(t *testing.T) {
 	if shown.Job.Number != 1 || shown.Job.Witness != w.ID || shown.Job.Words != "Please fix the fixture" || shown.Job.Reading != "Fix the fixture" || shown.Job.Mandate != "tested-pr" || shown.Job.Role != "coordination" || shown.Job.Repository != "fixture" || len(shown.Job.Criteria) != 2 {
 		t.Fatalf("job 1 = %+v", shown.Job)
 	}
-	if entries := journaled(t, "job.opened"); len(entries) != 1 || !strings.Contains(string(entries[0].Data), `"number": 1`) || !strings.Contains(string(entries[0].Data), `"role": "coordination"`) {
+	if entries := journaled(t, "job.opened"); len(entries) != 2 || !strings.Contains(string(entries[0].Data), `"number": 1`) || !strings.Contains(string(entries[0].Data), `"role": "coordination"`) {
 		t.Fatalf("job journal = %+v", entries)
 	}
 	credential, err := os.ReadFile(filepath.Join(testDir, "credential"))

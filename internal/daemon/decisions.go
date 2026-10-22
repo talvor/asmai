@@ -140,7 +140,10 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 			return Response{}, err
 		}
 		if !fastForward {
-			return Response{}, refuse("result commit %s is not a fast-forward of the job branch's tip %s, so the acceptance is refused and nothing moved", result.Commit, branch.Tip)
+			// The job branch moved after the result was submitted: the work
+			// goes back to its worker to take in the new tip, which is not a
+			// rejection (02 rule 31, 05 rule 19).
+			return d.returnMovedTip(req, ref, a, branch)
 		}
 		if err := repos.MoveBranch(ctx, clone, branch.Name, result.Commit, branch.Tip); err != nil {
 			return Response{}, err
@@ -196,6 +199,34 @@ func (d *daemon) accept(req Request, ref sessionRef) (Response, error) {
 		return Response{}, err
 	}
 	return Response{Assignment: &a, Decision: &decision, JobBranch: &branch}, nil
+}
+
+// returnMovedTip returns the submitted result of the assignment a to its
+// worker, which is started if it is not running, because the job branch moved
+// to its tip after the result was submitted. Nothing is accepted, no decision
+// is recorded and nothing moved. The returned dispatch is the worker's, to
+// nudge. assignMu is held.
+func (d *daemon) returnMovedTip(req Request, ref sessionRef, a store.Assignment, branch store.JobBranch) (Response, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, _, err := d.caller(req); err != nil {
+		return Response{}, err
+	}
+	dispatch, err := d.store.ResultReturned(a.ID, ref.address.String(), branch.Tip, time.Now())
+	if err != nil {
+		return Response{}, refuse("%v", err)
+	}
+	d.log.Info("result returned to its worker: the job branch moved after it was submitted", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "tip", branch.Tip, "leader", ref.address.String(), "dispatch", dispatch.ID)
+	if worker, err := roles.ParseAddress(a.Worker); err == nil {
+		if err := d.ensureAgent(worker); err != nil {
+			d.log.Error("starting the assignment's worker", "agent", a.Worker, "dispatch", dispatch.ID, "error", err.Error())
+		}
+	}
+	a, err = d.store.Assignment(a.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{Assignment: &a, Dispatch: &dispatch, JobBranch: &branch, Returned: true}, nil
 }
 
 // acceptPrototype records the acceptance of the result of the writing

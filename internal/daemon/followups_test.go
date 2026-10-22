@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/talvor/asmai/internal/store"
+)
+
+// fakeViewGH is a gh on the PATH that shows one pull request, #7 of job 1's
+// branch, in the state the test's file holds: OPEN, MERGED or CLOSED. It
+// refuses every other call, and `gh pr view` as long as the state file is
+// missing.
+const fakeViewGH = `#!/bin/sh
+[ "$1 $2" = "pr view" ] || { echo "the fake gh does not do: $*" >&2; exit 1; }
+state=$(cat "$ASMAI_TEST_DIR/pr-state" 2>/dev/null) || { echo "no pull requests found" >&2; exit 1; }
+printf '{"number":7,"url":"https://github.com/talvor/asmai-fixture/pull/7","title":"Add a greeting","isDraft":false,"headRefName":"%s","headRefOid":"abc","state":"%s"}\n' "$(cat "$ASMAI_TEST_DIR/pr-branch")" "$state"
+`
+
+// deliveredFirstJob is a fixture whose first job, a notes job whose branch
+// holds the accepted work of its first assignment, was pushed, delivered with
+// a pull request and ended, so that a follow-up can continue it.
+type deliveredFirstJob struct {
+	twoResults
+	testDir string
+	branch  string
+}
+
+func newDeliveredFirstJob(t *testing.T) deliveredFirstJob {
+	t.Helper()
+	f := newTwoResultsOf(t, "planning")
+	testDir := t.TempDir()
+	bin := filepath.Join(testDir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeViewGH), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	branch := JobBranchName(f.job)
+	if err := os.WriteFile(filepath.Join(testDir, "pr-branch"), []byte(branch), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The first result is accepted and the second assignment cancelled, so
+	// that no assignment is left live.
+	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "file-1.txt is there"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.decide(CommandCancel, f.assignments[1].ID, "not needed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AssignmentCancelled(f.assignments[1].ID, store.Cancellation{Commit: f.commits[1], Pushed: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The daemon pushes the job branch, and the delivery owner opens the pull
+	// request and records it, in the dispatch that brought it the result.
+	owner := f.assignments[0].Owner
+	at := time.Now()
+	if err := f.s.ChangeDispatch(f.reported[0].ID, 1, store.DispatchCreated, store.DispatchWorking, "", at); err != nil {
+		t.Fatal(err)
+	}
+	git(t, f.clone, "push", "origin", "refs/heads/"+branch+":refs/heads/"+branch)
+	tip := git(t, f.clone, "rev-parse", "refs/heads/"+branch)
+	if _, err := f.s.JobBranchPushed(store.Push{Job: f.job.Number, Branch: branch, Commit: tip, Leader: owner, Dispatch: f.reported[0].ID}, 1, nil, at); err != nil {
+		t.Fatal(err)
+	}
+	pr := store.PullRequest{Job: f.job.Number, Number: 7, URL: "https://github.com/talvor/asmai-fixture/pull/7", Title: "Add a greeting", Branch: branch, Head: tip, State: "OPEN", Leader: owner, Dispatch: f.reported[0].ID}
+	if _, _, err := f.s.PullRequestRecorded(pr, 1, pr.URL, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.s.JobDelivered(store.Delivery{Job: f.job.Number, Number: 7, URL: pr.URL, Head: tip, NoCI: true}, "delivered", at); err != nil {
+		t.Fatal(err)
+	}
+	return deliveredFirstJob{twoResults: f, testDir: testDir, branch: branch}
+}
+
+// followUp opens a new job in the fixture's repository, with the job branch
+// the daemon makes as a job opens, and links it to job.
+func (f deliveredFirstJob) followUp(t *testing.T, follows int64) (store.Job, Response, error) {
+	t.Helper()
+	j, err := f.s.JobOpened(store.Job{Repository: "fixture", Reading: "Greet by name too", Mandate: store.MandateTestedPR, Criteria: []string{"done"}}, true, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := f.s.Repository("fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.ensureJobBranch(context.Background(), j, repository); err != nil {
+		t.Fatal(err)
+	}
+	j, err = f.s.JobLinked(j.Number, follows, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp Response
+	err = f.d.settleFollowUp(j, &resp)
+	return j, resp, err
+}
+
+func TestAFollowUpToAJobWithAnOpenPullRequestContinuesItsBranchAndPullRequestFromOriginsCopy(t *testing.T) {
+	f := newDeliveredFirstJob(t)
+	if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte("OPEN"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The branch on origin has a commit the clone's copy lacks, as a review
+	// fix would: the follow-up starts from origin's copy.
+	other := filepath.Join(t.TempDir(), "other")
+	git(t, filepath.Dir(other), "clone", "--branch", f.branch, f.origin, other)
+	if err := os.WriteFile(filepath.Join(other, "review.txt"), []byte("fix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, other, "add", "review.txt")
+	git(t, other, "commit", "-m", "review fix")
+	git(t, other, "push", "origin", f.branch)
+	originTip := git(t, other, "rev-parse", "HEAD")
+
+	j, resp, err := f.followUp(t, f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Follows != f.job.Number {
+		t.Errorf("the follow-up follows job %d, want %d", j.Follows, f.job.Number)
+	}
+	b, err := f.s.JobBranch(j.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Name != f.branch || b.Continues != f.job.Number || b.StartedFrom != originTip || b.Tip != originTip {
+		t.Errorf("the follow-up's job branch is %+v, want %s continued from origin's copy %s", b, f.branch, originTip)
+	}
+	if resp.Continues == nil || resp.Continues.Number != 7 || resp.JobBranch == nil || resp.JobBranch.Name != f.branch {
+		t.Errorf("the link answered %+v and %+v, want it to continue pull request #7 on %s", resp.Continues, resp.JobBranch, f.branch)
+	}
+	if got := git(t, f.clone, "rev-parse", "refs/heads/"+f.branch); got != originTip {
+		t.Errorf("the clone's branch is at %s, want origin's copy %s", got, originTip)
+	}
+	if out := git(t, f.clone, "branch", "--list", JobBranchName(j)); out != "" {
+		t.Errorf("the branch the daemon made as the follow-up opened is still there: %s", out)
+	}
+	if got := git(t, filepath.Join(f.d.cfg.Paths.Views, fmt.Sprintf("job-%d", j.Number)), "rev-parse", "HEAD"); got != originTip {
+		t.Errorf("the follow-up's view is at %s, want %s", got, originTip)
+	}
+
+	// The brief points to the pull request it continues.
+	var continued []store.PullRequest
+	if resp.Continues != nil {
+		continued = []store.PullRequest{*resp.Continues}
+	}
+	brief := brief(j, store.Repository{Origin: f.origin, Clone: f.clone, DefaultBranch: "trunk"}, nil, nil, &b, continued, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
+	for _, want := range []string{"Follow-up to job 1", "continues job 1's job branch", "Continues job 1's pull request #7 https://github.com/talvor/asmai-fixture/pull/7, still open"} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("the brief lacks %q:\n%s", want, brief)
+		}
+	}
+
+	// A job branch belongs to one open job at a time: a second follow-up to
+	// the same job starts afresh while the first holds the branch, and the
+	// store refuses to give it the branch.
+	second, resp2, err := f.followUp(t, f.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := f.s.JobBranch(second.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b2.Continues != 0 || b2.Name != JobBranchName(second) || !strings.Contains(resp2.Starts, "open job 2 holds the job branch") {
+		t.Errorf("the second follow-up's branch is %+v and it says %q, want a new branch and the reason", b2, resp2.Starts)
+	}
+	if _, err := f.s.JobBranchMade(store.JobBranch{Job: 99, Repository: "fixture", Name: f.branch, StartedFrom: originTip, View: "v"}, time.Now()); err == nil {
+		t.Errorf("a branch an open job holds was given to another job")
+	}
+}
+
+func TestAFollowUpStartsAfreshOnceThePullRequestIsMergedOrClosedOrWhileTheEarlierJobIsOpen(t *testing.T) {
+	for _, state := range []string{"MERGED", "CLOSED"} {
+		t.Run(state, func(t *testing.T) {
+			f := newDeliveredFirstJob(t)
+			if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte(state), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			j, resp, err := f.followUp(t, f.job.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := f.s.JobBranch(j.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if b.Continues != 0 || b.Name != JobBranchName(j) || resp.Continues != nil || !strings.Contains(resp.Starts, state) {
+				t.Errorf("the follow-up's branch is %+v and the link answered %+v and %q, want a new branch, with %s as the reason", b, resp.Continues, resp.Starts, state)
+			}
+			if b.StartedFrom == f.commits[0] {
+				t.Errorf("the follow-up started from the earlier job's work %s, not the base", b.StartedFrom)
+			}
+		})
+	}
+	t.Run("the earlier job is open", func(t *testing.T) {
+		f := newTwoResultsOf(t, "planning")
+		other, err := f.s.JobOpened(store.Job{Repository: "fixture", Reading: "Greet by name too", Mandate: store.MandateTestedPR, Criteria: []string{"done"}}, true, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		repository, _ := f.s.Repository("fixture")
+		if _, err := f.d.ensureJobBranch(context.Background(), other, repository); err != nil {
+			t.Fatal(err)
+		}
+		other, err = f.s.JobLinked(other.Number, f.job.Number, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var resp Response
+		if err := f.d.settleFollowUp(other, &resp); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := f.s.JobBranch(other.Number); b.Continues != 0 || !strings.Contains(resp.Starts, "job 1 is still open") {
+			t.Errorf("the follow-up's branch is %+v and it says %q", b, resp.Starts)
+		}
+	})
+}

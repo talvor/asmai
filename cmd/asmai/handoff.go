@@ -95,6 +95,9 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if m.Kind == store.MessageRejection || m.Kind == store.MessageCancellation {
 			fmt.Fprintf(o.stdout, "Reasons from %s:\n%s\n", m.Sender, m.Body)
 		}
+		if m.Kind == store.MessageMovedTip {
+			fmt.Fprintf(o.stdout, "Your result is returned by %s, which is not a rejection:\n%s\n", m.Sender, m.Body)
+		}
 		if m.Kind == store.MessageResumption {
 			fmt.Fprintf(o.stdout, "Resumes dispatch %d, which stopped at a boundary before the factory stopped.\n%s\n", m.Resumes, m.Body)
 		}

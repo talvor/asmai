@@ -56,7 +56,7 @@ func TestACoordinationLeaderRecordsAGrantTheUserGaveInTheConversationCitingTheir
 	}
 
 	// The job's brief lists the grant with its words and conditions.
-	text := brief(f.job, store.Repository{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, []store.Grant{g}, "")
+	text := brief(f.job, store.Repository{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, []store.Grant{g}, "")
 	for _, want := range []string{"Grants (", "- grant 1 | job 1 | deploy | active | recorded by leader@coordination", "Approved: deploy the build to staging", "Conditions: the tests pass", "The user's words: yes, you may deploy"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the brief lacks %q:\n%s", want, text)

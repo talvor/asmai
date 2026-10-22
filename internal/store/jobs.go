@@ -55,6 +55,8 @@ type Job struct {
 	Mandate    string    `json:"mandate"`
 	Criteria   []string  `json:"acceptance_criteria"`
 	OpenedAt   time.Time `json:"opened_at"`
+	// Follows is the job this one is a follow-up to, or zero (02 rule 20).
+	Follows int64 `json:"follows,omitempty"`
 }
 
 // JobOpened verifies a witnessed message and a registered repository in the
@@ -130,6 +132,60 @@ func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 	return job, tx.Commit()
 }
 
+// JobLinked links the follow-up job to the job it follows, and journals it.
+// The follow-up is a job opened after its predecessor, still open and not
+// linked to another, and in the same repository when both have one (02 rule 20).
+func (s *Store) JobLinked(number, follows int64, at time.Time) (Job, error) {
+	var linked Job
+	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
+		j, err := job(tx, number)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, fmt.Errorf("job %d does not exist", number)
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		predecessor, err := job(tx, follows)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, fmt.Errorf("job %d does not exist", follows)
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		// Linking again records nothing, so that Coordination can ask the
+		// daemon to settle the follow-up's job branch again.
+		if j.Follows == follows {
+			linked = j
+			return "", nil, nil
+		}
+		switch {
+		case follows >= number:
+			return "", nil, fmt.Errorf("job %d is not a follow-up to job %d: a follow-up is a new job linked to one opened before it", number, follows)
+		case j.State != JobOpen:
+			return "", nil, fmt.Errorf("job %d is %s, so it cannot be linked", number, j.State)
+		case j.Follows != 0:
+			return "", nil, fmt.Errorf("job %d already follows job %d", number, j.Follows)
+		case j.Repository != predecessor.Repository:
+			return "", nil, fmt.Errorf("job %d targets %s and job %d targets %s: a follow-up is in the same repository as the job it follows", number, repositoryName(j.Repository), follows, repositoryName(predecessor.Repository))
+		}
+		if _, err := tx.Exec(`UPDATE jobs SET follows = ? WHERE number = ?`, follows, number); err != nil {
+			return "", nil, err
+		}
+		j.Follows = follows
+		linked = j
+		return KindJobLinked, map[string]any{"job": number, "follows": follows}, nil
+	})
+	return linked, err
+}
+
+// repositoryName is a repository for a sentence, or "no repository".
+func repositoryName(name string) string {
+	if name == "" {
+		return "no repository"
+	}
+	return name
+}
+
 func (s *Store) Job(number int64) (Job, error) {
 	return job(s.db, number)
 }
@@ -138,7 +194,7 @@ func job(q queryer, number int64) (Job, error) {
 	var j Job
 	var repo sql.NullString
 	var criteria, opened string
-	err := q.QueryRow(`SELECT number, repository, state, role, witness, words, reading, mandate, criteria, opened_at FROM jobs WHERE number = ?`, number).Scan(&j.Number, &repo, &j.State, &j.Role, &j.Witness, &j.Words, &j.Reading, &j.Mandate, &criteria, &opened)
+	err := q.QueryRow(`SELECT number, repository, state, role, witness, words, reading, mandate, criteria, opened_at, follows FROM jobs WHERE number = ?`, number).Scan(&j.Number, &repo, &j.State, &j.Role, &j.Witness, &j.Words, &j.Reading, &j.Mandate, &criteria, &opened, &j.Follows)
 	if err != nil {
 		return Job{}, err
 	}

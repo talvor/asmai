@@ -44,6 +44,17 @@ func CreateBranch(ctx context.Context, clone, name, commit string) error {
 	return nil
 }
 
+// ResetBranch makes the branch name in the repository at clone point at
+// commit, making it if it is missing and moving it if it is elsewhere, so that
+// the branch is a copy of that commit whatever it held before. No checkout of
+// the clone has it checked out.
+func ResetBranch(ctx context.Context, clone, name, commit string) error {
+	if _, err := git(ctx, clone, "branch", "--force", "--no-track", name, commit); err != nil {
+		return fmt.Errorf("resetting branch %s to %s: %w", name, commit, err)
+	}
+	return nil
+}
+
 // AddWorkspace makes dir a checkout of AsmAI's clone on a new branch, at
 // commit. The checkout shares the clone's objects and its configuration, so
 // that the branch can be pushed to the clone's origin. Whatever an earlier

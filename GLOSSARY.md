@@ -69,7 +69,7 @@ _Avoid_: Pause (when the factory stopped the work)
 A request for another leader to take responsibility for a defined outcome, carrying the context and acceptance criteria needed to accept, clarify, or decline it.
 
 **Mandate**:
-The authority to pursue a requested outcome within its agreed scope, constraints, and acceptance criteria. A tested-PR mandate covers delivering a tested pull request; a planning-only mandate covers only producing its planning outcome, and a research-only mandate only its research outcome, never code.
+The authority to pursue a requested outcome within its agreed scope, constraints, and acceptance criteria. A tested-PR mandate covers delivering a tested pull request; a planning-only mandate covers only producing its planning outcome, a research-only mandate only its research outcome, and a setup mandate only setting a registered repository up for the skills, never code.
 
 **Grant**:
 An explicit authorization for a decision or action within a recorded scope and set of conditions, reusable while those conditions hold. The user gives it in words, and a leader records it at its scope citing them. A job's own approval stays with that job unless granted at a wider scope, spending is zero unless a grant names the amount and the scope, and no grant can authorize a merge. It ends only when the user revokes it or a leader reports that a condition no longer holds; actions it already authorized are reported as they stand, never undone.
@@ -91,8 +91,12 @@ A decision request carried to the user through Coordination when work requires t
 A repository the user has explicitly added to a factory. Jobs can target only registered repositories.
 
 **Repository instructions**:
-The instructions a registered repository gives agents, plus the user's own notes for it in the factory's configuration. They govern how work is done in that repository but never widen a mandate.
+The instructions a registered repository gives agents, plus the user's own notes for it in the factory's configuration, and the user's answers to its setup questions until its setup pull request merges. They govern how work is done in that repository but never widen a mandate.
 _Avoid_: Repository rules, project settings
+
+**Repository setup**:
+A repository's skill setup, which lives in the repository: `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md` and `docs/agents/domain.md`, and a block in its `CLAUDE.md` or `AGENTS.md`. Registering a repository without `docs/agents/issue-tracker.md` (that file alone decides) makes the daemon open its setup job, which Coordination runs with its own worker and delivers like a notes-only job. The user's answers are recorded for the repository as they send them, and whether the repository has CI is theirs to declare in the configuration.
+_Avoid_: Onboarding, bootstrap
 
 **Job branch**:
 The one branch that carries a repository job's accepted work and becomes its pull request.
@@ -133,7 +137,7 @@ A problem that validation reports. A blocking finding must be fixed before deliv
 _Avoid_: Issue, comment (when meaning a validation result)
 
 **Delivery owner**:
-The leader that delivers a job: for a code job, Engineering's leader, and for a job whose outcome is notes in a repository, the leader whose notes they are, Planning's or Research's. Only it asks the daemon to push the job branch, and only the daemon pushes it. It opens the job's pull request itself, and records it as its effect.
+The leader that delivers a job: for a code job, Engineering's leader, and for a job whose outcome is notes in a repository, the leader whose notes they are, Planning's or Research's, and for a repository's setup job, Coordination's leader. Only it asks the daemon to push the job branch, and only the daemon pushes it. It opens the job's pull request itself, and records it as its effect.
 
 **Outside change**:
 Commits on origin's job branch that AsmAI did not make, found when the daemon fetches the branch before a push. The push is refused, and a worker merges them in; they are never force-pushed over.

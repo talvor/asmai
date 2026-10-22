@@ -49,8 +49,8 @@ func TestAResearchJobWithNoRepositoryGivesItsWorkerAnEmptyScratchWorkspaceWithNo
 			t.Errorf("Research's leader may not run %s: %v", command, err)
 		}
 	}
-	if err := p.d.authorize(Request{Session: "coordination", Command: CommandAssign}); err == nil {
-		t.Error("Coordination's leader may assign work")
+	if _, _, err := p.d.assign(Request{Session: "coordination", Command: CommandAssign, Job: p.job.Number, Outcome: "Find it", Criteria: []string{"found"}}); err == nil || !strings.Contains(err.Error(), "only leader@research may give its writing work") {
+		t.Errorf("Coordination's leader assigning a research-only job's work returned %v, want it refused", err)
 	}
 
 	a, dispatch, err := p.d.assign(Request{Session: "research", Command: CommandAssign, Job: p.job.Number, Outcome: "Find how the greeting is spelled", Criteria: []string{"the answer names its source"}, Skill: "research"})

@@ -444,7 +444,7 @@ func TestRepoAddAcceptsEveryNonCodexFieldOfTheEntry(t *testing.T) {
 	gitIn(t, work, "clone", "--quiet", origin, "seed")
 	seed := filepath.Join(work, "seed")
 	gitIn(t, seed, "checkout", "-b", "trunk")
-	gitIn(t, seed, "commit", "--allow-empty", "-m", "first")
+	commitSetUp(t, seed, "first")
 	gitIn(t, seed, "push", "--quiet", "origin", "trunk")
 	gitIn(t, seed, "push", "--quiet", "origin", "trunk:develop")
 
@@ -538,7 +538,7 @@ func TestRestartReportsRepositoryRecordMismatchesWithoutChangingTheRecord(t *tes
 	gitIn(t, work, "clone", "--quiet", origin, "seed")
 	seed := filepath.Join(work, "seed")
 	gitIn(t, seed, "checkout", "-b", "trunk")
-	gitIn(t, seed, "commit", "--allow-empty", "-m", "first")
+	commitSetUp(t, seed, "first")
 	gitIn(t, seed, "push", "--quiet", "origin", "trunk")
 	asmaiJSON(t, &struct{}{}, "repo", "add", origin, "--name", "fixture")
 	registered := readConfig(t)

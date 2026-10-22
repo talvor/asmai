@@ -68,7 +68,7 @@ func TestTheDaemonPushesTheJobBranchForEngineeringAndRefusesOverOutsideCommitsUn
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt'`, 0, ""),
 		// Only the delivery owner asks for the push.
-		fakeRun(`asmai push 1`, 1, "only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, may run asmai push"),
+		fakeRun(`asmai push 1`, 1, "only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, or leader@coordination, the delivery owner of a repository's setup, may run asmai push"),
 		fakeRun(pushWorker("asmai/job-1/1"), 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
@@ -91,7 +91,9 @@ func TestTheDaemonPushesTheJobBranchForEngineeringAndRefusesOverOutsideCommitsUn
 		`{"expect":"Please add a greeting\r"}`,
 		hookStep("UserPromptSubmit", "", "Please add a greeting"),
 		fakeRun(`asmai job open --message latest --repository fixture --reading 'Add a greeting' --criterion 'Greeting is printed'`, 0, "Opened job 1"),
-		fakeRun(`asmai push 1`, 1, "only leader@engineering, the delivery owner"),
+		// Coordination's leader owns the delivery of a repository's setup only,
+		// and asks for a push while it works on a dispatch.
+		fakeRun(`asmai push 1`, 1, "has no current dispatch to tag the push with"),
 		fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'Add a greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'Greeting is printed'`, 0, "dispatch 1"),
 		hookStep("Stop", "", ""),
 		`{"expect":"asmai inbox --dispatch 2\r"}`,

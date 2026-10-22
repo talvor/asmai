@@ -721,6 +721,16 @@ func (d *daemon) startWorker(l *leader, cfg config.Config, install store.Provide
 	if repository != "" {
 		instructions += "\n" + repository
 	}
+	// The user's answers to its repository's setup are repository
+	// instructions until the setup pull request merges, so a job that starts
+	// before then is given them.
+	setup, err := d.workerSetupInstructions(a)
+	if err != nil {
+		return fmt.Errorf("reading the setup answers of the repository of assignment %d: %w", a.ID, err)
+	}
+	if setup != "" {
+		instructions += "\n" + setup
+	}
 	// The folders its repository declares are checked again here, as the
 	// file may have been applied before today's rules.
 	folders, err := d.workerFolders(cfg, a.Job)
@@ -760,10 +770,10 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	}
 	hook := providers.HookCommand(d.cfg.Paths.Executable)
 	guard := providers.WriteGuard{Writable: launch.writable, Socket: d.cfg.Paths.Socket}
-	// Only Coordination's terminal takes the user's keys, in the
+	// Only Coordination's leader's terminal takes the user's keys, in the
 	// conversation: every other session would wait at a native prompt
 	// nobody can answer, so it is denied what its rules do not allow.
-	perms := providers.Permissions{Unattended: l.address.Role != roles.Coordination, Editable: launch.editable}
+	perms := providers.Permissions{Unattended: l.address != roles.LeaderOf(roles.Coordination), Editable: launch.editable}
 	// The session's skills are written as a plugin for it alone, copied
 	// afresh at each start from the bundle in the executable and from the
 	// directories of added and repository skills, so editing those never
@@ -859,7 +869,7 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 	if resumed && !l.started {
 		d.cannotResume(l, exit)
 	}
-	if l.address.Role != roles.Coordination {
+	if l.address != roles.LeaderOf(roles.Coordination) {
 		pending, err := d.store.PendingLeaders()
 		if err != nil {
 			d.log.Error("reading pending leaders after agent exit", "agent", l.address.String(), "error", err)

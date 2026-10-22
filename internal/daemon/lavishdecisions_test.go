@@ -337,11 +337,11 @@ func TestAPageSurvivesARestartOfTheLavishServer(t *testing.T) {
 	f := newLavishFactory(t)
 	r := f.request(t, 0, "")
 	restarts := f.d.lavish.State().Restarts
-	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/shutdown", f.port), "application/json", strings.NewReader("{}"))
-	if err != nil {
-		t.Fatal(err)
+	// The server may exit before it answers, so the reply is not checked:
+	// the restart below is what shows the shutdown happened.
+	if resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/shutdown", f.port), "application/json", strings.NewReader("{}")); err == nil {
+		resp.Body.Close()
 	}
-	resp.Body.Close()
 	eventually(t, "the server to be restarted", func() bool {
 		s := f.d.lavish.State()
 		return s.Running && s.Restarts > restarts

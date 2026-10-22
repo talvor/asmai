@@ -311,6 +311,14 @@ ALTER TABLE decision_requests ADD COLUMN step TEXT NOT NULL DEFAULT '';
 ALTER TABLE decision_requests ADD COLUMN relied_records TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE decision_requests ADD COLUMN relied_grants TEXT NOT NULL DEFAULT '[]';
 `,
+	`
+CREATE TABLE setup_answers (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, job INTEGER NOT NULL REFERENCES jobs(number),
+ request INTEGER NOT NULL, version INTEGER NOT NULL, question TEXT NOT NULL, title TEXT NOT NULL,
+ choice TEXT NOT NULL, notes TEXT NOT NULL, cites INTEGER NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX setup_answers_repository ON setup_answers(repository, id);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -469,6 +477,9 @@ const (
 	// KindScratchCleaned records the daemon removing the scratch workspaces
 	// of a job with no repository that ended, on the user's command.
 	KindScratchCleaned = "job.scratch.cleaned"
+	// KindSetupAnswered records the user's answer to a question of a
+	// repository's setup, recorded for that repository at once.
+	KindSetupAnswered = "setup.answered"
 )
 
 // The states an agent can be in.

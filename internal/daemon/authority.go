@@ -49,17 +49,17 @@ func (d *daemon) authorize(req Request) error {
 		if ownsWorkers(ref.address) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering, leader@planning or leader@research, for writing work, or leader@quality, for validation, may run asmai assign")
+		return fmt.Errorf("only leader@engineering, leader@planning, leader@research or leader@coordination, for writing work, or leader@quality, for validation, may run asmai assign")
 	case CommandAccept, CommandReject, CommandCancel:
 		if ownsWorkers(ref.address) {
 			return nil
 		}
-		return fmt.Errorf("only leader@engineering, leader@planning, leader@research or leader@quality may run asmai %s", req.Command)
+		return fmt.Errorf("only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai %s", req.Command)
 	case CommandPush:
 		if isDeliveryOwner(ref.address) {
 			return nil
 		}
-		return errors.New("only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, may run asmai push")
+		return errors.New("only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, or leader@coordination, the delivery owner of a repository's setup, may run asmai push")
 	case CommandDecisionRecord:
 		if ref.address.Name == roles.Leader {
 			return nil
@@ -162,23 +162,26 @@ func commandName(command string) string {
 
 // ownsWorkers reports whether address is a leader that gives workers
 // assignments, and accepts, rejects and cancels them: Engineering's,
-// Planning's and Research's for writing work, Quality's for validation.
+// Planning's and Research's for writing work, Coordination's for the setup of
+// a repository, Quality's for validation.
 func ownsWorkers(address roles.Address) bool {
-	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Quality)}, address)
+	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Coordination), roles.LeaderOf(roles.Quality)}, address)
 }
 
 // isDeliveryOwner reports whether address is a leader that can own the delivery
-// of a job: Engineering's, for a job that changes code, and Planning's and
-// Research's, for a job whose outcome is notes (06 rule 16). Which of them
-// owns a given job is deliveryOwner's.
+// of a job: Engineering's, for a job that changes code, Planning's and
+// Research's, for a job whose outcome is notes (06 rule 16), and
+// Coordination's, for a repository's setup (08 rule 29). Which of them owns a
+// given job is deliveryOwner's.
 func isDeliveryOwner(address roles.Address) bool {
-	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research)}, address)
+	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Coordination)}, address)
 }
 
 // deliveryOwner returns the leader that owns the delivery of j: the leader
 // whose notes they are when its outcome is notes, Planning's for a
 // planning-only job and Research's for a research-only job in a repository,
-// and Engineering's for any other (06 rule 16).
+// Coordination's for the setup job of a repository, and Engineering's for
+// any other (06 rule 16, 08 rule 29).
 func deliveryOwner(j store.Job) roles.Address {
 	if j.Notes() {
 		return roles.LeaderOf(onlyRole[j.Mandate])

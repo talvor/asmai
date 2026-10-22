@@ -96,7 +96,9 @@ commands you type:
                               branch in the store and the configuration file, and make AsmAI's
                               own clone of it, fetched from origin, then open the pinned Claude
                               Code in the clone for you to trust it, as setup does. Your own
-                              checkout is never used for work. It also takes the entry's other
+                              checkout is never used for work. A repository with no
+                              docs/agents/issue-tracker.md gets a setup job at once, whose questions reach you in
+                              Lavish; with that file present nothing more happens. It also takes the entry's other
                               settings: --default-branch <branch>, --notes <text>,
                               --checks-one-at-a-time, --no-ci, --commit-trailers=false and
                               --repository-skills <role> (repeat for each role) and
@@ -140,8 +142,8 @@ commands agents run:
                               repeat --record for each of the job's decision records that goes with the handoff
   asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
   asmai assign --job <number> --outcome <text> --criterion <text> [--skill <name>] [--narrow <name>] [--record <id>] [--approved <id>]
-                              Engineering's, Planning's or Research's leader gives a writing assignment to a worker
-                              of its role, in a workspace of AsmAI's clone on its own branch, or for a job with no
+                              Engineering's, Planning's or Research's leader, or Coordination's for the setup of a
+                              repository, gives a writing assignment to a worker of its role, in a workspace of AsmAI's clone on its own branch, or for a job with no
                               repository in an empty scratch workspace; repeat --criterion for
                               each acceptance criterion. A skill that starts only on request starts only when
                               the job's mandate calls for it, or with --approved, the decision record of the
@@ -175,7 +177,8 @@ commands agents run:
   asmai cancel --assignment <id> --reason <text>
                               a leader cancels an assignment it owns; its worker pushes its assignment
                               branch, if it has one, and stops
-  asmai push <number>         the delivery owner, Engineering's leader for a code job, asks the daemon to
+  asmai push <number>         the delivery owner, Engineering's leader for a code job and Coordination's for a
+                              repository's setup, asks the daemon to
                               push the job branch: it fetches the branch from origin, refuses and records an
                               outside change if origin has commits AsmAI did not make, and otherwise pushes
                               it with a plain push, never forced, recorded as the daemon's effect

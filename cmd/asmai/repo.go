@@ -55,6 +55,9 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 		if r.Location != "" {
 			fmt.Fprintf(w, "Your own checkout is recorded but never used for work.\n")
 		}
+		if resp.Job != nil {
+			fmt.Fprintf(w, "%s has no docs/agents/issue-tracker.md, so it is not set up for the skills: Coordination opened job %d to set it up. Its questions reach you in Lavish, where `asmai decisions` lists them and `asmai lavish` gives the command that forwards its port; the setup files go on the job's pull request.\n", r.Name, resp.Job.Number)
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -70,21 +73,21 @@ func repoAdd(o *output, paths statedir.Paths, source, name string, settings repo
 		return o.fail(err)
 	} else if !trusted && !exists(plan.Path) {
 		fmt.Fprintf(w, "%s, and the pinned %s is not installed yet: run `asmai init` in a terminal, which installs it and opens it in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
-		return repoAdded(o, r, resp.Writable)
+		return repoAdded(o, r, resp.Writable, resp.Job)
 	}
 	step := "trust " + trustStep(paths, r.Clone)
 	state, detail, err := trustFolder(w, o.stderr, stdin, plan, record, r.Clone, true, "repo add", false)
 	switch {
 	case errors.Is(err, errNoTerminal):
 		fmt.Fprintf(w, "%s, and trusting it needs you at a terminal: run `asmai init` in a terminal, which opens %s in %s for you to trust it.\n", untrusted, plan.Title, r.Clone)
-		return repoAdded(o, r, resp.Writable)
+		return repoAdded(o, r, resp.Writable, resp.Job)
 	case state != "":
 		fmt.Fprintf(w, "%s: %s. %s\n", step, state, detail)
 	}
 	if err != nil {
 		return o.fail(err)
 	}
-	return repoAdded(o, r, resp.Writable)
+	return repoAdded(o, r, resp.Writable, resp.Job)
 }
 
 type repoSettings struct {
@@ -114,14 +117,18 @@ func (s repoSettings) options() (config.RepositoryOptions, error) {
 	return o, nil
 }
 
-// repoAdded reports, with --json or --toon, that r is registered, and the folders its
-// workers may write.
-func repoAdded(o *output, r store.Repository, writable []config.Folder) int {
+// repoAdded reports, with --json or --toon, that r is registered, the folders its
+// workers may write, and the setup job the daemon opened for it, if it did.
+func repoAdded(o *output, r store.Repository, writable []config.Folder, setup *store.Job) int {
 	if o.structured() {
 		if writable == nil {
 			writable = []config.Folder{}
 		}
-		return o.printData(map[string]any{"registered": true, "repository": r, "writable": writable})
+		data := map[string]any{"registered": true, "repository": r, "writable": writable}
+		if setup != nil {
+			data["setup_job"] = setup
+		}
+		return o.printData(data)
 	}
 	return 0
 }

@@ -43,6 +43,28 @@ func gitIdentity(t *testing.T) {
 	}
 }
 
+// commitSetUp commits, in the checkout dir, what a repository that is set up
+// for the skills has, its issue tracker file, so that registering it opens no
+// setup job.
+func commitSetUp(t *testing.T, dir, message string) {
+	t.Helper()
+	writeSetUp(t, dir)
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-m", message)
+}
+
+// writeSetUp writes the issue tracker file of a repository that is set up for
+// the skills into the checkout dir.
+func writeSetUp(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "docs", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "agents", "issue-tracker.md"), []byte("# Issue tracker\n\nIssues live in GitHub.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // registerWritingFixture registers a repository whose main holds one file,
 // by the user's checkout of it, which also holds a commit and a file no one
 // else has, so that a workspace made from the checkout would show.
@@ -62,6 +84,20 @@ func registerWritingFixtureWith(t *testing.T, files map[string]string) writingFi
 // registered with the further arguments of `asmai repo add`, such as --no-ci.
 func registerWritingFixtureAs(t *testing.T, files map[string]string, addArgs ...string) writingFixture {
 	t.Helper()
+	return registerFixture(t, files, true, addArgs...)
+}
+
+// registerFixtureWithoutSetup is registerWritingFixtureAs for a repository
+// that has no issue tracker file, which registering opens a setup job for.
+func registerFixtureWithoutSetup(t *testing.T, files map[string]string, addArgs ...string) writingFixture {
+	t.Helper()
+	return registerFixture(t, files, false, addArgs...)
+}
+
+// registerFixture registers the fixture repository, which holds the issue
+// tracker file of a repository that is set up for the skills when setUp.
+func registerFixture(t *testing.T, files map[string]string, setUp bool, addArgs ...string) writingFixture {
+	t.Helper()
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +108,9 @@ func registerWritingFixtureAs(t *testing.T, files map[string]string, addArgs ...
 	gitIn(t, f.checkout, "checkout", "-b", "main")
 	if err := os.WriteFile(filepath.Join(f.checkout, "README.md"), []byte("fixture\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if setUp {
+		writeSetUp(t, f.checkout)
 	}
 	for path, text := range files {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(f.checkout, path)), 0o755); err != nil {

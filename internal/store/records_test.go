@@ -166,6 +166,40 @@ func TestAHumanDecisionCitesAWitnessedMessageOfTheJobsConversation(t *testing.T)
 	}
 }
 
+func TestAHumanDecisionInASetupJobCitesAWitnessedMessageToCoordinationsLeader(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	for _, agent := range []string{"leader@coordination", "leader@engineering"} {
+		if err := s.ConversationEntered(agent, strings.TrimPrefix(agent, "leader@"), 1, "/dev/pts/3", assignmentsAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	say := func(agent string) int64 {
+		t.Helper()
+		w := Witnessed{Agent: agent, Role: strings.TrimPrefix(agent, "leader@"), Generation: 1, Terminal: "/dev/pts/3", Text: "use github"}
+		_, message, err := s.ObservedWitnessed(w, "UserPromptSubmit", json.RawMessage(`{}`), assignmentsAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return message
+	}
+	job, d := leaderWorking(t, s)
+	// A setup job's witness is the registration entry, not a message.
+	if _, err := s.db.Exec(`UPDATE jobs SET mandate = ?, witness = 1 WHERE number = ?`, MandateSetup, job); err != nil {
+		t.Fatal(err)
+	}
+	human := rule25(job, d)
+	human.Source = SourceHuman
+
+	human.Cites = say("leader@engineering")
+	if _, err := s.DecisionRecorded(human, 1, assignmentsAt); err == nil || !strings.Contains(err.Error(), "not in the job's conversation") {
+		t.Errorf("a message to another agent: %v", err)
+	}
+	human.Cites = say("leader@coordination")
+	if got, err := s.DecisionRecorded(human, 1, assignmentsAt); err != nil || got.Cites != human.Cites {
+		t.Errorf("a message to Coordination's leader: %+v (%v)", got, err)
+	}
+}
+
 func TestARecordIsPassedInAnAssignmentAndAHandoffAndSurvivesARestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "store.db")
 	s := open(t, path)

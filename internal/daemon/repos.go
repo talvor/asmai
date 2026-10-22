@@ -32,13 +32,15 @@ func (d *daemon) repoCommand(conn *net.UnixConn, req Request) {
 		ctx, cancel := context.WithTimeout(d.work, repoTimeout)
 		defer cancel()
 		var r store.Repository
+		var setup *store.Job
 		options := config.DefaultRepositoryOptions()
 		if req.Options != nil {
 			options = *req.Options
 		}
-		if r, err = d.repoAdd(ctx, req.Source, req.Repository, req.DefaultBranch, options); err == nil {
+		if r, setup, err = d.repoAdd(ctx, req.Source, req.Repository, req.DefaultBranch, options); err == nil {
 			resp.Repository = &r
 			resp.Writable = d.appliedFolders(r.Name)
+			resp.Job = setup
 		}
 	case CommandRepoList:
 		resp.Repositories, err = d.store.Repositories()
@@ -83,32 +85,36 @@ func notRegistered(name string) error {
 // it, fetched from its origin, writes its entry into the configuration file,
 // and records it in the store. It does the last step last, so a repository
 // the store records has its clone and its entry; a failure undoes the steps
-// before it.
-func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, options config.RepositoryOptions) (store.Repository, error) {
+// before it. A repository whose clone has no docs/agents/issue-tracker.md is
+// not set up for the skills, so the store opens its setup job in the same
+// step as the registration and tells Coordination's leader, and repoAdd
+// returns the job (05 rule 4, 08 rule 28); with the file present nothing else
+// happens.
+func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, options config.RepositoryOptions) (store.Repository, *store.Job, error) {
 	d.repoMu.Lock()
 	defer d.repoMu.Unlock()
 	if d.cfg.ConfigFile == "" {
-		return store.Repository{}, refuse("this daemon reads no configuration file, so it cannot write the repository's entry; start the factory with `asmai start`")
+		return store.Repository{}, nil, refuse("this daemon reads no configuration file, so it cannot write the repository's entry; start the factory with `asmai start`")
 	}
 	src, err := repos.Resolve(ctx, source)
 	if err != nil {
-		return store.Repository{}, refuse("%v", err)
+		return store.Repository{}, nil, refuse("%v", err)
 	}
 	if name == "" {
 		if name = repos.DeriveName(src.Origin); config.CheckRepositoryName(name) != nil {
-			return store.Repository{}, refuse("no name can be made from %s; choose one with --name", src.Origin)
+			return store.Repository{}, nil, refuse("no name can be made from %s; choose one with --name", src.Origin)
 		}
 	}
 	if err := config.CheckRepositoryName(name); err != nil {
-		return store.Repository{}, refuse("%v", err)
+		return store.Repository{}, nil, refuse("%v", err)
 	}
 	if err := config.CheckRepositoryOptions(options); err != nil {
-		return store.Repository{}, refuse("%v", err)
+		return store.Repository{}, nil, refuse("%v", err)
 	}
 	if _, err := d.store.Repository(name); err == nil {
-		return store.Repository{}, refuse("a repository is already registered as %q; choose another name with --name, or remove it with `asmai repo remove %s`", name, name)
+		return store.Repository{}, nil, refuse("a repository is already registered as %q; choose another name with --name, or remove it with `asmai repo remove %s`", name, name)
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return store.Repository{}, err
+		return store.Repository{}, nil, err
 	}
 	// Fail before the clone, which takes time, when the file cannot take the
 	// entry.
@@ -116,21 +122,21 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 	switch {
 	case errors.Is(err, config.ErrMissing):
 	case err != nil:
-		return store.Repository{}, fmt.Errorf("reading the configuration file: %w", err)
+		return store.Repository{}, nil, fmt.Errorf("reading the configuration file: %w", err)
 	case len(problems) > 0:
-		return store.Repository{}, refuse("%v", &config.ProblemsError{Path: d.cfg.ConfigFile, Problems: problems})
+		return store.Repository{}, nil, refuse("%v", &config.ProblemsError{Path: d.cfg.ConfigFile, Problems: problems})
 	}
 	if _, ok := cfg.Repositories[name]; ok {
-		return store.Repository{}, refuse("the configuration file already has [repositories.%s]; remove it, or choose another name with --name", name)
+		return store.Repository{}, nil, refuse("the configuration file already has [repositories.%s]; remove it, or choose another name with --name", name)
 	}
 	// The folders the user named are checked before the clone too; the ones
 	// its language suggests, after it.
 	bounds, err := d.writableBounds(cfg, name)
 	if err != nil {
-		return store.Repository{}, err
+		return store.Repository{}, nil, err
 	}
 	if err := config.CheckWritable(name, options.Writable, bounds); err != nil {
-		return store.Repository{}, refuse("%v", err)
+		return store.Repository{}, nil, refuse("%v", err)
 	}
 
 	clone := filepath.Join(d.cfg.Paths.Repositories, name)
@@ -139,16 +145,16 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 	branch, err = repos.Clone(ctx, src.Origin, partial, branch)
 	if err != nil {
 		if ctx.Err() != nil {
-			return store.Repository{}, refuse("registering %s was interrupted: %v", name, ctx.Err())
+			return store.Repository{}, nil, refuse("registering %s was interrupted: %v", name, ctx.Err())
 		}
-		return store.Repository{}, refuse("%v", err)
+		return store.Repository{}, nil, refuse("%v", err)
 	}
 	undo := func() { os.RemoveAll(partial) }
 	if len(options.Writable) == 0 {
 		options.Writable = config.DetectWritable(partial)
 		if err := config.CheckWritable(name, options.Writable, bounds); err != nil {
 			undo()
-			return store.Repository{}, refuse("%v", err)
+			return store.Repository{}, nil, refuse("%v", err)
 		}
 	}
 	entry := config.Repository{Location: src.Location, Origin: src.Origin, DefaultBranch: branch}
@@ -157,9 +163,9 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 		var problems *config.ProblemsError
 		var entryProblems *config.EntryProblemsError
 		if errors.As(err, &problems) || errors.As(err, &entryProblems) || errors.Is(err, config.ErrRepositoryEntryExists) {
-			return store.Repository{}, refuse("%v", err)
+			return store.Repository{}, nil, refuse("%v", err)
 		}
-		return store.Repository{}, fmt.Errorf("writing the entry to the configuration file: %w", err)
+		return store.Repository{}, nil, fmt.Errorf("writing the entry to the configuration file: %w", err)
 	}
 	undo = func() {
 		os.RemoveAll(partial)
@@ -171,20 +177,64 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 	// A clone left in place by an interrupted registration has no record.
 	if err := os.RemoveAll(clone); err != nil {
 		undo()
-		return store.Repository{}, fmt.Errorf("clearing %s: %w", clone, err)
+		return store.Repository{}, nil, fmt.Errorf("clearing %s: %w", clone, err)
 	}
 	if err := os.Rename(partial, clone); err != nil {
 		undo()
-		return store.Repository{}, fmt.Errorf("putting the clone in place: %w", err)
+		return store.Repository{}, nil, fmt.Errorf("putting the clone in place: %w", err)
 	}
 	r := store.Repository{Name: name, Location: src.Location, Origin: src.Origin, DefaultBranch: branch, Clone: clone, AddedAt: time.Now()}
-	if err := d.store.RepositoryAdded(r); err != nil {
+	var setup *store.Job
+	var dispatch store.Dispatch
+	if hasIssueTracker(clone) {
+		err = d.store.RepositoryAdded(r)
+	} else {
+		var j store.Job
+		if j, dispatch, err = d.store.RepositoryAddedWithSetup(r, setupOpening(r, source)); err == nil {
+			setup = &j
+		}
+	}
+	if err != nil {
 		undo()
-		return store.Repository{}, fmt.Errorf("recording the repository: %w", err)
+		return store.Repository{}, nil, fmt.Errorf("recording the repository: %w", err)
 	}
 	d.noteRepository(name)
 	d.log.Info("repository registered", "repository", name, "origin", r.Origin, "default_branch", branch, "clone", clone)
-	return r, nil
+	if setup != nil {
+		d.log.Info("setup job opened for a repository with no docs/agents/issue-tracker.md", "job", setup.Number, "repository", name, "dispatch", dispatch.ID)
+		// The job's branch is made before Coordination is told, so that its
+		// brief points to the code from the start.
+		d.makeJobBranch(*setup)
+		d.nudge(dispatch.Agent)
+	}
+	return r, setup, nil
+}
+
+// issueTrackerFile is the file of a repository's setup that alone decides
+// whether the repository is set up for the skills (08 rule 28).
+const issueTrackerFile = "docs/agents/issue-tracker.md"
+
+// hasIssueTracker reports whether the clone at dir has the repository's
+// issue tracker file, as a regular file.
+func hasIssueTracker(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(issueTrackerFile)))
+	return err == nil && info.Mode().IsRegular()
+}
+
+// setupOpening is the setup job the registration of r, which the user ran as
+// `asmai repo add source`, opens: the registration is its request, and the
+// daemon's reading of it and acceptance criteria say what the job is for.
+func setupOpening(r store.Repository, source string) store.SetupOpening {
+	return store.SetupOpening{
+		Words:   "asmai repo add " + source,
+		Reading: fmt.Sprintf("Set %s up for the skills: it has no %s", r.Name, issueTrackerFile),
+		Criteria: []string{
+			fmt.Sprintf("%s, docs/agents/triage-labels.md and docs/agents/domain.md, and the Agent skills block in the repository's CLAUDE.md or AGENTS.md, are on the job's branch and pull request, written from the user's own answers", issueTrackerFile),
+			"every question of the setup, including whether the repository has CI, reached the user as a decision request answered in Lavish, and their answers are recorded for the repository",
+			"the user is given the change to make in the configuration when the repository has no CI",
+		},
+		Body: setupBody(r),
+	}
 }
 
 // repoRemove removes the registered repository name: its record in the

@@ -128,8 +128,8 @@ func LeaderInstructionsFor(role string, list []string, index []skills.IndexEntry
 }
 
 // WorkerInstructions returns the instructions for role's workers: their own,
-// the operating guide and their default skills. Coordination's workers,
-// which run repository setup, have none yet.
+// the operating guide and their default skills. Coordination's workers run
+// repository setup.
 func WorkerInstructions(role string) (string, error) {
 	return WorkerInstructionsFor(role, skills.WorkerList(role))
 }
@@ -205,4 +205,29 @@ func RepositoryInstructions(dir, notes string) (string, error) {
 		fmt.Fprintf(&text, "\n## The user's notes for this repository, from AsmAI's configuration\n\n%s\n", notes)
 	}
 	return text.String(), nil
+}
+
+// SetupAnswer is the user's answer to one question of a repository's setup:
+// the question's id and title, and the answer in the user's own words.
+type SetupAnswer struct {
+	Question string
+	Title    string
+	Answer   string
+}
+
+// SetupInstructions returns the user's answers to the setup questions of the
+// repository, as repository instructions to append to an agent's
+// instructions, or "" when there are none. The setup pull request has not
+// merged, so the repository's own files do not carry them yet, and until it
+// does they count as the repository's instructions (08 rule 30).
+func SetupInstructions(repository string, answers []SetupAnswer) string {
+	if len(answers) == 0 {
+		return ""
+	}
+	var text strings.Builder
+	fmt.Fprintf(&text, "# The user's answers to the setup of %s\n\nThe repository's setup pull request has not merged, so its setup files are not in the repository you work in yet. The user gave these answers to its setup questions, in their own words. Until that pull request merges they are the repository's instructions, with the instruction files above: they decide how work is done in the repository, and they never widen your assignment or the job's mandate.\n\n", repository)
+	for _, a := range answers {
+		fmt.Fprintf(&text, "- %s (%s): %s\n", a.Title, a.Question, a.Answer)
+	}
+	return text.String()
 }

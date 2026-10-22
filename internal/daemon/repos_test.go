@@ -34,8 +34,23 @@ func git(t *testing.T, dir string, args ...string) string {
 }
 
 // remote makes a bare repository with a commit on trunk, standing in for a
-// remote.
+// remote. It holds the issue tracker file of a repository that is set up for
+// the skills, so that registering it opens no setup job.
 func remote(t *testing.T) string {
+	t.Helper()
+	return remoteWith(t, map[string]string{"docs/agents/issue-tracker.md": "# Issue tracker\n\nIssues live in GitHub.\n"})
+}
+
+// remoteWithoutSetup is remote with no issue tracker file, as a repository
+// that is not set up for the skills has it.
+func remoteWithoutSetup(t *testing.T) string {
+	t.Helper()
+	return remoteWith(t, nil)
+}
+
+// remoteWith makes a bare repository standing in for a remote, with a commit
+// on trunk that holds files.
+func remoteWith(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -43,9 +58,19 @@ func remote(t *testing.T) string {
 	}
 	bare := filepath.Join(dir, "fixture.git")
 	git(t, dir, "init", "--bare", "-b", "trunk", bare)
+	seed := filepath.Join(dir, "seed")
 	git(t, dir, "init", "-b", "trunk", "seed")
-	git(t, filepath.Join(dir, "seed"), "commit", "--allow-empty", "-m", "first")
-	git(t, filepath.Join(dir, "seed"), "push", bare, "trunk")
+	for name, text := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(seed, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(seed, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, seed, "add", name)
+	}
+	git(t, seed, "commit", "--allow-empty", "-m", "first")
+	git(t, seed, "push", bare, "trunk")
 	return bare
 }
 

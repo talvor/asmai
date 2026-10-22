@@ -103,7 +103,7 @@ func TestRepositoriesAreRegisteredListedShownAndRemovedEndToEnd(t *testing.T) {
 	gitIn(t, work, "clone", "--quiet", origin, "fixture")
 	checkout := filepath.Join(work, "fixture")
 	gitIn(t, checkout, "checkout", "-b", "trunk")
-	gitIn(t, checkout, "commit", "--allow-empty", "-m", "published")
+	commitSetUp(t, checkout, "published")
 	gitIn(t, checkout, "push", "--quiet", "origin", "trunk")
 	published := gitIn(t, checkout, "rev-parse", "HEAD")
 	gitIn(t, checkout, "commit", "--allow-empty", "-m", "mine alone")

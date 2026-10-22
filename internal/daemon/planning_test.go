@@ -148,6 +148,15 @@ func newPlanningJob(t *testing.T, mandate string) planningJob {
 // no clone and no job branch.
 func newJobFactory(t *testing.T, mandate string, repository bool) planningJob {
 	t.Helper()
+	return newJobFactoryFrom(t, mandate, repository, "")
+}
+
+// newJobFactoryFrom is newJobFactory for a repository cloned from origin, or
+// from a remote of its own when origin is empty: the setup job of a
+// repository that has no issue tracker file, and any other job of one that
+// has it.
+func newJobFactoryFrom(t *testing.T, mandate string, repository bool, origin string) planningJob {
+	t.Helper()
 	out := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(out, 0o700); err != nil {
 		t.Fatal(err)
@@ -157,9 +166,13 @@ func newJobFactory(t *testing.T, mandate string, repository bool) planningJob {
 	if err := os.MkdirAll(paths.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	var origin, clone string
+	var clone string
 	if repository {
-		origin = remote(t)
+		if origin == "" && mandate == store.MandateSetup {
+			origin = remoteWithoutSetup(t)
+		} else if origin == "" {
+			origin = remote(t)
+		}
 		clone = filepath.Join(paths.Repositories, "fixture")
 		if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
 			t.Fatal(err)
@@ -195,22 +208,32 @@ func newJobFactory(t *testing.T, mandate string, repository bool) planningJob {
 		t.Fatal(err)
 	}
 	repositoryName := ""
-	if repository {
-		repositoryName = "fixture"
-		if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
+	var job store.Job
+	if mandate == store.MandateSetup {
+		// The daemon opens a repository's setup job as it registers it.
+		var err error
+		job, _, err = s.RepositoryAddedWithSetup(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}, store.SetupOpening{Words: "asmai repo add " + origin, Reading: "Set fixture up for the skills", Criteria: []string{"its setup files are on the job's pull request"}, Body: "setup"})
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
-		t.Fatal(err)
-	}
-	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "plan a greeting"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"plan a greeting"}`), at)
-	if err != nil {
-		t.Fatal(err)
-	}
-	job, err := s.JobOpened(store.Job{Repository: repositoryName, Witness: witness, Reading: "Plan a greeting", Mandate: mandate, Criteria: []string{"a plan"}}, false, at)
-	if err != nil {
-		t.Fatal(err)
+	} else {
+		if repository {
+			repositoryName = "fixture"
+			if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
+			t.Fatal(err)
+		}
+		_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "plan a greeting"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"plan a greeting"}`), at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, err = s.JobOpened(store.Job{Repository: repositoryName, Witness: witness, Reading: "Plan a greeting", Mandate: mandate, Criteria: []string{"a plan"}}, false, at)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	d := &daemon{
 		cfg: Config{Paths: paths, ConfigFile: configFile, Pins: testPins("v"), ClaudeVersion: reportsVersion("v"), ClaudeRecord: trustingRecord(t, paths)}, work: context.Background(), store: s,
@@ -284,8 +307,13 @@ func TestOnlyTheOwningRolesLeaderAssignsItsWorkAndPlanningNeverValidates(t *test
 	if _, _, err := p.d.assign(Request{Session: "planning", Command: CommandAssign, Job: p.job.Number, ReadOnly: true, Commit: "abc", Outcome: "validate", Criteria: []string{"c"}}); err == nil || !strings.Contains(err.Error(), "only leader@quality") {
 		t.Errorf("Planning's leader assigning a validation returned %v, want it refused: Quality validates", err)
 	}
-	if err := p.d.authorize(Request{Session: "coordination", Command: CommandAssign}); err == nil {
-		t.Error("Coordination's leader may assign work")
+	// Coordination's leader gives writing work for the setup of a repository
+	// only, which the assignment itself checks.
+	if err := p.d.authorize(Request{Session: "coordination", Command: CommandAssign}); err != nil {
+		t.Errorf("Coordination's leader may not assign the work of a repository's setup: %v", err)
+	}
+	if _, _, err := p.d.assign(Request{Session: "coordination", Command: CommandAssign, Job: p.job.Number, Outcome: "Plan it", Criteria: []string{"planned"}}); err == nil || !strings.Contains(err.Error(), "only leader@planning may give its writing work") {
+		t.Errorf("Coordination's leader assigning a planning-only job's work returned %v, want it refused", err)
 	}
 	for _, command := range []string{CommandAccept, CommandReject, CommandCancel} {
 		if err := p.d.authorize(Request{Session: "planning", Command: command}); err != nil {

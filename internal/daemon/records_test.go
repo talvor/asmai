@@ -87,7 +87,7 @@ func TestALeaderRecordsADecisionAndRoutineWorkNeedsNone(t *testing.T) {
 	if err != nil || len(records) != 2 {
 		t.Fatalf("the records are %+v (%v)", records, err)
 	}
-	text := brief(f.job, store.Repository{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, records, nil, nil)
+	text := brief(f.job, store.Repository{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, records, nil, nil, "")
 	for _, want := range []string{
 		"Decisions:\n- decision 1 | job 1 | delegated | accountable leader leader@engineering | ",
 		"- decision 2 | job 1 | delegated | accountable leader leader@engineering | ",

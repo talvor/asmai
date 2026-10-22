@@ -54,7 +54,7 @@ func (d *daemon) push(req Request) (store.Push, error) {
 		return store.Push{}, err
 	}
 	if !isDeliveryOwner(ref.address) {
-		return store.Push{}, refuse("only %s, the delivery owner of a code job, %s or %s, the delivery owner of a notes job, may run asmai push", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research))
+		return store.Push{}, refuse("only %s, the delivery owner of a code job, %s or %s, the delivery owner of a notes job, or %s, the delivery owner of a repository's setup, may run asmai push", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Coordination))
 	}
 	if dispatch == 0 {
 		return store.Push{}, refuse("%s has no current dispatch to tag the push with; ask for the push while working on a dispatch you fetched with `asmai inbox`", ref.address)

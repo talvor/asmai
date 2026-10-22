@@ -1014,3 +1014,49 @@ func TestResearchsLeaderAndWorkersAreGivenTheirSkills(t *testing.T) {
 		t.Errorf("Research's leader has skills %v besides its index", got)
 	}
 }
+
+func TestCoordinationsInstructionsRunARepositorysSetupWithItsOwnWorkerAndDeliverItLikeANotesOnlyJob(t *testing.T) {
+	got, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		// When it runs, and who opens it.
+		"has no `docs/agents/issue-tracker.md`", "opens its setup job at once", "message of kind `setup`", "`asmai job open` refuses the setup mandate", "With that file present nothing happens",
+		// How it runs.
+		"`asmai assign --job <number> --skill setup-matt-pocock-skills", "Every question of a setup is answered in Lavish, even a single choice", "--carries <the worker's request ID>",
+		"never reword, drop or add a question", "--user-answer <the ID of your request that carried it>",
+		// Answers apply at once.
+		"The answers are recorded for the repository at once", "given them as repository instructions",
+		// CI.
+		"the question with the id `ci`", "lives only in the configuration, which only the user changes", "set `no_ci = true`", "`asmai config apply`", "Never edit the configuration yourself",
+		// Delivery.
+		"Deliver it like a notes-only job", "no Quality validation", "`asmai push <job>`", "gh pr create --draft", "`asmai effect pull-request <the URL gh printed>`", "never merge",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Coordination's instructions lack %q", want)
+		}
+	}
+}
+
+func TestCoordinationsWorkersAreGivenTheirInstructionsAndTheirSkill(t *testing.T) {
+	got, err := WorkerInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"You are a Coordination worker", "`leader@coordination`", "setup-matt-pocock-skills", "docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md", "## Agent skills",
+		"Never ask the user directly, and never supply the user's side of a decision", "you never answer one yourself",
+		"`asmai decision request --kind questions", "`tracker`", "`labels`", "`agent-file`", "`ci`", "Always ask whether the repository has CI", "write nothing about CI into the repository's files",
+		"asmai decision request --kind review", "Write the files into the repository only after the user's answer approves them",
+		"asmai result", "--skill setup-matt-pocock-skills", "you never write code", "asmai blocked",
+		"The operating guide", "Your skill list",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Coordination's workers' instructions lack %q", want)
+		}
+	}
+	if !slices.Equal(skills.WorkerList(Coordination), []string{"setup-matt-pocock-skills"}) {
+		t.Errorf("Coordination's workers' skills are %v", skills.WorkerList(Coordination))
+	}
+}

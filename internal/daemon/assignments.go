@@ -539,29 +539,22 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	var branch store.JobBranch
 	var commit string
 	var tookIn bool
+	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
+	defer cancel()
 	if a.Scratch {
 		// A scratch workspace is no repository: there is no commit to see,
 		// no job branch to take in and no assignment branch to push.
 		input.Artifacts = append([]string{"scratch workspace " + a.Workspace.Path}, input.Artifacts...)
-	}
-	if !a.Scratch {
-		branch, err = d.store.JobBranch(a.Job)
-		if err != nil {
+	} else {
+		if branch, err = d.store.JobBranch(a.Job); err != nil {
 			return store.Report{}, store.Dispatch{}, err
 		}
-	}
-
-	// What the daemon sees of the workspace is the commit the report is at.
-	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
-	defer cancel()
-	if !a.Scratch {
-		commit, err = repos.Commit(ctx, a.Workspace.Path, "HEAD")
-		if err != nil {
+		// What the daemon sees of the workspace is the commit the report is at.
+		if commit, err = repos.Commit(ctx, a.Workspace.Path, "HEAD"); err != nil {
 			return store.Report{}, store.Dispatch{}, fmt.Errorf("reading the commit of %s: %w", a.Workspace.Path, err)
 		}
 	}
 	switch {
-	case a.Scratch:
 	case a.ReadOnly:
 		// A validation is fixed at one commit, and its evidence names it.
 		// It has no branch to push, so only the commit it is at is checked.
@@ -572,7 +565,7 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 			return store.Report{}, store.Dispatch{}, err
 		}
 		input.Artifacts = append([]string{fmt.Sprintf("validated commit %s of job branch %s, in a read-only workspace", commit, branch.Name)}, input.Artifacts...)
-	default:
+	case !a.Scratch:
 		if tookIn, err = d.checkWritingReport(ctx, a, branch, commit); err != nil {
 			return store.Report{}, store.Dispatch{}, err
 		}

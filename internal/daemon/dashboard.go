@@ -756,6 +756,10 @@ func validationWords(w store.JobWork, head string) string {
 		words = "validating"
 	case w.Validated:
 		words = "accepted at " + short
+	case w.LastValidated != "":
+		// A later commit made the evidence stale: the head is validated
+		// again, and its checks re-run, before it is delivered.
+		words = fmt.Sprintf("stale: validated at %s, the head is now %s", w.LastValidated[:min(len(w.LastValidated), 7)], short)
 	default:
 		words = "not started"
 	}

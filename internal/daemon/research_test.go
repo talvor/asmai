@@ -137,7 +137,8 @@ func TestAResearchOnlyMandateAuthorizesOnlyResearchAndNeverTheOtherRoles(t *test
 		{"Coordination to Research, in a planning-only job", roles.Coordination, roles.Research, planning, "authorizes only its planning outcome: hand it to Planning"},
 		{"Coordination to Engineering, in a planning-only job", roles.Coordination, roles.Engineering, planning, "authorizes only its planning outcome, never code"},
 		{"Research to Engineering", roles.Research, roles.Engineering, research, "send a handoff to another role's leader"},
-		{"Research to Quality", roles.Research, roles.Quality, research, "send a handoff to another role's leader"},
+		{"Research to Quality, in a research-only job", roles.Research, roles.Quality, research, "authorizes only its research outcome: hand it to Research"},
+		{"Research to Quality, for an early review in a tested-PR job", roles.Research, roles.Quality, tested, ""},
 		{"Engineering to Research", roles.Engineering, roles.Research, tested, "send a handoff to another role's leader"},
 	} {
 		err := checkHandoff(tt.sender, tt.receiver, tt.job)

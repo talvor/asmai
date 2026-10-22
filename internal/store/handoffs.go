@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -40,6 +41,14 @@ type Handoff struct {
 	// Head is the exact commit of the job branch that a handoff to Quality
 	// asks it to validate, which the daemon fixes when the handoff is sent.
 	Head string `json:"head,omitempty"`
+	// Review is how the validation a handoff to Quality asks for goes: full,
+	// changes or checks for the finished job branch, early for the result of
+	// one assignment, and Since the last validated commit that a changes or
+	// checks review looks from. Assignment is the assignment an early review
+	// is of, and Head then the commit of its result.
+	Review     string `json:"review,omitempty"`
+	Since      string `json:"since,omitempty"`
+	Assignment int64  `json:"assignment,omitempty"`
 	// Records are the IDs of the job's decision records the sending leader
 	// passes with the handoff, and DecisionRecords the records themselves.
 	Records         []int64          `json:"records,omitempty"`
@@ -137,9 +146,25 @@ func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) 
 	if _, err = job(tx, h.Job); err != nil {
 		return Handoff{}, Dispatch{}, fmt.Errorf("job %d: %w", h.Job, err)
 	}
-	if h.Head != "" {
+	if h.Head != "" && h.Review == "" {
+		h.Review = ReviewFull
+	}
+	switch {
+	case h.Review == ReviewEarly:
+		// An early review is of one assignment's result, whatever the job
+		// branch is at and whether the job branch is finished.
+		if h.Assignment <= 0 || h.Head == "" || h.Since != "" {
+			return Handoff{}, Dispatch{}, errors.New("an early review names the assignment to review and the commit of its result")
+		}
+		if err := checkReviewed(tx, h.Job, h.Assignment, h.Head); err != nil {
+			return Handoff{}, Dispatch{}, err
+		}
+	case h.Head != "":
 		// A handoff asking for validation names the job branch's tip, which
 		// is finished: no writing assignment of the job is live.
+		if !slices.Contains(JobReviews, h.Review) || h.Assignment != 0 {
+			return Handoff{}, Dispatch{}, fmt.Errorf("a validation of the job branch is %s, with no assignment", strings.Join(JobReviews, ", "))
+		}
 		b, err := jobBranch(tx, h.Job)
 		if err != nil {
 			return Handoff{}, Dispatch{}, fmt.Errorf("job %d has no job branch to validate: %w", h.Job, err)
@@ -167,7 +192,7 @@ func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) 
 	if len(passed) > 0 {
 		h.Records, h.DecisionRecords = recordIDs(passed), passed
 	}
-	result, err := tx.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,head,decision_records,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, h.Job, h.Sender, h.Receiver, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions, string(criteria), h.State, h.Head, string(records), timestamp(at))
+	result, err := tx.Exec(`INSERT INTO handoffs(job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,head,review,since,assignment,decision_records,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, h.Job, h.Sender, h.Receiver, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions, string(criteria), h.State, h.Head, h.Review, h.Since, h.Assignment, string(records), timestamp(at))
 	if err != nil {
 		return Handoff{}, Dispatch{}, err
 	}
@@ -292,7 +317,7 @@ func (s *Store) AnswerHandoff(id int64, agent string, currentDispatch int64, gen
 func handoff(q querier, id int64) (Handoff, error) {
 	var h Handoff
 	var criteria, records string
-	err := q.QueryRow(`SELECT id,job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,answer,head,decision_records FROM handoffs WHERE id=?`, id).Scan(&h.ID, &h.Job, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head, &records)
+	err := q.QueryRow(`SELECT id,job,sender,receiver,outcome,decisions,evidence,constraints,permissions,criteria,state,answer,head,review,since,assignment,decision_records FROM handoffs WHERE id=?`, id).Scan(&h.ID, &h.Job, &h.Sender, &h.Receiver, &h.Outcome, &h.Decisions, &h.Evidence, &h.Constraints, &h.Permissions, &criteria, &h.State, &h.Answer, &h.Head, &h.Review, &h.Since, &h.Assignment, &records)
 	if err != nil {
 		return Handoff{}, err
 	}

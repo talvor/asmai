@@ -217,8 +217,38 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	if err != nil {
 		return store.Assignment{}, store.Dispatch{}, err
 	}
-	if req.ReadOnly && req.Commit != branch.Tip {
-		return store.Assignment{}, store.Dispatch{}, refuse("job %d's job branch is at %s, not %s: validation is fixed at the exact head, so assign it at the branch's tip", j.Number, branch.Tip, req.Commit)
+	// A validation is fixed at the job branch's exact head, and how it goes
+	// follows from what changed since Quality last validated the branch. An
+	// early review is fixed at the result of the assignment a leader asked
+	// Quality to review, and is answered to that leader.
+	base, review, since, requester := branch.Tip, "", "", ""
+	if req.ReadOnly && req.Assignment != 0 {
+		h, err := d.store.EarlyReviewRequest(j.Number, req.Assignment)
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.Assignment{}, store.Dispatch{}, refuse("no leader has asked Quality, in a handoff you accepted, for an earlier review of assignment %d of job %d: `asmai handoff send --assignment %d` asks for it", req.Assignment, j.Number, req.Assignment)
+		}
+		if err != nil {
+			return store.Assignment{}, store.Dispatch{}, err
+		}
+		if req.Commit != h.Head {
+			return store.Assignment{}, store.Dispatch{}, refuse("the early review of assignment %d is fixed at %s, the exact commit of its result the handoff names, not %s", req.Assignment, h.Head, req.Commit)
+		}
+		if err := repos.Fetch(ctx, repository.Clone); err != nil {
+			return store.Assignment{}, store.Dispatch{}, err
+		}
+		base, review, requester = h.Head, store.ReviewEarly, h.Sender
+	} else if req.ReadOnly {
+		if req.Commit != branch.Tip {
+			return store.Assignment{}, store.Dispatch{}, refuse("job %d's job branch is at %s, not %s: validation is fixed at the exact head, so assign it at the branch's tip", j.Number, branch.Tip, req.Commit)
+		}
+		if review, since, err = d.reviewPlan(ctx, j, repository, branch.Tip); err != nil {
+			return store.Assignment{}, store.Dispatch{}, refuse("%v", err)
+		}
+		if review == store.ReviewChecks && req.Skill != "" {
+			return store.Assignment{}, store.Dispatch{}, refuse("the changes since %s are a clean merge of the moved base, which needs only the repository's checks re-run at %s: no skill is named for a review the validation does not make", since, branch.Tip)
+		}
+	} else if req.Assignment != 0 {
+		return store.Assignment{}, store.Dispatch{}, refuse("--of names the assignment an early review is of, which only a read-only assignment has")
 	}
 	if req.ReadOnly {
 		if live, err := d.store.LiveValidation(j.Number); err != nil {
@@ -241,7 +271,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		Slot: slot,
 		Path: filepath.Join(dir, "repo"),
 		Tmp:  filepath.Join(dir, "tmp"),
-		Base: branch.Tip,
+		Base: base,
 	}
 	undo := func() {
 		if err := repos.RemoveWorkspace(context.WithoutCancel(ctx), repository.Clone, workspace.Path, workspace.Branch); err != nil {
@@ -274,6 +304,7 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	a, dispatch, err := d.store.AssignmentCreated(store.NewAssignment{
 		ID: id, Job: j.Number, Owner: ref.address.String(), Worker: worker.String(),
 		Outcome: req.Outcome, Criteria: req.Criteria, Workspace: workspace, ReadOnly: req.ReadOnly, Skill: req.Skill, Skills: skillList, Records: records,
+		Review: review, Since: since, Reviews: req.Assignment, Requester: requester,
 	}, time.Now())
 	if err != nil {
 		undo()

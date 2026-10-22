@@ -336,9 +336,11 @@ func TestCoordinationHandsAJobToPlanningAndAPlanningOnlyJobNeverToEngineering(t 
 		{"Coordination to Engineering, in a tested-PR job", roles.Coordination, roles.Engineering, tested, ""},
 		{"Coordination to Engineering, in a planning-only job", roles.Coordination, roles.Engineering, planning, "authorizes only its planning outcome, never code"},
 		{"Engineering to Quality", roles.Engineering, roles.Quality, tested, ""},
-		{"Planning to Quality", roles.Planning, roles.Quality, planning, "send a handoff to another role's leader"},
+		{"Planning to Quality, for an early review in a tested-PR job", roles.Planning, roles.Quality, tested, ""},
+		{"Planning to Quality, in a planning-only job", roles.Planning, roles.Quality, planning, "authorizes only its planning outcome: hand it to Planning"},
 		{"Planning to Engineering", roles.Planning, roles.Engineering, tested, "send a handoff to another role's leader"},
-		{"Coordination to Quality", roles.Coordination, roles.Quality, tested, "send a handoff to another role's leader"},
+		{"Coordination to Quality, for an early review", roles.Coordination, roles.Quality, tested, ""},
+		{"Quality to Engineering", roles.Quality, roles.Engineering, tested, "send a handoff to another role's leader"},
 		{"Engineering to Planning", roles.Engineering, roles.Planning, tested, "send a handoff to another role's leader"},
 	} {
 		err := checkHandoff(tt.sender, tt.receiver, tt.job)

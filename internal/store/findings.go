@@ -134,7 +134,10 @@ func checkValidation(q querier, a Assignment, in ReportInput) error {
 			missing = append(missing, fmt.Sprintf("%d (%s)", f.ID, f.Text))
 		}
 	}
-	if len(missing) > 0 {
+	// An early review is of one assignment's result: it names the earlier
+	// findings it can speak to, and leaves the rest for the validation of
+	// the finished job branch.
+	if len(missing) > 0 && a.Review != ReviewEarly {
 		return fmt.Errorf("a validation says whether each earlier blocking finding is resolved at its commit; name each with --resolved <id>, or --unresolved <id> when it is still open: %s", strings.Join(missing, "; "))
 	}
 	return nil

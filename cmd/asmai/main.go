@@ -142,8 +142,10 @@ commands agents run:
                               and pull request, and otherwise starts afresh
   asmai brief <number>        read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
-  asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>]
-                              repeat --record for each of the job's decision records that goes with the handoff
+  asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>] [--assignment <id>]
+                              repeat --record for each of the job's decision records that goes with the handoff;
+                              any leader asks Quality for an earlier review of an assignment of the job with
+                              --assignment, which Quality reviews at the commit of its result
   asmai handoff accept|clarify|decline --handoff <id> [--answer <text>]
   asmai assign --job <number> --outcome <text> --criterion <text> [--skill <name>] [--narrow <name>] [--record <id>] [--approved <id>]
                               Engineering's, Planning's or Research's leader, or Coordination's for the setup of a
@@ -152,9 +154,12 @@ commands agents run:
                               each acceptance criterion. A skill that starts only on request starts only when
                               the job's mandate calls for it, or with --approved, the decision record of the
                               user's own answer to a proposal of it, which goes to the worker too
-  asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text>
+  asmai assign --read-only --commit <sha> --job <number> --outcome <text> --criterion <text> [--of <assignment>]
                               Quality's leader gives a validation to a worker, in a clean workspace fixed at the
-                              job branch's exact head, with the job's mandate and criteria
+                              job branch's exact head, with the job's mandate and criteria; the daemon decides
+                              whether it reviews the changes or only re-runs the checks, from what changed
+                              since the last validated commit. With --of it is the early review of an assignment
+                              that a leader asked for, fixed at the commit of its result
   asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch;
                               the delivery owner's "asmai effect pull-request <url>" also records the pull
                               request as gh shows it, its number and whether it is a draft or "[not ready]"
@@ -352,7 +357,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	foreground, follow, repoName, assumeYes := new(bool), new(bool), new(string), new(bool)
 	var message string
 	var reading, mandate, repository string
-	var handoffJob, handoffID, dispatchID, linkJob, linkFollows int64
+	var handoffJob, handoffID, dispatchID, linkJob, linkFollows, handoffAssignment, assignOf int64
 	var recipient, outcome, decisions, evidence, constraints, permissions, answer string
 	var criteria criteriaFlags
 	var assignJob int64
@@ -415,6 +420,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&permissions, "permissions", "", "permissions granted")
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
 		flags.Var(&records, "record", "the ID of one of the job's decision records that goes with the handoff; may be repeated")
+		flags.Int64Var(&handoffAssignment, "assignment", 0, "with --to quality, the ID of an assignment of the job to ask for an earlier review of, at the commit of its result")
 	case "handoff accept", "handoff clarify", "handoff decline":
 		flags.Int64Var(&handoffID, "handoff", 0, "handoff ID")
 		flags.StringVar(&answer, "answer", "", "answer, question or reason")
@@ -425,7 +431,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&assignOutcome, "outcome", "", "the outcome the worker is to deliver")
 		flags.Var(&criteria, "criterion", "one acceptance criterion; may be repeated")
 		flags.BoolVar(&assignReadOnly, "read-only", false, "give a validation, which changes nothing, instead of a writing assignment")
-		flags.StringVar(&assignCommit, "commit", "", "with --read-only, the job branch's exact head commit the validation is fixed at")
+		flags.StringVar(&assignCommit, "commit", "", "with --read-only, the job branch's exact head commit the validation is fixed at, or with --of the commit of the assignment's result")
+		flags.Int64Var(&assignOf, "of", 0, "with --read-only, the ID of the assignment an early review that a leader asked Quality for is of")
 		flags.StringVar(&assignSkill, "skill", "", "the skill from the worker's list that it is to run")
 		flags.Int64Var(&assignApproved, "approved", 0, "with --skill, a skill that starts only on request which the job's mandate does not call for: the ID of the decision record of the user's own answer that starts it")
 		flags.Var(&assignNarrow, "narrow", "a skill the worker's list is narrowed to, from the role's workers' list; may be repeated")
@@ -614,11 +621,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "inbox":
 		return inbox(o, paths, dispatchID)
 	case "handoff send":
-		return handoffSend(o, paths, handoffJob, recipient, outcome, decisions, evidence, constraints, permissions, criteria, records)
+		return handoffSend(o, paths, handoffJob, recipient, outcome, decisions, evidence, constraints, permissions, criteria, records, handoffAssignment)
 	case "handoff accept", "handoff clarify", "handoff decline":
 		return handoffAnswer(o, paths, name, handoffID, answer)
 	case "assign":
-		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit, assignSkill, assignNarrow, assignApproved, records)
+		return assign(o, paths, assignJob, assignOutcome, criteria, assignReadOnly, assignCommit, assignSkill, assignNarrow, assignApproved, records, assignOf)
 	case "effect":
 		return effect(o, paths, operands[0], operands[1])
 	case "result":

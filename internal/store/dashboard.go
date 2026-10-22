@@ -111,8 +111,12 @@ type JobWork struct {
 	// delivery owner for the current head. Pushed and PRCurrent are also
 	// evidence for that head.
 	Validated bool
-	Pushed    bool
-	PRCurrent bool
+	// LastValidated is the commit of the latest validation of the finished
+	// job branch that Quality's leader accepted, empty when there is none.
+	// When it is not the job branch's tip, a later commit made it stale.
+	LastValidated string
+	Pushed        bool
+	PRCurrent     bool
 }
 
 // JobWorks returns what the records say of each job, in job order. It only
@@ -146,14 +150,17 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 			FROM findings GROUP BY job
 		), validations AS (
 			SELECT m.job, r.commit_id, 1 validated FROM messages m
-			JOIN reports r ON r.id = m.report WHERE m.kind = ? GROUP BY m.job, r.commit_id
+			JOIN reports r ON r.id = m.report JOIN assignments va ON va.id = r.assignment
+			WHERE m.kind = ? AND va.review != ? GROUP BY m.job, r.commit_id
 		), pushed_heads AS (
 			SELECT job, commit_id, 1 pushed FROM pushes WHERE result = ? GROUP BY job, commit_id
 		)
 		SELECT j.number, j.state = ?, j.words, COALESCE(p.number, 0), COALESCE(p.title, ''),
 			COALESCE(a.validating, 0), COALESCE(a.writing, 0),
 			COALESCE(f.needs_you, 0), COALESCE(f.open_blocking, 0),
-			COALESCE(v.validated, 0), COALESCE(x.pushed, 0), COALESCE(p.head = b.tip, 0)
+			COALESCE(v.validated, 0), COALESCE(x.pushed, 0), COALESCE(p.head = b.tip, 0),
+			COALESCE((SELECT lw.base FROM assignments la JOIN workspaces lw ON lw.assignment = la.id
+				WHERE la.job = j.number AND la.read_only = 1 AND la.state = ? AND la.review != ? ORDER BY la.id DESC LIMIT 1), '')
 		FROM jobs j
 		LEFT JOIN job_branches b ON b.job = j.number
 		LEFT JOIN latest_pr p ON p.job = j.number
@@ -161,7 +168,7 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 		LEFT JOIN finding_state f ON f.job = j.number
 		LEFT JOIN validations v ON v.job = j.number AND v.commit_id = b.tip
 		LEFT JOIN pushed_heads x ON x.job = j.number AND x.commit_id = b.tip
-		ORDER BY j.number`, AssignmentAccepted, AssignmentCancelled, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation, PushPushed, JobEnded)
+		ORDER BY j.number`, AssignmentAccepted, AssignmentCancelled, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation, ReviewEarly, PushPushed, JobEnded, AssignmentAccepted, ReviewEarly)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +176,7 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 	works := []JobWork{}
 	for rows.Next() {
 		w := JobWork{Assignments: map[string]int{}}
-		if err := rows.Scan(&w.Number, &w.Ended, &w.Words, &w.PullRequest, &w.Title, &w.Validating, &w.Writing, &w.NeedsYou, &w.OpenBlocking, &w.Validated, &w.Pushed, &w.PRCurrent); err != nil {
+		if err := rows.Scan(&w.Number, &w.Ended, &w.Words, &w.PullRequest, &w.Title, &w.Validating, &w.Writing, &w.NeedsYou, &w.OpenBlocking, &w.Validated, &w.Pushed, &w.PRCurrent, &w.LastValidated); err != nil {
 			return nil, err
 		}
 		works = append(works, w)

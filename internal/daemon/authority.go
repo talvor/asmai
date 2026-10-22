@@ -56,7 +56,7 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return fmt.Errorf("only leader@engineering, leader@planning, leader@research or leader@quality may run asmai %s", req.Command)
 	case CommandPush:
-		if deliveryOwners(ref.address) {
+		if isDeliveryOwner(ref.address) {
 			return nil
 		}
 		return errors.New("only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, may run asmai push")
@@ -66,7 +66,7 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return errors.New("only a role's leader may run asmai decision record: a worker's decision goes to its owning leader")
 	case CommandEffect:
-		if ref.address.Name != roles.Leader || deliveryOwners(ref.address) {
+		if ref.address.Name != roles.Leader || isDeliveryOwner(ref.address) {
 			return nil
 		}
 		return fmt.Errorf("only a worker, or the delivery owner of a job, may run asmai effect")
@@ -167,11 +167,11 @@ func ownsWorkers(address roles.Address) bool {
 	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), roles.LeaderOf(roles.Quality)}, address)
 }
 
-// deliveryOwners reports whether address is a leader that can own the delivery
+// isDeliveryOwner reports whether address is a leader that can own the delivery
 // of a job: Engineering's, for a job that changes code, and Planning's and
 // Research's, for a job whose outcome is notes (06 rule 16). Which of them
 // owns a given job is deliveryOwner's.
-func deliveryOwners(address roles.Address) bool {
+func isDeliveryOwner(address roles.Address) bool {
 	return slices.Contains([]roles.Address{roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research)}, address)
 }
 

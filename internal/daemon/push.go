@@ -53,7 +53,7 @@ func (d *daemon) push(req Request) (store.Push, error) {
 	if err != nil {
 		return store.Push{}, err
 	}
-	if !deliveryOwners(ref.address) {
+	if !isDeliveryOwner(ref.address) {
 		return store.Push{}, refuse("only %s, the delivery owner of a code job, %s or %s, the delivery owner of a notes job, may run asmai push", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research))
 	}
 	if dispatch == 0 {
@@ -120,13 +120,17 @@ func (d *daemon) push(req Request) (store.Push, error) {
 		return store.Push{}, fmt.Errorf("%w; nothing is recorded as pushed. If origin's branch moved since the fetch, ask for the push again", err)
 	}
 	if len(outside) > 0 {
+		validate := "have Quality validate the new head, and "
+		if j.Notes() {
+			validate = "and "
+		}
 		p.Outside = outside
 		if p, err = d.store.OutsideChangeFound(p, ref.generation, time.Now()); err != nil {
 			return store.Push{}, err
 		}
 		d.log.Info("push refused over outside commits", "job", j.Number, "branch", branch.Name, "outside", len(outside))
-		return store.Push{}, refuse("nothing was pushed: %s has %d commit(s) AsmAI did not make, %s, recorded as outside change %d. Assign a worker to merge origin/%s into its assignment branch, keeping them, accept its result, have Quality validate the new head, and ask for the push again",
-			p.Found, len(outside), strings.Join(outside, ", "), p.ID, branch.Name)
+		return store.Push{}, refuse("nothing was pushed: %s has %d commit(s) AsmAI did not make, %s, recorded as outside change %d. Assign a worker to merge origin/%s into its assignment branch, keeping them, accept its result, %sask for the push again",
+			p.Found, len(outside), strings.Join(outside, ", "), p.ID, branch.Name, validate)
 	}
 	if p, err = d.store.JobBranchPushed(p, ref.generation, tookIn, time.Now()); err != nil {
 		return store.Push{}, err

@@ -195,22 +195,34 @@ func (d *daemon) lookAtCI(j store.Job, pr store.PullRequest, w *watch) bool {
 	case o.Verdict != github.Green:
 		return changed
 	}
+	if !d.deliverHead(ctx, j, repository, found.PullRequest, o.Checks, false, w, "every check is green") {
+		return changed
+	}
+	return true
+}
+
+// deliverHead marks the pull request found ready and delivers j when w's head,
+// the one the daemon pushed, is deliverable, and tells Coordination's leader
+// and removes what was local to j. When it is not, it logs once, with why
+// what the daemon saw would otherwise have delivered it, and delivers
+// nothing. It returns whether j was delivered.
+func (d *daemon) deliverHead(ctx context.Context, j store.Job, repository store.Repository, found github.PullRequest, checks []store.CheckState, noCI bool, w *watch, why string) bool {
 	d.assignMu.Lock()
 	if err := d.store.Deliverable(j.Number, w.head); err != nil {
 		d.assignMu.Unlock()
-		if why := err.Error(); why != w.unmet {
-			w.unmet = why
-			d.log.Warn("every check is green, but the head is not deliverable, so it is not marked ready", "job", j.Number, "head", w.head, "reason", why)
+		if reason := err.Error(); reason != w.unmet {
+			w.unmet = reason
+			d.log.Warn(why+", but the head is not deliverable, so it is not marked ready", "job", j.Number, "head", w.head, "reason", reason)
 		}
-		return changed
+		return false
 	}
-	dispatch, ok := d.deliver(ctx, j, repository, found.PullRequest, o.Checks, false)
+	dispatch, ok := d.deliver(ctx, j, repository, found, checks, noCI)
 	d.assignMu.Unlock()
 	if ok {
 		d.nudge(dispatch.Agent)
 		d.removeJobLocal(j.Number)
 	}
-	return true
+	return ok
 }
 
 // noCI reports whether the repository of job is declared, in the
@@ -240,21 +252,7 @@ func (d *daemon) lookAtNoCI(ctx context.Context, j store.Job, pr store.PullReque
 		// has another.
 		return false
 	}
-	d.assignMu.Lock()
-	if err := d.store.Deliverable(j.Number, w.head); err != nil {
-		d.assignMu.Unlock()
-		if why := err.Error(); why != w.unmet {
-			w.unmet = why
-			d.log.Warn("the repository has no CI, but the head is not deliverable, so it is not marked ready", "job", j.Number, "head", w.head, "reason", why)
-		}
-		return false
-	}
-	dispatch, ok := d.deliver(ctx, j, repository, found, []store.CheckState{}, true)
-	d.assignMu.Unlock()
-	if ok {
-		d.nudge(dispatch.Agent)
-		d.removeJobLocal(j.Number)
-	}
+	d.deliverHead(ctx, j, repository, found, []store.CheckState{}, true, w, "the repository has no CI")
 	return true
 }
 

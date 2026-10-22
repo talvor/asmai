@@ -51,12 +51,12 @@ func TestTheDeliveryOwnerOfAJobIsTheLeaderWhoseNotesTheyAre(t *testing.T) {
 		}
 	}
 	for _, role := range []string{roles.Engineering, roles.Planning, roles.Research} {
-		if !deliveryOwners(roles.LeaderOf(role)) {
+		if !isDeliveryOwner(roles.LeaderOf(role)) {
 			t.Errorf("the leader of %s cannot own a delivery", role)
 		}
 	}
 	for _, address := range []roles.Address{roles.LeaderOf(roles.Coordination), roles.LeaderOf(roles.Quality), roles.WorkerOf(roles.Research, 1)} {
-		if deliveryOwners(address) {
+		if isDeliveryOwner(address) {
 			t.Errorf("%s can own a delivery", address)
 		}
 	}

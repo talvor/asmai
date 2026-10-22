@@ -36,7 +36,7 @@ func (d *daemon) pullRequestEffect(req Request) (store.Effect, *store.PullReques
 	if err != nil {
 		return store.Effect{}, nil, err
 	}
-	if !deliveryOwners(ref.address) {
+	if !isDeliveryOwner(ref.address) {
 		e, err := d.effect(req)
 		return e, nil, err
 	}

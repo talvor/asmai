@@ -67,11 +67,15 @@ func redBody(j store.Job, o store.ChecksObservation, rerun *store.Rerun) string 
 	} else {
 		fmt.Fprintf(&b, "If you judge the failure unrelated to the change, you may re-run the failed jobs once for this head, recording your judgment: `asmai decision record --job %d --choice %s --rationale <why the failure is unrelated to the change> --evidence <what shows it>`. Otherwise, assign", j.Number, store.ChoiceRerunFailed)
 	}
+	validation := "hand validation of the new head to Quality, and once Quality passes it ask"
 	if j.Notes() {
-		b.WriteString(" a fix as a new writing assignment naming the failing checks; accept its result, and ask for the push with `asmai push`: a notes job has no Quality validation to wait for. The daemon then watches the new head and drops the wait on this one. ")
-	} else {
-		b.WriteString(" a fix as a new writing assignment naming the failing checks; accept its result, hand validation of the new head to Quality, and once Quality passes it ask for the push with `asmai push`. The daemon then watches the new head and drops the wait on this one. ")
+		validation = "and ask"
 	}
+	b.WriteString(" a fix as a new writing assignment naming the failing checks; accept its result, " + validation + " for the push with `asmai push`")
+	if j.Notes() {
+		b.WriteString(": a notes job has no Quality validation to wait for")
+	}
+	b.WriteString(". The daemon then watches the new head and drops the wait on this one. ")
 	b.WriteString("Update the pull request body with the CI results, and record each update with `asmai effect pull-request <url>`.")
 	return b.String()
 }
@@ -158,7 +162,7 @@ func (d *daemon) recordDecision(req Request) (store.DecisionRecord, store.Rerun,
 // nothing was re-run.
 func (d *daemon) recordRerun(req Request, ref sessionRef, record store.DecisionRecord) (store.DecisionRecord, store.Rerun, error) {
 	dispatch := record.Dispatch
-	if !deliveryOwners(ref.address) {
+	if !isDeliveryOwner(ref.address) {
 		return store.DecisionRecord{}, store.Rerun{}, refuse("only a delivery owner, %s for a code job and %s or %s for a notes job, judging a red head's checks, may record --choice %s", roles.LeaderOf(roles.Engineering), roles.LeaderOf(roles.Planning), roles.LeaderOf(roles.Research), store.ChoiceRerunFailed)
 	}
 	if dispatch == 0 {

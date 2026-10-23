@@ -107,11 +107,14 @@ var Cases = []Case{
 	{ID: "C45", Title: "The daemon marks the pull request ready when CI is green", Env: signedInOnly, Run: (*Harness).c45},
 	{ID: "C48", Title: "With the agents folder and a registered repository's clone trusted at setup, a new agent directory and a new worker's worktree of the clone start with no trust question", Env: signedInOnly, Run: (*Harness).c48},
 	{ID: "C49", Title: "An agent with no user terminal never waits at a native prompt: a worker's Write tool writes in its workspace, and a shell write it cannot be prompted for is denied, with the agent told", Env: signedInOnly, Run: (*Harness).c49},
-	{ID: "C50", Title: "Engineering's leader opens and updates the job's pull request in its real session and sandbox", Env: signedInOnly, Run: (*Harness).c50},
-	{ID: "C51", Title: "An Engineering worker commits and pushes its assignment branch in its real session and sandbox", Env: signedInOnly, Run: (*Harness).c51},
+	{ID: "C50", Title: "The daemon opens and updates the job's pull request with gh, as the user, for a delivery owner's `asmai pr open` and `asmai pr update`", Env: signedInOnly, Run: (*Harness).c50},
+	{ID: "C51", Title: "The daemon commits, merges and pushes a worker's assignment branch, as the user and unsandboxed, for its `asmai commit`, `asmai merge` and `asmai push`", Env: signedInOnly, Run: (*Harness).c51},
 	{ID: "C52", Title: "The Dashboard hands the terminal to attach and gets it back: raw mode, the alternate screen and the size are restored, and attach still only observes", Env: signedInOnly, Run: (*Harness).c52},
 	{ID: "C53", Title: "The Dashboard's agent statuses and Waiting on you set match a real factory: idle, stopped, working, and a native prompt or held input waiting", Env: signedInOnly, Run: (*Harness).c53},
 	{ID: "C54", Title: "The Dashboard shows only the stopped message while the factory is stopped, and clears it and reads everything again when the factory is restored", Env: signedInOnly, Run: (*Harness).c54},
+	{ID: "C55", Title: "The permission probe's verdicts under a Claude Code managed policy: the rules it applies, and the check that refuses where `asmai` cannot run unprompted", Env: signedInOnly, Run: (*Harness).c55},
+	{ID: "C56", Title: "An agent's `asmai` runs sandboxed and unprompted under the managed policy, and reaches the daemon's socket, in the pinned Claude Code's real session", Env: signedInOnly, Run: (*Harness).c56},
+	{ID: "C57", Title: "The keys the daemon's stall relay types answer a real native permission prompt: Enter takes its one-time Yes, Escape cancels it, and neither adds an allow rule", Env: signedInOnly, Run: (*Harness).c57},
 }
 
 // Run runs the cases named in ids, or all of them when ids is empty, each in
@@ -231,7 +234,7 @@ func (h *Harness) resetDisposableState() error {
 // disposableState reports whether the case id runs in the disposable state
 // directory, which the harness has `asmai setup` prepare.
 func disposableState(id string) bool {
-	return slices.Contains([]string{"C2", "C7", "C11", "C19", "C48", "C52", "C53", "C54"}, id)
+	return slices.Contains([]string{"C2", "C7", "C11", "C19", "C48", "C52", "C53", "C54", "C57"}, id)
 }
 
 // withoutAPIKeys returns environ less any provider API-key variable, and the
@@ -297,6 +300,14 @@ func withAPIKeyCanaries(environ []string, r *Result) []string {
 	return env
 }
 
+// startChecksFailed is the error of a start whose checks failed, with the
+// checks.
+type startChecksFailed struct{ Checks []daemon.Check }
+
+func (e startChecksFailed) Error() string {
+	return "asmai start failed its checks: " + failedChecks(e.Checks)
+}
+
 // ready starts the factory with Coordination's leader running the pinned
 // Claude Code, installing it first if it is not installed, and returns where
 // it is. In the disposable state directory it also runs `asmai setup`, which
@@ -304,49 +315,59 @@ func withAPIKeyCanaries(environ []string, r *Result) []string {
 // user's own, that trust is theirs to give, with their own `asmai setup`.
 // The leader's start is what the case then watches.
 func (h *Harness) ready(ctx context.Context, f *Factory) (path string, err error) {
+	path, _, err = h.readyWith(ctx, f)
+	return path, err
+}
+
+// readyWith is ready, which also returns what the last `asmai start` printed.
+// A start whose checks failed is a startChecksFailed, with the daemon left
+// running and the pinned copy installed and reported, so that a case that
+// qualifies a check can read the failure.
+func (h *Harness) readyWith(ctx context.Context, f *Factory) (path string, res StartResult, err error) {
 	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
 	if !ok {
-		return "", fmt.Errorf("%s/%s is not a platform Claude Code is published for", runtime.GOOS, runtime.GOARCH)
+		return "", StartResult{}, fmt.Errorf("%s/%s is not a platform Claude Code is published for", runtime.GOOS, runtime.GOARCH)
 	}
 	plan, err := h.Subject.Pins.ClaudeCodePlan(platform, f.paths.Providers)
 	if err != nil {
-		return "", err
+		return "", StartResult{}, err
 	}
 	// The first start runs the daemon, which installing needs. It does not
 	// start the leader if the pinned Claude Code is not installed yet.
 	res, code, err := f.Start(ctx)
 	if err != nil {
-		return "", err
+		return "", res, err
 	}
 	if _, running := f.Running(); !running {
-		return "", fmt.Errorf("the factory's daemon did not start: %s", res.Error)
+		return "", res, fmt.Errorf("the factory's daemon did not start: %s", res.Error)
 	}
+	var failed error
 	if code != 0 {
 		h.logf("installing the pinned Claude Code %s", plan.Version)
 		if err := h.Provider.Install(ctx, f, h.Subject.Pins); err != nil {
-			return "", err
+			return "", res, err
 		}
 		if f.paths.Dir == h.QualificationPaths.Dir {
 			if err := h.setup(ctx, f); err != nil {
-				return "", err
+				return "", res, err
 			}
 		}
 		if res, code, err = f.Start(ctx); err != nil {
-			return "", err
+			return "", res, err
 		}
 		if code != 0 {
-			return "", fmt.Errorf("asmai start failed its checks: %s", failedChecks(res.Checks))
+			failed = startChecksFailed{res.Checks}
 		}
 	}
 	reported, err := h.Provider.Version(ctx, f, plan.Path)
 	if err != nil {
-		return "", err
+		return "", res, err
 	}
 	h.reported = reported
 	if !strings.HasPrefix(reported, plan.Version) {
-		return "", fmt.Errorf("the installed copy at %s reports %q, not the pinned %s", plan.Path, reported, plan.Version)
+		return "", res, fmt.Errorf("the installed copy at %s reports %q, not the pinned %s", plan.Path, reported, plan.Version)
 	}
-	return plan.Path, nil
+	return plan.Path, res, failed
 }
 
 // c3 qualifies that the pinned copy reuses the user's existing sign-in

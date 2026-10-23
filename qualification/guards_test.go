@@ -43,10 +43,13 @@ type guardSession struct {
 	controlBlind bool
 	// guardOff lets a write outside the workspace and an unlisted host through.
 	guardOff bool
-	// promptsForGit makes git raise a native prompt, which the guard should not.
-	promptsForGit bool
-	// retriesGit makes the session run git push again outside the sandbox.
-	retriesGit    bool
+	// gitWritesRun lets git add, commit and push through, as a session would
+	// that is allowed them, which no agent is (ADR 0018). noPromptForGit
+	// makes their retries outside the sandbox fail without dontAsk mode's
+	// denial.
+	gitWritesRun, noPromptForGit bool
+	// retriesLs makes the session run git ls-remote again outside the sandbox.
+	retriesLs     bool
 	ghUnavailable bool
 	// skipsRetry makes the session not retry what the sandbox stopped.
 	skipsRetry         bool
@@ -152,7 +155,7 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 	// commandInstead counts the commands of both of C37's turns together.
 	offset := 0
 	if strings.Contains(spec.Prompt, "expected to be stopped by the sandbox") {
-		offset = 6
+		offset = 3
 	}
 	for i, m := range listed.FindAllStringSubmatch(spec.Prompt, -1) {
 		text := m[1]
@@ -166,6 +169,9 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 		switch {
 		case strings.HasPrefix(text, "git ls-remote"):
 			c.Output = "0123456789abcdef0123456789abcdef01234567\trefs/heads/master\n"
+			if g.retriesLs {
+				retry = &Command{Text: text, Unsandboxed: true}
+			}
 		case strings.HasPrefix(text, "gh pr list"):
 			if g.ghUnavailable {
 				c.Failed, c.Output = true, "gh: command not found"
@@ -190,18 +196,21 @@ func (g guardSession) guarded(spec AskSpec) (Turn, error) {
 				c.Failed, c.Output = true, "network is unavailable"
 				retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: deniedOutput(g.noPromptForCurl), Denied: !g.noPromptForCurl}
 			}
-		default:
-			if g.promptsForGit && strings.HasPrefix(text, "git push") {
-				c.Denied, c.Failed = true, true
+		case strings.HasPrefix(text, "git add"), strings.HasPrefix(text, "git commit"), strings.HasPrefix(text, "git push"):
+			if g.gitWritesRun {
+				cmd := exec.Command("sh", "-c", text)
+				cmd.Dir = spec.Dir
+				out, err := cmd.CombinedOutput()
+				c.Output, c.Failed = string(out), err != nil
 				break
 			}
+			c.Failed, c.Output = true, "fatal: Unable to create '.git/index.lock': Read-only file system"
+			retry = &Command{Text: text, Unsandboxed: true, Failed: true, Output: deniedOutput(g.noPromptForGit), Denied: !g.noPromptForGit}
+		default:
 			cmd := exec.Command("sh", "-c", text)
 			cmd.Dir = spec.Dir
 			out, err := cmd.CombinedOutput()
 			c.Output, c.Failed = string(out), err != nil
-			if g.retriesGit && strings.HasPrefix(text, "git push") {
-				retry = &Command{Text: text, Unsandboxed: true}
-			}
 		}
 		turn.Commands = append(turn.Commands, c)
 		if retry != nil && !(g.skipsRetry && retry.Unsandboxed && c.Failed) {
@@ -271,13 +280,13 @@ func TestC36RequiresTheExactSuccessfulEnvironmentProbe(t *testing.T) {
 	}
 }
 
-func TestC37PassesWhenTheGuardKeepsWritesInTheWorkspaceAndLetsGitAndGhThrough(t *testing.T) {
+func TestC37PassesWhenTheGuardKeepsWritesInTheWorkspaceLetsReadOnlyGitAndGhThroughAndStopsEveryGitWrite(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{}), "C37")
 	if r.Outcome != Passed {
 		t.Fatalf("C37 %s: %s", r.Outcome, r.Failure)
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"ran without a native prompt", "a write outside the workspace did not happen", "did not go through: the sandbox stopped it, and its retry outside the sandbox was denied in dontAsk mode, with no native prompt", "was not loaded"} {
+	for _, want := range []string{"ran without a native prompt", "`git commit --allow-empty -q -m inside` did not run: the sandbox stopped it, and its retry outside the sandbox was denied in dontAsk mode", "a write outside the workspace did not happen", "did not go through: the sandbox stopped it, and its retry outside the sandbox was denied in dontAsk mode, with no native prompt", "was not loaded"} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C37's evidence\n%s\ndoes not say %q", evidence, want)
 		}
@@ -305,17 +314,17 @@ func TestC37FailsWhenCurlFailsWithoutRaisingAPrompt(t *testing.T) {
 	}
 }
 
-func TestC37FailsWhenGitRaisesANativePrompt(t *testing.T) {
-	r := result(t, guardHarness(t, guardSession{promptsForGit: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "was denied, but the guard allows it") {
-		t.Errorf("C37 %s: %q, want it to fail because git was stopped", r.Outcome, r.Failure)
+func TestC37FailsWhenAnAgentsGitWriteRuns(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{gitWritesRun: true}), "C37")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "no git write is allowed to an agent") {
+		t.Errorf("C37 %s: %q, want it to fail because a git write ran", r.Outcome, r.Failure)
 	}
 }
 
-func TestC37FailsWhenAnAllowedCommandIsRetriedOutsideTheSandbox(t *testing.T) {
-	r := result(t, guardHarness(t, guardSession{retriesGit: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "allows it to run once inside it") {
-		t.Errorf("C37 %s: %q, want it to fail because git push was retried outside the sandbox", r.Outcome, r.Failure)
+func TestC37FailsWhenAGitWriteIsRefusedWithoutDontAsksDenial(t *testing.T) {
+	r := result(t, guardHarness(t, guardSession{noPromptForGit: true}), "C37")
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "`git add inside.txt` was not denied in dontAsk mode") {
+		t.Errorf("C37 %s: %q, want it to fail because git add was not denied without a prompt", r.Outcome, r.Failure)
 	}
 }
 
@@ -328,7 +337,7 @@ func TestC37IsInconclusiveWhenTheSessionSkipsTheRetryOutsideTheSandbox(t *testin
 
 func TestC37FailsWhenGhCannotRun(t *testing.T) {
 	r := result(t, guardHarness(t, guardSession{ghUnavailable: true}), "C37")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "gh pr list` was refused, failed or retried") {
+	if r.Outcome != Failed || !strings.Contains(r.Failure, "gh pr list --repo cli/cli --state all --limit 1 --json number` failed in the guard") {
 		t.Errorf("C37 %s: %q, want it to fail because gh could not run", r.Outcome, r.Failure)
 	}
 }
@@ -339,8 +348,11 @@ func TestC37RequiresTheRequestedCommands(t *testing.T) {
 		instead string
 	}{
 		"allowed write": {0, "echo inside > inside.txt # changed"},
-		"remote host":   {4, "git ls-remote --heads origin main"},
-		"gh repository": {5, "gh pr list --repo other/repo --state all --limit 1 --json number"},
+		"remote host":   {1, "git ls-remote --heads origin main"},
+		"gh repository": {2, "gh pr list --repo other/repo --state all --limit 1 --json number"},
+		"git add":       {3, "git add ."},
+		"git commit":    {4, "git commit -q -m inside"},
+		"git push":      {5, "git push origin HEAD:refs/heads/qualification"},
 		"outside write": {6, "echo outside > somewhere-else.txt"},
 		"curl host":     {7, "curl -sS --max-time 20 -o curl.out https://other.example"},
 	} {

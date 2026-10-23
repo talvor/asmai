@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -80,6 +81,9 @@ type AskSpec struct {
 	Dir    string
 	Args   []string
 	Prompt string
+	// Env is set in the run's environment besides the factory's, such as a
+	// PATH that finds the asmai under test.
+	Env []string
 }
 
 // askTimeout is how long a non-interactive run may take.
@@ -93,7 +97,7 @@ func (ClaudeCode) Ask(ctx context.Context, f *Factory, path string, spec AskSpec
 	args := append([]string{"-p", spec.Prompt, "--output-format", "stream-json", "--verbose", "--max-turns", "20"}, spec.Args...)
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = f.env
+	cmd.Env = append(slices.Clone(f.env), spec.Env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

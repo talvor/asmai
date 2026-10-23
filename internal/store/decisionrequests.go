@@ -38,6 +38,10 @@ const (
 // a skill, which its owning leader answers only from the user's recorded
 // decisions and grants or carries to the user.
 //
+// A prompt is a native permission prompt an agent waits at that nobody can
+// answer in its terminal, which the daemon raises through Coordination as a
+// single choice for the user; it is never an agent's request.
+//
 // A finding is a needs-you finding, quoted to the user word for word, and a
 // dispute is a blocking finding the two leaders could not settle. A mandate
 // request asks for an action outside the mandate, and a conflict for a ruling
@@ -56,10 +60,11 @@ const (
 	RequestWayfinder = "wayfinder"
 	RequestQuestions = "questions"
 	RequestStep      = "step"
+	RequestPrompt    = "prompt"
 )
 
 // RequestKinds are the kinds a decision request can be.
-var RequestKinds = []string{RequestChoice, RequestProvider, RequestFinding, RequestDispute, RequestMandate, RequestConflict, RequestReview, RequestGrilling, RequestWayfinder, RequestQuestions, RequestStep}
+var RequestKinds = []string{RequestChoice, RequestProvider, RequestFinding, RequestDispute, RequestMandate, RequestConflict, RequestReview, RequestGrilling, RequestWayfinder, RequestQuestions, RequestStep, RequestPrompt}
 
 // The messages about decision requests: a request carried to the leader that
 // answers it or to Coordination, which presents it, and an answer returned
@@ -75,6 +80,15 @@ const (
 const (
 	DisputeUphold   = "Uphold the finding"
 	DisputeOverrule = "Overrule the finding"
+)
+
+// The two options of a native prompt, in the order they are offered. The
+// daemon relays the one the user chose to the agent's terminal: allowing it
+// once answers the prompt's default yes, and denying it cancels the prompt.
+// Neither adds an allow rule.
+const (
+	PromptAllow = "Allow once"
+	PromptDeny  = "Deny"
 )
 
 // QuotedFinding is a finding as the user is given it: copied by the store
@@ -260,10 +274,16 @@ func jobTakesDecisions(state string) bool {
 // everything else, reviews, all grilling and Wayfinder questions and requests
 // with several questions, in Lavish.
 func AnswerSurface(kind string, questions []Question) string {
-	if (kind == RequestChoice || kind == RequestProvider || userDecides(kind)) && len(questions) == 1 {
+	if singleChoice(kind) && len(questions) == 1 {
 		return SurfaceConversation
 	}
 	return SurfaceLavish
+}
+
+// singleChoice says whether kind is a single choice: one question with
+// options, answered in the conversation.
+func singleChoice(kind string) bool {
+	return kind == RequestChoice || kind == RequestProvider || kind == RequestPrompt || userDecides(kind)
 }
 
 func validateRequest(in DecisionRequestInput) error {
@@ -300,7 +320,10 @@ func validateRequest(in DecisionRequestInput) error {
 	if in.Kind != RequestStep && (strings.TrimSpace(in.Skill) != "" || strings.TrimSpace(in.Step) != "") {
 		return fmt.Errorf("only a step request names a skill and a step, not a %s request", in.Kind)
 	}
-	if in.Kind == RequestChoice || in.Kind == RequestProvider || userDecides(in.Kind) {
+	if in.Kind == RequestPrompt && (len(in.Questions) != 1 || !slices.Equal(in.Questions[0].Options, []string{PromptAllow, PromptDeny})) {
+		return fmt.Errorf("a prompt request offers the user one question with two options, %q and %q, in that order", PromptAllow, PromptDeny)
+	}
+	if singleChoice(in.Kind) {
 		if len(in.Questions) != 1 || len(in.Questions[0].Options) < 2 {
 			return fmt.Errorf("a %s request is a single choice: one question with at least two options; ask several questions as kind %s", in.Kind, RequestQuestions)
 		}
@@ -408,6 +431,9 @@ func (s *Store) DecisionRequested(in DecisionRequestInput, at time.Time) (Decisi
 		}
 		if replaced.State != RequestPending {
 			return DecisionRequest{}, nil, fmt.Errorf("version %d of decision request %d is %s, so it takes no new version; make a new request", replaced.Version, in.Request, replaced.State)
+		}
+		if replaced.Kind == RequestPrompt || in.Kind == RequestPrompt {
+			return DecisionRequest{}, nil, fmt.Errorf("a native prompt request has one version: the daemon withdraws it when the agent is past the prompt and raises another for the next")
 		}
 		version = replaced.Version + 1
 		in.Recipient, in.Assignment = replaced.Recipient, replaced.Assignment
@@ -817,6 +843,46 @@ func (s *Store) JobDecisionsWithdrawn(job int64, at time.Time) ([]DecisionReques
 		}
 	}
 	return pending, tx.Commit()
+}
+
+// PromptRequestWithdrawn withdraws request if it is a native prompt request
+// still pending, as when the agent that waited at the prompt is past it or
+// ended, and journals it. It reports whether it withdrew one.
+func (s *Store) PromptRequestWithdrawn(request int64, at time.Time) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	r, err := latestRequestVersion(tx, request)
+	if err != nil {
+		return false, err
+	}
+	if r.Kind != RequestPrompt || r.State != RequestPending {
+		return false, nil
+	}
+	if _, err := tx.Exec(`UPDATE decision_requests SET state = ?, settled_at = ? WHERE id = ?`, RequestWithdrawn, timestamp(at), r.ID); err != nil {
+		return false, err
+	}
+	if _, err := appendEntry(tx, at, KindDecisionWithdrawn, map[string]any{"request": r.Request, "version": r.Version, "job": r.Job, "requester": r.Requester}); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// PromptRelayed journals the daemon typing the user's answer to the native
+// prompt request r into its agent's terminal, in the session of generation:
+// choice is the option the user's witnessed message chose, which r records.
+func (s *Store) PromptRelayed(r DecisionRequest, choice string, generation int, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := appendEntry(tx, at, KindPromptRelayed, map[string]any{"request": r.Request, "version": r.Version, "job": r.Job, "agent": r.Requester, "generation": generation, "choice": choice, "cites": r.Cites}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func decisionRequests(q querier, where string, args ...any) ([]DecisionRequest, error) {

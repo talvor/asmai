@@ -180,6 +180,9 @@ type leader struct {
 	transcript      string
 	// prompt is the native permission prompt the session waits at, if any.
 	prompt *WaitingPrompt
+	// managedOnly is set when the session started under the managed policy
+	// that has Claude Code apply only the administrator's permission rules.
+	managedOnly bool
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -851,7 +854,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.skills = skills.NamesOf(launch.skills)
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", ""
-	l.prompt = nil
+	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
 	d.agents.Add(1)
@@ -890,6 +893,7 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 		return
 	}
 	l.session = nil
+	d.promptEnded(l)
 	if d.stopping {
 		return
 	}

@@ -457,6 +457,10 @@ const (
 	KindDecisionReplaced  = "decision.replaced"
 	KindDecisionAnswered  = "decision.answered"
 	KindDecisionWithdrawn = "decision.withdrawn"
+	// KindPromptRelayed records the daemon typing the user's witnessed
+	// answer to a native prompt request into the terminal of the agent that
+	// waits at the prompt.
+	KindPromptRelayed = "prompt.relayed"
 	// KindDecisionPresented records Coordination showing the user a version
 	// of a decision request in the conversation, and KindDecisionRefused the
 	// daemon refusing a record that cited a nudge, or a message typed

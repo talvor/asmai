@@ -485,6 +485,23 @@ func TestEveryLeadersInstructionsSayWhatCountsAsDistinctAndWhenToAsk(t *testing.
 	}
 }
 
+func TestCoordinationPresentsANativePromptTheDaemonRaisedAndNeverAnswersItForTheUser(t *testing.T) {
+	text, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"A request of kind `prompt` is one the daemon raises, never an agent",
+		"`Allow once` and `Deny`",
+		"the daemon types that choice into the agent's terminal, and never before or otherwise",
+		"You never answer a prompt for the user",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+}
+
 func TestCoordinationPresentsAChoiceOnceAndRecordsTheUsersOwnMessageWithItsReading(t *testing.T) {
 	text, err := LeaderInstructions(Coordination)
 	if err != nil {

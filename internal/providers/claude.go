@@ -71,10 +71,15 @@ type WriteGuard struct {
 // The Claude Code permission modes an agent session runs in. In the default
 // mode, an action the session's rules do not allow raises the native
 // permission prompt in its terminal. In dontAsk mode it is denied instead,
-// with no prompt and no approval given, and the session is told so.
+// with no prompt and no approval given, and the session is told so. In
+// acceptEdits mode the session's Edit and Write tools change files in its
+// working directory and its added directories without a prompt, which is how
+// an unattended session edits under the managed policy, where its own allow
+// rules are ignored (ADR 0018).
 const (
-	PermissionModeDefault = "default"
-	PermissionModeDontAsk = "dontAsk"
+	PermissionModeDefault     = "default"
+	PermissionModeDontAsk     = "dontAsk"
+	PermissionModeAcceptEdits = "acceptEdits"
 )
 
 // Permissions is what an agent session's permission rules need to know of
@@ -82,7 +87,8 @@ const (
 type Permissions struct {
 	// Unattended is set for a session in whose terminal nobody answers a
 	// native permission prompt: every agent's but Coordination's leader,
-	// whose terminal is the user's conversation. It runs in dontAsk mode.
+	// whose terminal is the user's conversation. It runs in dontAsk mode,
+	// or in acceptEdits mode under the managed policy (ManagedOnly).
 	Unattended bool
 	// Editable are the directories in which the session's Edit and Write
 	// tools may read, change and make files without a prompt, such as a
@@ -101,6 +107,9 @@ type Permissions struct {
 // Mode returns the permission mode of a session p describes.
 func (p Permissions) Mode() string {
 	if p.Unattended {
+		if p.ManagedOnly {
+			return PermissionModeAcceptEdits
+		}
 		return PermissionModeDontAsk
 	}
 	return PermissionModeDefault

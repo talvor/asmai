@@ -276,8 +276,13 @@ func TestOnlyASessionTheUserAnswersKeepsTheNativePrompts(t *testing.T) {
 		mode  string
 		files []string
 	}{
-		"Coordination's leader": {Permissions{}, "default", nil},
-		"another leader":        {Permissions{Unattended: true}, "dontAsk", nil},
+		"Coordination's leader":                          {Permissions{}, "default", nil},
+		"another leader":                                 {Permissions{Unattended: true}, "dontAsk", nil},
+		"another leader under the managed policy":        {Permissions{Unattended: true, ManagedOnly: true}, "acceptEdits", nil},
+		"Coordination's leader under the managed policy": {Permissions{ManagedOnly: true}, "default", nil},
+		"a worker under the managed policy": {Permissions{Unattended: true, ManagedOnly: true, Editable: []string{workspace}}, "acceptEdits", []string{
+			"Read(//state/workspaces/job-1/assignment-1/checkout/**)", "Edit(//state/workspaces/job-1/assignment-1/checkout/**)",
+		}},
 		"a worker": {Permissions{Unattended: true, Editable: []string{workspace, tmp}}, "dontAsk", []string{
 			"Read(//state/workspaces/job-1/assignment-1/checkout/**)", "Edit(//state/workspaces/job-1/assignment-1/checkout/**)",
 			"Read(//state/workspaces/job-1/assignment-1/tmp/**)", "Edit(//state/workspaces/job-1/assignment-1/tmp/**)",

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"runtime"
 	"strings"
 	"testing"
@@ -152,4 +153,33 @@ func runningLeaders(t *testing.T) []string {
 		}
 	}
 	return running
+}
+
+// Coordination's leader, whose terminal is the user's conversation, keeps
+// its native prompts under the managed policy as without it; the other
+// agents' modes are pinned by the providers' tests.
+func TestCoordinationsLeaderKeepsItsDefaultPermissionModeUnderTheManagedPolicy(t *testing.T) {
+	for name, managed := range map[string]bool{"under the managed policy": true, "without it": false} {
+		t.Run(name, func(t *testing.T) {
+			if managed {
+				t.Setenv(fakeprovider.ManagedRulesOnlyEnv, "1")
+				t.Setenv(fakeprovider.PlatformEnv, "darwin")
+			}
+			readyFactory(t, idleLeader)
+			if stdout, stderr, code := runAsmai(t, "start"); code != 0 {
+				t.Fatalf("asmai start exited %d, printing %q", code, stdout+stderr)
+			}
+			var settings struct {
+				Permissions struct {
+					DefaultMode string `json:"defaultMode"`
+				} `json:"permissions"`
+			}
+			if err := json.Unmarshal([]byte(argValue(sessionArgs(t, "leader@coordination"), "--settings")), &settings); err != nil {
+				t.Fatal(err)
+			}
+			if got := settings.Permissions.DefaultMode; got != "default" {
+				t.Errorf("Coordination's leader runs in the %q permission mode, want %q", got, "default")
+			}
+		})
+	}
 }

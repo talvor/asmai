@@ -38,6 +38,7 @@ ADR 0013 had `asmai start` refuse wherever the account's managed settings set `a
 
 - An account under the policy can run the factory with no AsmAI rule in the managed settings, where sandbox auto-allow is on. The administrator's minimum, where it is off, is one rule.
 - The daemon grows the git and gh operations agents used to run themselves, as `asmai` subcommands for every account, and Coordination grows the stall relay. Agents' operating guides change to match.
+- The daemon runs `git commit` and `git merge` unsandboxed, as the user, so the repository's hooks run with the user's privileges. A worker that edits a hook can therefore run code outside its sandbox by calling `asmai commit`. The captain accepted this tradeoff.
 - Claude Code's brace-next-to-quote check ("expansion obfuscation") still prompts under sandbox auto-allow, and cannot be switched off: `asmai` invocations and the commands agents are told to run must avoid a brace next to a quote character.
 - Not yet verified: Linux socket control for the sandbox route, auto mode's availability and decisions in a worker session, and whether `excludedCommands` removes a command from sandbox auto-allow. Qualification covers the probe's verdicts, a sandboxed `asmai` call under the policy, the daemon-done git and gh writes, and the stall relay, with the fake provider's managed-rules flags simulating the policy in dev tests. The probe's contract is the pinned Claude Code's, as in ADR 0013. The macOS probes ran on Claude Code 2.1.285, not the 2.1.292 pin.
 

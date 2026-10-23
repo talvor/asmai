@@ -80,11 +80,43 @@ func rulesAnswer(t *testing.T, managedOnly bool) string {
 }
 
 // answersTheRulesProbe is the start of a stand-in Claude Code's script that
-// answers the permission rules probe, as Claude Code does with no policy.
-func answersTheRulesProbe(t *testing.T) string {
+// answers the permission rules probe, as Claude Code does with no policy,
+// followed by any further answers, one line each.
+func answersTheRulesProbe(t *testing.T, further ...string) string {
 	t.Helper()
+	answers := append([]string{rulesAnswer(t, false)}, further...)
 	return "if [ \"$1\" = auth ]; then echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'; exit 0; fi\n" +
-		"if [ \"$1\" = -p ]; then cat > /dev/null; printf '%s\\n' '" + rulesAnswer(t, false) + "'; exit 0; fi\n"
+		"if [ \"$1\" = -p ]; then cat > /dev/null; printf '%s\\n' '" + strings.Join(answers, "'\n printf '%s\\n' '") + "'; exit 0; fi\n"
+}
+
+// autoModeAnswer returns Claude Code's answer to the probe's request to
+// switch a session to auto mode: it does, or refuses with why.
+func autoModeAnswer(t *testing.T, refusal string) string {
+	t.Helper()
+	response := map[string]any{"subtype": "success", "request_id": "asmai-auto-mode", "response": map[string]any{}}
+	if refusal != "" {
+		response = map[string]any{"subtype": "error", "request_id": "asmai-auto-mode", "error": refusal}
+	}
+	answer, err := json.Marshal(map[string]any{"type": "control_response", "response": response})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(answer)
+}
+
+// disabledAutoModeAnswer returns Claude Code's answer to the probe's request
+// for the effective settings, as an administrator's managed settings that set
+// permissions.disableAutoMode to "disable" make them.
+func disabledAutoModeAnswer(t *testing.T) string {
+	t.Helper()
+	answer, err := json.Marshal(map[string]any{"type": "control_response", "response": map[string]any{
+		"subtype": "success", "request_id": "asmai-effective-settings",
+		"response": map[string]any{"effective": map[string]any{"permissions": map[string]any{"disableAutoMode": "disable"}}, "sources": []any{}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(answer)
 }
 
 // testPins pins version of Claude Code for this platform, which the daemon's

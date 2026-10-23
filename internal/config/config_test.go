@@ -332,6 +332,7 @@ recording_retention = "7d"
 [providers.claude]
 worker_cap = 8
 default_model = "sonnet"
+auto_mode = true
 
 [roles.engineering]
 leader_skills = ["pr"]
@@ -356,7 +357,7 @@ repository_skills = ["engineering", "quality"]
 	if cfg.Logs != (Logs{9, 1_000_000, 7 * 24 * time.Hour}) {
 		t.Errorf("logs are %+v", cfg.Logs)
 	}
-	if cfg.Providers[Claude] != (Provider{8, "sonnet"}) {
+	if cfg.Providers[Claude] != (Provider{8, "sonnet", true}) {
 		t.Errorf("claude is %+v", cfg.Providers[Claude])
 	}
 	skills := cfg.Skills["engineering"]

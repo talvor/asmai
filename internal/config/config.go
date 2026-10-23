@@ -114,6 +114,10 @@ type Provider struct {
 	// DefaultModel is the model used when work falls back to the provider;
 	// empty when the file sets none.
 	DefaultModel string
+	// AutoMode is the user's opt-in to Claude Code's auto mode for the
+	// agents nobody answers a prompt for, where Claude Code reports it
+	// available (ADR 0018). Off unless the file turns it on.
+	AutoMode bool
 }
 
 // Skills is a role's skill lists, in [roles.<role>]. A nil list is not in the
@@ -847,6 +851,7 @@ func providerSettings(p *Provider) []setting {
 				return "", ""
 			},
 			set: func(v value) { p.DefaultModel = v.text }},
+		{name: "auto_mode", kind: kindBoolean, example: "true", set: func(v value) { p.AutoMode = v.flag }},
 	}
 }
 
@@ -1082,6 +1087,7 @@ recording_retention = "14d"
 [providers.claude]
 worker_cap = 3
 default_model = "opus"
+auto_mode = false
 
 [roles.coordination]
 leader_provider = "claude"

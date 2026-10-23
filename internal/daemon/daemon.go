@@ -653,6 +653,10 @@ type daemon struct {
 		check Check
 		// managedOnly is set when that check found the managed policy.
 		managedOnly bool
+		// autoMode is whether Claude Code reported auto mode available to a
+		// session, and why not when it did not.
+		autoMode    bool
+		autoModeWhy string
 	}
 	stopping  bool
 	stoppedBy string

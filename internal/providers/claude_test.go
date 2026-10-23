@@ -353,6 +353,12 @@ func TestOnlyASessionTheUserAnswersKeepsTheNativePrompts(t *testing.T) {
 		"a worker under the managed policy": {Permissions{Unattended: true, ManagedOnly: true, Editable: []string{workspace}}, "acceptEdits", []string{
 			"Read(//state/workspaces/job-1/assignment-1/checkout/**)", "Edit(//state/workspaces/job-1/assignment-1/checkout/**)",
 		}},
+		// Auto mode takes the place of the mode a session nobody answers would
+		// have, under the managed policy or not, and never the user's own
+		// conversation.
+		"another leader in auto mode":                  {Permissions{Unattended: true, Auto: true}, "auto", nil},
+		"another leader in auto mode under the policy": {Permissions{Unattended: true, Auto: true, ManagedOnly: true}, "auto", nil},
+		"Coordination's leader with auto on":           {Permissions{Auto: true}, "default", nil},
 		"a worker": {Permissions{Unattended: true, Editable: []string{workspace, tmp}}, "dontAsk", []string{
 			"Read(//state/workspaces/job-1/assignment-1/checkout/**)", "Edit(//state/workspaces/job-1/assignment-1/checkout/**)",
 			"Read(//state/workspaces/job-1/assignment-1/tmp/**)", "Edit(//state/workspaces/job-1/assignment-1/tmp/**)",

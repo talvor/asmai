@@ -61,6 +61,24 @@ const (
 	PlatformEnv          = "ASMAI_FAKE_PROVIDER_PLATFORM"
 )
 
+// ArgsLogEnv names a file the fake appends one line to for each time it is
+// started: the JSON array of its arguments, so that a test sees every
+// session's own, which ArgsEnv's file holds the last of only.
+const ArgsLogEnv = "ASMAI_FAKE_PROVIDER_ARGS_LOG"
+
+// DisableAutoModeEnv, when set, makes the effective settings the fake answers
+// a settings request with set permissions.disableAutoMode to "disable", as an
+// administrator's managed settings can, and says no more: it still lets a
+// session switch to auto mode, so AsmAI must read the flag as well.
+// AutoModeUnavailableEnv makes it refuse a request to switch to auto mode,
+// as Claude Code does where auto mode is not available to the session for
+// any other reason, such as the account or the model. With neither, auto
+// mode is available.
+const (
+	DisableAutoModeEnv     = "ASMAI_FAKE_PROVIDER_DISABLE_AUTO_MODE"
+	AutoModeUnavailableEnv = "ASMAI_FAKE_PROVIDER_AUTO_MODE_UNAVAILABLE"
+)
+
 // VersionEnv names the version the fake reports for --version, as Claude Code
 // does; with none, it reports the version this asmai pins, so that the fake
 // stands in for the pinned copy. A test sets it to stand in for a copy that
@@ -135,6 +153,18 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		encoded, _ := json.Marshal(args)
 		if err := os.WriteFile(path, encoded, 0o600); err != nil {
 			fmt.Fprintf(stderr, "fake-provider: $%s: %v\n", ArgsEnv, err)
+			return 2
+		}
+	}
+	if path := os.Getenv(ArgsLogEnv); path != "" {
+		encoded, _ := json.Marshal(args)
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, err = f.Write(append(encoded, '\n'))
+			f.Close()
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "fake-provider: $%s: %v\n", ArgsLogEnv, err)
 			return 2
 		}
 	}
@@ -394,6 +424,7 @@ func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.W
 			RequestID string `json:"request_id"`
 			Request   struct {
 				Subtype string `json:"subtype"`
+				Mode    string `json:"mode"`
 			} `json:"request"`
 		}
 		if json.Unmarshal(sc.Bytes(), &req) != nil || req.Type != "control_request" {
@@ -407,7 +438,14 @@ func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.W
 			if sandbox != nil {
 				effective["sandbox"] = sandbox
 			}
+			if os.Getenv(DisableAutoModeEnv) != "" {
+				effective["permissions"] = map[string]any{"disableAutoMode": "disable"}
+			}
 			response["response"] = map[string]any{"effective": effective, "sources": []any{}, "platform": os.Getenv(PlatformEnv)}
+		} else if req.Request.Subtype == "set_permission_mode" && req.Request.Mode == "auto" && os.Getenv(AutoModeUnavailableEnv) != "" {
+			response = map[string]any{"subtype": "error", "request_id": req.RequestID, "error": "Cannot set permission mode to auto: auto mode unavailable"}
+		} else if req.Request.Subtype == "set_permission_mode" {
+			response["response"] = map[string]any{}
 		} else {
 			response = map[string]any{"subtype": "error", "request_id": req.RequestID, "error": "Unsupported control request subtype: " + req.Request.Subtype}
 		}

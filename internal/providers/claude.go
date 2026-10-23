@@ -84,6 +84,7 @@ const (
 	PermissionModeDefault     = "default"
 	PermissionModeDontAsk     = "dontAsk"
 	PermissionModeAcceptEdits = "acceptEdits"
+	PermissionModeAuto        = "auto"
 )
 
 // Permissions is what an agent session's permission rules need to know of
@@ -106,11 +107,21 @@ type Permissions struct {
 	// managed permission rules, which ignore the rules the session is given:
 	// the sandbox then runs `asmai` and auto-allows it (ADR 0018).
 	ManagedOnly bool
+	// Auto is set when the user switched auto mode on and Claude Code
+	// reports it available (PermissionVerdict.AutoModeAvailable): an
+	// unattended session then runs in auto mode instead of dontAsk, where
+	// Claude Code's classifier answers what its prompts would ask (ADR 0018).
+	// It is never set from the switch alone, as Claude Code starts a session
+	// in the default mode, silently, where auto mode is not available.
+	Auto bool
 }
 
 // Mode returns the permission mode of a session p describes.
 func (p Permissions) Mode() string {
 	if p.Unattended {
+		if p.Auto {
+			return PermissionModeAuto
+		}
 		if p.ManagedOnly {
 			return PermissionModeAcceptEdits
 		}

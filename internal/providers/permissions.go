@@ -31,6 +31,7 @@ const probeTimeout = 30 * time.Second
 const (
 	probeRequestID    = "asmai-permission-rules"
 	settingsRequestID = "asmai-effective-settings"
+	autoModeRequestID = "asmai-auto-mode"
 )
 
 // PermissionVerdict is what Claude Code says of the permission rules AsmAI
@@ -51,6 +52,14 @@ type PermissionVerdict struct {
 	// Platform is the platform Claude Code says it runs on, or empty when it
 	// does not say.
 	Platform string
+	// AutoModeAvailable is set when Claude Code lets a session switch to auto
+	// mode, and the effective settings do not disable it. Claude Code starts a
+	// session that asks for auto mode in the default mode, silently, when it
+	// is not available, so the setting alone says nothing (ADR 0018).
+	AutoModeAvailable bool
+	// AutoModeWhy says why auto mode is not available, when it is not: what
+	// Claude Code answered, or that the effective settings disable it.
+	AutoModeWhy string
 }
 
 // Honoured reports whether Claude Code applies every permission rule AsmAI
@@ -124,11 +133,13 @@ func resolvedSocket(socket string) string {
 }
 
 // The control requests that have Claude Code list the permission rules its
-// session applies, and which of them it ignores, and the session's effective
-// merged settings.
+// session applies, and which of them it ignores, the session's effective
+// merged settings, and whether the session can switch to auto mode, which
+// Claude Code refuses where auto mode is not available to it.
 const (
 	permissionRulesRequest = `{"type":"control_request","request_id":"` + probeRequestID + `","request":{"subtype":"list_permission_rules"}}`
 	settingsRequest        = `{"type":"control_request","request_id":"` + settingsRequestID + `","request":{"subtype":"get_settings"}}`
+	autoModeRequest        = `{"type":"control_request","request_id":"` + autoModeRequestID + `","request":{"subtype":"set_permission_mode","mode":"auto"}}`
 )
 
 // ProbePermissionRules asks the Claude Code at path, started in dir, which of
@@ -166,7 +177,7 @@ func ProbePermissionRules(ctx context.Context, path, dir, socket string, environ
 	}
 	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
 	// Claude Code answers each request it reads and ends when its stdin does.
-	cmd.Stdin = strings.NewReader(permissionRulesRequest + "\n" + settingsRequest + "\n")
+	cmd.Stdin = strings.NewReader(permissionRulesRequest + "\n" + settingsRequest + "\n" + autoModeRequest + "\n")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -197,6 +208,8 @@ func ProbePermissionRules(ctx context.Context, path, dir, socket string, environ
 func parsePermissionRules(out []byte, socket string) (v PermissionVerdict, found bool, err error) {
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(nil, 16<<20)
+	var disableAutoMode, autoModeAnswered bool
+	var autoModeError string
 	for sc.Scan() {
 		var msg struct {
 			Type     string `json:"type"`
@@ -215,6 +228,9 @@ func parsePermissionRules(out []byte, socket string) (v PermissionVerdict, found
 					} `json:"state"`
 					Platform  string `json:"platform"`
 					Effective struct {
+						Permissions struct {
+							DisableAutoMode string `json:"disableAutoMode"`
+						} `json:"permissions"`
 						Sandbox struct {
 							Enabled                  bool `json:"enabled"`
 							AutoAllowBashIfSandboxed bool `json:"autoAllowBashIfSandboxed"`
@@ -238,6 +254,15 @@ func parsePermissionRules(out []byte, socket string) (v PermissionVerdict, found
 			v.Platform = msg.Response.Response.Platform
 			v.SandboxAutoAllow = sandbox.Enabled && sandbox.AutoAllowBashIfSandboxed
 			v.SocketControl = socket != "" && slices.Contains(sandbox.Network.AllowUnixSockets, socket)
+			disableAutoMode = msg.Response.Response.Effective.Permissions.DisableAutoMode == "disable"
+		case autoModeRequestID:
+			autoModeAnswered = true
+			autoModeError = msg.Response.Error
+			if msg.Response.Subtype == "success" {
+				autoModeError = ""
+			} else if autoModeError == "" {
+				autoModeError = "it refused the switch"
+			}
 		case probeRequestID:
 			if msg.Response.Subtype != "success" {
 				return v, false, fmt.Errorf("Claude Code refused to list its permission rules: %s", msg.Response.Error)
@@ -260,6 +285,16 @@ func parsePermissionRules(out []byte, socket string) (v PermissionVerdict, found
 	}
 	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		return v, false, err
+	}
+	switch {
+	case disableAutoMode:
+		v.AutoModeWhy = "the account's settings set permissions.disableAutoMode to \"disable\""
+	case !autoModeAnswered:
+		v.AutoModeWhy = "Claude Code did not say whether a session can switch to auto mode"
+	case autoModeError != "":
+		v.AutoModeWhy = "Claude Code refused the switch to auto mode: " + autoModeError
+	default:
+		v.AutoModeAvailable = true
 	}
 	return v, found, nil
 }

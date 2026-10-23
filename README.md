@@ -125,12 +125,14 @@ worker_model = "opus"
 | --- | --- |
 | `[limits]` | `leader_idle_grace`, `leader_restarts`, `leader_restart_window`, `silence_timeout`, `drain_timeout`, `side_effect_free_retries`, `provider_error_resumes`, `provider_error_wait`, `provider_error_wait_max`, `recheck_interval`, `dispatch_limit`, `failed_validations`, `first_check_wait`, `free_space_floor` |
 | `[logs]` | `daemon_files`, `daemon_file_size`, `recording_retention` |
-| `[providers.claude]` | `worker_cap`, `default_model` |
+| `[providers.claude]` | `worker_cap`, `default_model`, `auto_mode` |
 | `[roles.<role>]` | `leader_provider`, `leader_model`, `worker_provider`, `worker_model`, `leader_skills`, `worker_skills`, `leader_added_skills`, `worker_added_skills` |
 | `[repositories.<name>]` | `location`, `origin`, `default_branch`, `notes`, `checks_one_at_a_time`, `no_ci`, `commit_trailers`, `repository_skills` |
 | `[[repositories.<name>.writable]]` | one table for each [writable folder](#writable-folders): `path`, `env` |
 
 Four repository settings take effect in this asmai already. `notes` is your notes for the repository: they reach the repository's workers after its instruction files (`AGENTS.md`, `CLAUDE.md`), as instructions. `commit_trailers = false` switches off the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers on that repository's commits, for a repository whose conventions forbid them; it is read at each commit. The `[[repositories.<name>.writable]]` tables name folders outside a workspace that the repository's workers may write, as [Writable folders](#writable-folders) describes. `no_ci = true` declares a repository with no CI: a notes pull request, or a setup one, is marked ready straight away (see [Notes delivery](#notes-delivery) and [Repository setup](#repository-setup)).
+
+`auto_mode = true` opts the agents nobody answers a prompt for into Claude Code's auto mode, where the account's administrator has not disabled it (`permissions.disableAutoMode`) and Claude Code itself reports it available: AsmAI asks Claude Code at `asmai start` and does not trust the setting alone. It is off unless you turn it on. Where Claude Code reports auto mode unavailable, `asmai start` says so and the agents run in the mode they would otherwise use. See [ADR 0018](docs/adr/0018-asmai-runs-under-managed-only-permission-rules-without-approving-anything-itself.md).
 
 `asmai config check` reads the file and reports every problem in it, each with its line and the fix, and exits 1 if there is any. `asmai config example` prints an example with every default written out, for one role and one repository, which passes `asmai config check`. `asmai start` refuses a file it cannot honour in the same way, naming the line and the fix: TOML that does not parse, a table or field it does not read, a value of the wrong type or out of range, a provider other than `"claude"`, or a role or field left out.
 
@@ -200,6 +202,8 @@ Coordination's leader runs the pinned Claude Code in a pseudo-terminal the daemo
 | `leader@coordination` | `default` | raises Claude Code's native prompt, which you answer in the conversation | none |
 | `leader@engineering`, `leader@quality` | `dontAsk`, or `acceptEdits` [under a managed policy](#under-a-claude-code-managed-policy) | is denied, with no prompt, and the agent is told so | none, or under the policy its working directory and added directories |
 | every worker | `dontAsk`, or `acceptEdits` under a managed policy | is denied, with no prompt, and the agent is told so | its workspace and its temporary directory |
+
+With [`auto_mode`](#the-configuration-file) on and available, `auto` replaces `dontAsk` and `acceptEdits` for every agent but Coordination's leader.
 
 Only Coordination's terminal takes your keys, so a native prompt in any other agent's would wait for an answer nobody can give. In `dontAsk` mode Claude Code gives no approval its rules do not give: the agent uses an allowed route, or reports what was denied, a worker with `asmai blocked` and a leader through Coordination. Workers are told to write files with the Edit and Write tools, never with shell heredocs or `cat > file`: Claude Code denies those its shell analyser marks too complex to check, such as one with a brace next to a quote character, and may run plain ones in the sandbox. Under a managed policy that ignores AsmAI's rules, `acceptEdits` replaces `dontAsk` for these agents: Claude Code itself approves their Edit and Write tools in the working directory and added directories, and still denies anything else. The mode follows the probe's remembered verdict ([ADR 0018](docs/adr/0018-asmai-runs-under-managed-only-permission-rules-without-approving-anything-itself.md)). AsmAI never uses auto mode, which would have a classifier approve in your place.
 

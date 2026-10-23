@@ -157,6 +157,20 @@ func newJobFactory(t *testing.T, mandate string, repository bool) planningJob {
 // has it.
 func newJobFactoryFrom(t *testing.T, mandate string, repository bool, origin string) planningJob {
 	t.Helper()
+	return newJobFactoryWith(t, mandate, repository, origin, factoryOptions{})
+}
+
+// factoryOptions are what a test changes of newJobFactoryFrom's factory: the
+// text its configuration file ends with, and the answers its stand-in Claude
+// Code gives the permission rules probe besides the rules'.
+type factoryOptions struct {
+	config  string
+	answers []string
+}
+
+// newJobFactoryWith is newJobFactoryFrom for a factory set by options.
+func newJobFactoryWith(t *testing.T, mandate string, repository bool, origin string, options factoryOptions) planningJob {
+	t.Helper()
 	out := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(out, 0o700); err != nil {
 		t.Fatal(err)
@@ -187,6 +201,7 @@ func newJobFactoryFrom(t *testing.T, mandate string, repository bool, origin str
 	if repository {
 		fmt.Fprintf(&config, "[repositories.fixture]\norigin = %q\ndefault_branch = \"trunk\"\n", origin)
 	}
+	config.WriteString(options.config)
 	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +209,7 @@ func newJobFactoryFrom(t *testing.T, mandate string, repository bool, origin str
 	if err := os.MkdirAll(filepath.Dir(provider), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.part\"\nmv \"$ASMAI_TEST_OUT/args.part\" \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
+	script := "#!/bin/sh\n" + answersTheRulesProbe(t, options.answers...) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.part\"\nmv \"$ASMAI_TEST_OUT/args.part\" \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
 	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

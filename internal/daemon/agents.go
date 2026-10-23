@@ -275,6 +275,9 @@ func (d *daemon) checks() ([]Check, config.Config, store.ProviderInstall) {
 	claude := ClaudeCodeChecks(pinned, install.Path, err,
 		func(path string) Check { return d.versionCheck(path, pinned) }, SignInCheck, d.permissionRulesCheck)
 	checks = append(checks, claude...)
+	if err == nil && !slices.ContainsFunc(claude, func(c Check) bool { return !c.OK }) {
+		checks = append(checks, d.autoModeCheck(cfg, install.Path)...)
+	}
 	checks = append(checks, d.trustCheck())
 	return checks, cfg, install
 }
@@ -382,8 +385,47 @@ func (d *daemon) permissionRulesCheck(path string) Check {
 	c, verdict := permissionRulesVerdict(path, d.cfg.Paths.Dir, d.cfg.Paths.Socket)
 	if c.OK {
 		d.rulesOK.path, d.rulesOK.check, d.rulesOK.managedOnly = path, c, verdict.ManagedOnly
+		d.rulesOK.autoMode, d.rulesOK.autoModeWhy = verdict.AutoModeAvailable, verdict.AutoModeWhy
 	}
 	return c
+}
+
+// autoMode reports whether the sessions of the install at path run in auto
+// mode: the user switched it on in the configuration, cfg, and the probe that
+// passed for the install found Claude Code reporting it available. When the
+// user switched it on and Claude Code does not report it available, the
+// sessions run in the mode they would otherwise have, and why says why, for
+// the user to be told (ADR 0018).
+func (d *daemon) autoMode(cfg config.Config, path string) (on bool, why string) {
+	if !cfg.Providers[config.Claude].AutoMode {
+		return false, ""
+	}
+	d.rulesMu.Lock()
+	defer d.rulesMu.Unlock()
+	if d.rulesOK.path != path {
+		return false, "Claude Code was not asked whether it is available"
+	}
+	return d.rulesOK.autoMode, d.rulesOK.autoModeWhy
+}
+
+// AutoModeName is the name of the check that says where the user's switch for
+// auto mode is on but Claude Code does not report auto mode available.
+const AutoModeName = "auto mode"
+
+// autoModeCheck says, as a warning that every start repeats, that the user
+// switched auto mode on and Claude Code does not report it available, so that
+// the agents nobody answers a prompt for run in the mode they would have with
+// it off instead: Claude Code would start them in its default mode without a
+// word, and nobody answers its prompts. It is no check at all with the switch off or auto mode
+// available.
+func (d *daemon) autoModeCheck(cfg config.Config, path string) []Check {
+	on, why := d.autoMode(cfg, path)
+	if on || !cfg.Providers[config.Claude].AutoMode {
+		return nil
+	}
+	instead := providers.Permissions{Unattended: true, ManagedOnly: d.managedOnly(path)}.Mode()
+	return []Check{{Name: AutoModeName, OK: true,
+		Warning: fmt.Sprintf("auto_mode is on in the configuration, but auto mode is not available: %s. The agents nobody answers a prompt for run in %s mode instead. An administrator who disabled it can enable it with permissions.disableAutoMode; set auto_mode = false to stop this warning", why, instead)}}
 }
 
 // managedOnly reports whether the permission rules check that passed for the
@@ -803,7 +845,11 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	// Only Coordination's leader's terminal takes the user's keys, in the
 	// conversation: every other session would wait at a native prompt
 	// nobody can answer, so it is denied what its rules do not allow.
-	perms := providers.Permissions{Unattended: l.address != roles.LeaderOf(roles.Coordination), Editable: launch.editable, ManagedOnly: d.managedOnly(install.Path)}
+	d.configMu.Lock()
+	applied := d.applied
+	d.configMu.Unlock()
+	auto, _ := d.autoMode(applied, install.Path)
+	perms := providers.Permissions{Unattended: l.address != roles.LeaderOf(roles.Coordination), Editable: launch.editable, ManagedOnly: d.managedOnly(install.Path), Auto: auto}
 	// The session's skills are written as a plugin for it alone, copied
 	// afresh at each start from the bundle in the executable and from the
 	// directories of added and repository skills, so editing those never

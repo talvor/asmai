@@ -71,6 +71,7 @@ func Entries(c Config) []Entry {
 	if provider.DefaultModel != "" {
 		add("providers.claude", "default_model", quote(provider.DefaultModel))
 	}
+	add("providers.claude", "auto_mode", strconv.FormatBool(provider.AutoMode))
 
 	for _, role := range roles.All {
 		staffing, staffed := c.Roles[role]

@@ -121,8 +121,15 @@ func startUnready(t *testing.T) (stderr string) {
 // before is the daemon's.
 func readyFactory(t *testing.T, script []string) (stateDir string) {
 	t.Helper()
+	return readyFactoryConfigured(t, script, staffing)
+}
+
+// readyFactoryConfigured is readyFactory for a factory whose configuration
+// file holds config, which the daemon reads when it starts.
+func readyFactoryConfigured(t *testing.T, script []string, config string) (stateDir string) {
+	t.Helper()
 	stateDir = factoryHome(t)
-	writeConfig(t, staffing)
+	writeConfig(t, config)
 	trustFactory(t, stateDir)
 	path := filepath.Join(t.TempDir(), "leader.jsonl")
 	if err := os.WriteFile(path, []byte(strings.Join(script, "\n")+"\n"), 0o600); err != nil {

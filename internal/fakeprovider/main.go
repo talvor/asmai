@@ -45,9 +45,20 @@ const ResumeFailsEnv = "ASMAI_FAKE_PROVIDER_RESUME_FAILS"
 // allowManagedPermissionRulesOnly: the rules it was given with --settings are
 // listed as not in effect. ManagedRulesAllowEnv names rules, separated by
 // commas, that the managed settings allow, and which are in effect.
+// ManagedSandboxOffEnv, when set, makes the effective settings it answers a
+// settings request with turn the sandbox's auto-allow off, as managed
+// settings can; ManagedSocketsOffEnv leaves the daemon's socket out of the
+// sockets the effective settings allow. With neither, the effective sandbox
+// settings are the ones the session was given with --settings, as Claude
+// Code applies them. PlatformEnv names the platform the fake says it runs on
+// in the settings request's answer, to simulate a host whose sandbox route
+// AsmAI cannot confirm, as Linux is.
 const (
 	ManagedRulesOnlyEnv  = "ASMAI_FAKE_PROVIDER_MANAGED_RULES_ONLY"
 	ManagedRulesAllowEnv = "ASMAI_FAKE_PROVIDER_MANAGED_ALLOW"
+	ManagedSandboxOffEnv = "ASMAI_FAKE_PROVIDER_MANAGED_SANDBOX_OFF"
+	ManagedSocketsOffEnv = "ASMAI_FAKE_PROVIDER_MANAGED_SOCKETS_OFF"
+	PlatformEnv          = "ASMAI_FAKE_PROVIDER_PLATFORM"
 )
 
 // VersionEnv names the version the fake reports for --version, as Claude Code
@@ -326,9 +337,11 @@ func (h hookCommands) deliver(stderr io.Writer) func(string, []byte) {
 // answerControlRequests plays Claude Code's print mode with stream-json
 // input, for the one request AsmAI sends: it answers each list_permission_rules
 // request with the allow rules of settings, in the --settings form, and ends
-// with stdin. Under ManagedRulesOnlyEnv the rules are not in effect.
+// with stdin, and each get_settings request with the effective settings'
+// sandbox. Under ManagedRulesOnlyEnv the rules are not in effect.
 func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var rules []string
+	var sandbox map[string]any
 	if settings != "" {
 		data := []byte(settings)
 		if !strings.HasPrefix(strings.TrimSpace(settings), "{") {
@@ -342,12 +355,20 @@ func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.W
 			Permissions struct {
 				Allow []string `json:"allow"`
 			} `json:"permissions"`
+			Sandbox map[string]any `json:"sandbox"`
 		}
 		if err := json.Unmarshal(data, &parsed); err != nil {
 			fmt.Fprintf(stderr, "fake-provider: --settings: %v\n", err)
 			return 2
 		}
 		rules = parsed.Permissions.Allow
+		sandbox = parsed.Sandbox
+	}
+	if os.Getenv(ManagedSandboxOffEnv) != "" && sandbox != nil {
+		sandbox["autoAllowBashIfSandboxed"] = false
+	}
+	if os.Getenv(ManagedSocketsOffEnv) != "" && sandbox != nil {
+		delete(sandbox, "network")
 	}
 	managedOnly := os.Getenv(ManagedRulesOnlyEnv) != ""
 	type rule struct {
@@ -381,6 +402,12 @@ func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.W
 		response := map[string]any{"subtype": "success", "request_id": req.RequestID}
 		if req.Request.Subtype == "list_permission_rules" {
 			response["response"] = map[string]any{"state": map[string]any{"rules": listed, "workspaceDirectories": []string{}, "originalCwd": ".", "managedOnly": managedOnly}}
+		} else if req.Request.Subtype == "get_settings" {
+			effective := map[string]any{}
+			if sandbox != nil {
+				effective["sandbox"] = sandbox
+			}
+			response["response"] = map[string]any{"effective": effective, "sources": []any{}, "platform": os.Getenv(PlatformEnv)}
 		} else {
 			response = map[string]any{"subtype": "error", "request_id": req.RequestID, "error": "Unsupported control request subtype: " + req.Request.Subtype}
 		}

@@ -340,7 +340,7 @@ func TestTheProbeReportsTheRulesClaudeCodeIgnores(t *testing.T) {
 		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		return ProbePermissionRules(t.Context(), path, t.TempDir(), nil)
+		return ProbePermissionRules(t.Context(), path, t.TempDir(), "/run/asmai.sock", nil)
 	}
 
 	if v, err := probe(t, answer(false, false)); err != nil || !v.Honoured() || v.ManagedOnly {
@@ -363,6 +363,69 @@ func TestTheProbeReportsTheRulesClaudeCodeIgnores(t *testing.T) {
 	}
 	if _, err := probe(t, ""); err == nil {
 		t.Error("no answer was taken for a verdict")
+	}
+}
+
+// The route that lets `asmai` run unprompted under the managed policy is an
+// administrator's allow rule that covers it, or the sandbox's auto-allow with
+// the daemon's socket in effect, which is confirmed on macOS only.
+func TestTheProbeFindsTheRouteAsmaiRunsUnprompted(t *testing.T) {
+	answer := func(rule string, managedOnly bool, sandbox string) string {
+		rules := ""
+		if rule != "" {
+			rules = `{"behavior":"allow","source":"policySettings","rule":"` + rule + `"}`
+		}
+		if !managedOnly {
+			var own []string
+			for _, r := range CommandRules() {
+				own = append(own, `{"behavior":"allow","source":"flagSettings","rule":"`+r+`"}`)
+			}
+			rules = strings.Join(own, ",")
+		}
+		out := `{"type":"control_response","response":{"subtype":"success","request_id":"asmai-permission-rules","response":{"state":{"rules":[` +
+			rules + `],"managedOnly":` + map[bool]string{true: "true", false: "false"}[managedOnly] + `}}}}`
+		if sandbox != "" {
+			out += "\n" + `{"type":"control_response","response":{"subtype":"success","request_id":"asmai-effective-settings","response":{"effective":{"sandbox":` + sandbox + `}}}}`
+		}
+		return out
+	}
+	const on = `{"enabled":true,"autoAllowBashIfSandboxed":true,"network":{"allowUnixSockets":["/run/asmai.sock"]}}`
+	probe := func(output string) PermissionVerdict {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "claude")
+		script := "#!/bin/sh\ncat > /dev/null\ncat <<'EOF'\n" + output + "\nEOF\n"
+		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		v, err := ProbePermissionRules(t.Context(), path, t.TempDir(), "/run/asmai.sock", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, c := range []struct {
+		name   string
+		output string
+		goos   string
+		want   Route
+	}{
+		{"no policy", answer("", false, on), "darwin", RouteRules},
+		{"no policy on linux", answer("", false, on), "linux", RouteRules},
+		{"an allow row for asmai", answer("Bash(asmai *)", true, ""), "darwin", RouteAllowRule},
+		{"the old colon form of the row", answer("Bash(asmai:*)", true, ""), "linux", RouteAllowRule},
+		{"a row for all of Bash", answer("Bash", true, ""), "darwin", RouteAllowRule},
+		{"a row for another command", answer("Bash(git status:*)", true, ""), "darwin", RouteNone},
+		{"sandbox auto-allow with the socket", answer("", true, on), "darwin", RouteSandbox},
+		{"sandbox auto-allow without the socket", answer("", true, `{"enabled":true,"autoAllowBashIfSandboxed":true}`), "darwin", RouteNone},
+		{"sandbox auto-allow switched off", answer("", true, `{"enabled":true,"autoAllowBashIfSandboxed":false,"network":{"allowUnixSockets":["/run/asmai.sock"]}}`), "darwin", RouteNone},
+		{"sandbox off", answer("", true, `{"enabled":false,"autoAllowBashIfSandboxed":true}`), "darwin", RouteNone},
+		{"no settings answer", answer("", true, ""), "darwin", RouteNone},
+		{"sandbox auto-allow on linux", answer("", true, on), "linux", RouteUnconfirmed},
+		{"no sandbox auto-allow on linux", answer("", true, `{"enabled":true}`), "linux", RouteNone},
+	} {
+		if got := probe(c.output).Route(c.goos); got != c.want {
+			t.Errorf("%s: the route is %d, want %d", c.name, got, c.want)
+		}
 	}
 }
 

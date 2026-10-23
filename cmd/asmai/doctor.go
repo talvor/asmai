@@ -108,7 +108,7 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 			func(path string) daemon.Check {
 				return daemon.Check(certify.Version(context.Background(), path, p.ClaudeCode.Version, providers.ClaudeCodeVersion))
 			}, daemon.SignInCheck,
-			func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir) })...)
+			func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir, paths.Socket) })...)
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
 	return checks, configFile, cfg, nil
@@ -272,6 +272,9 @@ func doctor(o *output, paths statedir.Paths) int {
 	for _, c := range checks {
 		if c.OK {
 			fmt.Fprintf(w, "  ok      %s\n", c.Name)
+			if c.Warning != "" {
+				fmt.Fprintf(w, "          warning: %s\n", c.Warning)
+			}
 			continue
 		}
 		fmt.Fprintf(w, "  failed  %s: %s\n", c.Name, c.Problem)

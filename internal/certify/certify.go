@@ -31,6 +31,7 @@ type Check struct {
 	OK      bool   `json:"ok"`
 	Problem string `json:"problem,omitempty"`
 	Fix     string `json:"fix,omitempty"`
+	Warning string `json:"warning,omitempty"`
 }
 
 // Platform checks that the platform named by goos and goarch is certified:

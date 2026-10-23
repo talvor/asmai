@@ -377,11 +377,20 @@ func (d *daemon) permissionRulesCheck(path string) Check {
 	if d.rulesOK.path == path {
 		return d.rulesOK.check
 	}
-	c := PermissionRulesCheck(path, d.cfg.Paths.Dir, d.cfg.Paths.Socket)
+	c, verdict := permissionRulesVerdict(path, d.cfg.Paths.Dir, d.cfg.Paths.Socket)
 	if c.OK {
-		d.rulesOK.path, d.rulesOK.check = path, c
+		d.rulesOK.path, d.rulesOK.check, d.rulesOK.managedOnly = path, c, verdict.ManagedOnly
 	}
 	return c
+}
+
+// managedOnly reports whether the permission rules check that passed for the
+// install at path found the managed policy, so that a session is started
+// for it (providers.Permissions.ManagedOnly).
+func (d *daemon) managedOnly(path string) bool {
+	d.rulesMu.Lock()
+	defer d.rulesMu.Unlock()
+	return d.rulesOK.path == path && d.rulesOK.managedOnly
 }
 
 // PermissionRulesName is the name of the check that AsmAI's agents can run
@@ -400,21 +409,28 @@ const PermissionRulesName = "permission rules"
 // itself, and never reads or writes any of its settings
 // (ProbePermissionRules).
 func PermissionRulesCheck(path, dir, socket string) Check {
+	c, _ := permissionRulesVerdict(path, dir, socket)
+	return c
+}
+
+// permissionRulesVerdict is PermissionRulesCheck with the verdict it was
+// made from.
+func permissionRulesVerdict(path, dir, socket string) (Check, providers.PermissionVerdict) {
 	verdict, err := providers.ProbePermissionRules(context.Background(), path, dir, socket, os.Environ())
 	if err != nil {
 		return Check{Name: PermissionRulesName, Problem: err.Error(),
-			Fix: "run `asmai start` again; if it persists, run `asmai providers install` to reinstall the pinned Claude Code"}
+			Fix: "run `asmai start` again; if it persists, run `asmai providers install` to reinstall the pinned Claude Code"}, verdict
 	}
 	switch verdict.Route(providers.HostPlatform) {
 	case providers.RouteNone:
 		return Check{Name: PermissionRulesName,
 			Problem: fmt.Sprintf("`asmai` cannot run unprompted: this account's managed settings set %s, so Claude Code ignores the permission rules AsmAI gives its agents, and neither a managed allow rule nor the sandbox's auto-allow covers `asmai`, so an agent would stop at its first `asmai` command, which nobody can approve", providers.ManagedPolicySetting),
-			Fix:     "ask an administrator to allow `Bash(asmai *)` in the managed settings' permissions.allow, or to set `sandbox.autoAllowBashIfSandboxed: true`, or run AsmAI under an account without that policy. Nothing is needed for git, gh or workspace edits. AsmAI never changes managed settings"}
+			Fix:     "ask an administrator to allow `Bash(asmai *)` in the managed settings' permissions.allow, or to set `sandbox.autoAllowBashIfSandboxed: true`, or run AsmAI under an account without that policy. Nothing is needed for git, gh or workspace edits. AsmAI never changes managed settings"}, verdict
 	case providers.RouteUnconfirmed:
 		return Check{Name: PermissionRulesName, OK: true,
-			Warning: "`asmai` may be prompted: this account's managed settings set " + providers.ManagedPolicySetting + ", and whether the sandbox lets an agent's `asmai` reach the daemon without a prompt cannot be confirmed on this platform. An agent that stops at a prompt is raised to Coordination for you to answer. An administrator can allow `Bash(asmai *)` in the managed settings to make sure"}
+			Warning: "`asmai` may be prompted: this account's managed settings set " + providers.ManagedPolicySetting + ", and whether the sandbox lets an agent's `asmai` reach the daemon without a prompt cannot be confirmed on this platform. An agent that stops at a prompt is raised to Coordination for you to answer. An administrator can allow `Bash(asmai *)` in the managed settings to make sure"}, verdict
 	}
-	return Check{Name: PermissionRulesName, OK: true}
+	return Check{Name: PermissionRulesName, OK: true}, verdict
 }
 
 // trustName is the name of the check that the user trusts the directories
@@ -784,7 +800,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	// Only Coordination's leader's terminal takes the user's keys, in the
 	// conversation: every other session would wait at a native prompt
 	// nobody can answer, so it is denied what its rules do not allow.
-	perms := providers.Permissions{Unattended: l.address != roles.LeaderOf(roles.Coordination), Editable: launch.editable}
+	perms := providers.Permissions{Unattended: l.address != roles.LeaderOf(roles.Coordination), Editable: launch.editable, ManagedOnly: d.managedOnly(install.Path)}
 	// The session's skills are written as a plugin for it alone, copied
 	// afresh at each start from the bundle in the executable and from the
 	// directories of added and repository skills, so editing those never

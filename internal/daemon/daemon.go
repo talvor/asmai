@@ -631,6 +631,8 @@ type daemon struct {
 	rulesOK struct {
 		path  string
 		check Check
+		// managedOnly is set when that check found the managed policy.
+		managedOnly bool
 	}
 	stopping  bool
 	stoppedBy string

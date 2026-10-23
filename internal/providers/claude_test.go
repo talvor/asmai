@@ -598,10 +598,69 @@ func TestWhatClaudeCodeCannotHideIsRecordedForDoctor(t *testing.T) {
 // it or the user's own lavish-axi without a prompt, and no excluded command
 // of the write guard names it.
 func TestNoPermissionRuleLetsAnAgentRunLavish(t *testing.T) {
-	allow, excluded := commandRules()
+	allow, excluded := commandRules(false)
 	for _, rule := range append(allow, excluded...) {
 		if strings.Contains(strings.ToLower(rule), "lavish") {
 			t.Errorf("the rule %q covers Lavish", rule)
 		}
+	}
+}
+
+func TestUnderTheManagedPolicyAsmaiRunsSandboxedByTheResolvedSocketAndNothingElseChanges(t *testing.T) {
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "state")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	guard := WriteGuard{Writable: []string{"/state/tmp"}, Socket: filepath.Join(link, "daemon.sock")}
+	var settings struct {
+		Sandbox struct {
+			ExcludedCommands []string `json:"excludedCommands"`
+			Filesystem       struct {
+				AllowWrite []string `json:"allowWrite"`
+			} `json:"filesystem"`
+			Network struct {
+				AllowUnixSockets []string `json:"allowUnixSockets"`
+			} `json:"network"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard, Permissions{ManagedOnly: true})), &settings); err != nil {
+		t.Fatal(err)
+	}
+	sb := settings.Sandbox
+	for _, command := range []string{"asmai *", "echo *", "cd *"} {
+		if slices.Contains(sb.ExcludedCommands, command) {
+			t.Errorf("under the policy the sandbox still leaves %q alone: %q", command, sb.ExcludedCommands)
+		}
+	}
+	if !slices.Contains(sb.ExcludedCommands, "gh pr view *") || !slices.Contains(sb.ExcludedCommands, "git status *") {
+		t.Errorf("under the policy the sandbox leaves %q alone, want gh and git as without it", sb.ExcludedCommands)
+	}
+	if want := []string{filepath.Join(real, "daemon.sock")}; !slices.Equal(sb.Network.AllowUnixSockets, want) {
+		t.Errorf("the sandbox allows the Unix sockets %q, want %q", sb.Network.AllowUnixSockets, want)
+	}
+	if !slices.Equal(sb.Filesystem.AllowWrite, []string{"/state/tmp"}) {
+		t.Errorf("the sandbox allows writes to %q, want the guard's", sb.Filesystem.AllowWrite)
+	}
+}
+
+func TestWithoutTheManagedPolicyTheSettingsAreUnchanged(t *testing.T) {
+	guard := WriteGuard{Writable: []string{"/state/tmp"}, Socket: "/run/daemon.sock"}
+	if a, b := ClaudeCodeSettings("hook", guard, Permissions{Editable: []string{"/w"}}), ClaudeCodeSettings("hook", guard, Permissions{Editable: []string{"/w"}, ManagedOnly: false}); a != b {
+		t.Errorf("settings differ:\n%s\n%s", a, b)
+	}
+	var s struct {
+		Sandbox struct {
+			ExcludedCommands []string `json:"excludedCommands"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard, Permissions{})), &s); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(s.Sandbox.ExcludedCommands, "asmai *") {
+		t.Errorf("without the policy the sandbox leaves %q alone, want asmai among them", s.Sandbox.ExcludedCommands)
 	}
 }

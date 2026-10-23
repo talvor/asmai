@@ -92,6 +92,10 @@ type Permissions struct {
 	// read without a prompt, such as the plugin its skills are delivered in:
 	// a skill points at the files beside it.
 	Readable []string
+	// ManagedOnly is set when the account's managed settings apply only
+	// managed permission rules, which ignore the rules the session is given:
+	// the sandbox then runs `asmai` and auto-allows it (ADR 0018).
+	ManagedOnly bool
 }
 
 // Mode returns the permission mode of a session p describes.
@@ -138,13 +142,22 @@ func readRules(dirs []string) []string {
 // commandRules returns the permission rules every session is given for the
 // commands it runs without a prompt, and the patterns the write guard leaves
 // alone.
-func commandRules() (allow, excluded []string) {
+//
+// Under the managed policy (managedOnly) Claude Code ignores the allow rules,
+// so a command the sandbox leaves alone goes through the regular permission
+// flow with nothing to approve it; `asmai` and its separators are not left
+// alone, and sandbox auto-allow approves them instead (ADR 0018).
+func commandRules(managedOnly bool) (allow, excluded []string) {
 	for _, command := range unguardedCommands {
 		allow = append(allow, "Bash("+command+":*)")
-		excluded = append(excluded, command+" *")
+		if !managedOnly {
+			excluded = append(excluded, command+" *")
+		}
 	}
-	for _, command := range separatorCommands {
-		excluded = append(excluded, command+" *")
+	if !managedOnly {
+		for _, command := range separatorCommands {
+			excluded = append(excluded, command+" *")
+		}
 	}
 	for _, command := range unguardedGHCommands {
 		allow = append(allow, "Bash(gh "+command+":*)")
@@ -162,7 +175,7 @@ func commandRules() (allow, excluded []string) {
 // operations. Under a Claude Code managed policy that applies only managed
 // permission rules, an administrator adds them to the managed settings.
 func CommandRules() []string {
-	allow, _ := commandRules()
+	allow, _ := commandRules(false)
 	return allow
 }
 
@@ -227,7 +240,7 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 	for _, event := range HookEvents {
 		hooks[event] = []matcher{{Hooks: []hook{{Type: "command", Command: hookCommand}}}}
 	}
-	allow, excluded := commandRules()
+	allow, excluded := commandRules(perms.ManagedOnly)
 	allow = append(allow, fileRules(perms.Editable)...)
 	allow = append(allow, readRules(perms.Readable)...)
 	sandbox := map[string]any{

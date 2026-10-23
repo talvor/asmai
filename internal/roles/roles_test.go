@@ -5,6 +5,7 @@ package roles
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1048,5 +1049,29 @@ func TestCoordinationsWorkersAreGivenTheirInstructionsAndTheirSkill(t *testing.T
 	}
 	if !slices.Equal(skills.WorkerList(Coordination), []string{"setup-matt-pocock-skills"}) {
 		t.Errorf("Coordination's workers' skills are %v", skills.WorkerList(Coordination))
+	}
+}
+
+// Claude Code's expansion-obfuscation check stops any command with a brace
+// next to a quote character, even under sandbox auto-allow, so no command the
+// instructions give may have one.
+func TestNoCommandInAnAgentsInstructionsHasABraceNextToAQuote(t *testing.T) {
+	// A placeholder for JSON in quotes is a brace next to a quote once an agent fills it in.
+	brace := regexp.MustCompile("[{}][\"'`]|[\"'`][{}]|'<[^>']*json[^>']*>'")
+	for _, role := range All {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		worker, err := WorkerInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, text := range map[string]string{"leader": leader, "worker": worker} {
+			if m := brace.FindString(text); m != "" {
+				i := strings.Index(text, m)
+				t.Errorf("%s %s instructions have a brace next to a quote at %q", role, name, text[max(0, i-60):min(len(text), i+60)])
+			}
+		}
 	}
 }

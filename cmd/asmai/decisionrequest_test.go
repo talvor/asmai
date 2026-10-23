@@ -309,3 +309,20 @@ func TestAWorkersStepGoesToItsOwningLeaderWhichAnswersItOnlyFromARecord(t *testi
 		t.Fatalf("a step no record covers was answered: %+v", got)
 	}
 }
+
+func TestAQuestionFileGivesAQuestionLikeTheQuestionFlagWithoutABraceInTheCommand(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "q.json")
+	if err := os.WriteFile(file, []byte(`{"id":"a","title":"Name?"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := requestFlags{questions: listFlags{`{"id":"b","title":"Scope?"}`}, questionFiles: listFlags{file}}.questionsOf()
+	if err != nil || len(got) != 2 || got[0].ID != "b" || got[1].ID != "a" || got[1].Title != "Name?" {
+		t.Fatalf("questionsOf = %+v, %v", got, err)
+	}
+	if _, err := (requestFlags{title: "x", questionFiles: listFlags{file}}).questionsOf(); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Errorf("a shorthand question and a question file: %v", err)
+	}
+	if _, err := (requestFlags{questionFiles: listFlags{file + ".missing"}}).questionsOf(); err == nil {
+		t.Error("a missing question file was accepted")
+	}
+}

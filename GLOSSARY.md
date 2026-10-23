@@ -280,6 +280,10 @@ _Avoid_: Console, monitor
 The things the factory cannot continue without the user: a native prompt waiting in a leader's session, an agent whose input the user still holds, a pending decision request, and a needs-you finding. An assignment needing reconciliation is the owning leader's to resolve and is not waiting on you.
 _Avoid_: Attention, notification
 
+**Stall relay**:
+Under a Claude Code managed policy, the daemon raising a native permission prompt that stalls an agent without the user's terminal as a decision request to the user through Coordination, and typing the user's witnessed answer, allowing the prompt once or denying it, into the agent's terminal. The daemon never answers a prompt itself, no agent raises one, and nothing is typed before the user's answer. Without the policy such a prompt is only reported.
+_Avoid_: Prompt forwarding, Auto-approval
+
 **Output format**:
 How an `asmai` command prints its result: readable tables for the user by default, JSON with `--json` for scripts and tests, or TOON with `--toon`, a more compact encoding of the same data than JSON. Agents read the default tables. JSON and TOON hold the same data, and a command takes one of them at most.
 _Avoid_: Mode, view

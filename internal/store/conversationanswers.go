@@ -181,6 +181,9 @@ func (s *Store) ConversationAnswerRecorded(d DecisionRecord, generation int, at 
 	if latest.Kind == RequestDispute && !slices.Contains(latest.Questions[0].Options, d.Choice) {
 		return fail(fmt.Errorf("the user's choice on a dispute is one of its options, %q or %q, not %q", DisputeUphold, DisputeOverrule, d.Choice))
 	}
+	if latest.Kind == RequestPrompt && !slices.Contains(latest.Questions[0].Options, d.Choice) {
+		return fail(fmt.Errorf("the user's choice on a native prompt is one of its options, %q or %q, not %q", PromptAllow, PromptDeny, d.Choice))
+	}
 	words := cited.Text
 	if blank(d.ReliedOn) {
 		d.ReliedOn = fmt.Sprintf("the user's answer to version %d of decision request %d", latest.Version, latest.Request)
@@ -211,7 +214,9 @@ func (s *Store) ConversationAnswerRecorded(d DecisionRecord, generation int, at 
 		return fail(err)
 	}
 	var dispatch *Dispatch
-	if r.Requester != d.Leader {
+	// An agent at a native prompt is not told the answer in a message: the
+	// daemon relays it to its terminal.
+	if r.Requester != d.Leader && r.Kind != RequestPrompt {
 		body := fmt.Sprintf("The user answered version %d of decision request %d in the conversation, in witnessed message %d, given after the version was shown. Decision record %d holds the answer.\nTheir words: %s\nCoordination's reading: %s", r.Version, r.Request, d.Cites, d.ID, words, d.Reading)
 		m, err := createMessage(tx, messageRef{assignment: r.Assignment, request: r.ID}, r.Job, d.Leader, r.Requester, MessageDecisionAnswer, body, at)
 		if err != nil {

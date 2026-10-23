@@ -88,6 +88,9 @@ func (d *daemon) decisionRequest(req Request) (store.DecisionRequest, *store.Dis
 	if err != nil {
 		return store.DecisionRequest{}, nil, err
 	}
+	if req.Kind == store.RequestPrompt {
+		return store.DecisionRequest{}, nil, refuse("a native prompt request is raised by the daemon, which sees the prompt an agent waits at: an agent never makes one")
+	}
 	in := store.DecisionRequestInput{
 		Request: req.Request, Requester: ref.address.String(), Kind: req.Kind, Skill: req.Skill, Step: req.Step,
 		Content: req.Content, Questions: req.Questions,
@@ -267,6 +270,11 @@ func (d *daemon) conversationAnswer(req Request) (store.DecisionRecord, store.De
 		return store.DecisionRecord{}, store.DecisionRequest{}, nil, refuse("%v", err)
 	}
 	d.log.Info("decision answered in the conversation", "request", r.Request, "version", r.Version, "job", r.Job, "record", record.ID, "cites", record.Cites, "requester", r.Requester)
+	if r.Kind == store.RequestPrompt {
+		// The user's witnessed answer, and only it, is typed into the
+		// terminal of the agent at the prompt.
+		d.relayPrompt(r, record.Choice)
+	}
 	if dispatch != nil {
 		if to, err := roles.ParseAddress(dispatch.Agent); err == nil {
 			if err := d.ensureAgent(to); err != nil {

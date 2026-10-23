@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -176,5 +177,21 @@ func TestAFailedCheckDoesNotSayARunningLeaderIsNotStarted(t *testing.T) {
 	got := stderr.String()
 	if strings.Contains(got, "but not Coordination's leader") || !strings.Contains(got, "so is Coordination's leader, but a check failed") || !strings.Contains(got, "failed  staffing") {
 		t.Errorf("asmai start said %q, want the failed check named and the leader not called stopped", got)
+	}
+}
+
+// Claude Code's expansion-obfuscation check stops any command with a brace
+// next to a quote character, even under sandbox auto-allow, so no command the
+// usage gives may have one.
+func TestUsageHasNoBraceNextToAQuote(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"help"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("asmai help exited %d: %s", code, stderr.String())
+	}
+	brace := regexp.MustCompile("[{}][\"'`]|[\"'`][{}]")
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if strings.HasPrefix(line, "  asmai ") && brace.MatchString(line) {
+			t.Errorf("a command in the usage has a brace next to a quote: %q", line)
+		}
 	}
 }

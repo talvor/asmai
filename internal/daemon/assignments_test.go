@@ -195,7 +195,7 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 	if err := os.MkdirAll(filepath.Dir(provider), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s' \"$ASMAI_SLOT\" > \"$ASMAI_TEST_OUT/slot\"\nprintf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir\"\nprintf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
+	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s' \"$ASMAI_SLOT\" > \"$ASMAI_TEST_OUT/slot\"\nprintf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir\"\nprintf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.tmp\" && mv \"$ASMAI_TEST_OUT/args.tmp\" \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
 	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -255,7 +255,7 @@ commands agents run:
                               Coordination's leader records that it showed the user that version in the
                               conversation, once; the user's answer is the message they send after it
   asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --title <text> --option <text> [--recommend <option>]
-  asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --question '<json>' [--content <text>] [--blocks <assignment>] [--carries <request>]
+  asmai decision request [--job <number>] [--request <id>] [--kind <kind>] --question-file <file> [--content <text>] [--blocks <assignment>] [--carries <request>]
                               request a decision. A worker's request goes to its owning leader, never to the user,
                               and holds its assignment's work until the answer; a leader's goes to the user through
                               Coordination, and holds the assignments of its own that --blocks names. --request
@@ -533,6 +533,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&request.options, "option", "an option of the one question; may be repeated")
 		flags.StringVar(&request.recommend, "recommend", "", "the option you recommend for the one question")
 		flags.Var(&request.questions, "question", `a question as JSON, {"id": ..., "title": ..., "body": ..., "options": [...], "recommendation": ...}; may be repeated`)
+		flags.Var(&request.questionFiles, "question-file", "a file holding one question as JSON, as --question does: an agent's command line must keep a brace away from a quote character, so it writes the JSON to a file; may be repeated")
 		flags.Var(&request.blocks, "blocks", "an assignment you own whose work waits for the answer; may be repeated")
 		flags.Int64Var(&request.carries, "carries", 0, "the worker's decision request, which you own, that your request carries to the user; its answer is the user's own, returned with decision answer --user-answer")
 	case "authorize":

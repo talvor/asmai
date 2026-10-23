@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,6 +29,7 @@ type requestFlags struct {
 	// a JSON object.
 	title, body, recommend string
 	options, questions     listFlags
+	questionFiles          listFlags
 	blocks                 listFlags
 	answer, reliedOn       string
 	// skill and step are the human step a worker's request of kind step asks
@@ -48,14 +50,22 @@ type requestFlags struct {
 // shorthand flags, or each JSON question, never both.
 func (f requestFlags) questionsOf() ([]store.Question, error) {
 	shorthand := f.title != "" || f.body != "" || f.recommend != "" || len(f.options) > 0
-	if shorthand && len(f.questions) > 0 {
-		return nil, errors.New("give the one question with --title, --body, --option and --recommend, or each question as --question JSON, not both")
+	if shorthand && len(f.questions)+len(f.questionFiles) > 0 {
+		return nil, errors.New("give the one question with --title, --body, --option and --recommend, or each question as --question or --question-file JSON, not both")
 	}
 	if shorthand {
 		return []store.Question{{ID: "q1", Title: f.title, Body: f.body, Options: f.options, Recommendation: f.recommend}}, nil
 	}
+	texts := slices.Clone(f.questions)
+	for _, file := range f.questionFiles {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("--question-file: %w", err)
+		}
+		texts = append(texts, string(data))
+	}
 	var questions []store.Question
-	for _, text := range f.questions {
+	for _, text := range texts {
 		var q store.Question
 		decoder := json.NewDecoder(strings.NewReader(text))
 		decoder.DisallowUnknownFields()

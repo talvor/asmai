@@ -175,6 +175,15 @@ var promptKeys = map[string][]byte{
 	store.PromptDeny:  []byte("\x1b"),
 }
 
+// PromptKeys returns the keys the daemon types into an agent's terminal for
+// the user's choice on a native prompt request, store.PromptAllow or
+// store.PromptDeny, which qualification types into a real Claude Code prompt
+// to show they answer it as the relay says.
+func PromptKeys(choice string) ([]byte, bool) {
+	keys, ok := promptKeys[choice]
+	return slices.Clone(keys), ok
+}
+
 // relayPrompt types the user's answer to r, a native prompt request they
 // answered with a witnessed message that the store checked, into the terminal
 // of the agent that waits at the prompt, if its session is still the one that

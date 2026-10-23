@@ -309,7 +309,7 @@ func TestHandoffCasesUseTheDisposableFactoryState(t *testing.T) {
 	h := harness(t, signedIn, startsDirectly)
 	callerState := filepath.Join(t.TempDir(), "caller-state")
 	h.Env = envValue(h.Env, "ASMAI_STATE_DIR", callerState)
-	for _, id := range []string{"C2", "C7", "C11", "C19", "C48", "C52", "C53", "C54"} {
+	for _, id := range []string{"C2", "C7", "C11", "C19", "C48", "C52", "C53", "C54", "C57"} {
 		f := h.factoryForCase(Case{ID: id, Env: signedInOnly}, &Result{})
 		if f.paths.Dir != h.QualificationPaths.Dir {
 			t.Errorf("%s factory state = %s, want disposable state %s", id, f.paths.Dir, h.QualificationPaths.Dir)

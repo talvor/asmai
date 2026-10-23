@@ -25,7 +25,6 @@ import (
 
 	"github.com/talvor/asmai/internal/certify"
 	"github.com/talvor/asmai/internal/config"
-	"github.com/talvor/asmai/internal/githooks"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/session"
@@ -778,8 +777,9 @@ func (d *daemon) startWorker(l *leader, cfg config.Config, install store.Provide
 			env[f.Env] = f.Resolved
 		}
 	}
-	// The worker's git adds the trailers to each commit, as the user.
-	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
+	// The worker runs no git write: the daemon makes each commit, merge and
+	// push for it, in this workspace, with the hooks directory that adds the
+	// trailers (workerGitEnv).
 	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: writable, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: given})
 }
 

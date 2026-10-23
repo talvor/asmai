@@ -65,16 +65,87 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	}
 	p := settings.Permissions
 	if !slices.Equal(p.Allow, []string{
-		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		"Bash(asmai:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
-		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
-		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
-		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
+		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
+		"Bash(git rev-parse:*)", "Bash(git var:*)",
 	}) || p.DefaultMode != "default" || p.DisableBypassPermissionsMode != "disable" {
-		t.Errorf("the permissions are %+v, want asmai, git and gh allowed and the native prompts kept", p)
+		t.Errorf("the permissions are %+v, want asmai and the read-only git and gh allowed and the native prompts kept", p)
 	}
 	if !slices.Contains(p.Allow, AllowedAsmai) {
 		t.Errorf("the permissions %q lack %s", p.Allow, AllowedAsmai)
+	}
+}
+
+// readOnlyGit and readOnlyGH are the git subcommands and gh commands an agent
+// may be given a rule for: each only reads. Every write an agent needs, a
+// commit, a merge, a push, a pull request open and an edit, is the daemon's,
+// asked for with an `asmai` command (ADR 0018).
+var (
+	readOnlyGit = []string{"ls-remote", "status", "rev-parse", "var"}
+	readOnlyGH  = []string{"pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch"}
+)
+
+func TestNoAgentSessionIsGivenAGitOrGHWriteRuleWithTheManagedPolicyOrWithoutIt(t *testing.T) {
+	var settings struct {
+		Sandbox     struct{ ExcludedCommands []string } `json:"sandbox"`
+		Permissions struct{ Allow, Ask []string }       `json:"permissions"`
+	}
+	rule := regexp.MustCompile(`^Bash\((git|gh) ([a-z-]+(?: [a-z-]+)?):\*\)$`)
+	excluded := regexp.MustCompile(`^(git|gh) ([a-z-]+(?: [a-z-]+)?) \*$`)
+	for name, perms := range map[string]Permissions{
+		"a leader's":                      {},
+		"an unattended worker's":          {Unattended: true, Editable: []string{"/w"}},
+		"a worker's under the policy":     {Unattended: true, Editable: []string{"/w"}, ManagedOnly: true},
+		"a leader's under the policy":     {ManagedOnly: true},
+		"an unattended leader's":          {Unattended: true},
+		"an unattended leader's, managed": {Unattended: true, ManagedOnly: true},
+	} {
+		settings.Sandbox.ExcludedCommands, settings.Permissions.Allow, settings.Permissions.Ask = nil, nil, nil
+		if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{Writable: []string{"/tmp/w"}, Socket: "/run/daemon.sock"}, perms)), &settings); err != nil {
+			t.Fatal(err)
+		}
+		checked := 0
+		for _, allowed := range settings.Permissions.Allow {
+			if !strings.HasPrefix(allowed, "Bash(git") && !strings.HasPrefix(allowed, "Bash(gh") {
+				continue
+			}
+			checked++
+			m := rule.FindStringSubmatch(allowed)
+			if m == nil {
+				t.Errorf("%s permissions allow %q, which is no exact read-only git or gh command", name, allowed)
+			} else if list := map[string][]string{"git": readOnlyGit, "gh": readOnlyGH}[m[1]]; !slices.Contains(list, m[2]) {
+				t.Errorf("%s permissions allow `%s %s`, which is not read-only", name, m[1], m[2])
+			}
+		}
+		for _, left := range settings.Sandbox.ExcludedCommands {
+			if !strings.HasPrefix(left, "git") && !strings.HasPrefix(left, "gh") {
+				continue
+			}
+			checked++
+			m := excluded.FindStringSubmatch(left)
+			if m == nil {
+				t.Errorf("%s sandbox leaves %q alone, which is no exact read-only git or gh command", name, left)
+			} else if list := map[string][]string{"git": readOnlyGit, "gh": readOnlyGH}[m[1]]; !slices.Contains(list, m[2]) {
+				t.Errorf("%s sandbox leaves `%s %s` alone, which is not read-only", name, m[1], m[2])
+			}
+		}
+		if checked == 0 {
+			t.Errorf("%s settings have no git or gh rule at all, so the test checked nothing", name)
+		}
+		for _, want := range []string{"add", "commit", "push", "merge", "fetch", "pull", "checkout", "reset", "rebase", "tag"} {
+			if slices.Contains(settings.Permissions.Allow, "Bash(git "+want+":*)") {
+				t.Errorf("%s permissions allow `git %s`", name, want)
+			}
+		}
+		for _, want := range []string{"pr create", "pr edit", "pr ready", "pr merge", "pr comment", "pr review", "issue create", "issue comment"} {
+			if slices.Contains(settings.Permissions.Allow, "Bash(gh "+want+":*)") {
+				t.Errorf("%s permissions allow `gh %s`", name, want)
+			}
+		}
+		if len(settings.Permissions.Ask) != 0 {
+			t.Errorf("%s permissions ask for %q", name, settings.Permissions.Ask)
+		}
 	}
 }
 
@@ -109,10 +180,9 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		// without a prompt; every other command is either guarded or raises
 		// the prompt.
 		if want := []string{
-			"asmai *", "echo *", "cd *", "gh pr create *", "gh pr edit *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"asmai *", "echo *", "cd *", "gh pr view *", "gh pr list *", "gh pr checks *",
 			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
-			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
-			"git status *", "git rev-parse *", "git merge *", "git var *",
+			"git ls-remote *", "git status *", "git rev-parse *", "git var *",
 		}; !slices.Equal(sb.ExcludedCommands, want) {
 			t.Errorf("%s sandbox leaves %q alone, want %q", name, sb.ExcludedCommands, want)
 		}
@@ -429,23 +499,17 @@ func TestTheProbeFindsTheRouteAsmaiRunsUnprompted(t *testing.T) {
 	}
 }
 
-// neverRunGHCommands are the gh commands the instructions name only to forbid
-// or to leave to the daemon, so no agent runs them and the settings need not
-// allow them.
-var neverRunGHCommands = []string{}
-
-func TestEveryGHCommandTheInstructionsNameIsExcludedAndAllowedOrNeverRun(t *testing.T) {
+func TestTheInstructionsNameNoGitOrGHWriteExceptToForbidItAndEveryGHCommandTheyNameIsAllowed(t *testing.T) {
 	var texts []string
 	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
 		leader, err := roles.LeaderInstructions(role)
 		if err != nil {
 			t.Fatal(err)
 		}
-		worker, err := roles.WorkerInstructions(role)
-		if err != nil {
-			continue
+		texts = append(texts, leader)
+		if worker, err := roles.WorkerInstructions(role); err == nil {
+			texts = append(texts, worker)
 		}
-		texts = append(texts, leader, worker)
 	}
 	var settings struct {
 		Sandbox     struct{ ExcludedCommands []string } `json:"sandbox"`
@@ -454,22 +518,25 @@ func TestEveryGHCommandTheInstructionsNameIsExcludedAndAllowedOrNeverRun(t *test
 	if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", WriteGuard{}, Permissions{})), &settings); err != nil {
 		t.Fatal(err)
 	}
-	named := regexp.MustCompile("`gh ([a-z]+ [a-z]+)")
-	found := 0
+	// An instruction may name a git write only to forbid it, in the one
+	// sentence that says every write is the daemon's: the write verbs it
+	// names are then exactly those, and no instruction tells an agent to run
+	// one. A gh command it names is one the settings allow, so it is read-only.
+	forbidden := regexp.MustCompile("never run `git add`, `git commit`, `git merge`, `git fetch`, `git push` or any other command")
+	write := regexp.MustCompile("`(git (?:add|commit|push|merge|fetch|pull|rebase|reset|checkout|switch|stash|tag|cherry-pick|am|apply)|gh (?:pr (?:create|edit|ready|merge|close|comment|review)|issue (?:create|edit|comment|close)))\\b")
 	for _, text := range texts {
-		for _, m := range named.FindAllStringSubmatch(text, -1) {
-			found++
-			command := m[1]
-			if slices.Contains(neverRunGHCommands, command) {
-				continue
-			}
-			if !slices.Contains(settings.Sandbox.ExcludedCommands, "gh "+command+" *") || !slices.Contains(settings.Permissions.Allow, "Bash(gh "+command+":*)") {
-				t.Errorf("the instructions name `gh %s`, which the settings do not both exclude from the sandbox and allow", command)
-			}
+		text = forbidden.ReplaceAllString(text, "")
+		for _, m := range write.FindAllStringSubmatch(text, -1) {
+			t.Errorf("the instructions name `%s`, a write no agent is given: the daemon makes it, for an `asmai` command", m[1])
 		}
 	}
-	if found == 0 {
-		t.Error("the instructions name no gh command")
+	named := regexp.MustCompile("`gh ([a-z]+ [a-z]+)")
+	for _, text := range texts {
+		for _, m := range named.FindAllStringSubmatch(text, -1) {
+			if !slices.Contains(settings.Sandbox.ExcludedCommands, "gh "+m[1]+" *") || !slices.Contains(settings.Permissions.Allow, "Bash(gh "+m[1]+":*)") {
+				t.Errorf("the instructions name `gh %s`, which the settings do not both exclude from the sandbox and allow", m[1])
+			}
+		}
 	}
 }
 

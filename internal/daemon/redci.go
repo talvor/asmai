@@ -76,7 +76,7 @@ func redBody(j store.Job, o store.ChecksObservation, rerun *store.Rerun) string 
 		b.WriteString(": a notes job has no Quality validation to wait for")
 	}
 	b.WriteString(". The daemon then watches the new head and drops the wait on this one. ")
-	b.WriteString("Update the pull request body with the CI results, and record each update with `asmai effect pull-request <url>`.")
+	b.WriteString("Update the pull request body with the CI results, with `asmai pr update <job> --body-file <file>`.")
 	return b.String()
 }
 

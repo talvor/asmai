@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -288,7 +289,7 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 		fmt.Fprintf(o.stdout, "note: this commit does not have the job branch's tip %s in its history; take the tip in and submit again\n", r.JobTip)
 	}
 	if !slices.ContainsFunc(r.Effects, func(e store.Effect) bool { return e.Kind == "push" }) {
-		fmt.Fprintln(o.stdout, "note: no push was recorded in this dispatch; push your assignment branch and record it with `asmai effect push <ref>`")
+		fmt.Fprintln(o.stdout, "note: no push was recorded in this dispatch; push your assignment branch with `asmai push`")
 	}
 	return 0
 }
@@ -521,11 +522,15 @@ func printReport(w io.Writer, r store.Report) {
 	}
 }
 
-// push asks the daemon to push the job branch of the job number names.
+// push asks the daemon to push: the job branch of the job number names, for
+// its delivery owner, or with no number a worker's own assignment branch.
 func push(o *output, paths statedir.Paths, number string) int {
-	n, err := jobNumber(number)
-	if err != nil {
-		return o.fail(err)
+	var n int64
+	if number != "" {
+		var err error
+		if n, err = jobNumber(number); err != nil {
+			return o.fail(err)
+		}
 	}
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandPush, Job: n})
 	if err != nil {
@@ -535,8 +540,129 @@ func push(o *output, paths statedir.Paths, number string) int {
 		return o.printData(resp)
 	}
 	p := resp.Push
+	if !strings.HasPrefix(p.Leader, "leader@") {
+		fmt.Fprintf(o.stdout, "the daemon pushed your assignment branch %s at %s to origin with a plain push; effect %d recorded in dispatch %d\n", p.Branch, p.Commit, p.Effect, p.Dispatch)
+		return 0
+	}
 	fmt.Fprintf(o.stdout, "job %d: the daemon pushed %s at %s to origin with a plain push; effect %d recorded in dispatch %d\n", p.Job, p.Branch, p.Commit, p.Effect, p.Dispatch)
 	return 0
+}
+
+// commit asks the daemon to commit the worker's changes in its workspace, all
+// of them or only the files named.
+func commit(o *output, paths statedir.Paths, message string, files []string) int {
+	if strings.TrimSpace(message) == "" {
+		return o.fail(errors.New("commit needs --message: the commit's message, one line"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandCommit, Message: message, Paths: files})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(resp)
+	}
+	w := resp.Written
+	fmt.Fprintf(o.stdout, "the daemon committed %s on %s; effect %d recorded in dispatch %d\n", w.Commit, w.Branch, w.Effect, w.Dispatch)
+	return 0
+}
+
+// merge asks the daemon to merge ref into the worker's assignment branch, or
+// with abort to end the merge in progress.
+func merge(o *output, paths statedir.Paths, ref string, abort bool) int {
+	switch {
+	case abort && ref != "":
+		return o.fail(errors.New("merge --abort takes no ref"))
+	case !abort && ref == "":
+		return o.fail(errors.New("merge needs the ref to take in: the job branch, or origin/<branch> of the job branch, the default branch or your assignment branch"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandMerge, Ref: ref, Abort: abort})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(resp)
+	}
+	w := resp.Written
+	switch {
+	case w.Aborted:
+		fmt.Fprintf(o.stdout, "the daemon ended the merge on %s: its files are as they were\n", w.Branch)
+	case w.UpToDate:
+		fmt.Fprintf(o.stdout, "%s is already in %s: nothing to merge\n", ref, w.Branch)
+	case len(w.Conflicts) > 0:
+		fmt.Fprintf(o.stdout, "merging %s into %s left conflicts in %s\nresolve them with the Edit tool, then run `asmai commit --message <message>` to finish the merge, or `asmai merge --abort`\n", ref, w.Branch, strings.Join(w.Conflicts, ", "))
+	default:
+		fmt.Fprintf(o.stdout, "the daemon merged %s into %s at %s; effect %d recorded in dispatch %d\n", ref, w.Branch, w.Commit, w.Effect, w.Dispatch)
+	}
+	return 0
+}
+
+// readBody reads the body of a pull request from file, in the agent's own
+// session, which names a file outside every repository; "-" reads stdin.
+func readBody(file string, stdin io.Reader) (string, error) {
+	if file == "" {
+		return "", errors.New("name the file that holds the body with --body-file")
+	}
+	var data []byte
+	var err error
+	if file == "-" {
+		data, err = io.ReadAll(stdin)
+	} else {
+		data, err = os.ReadFile(file)
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading the body: %w", err)
+	}
+	return string(data), nil
+}
+
+// printPullRequest tells what the daemon did to a pull request, and that it
+// recorded it as GitHub has it.
+func printPullRequest(o *output, resp daemon.Response, verb string) int {
+	if o.structured() {
+		return o.printData(resp)
+	}
+	p := resp.PullRequest
+	fmt.Fprintf(o.stdout, "pull request #%d of job %d %s by the daemon, %s, and recorded, as GitHub has it: %s, from %s at %s; effect %d in dispatch %d; the daemon follows it\n", p.Number, p.Job, verb, p.URL, daemon.PullRequestState(*p), p.Branch, p.Head, p.Effect, p.Dispatch)
+	return 0
+}
+
+// prOpen asks the daemon to open the pull request of the job number names,
+// with the body in file.
+func prOpen(o *output, paths statedir.Paths, number, title, file string, stdin io.Reader) int {
+	n, err := jobNumber(number)
+	if err != nil {
+		return o.fail(err)
+	}
+	if strings.TrimSpace(title) == "" {
+		return o.fail(errors.New("pr open needs --title: the pull request's title"))
+	}
+	body, err := readBody(file, stdin)
+	if err != nil {
+		return o.fail(err)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandPullRequestOpen, Job: n, Title: title, Body: body})
+	if err != nil {
+		return o.fail(err)
+	}
+	return printPullRequest(o, resp, "opened")
+}
+
+// prUpdate asks the daemon to replace the body of the pull request of the job
+// number names with the one in file.
+func prUpdate(o *output, paths statedir.Paths, number, file string, stdin io.Reader) int {
+	n, err := jobNumber(number)
+	if err != nil {
+		return o.fail(err)
+	}
+	body, err := readBody(file, stdin)
+	if err != nil {
+		return o.fail(err)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandPullRequestUpdate, Job: n, Body: body})
+	if err != nil {
+		return o.fail(err)
+	}
+	return printPullRequest(o, resp, "updated")
 }
 
 // decisionFlags are the values of `asmai decision record`'s flags.

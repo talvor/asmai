@@ -19,11 +19,15 @@ var HookEvents = []string{"SessionStart", "UserPromptSubmit", "PermissionRequest
 const AllowedAsmai = "Bash(asmai:*)"
 
 // The commands an agent runs without a native permission prompt, besides the
-// commands Claude Code's write guard allows: `asmai`, and selected git and gh operations with
-// network access. They run outside the guard, as they need the user's own
-// credentials, their network, the daemon's socket and the clone's git
-// directory, which is outside the workspace. Each is both a permission rule
-// and a pattern the guard leaves alone.
+// commands Claude Code's write guard allows: `asmai`, and the read-only git and
+// gh operations that need network access. They run outside the guard, as they
+// need the user's own credentials, their network, the daemon's socket and the
+// clone's git directory, which is outside the workspace. Each is both a
+// permission rule and a pattern the guard leaves alone.
+//
+// No git or gh write is among them, with the managed policy or without it
+// (ADR 0018): the daemon makes every commit, merge, push and pull request write
+// an agent needs, through the `asmai` commands the agent calls.
 var unguardedCommands = []string{"asmai"}
 
 // separatorCommands are the read-only commands an agent puts between its
@@ -36,16 +40,16 @@ var unguardedCommands = []string{"asmai"}
 // permission rule, as Claude Code allows read-only commands, and a redirect
 // to a file keeps a call that has one in the guard. `cd` is one of them: a
 // leader's working directory is not the read-only view it reads the job's code
-// in, so it runs `cd <view> && gh pr create ...`, which would otherwise stay in
-// the guard, where gh reaches no network host.
+// in, so it runs `cd <view> && git status`, which would otherwise stay in
+// the guard.
 var separatorCommands = []string{"echo", "cd"}
 
 var unguardedGHCommands = []string{
-	"pr create", "pr edit", "pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
+	"pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
 }
 
 var unguardedGitSubcommands = []string{
-	"add", "commit", "push", "fetch", "ls-remote", "status", "rev-parse", "merge", "var",
+	"ls-remote", "status", "rev-parse", "var",
 }
 
 // WriteGuard is what an agent session's write guard needs to know of the
@@ -171,7 +175,7 @@ func commandRules(managedOnly bool) (allow, excluded []string) {
 }
 
 // CommandRules returns the permission rules every agent session is given for
-// the commands it runs without a prompt: `asmai`, and selected git and gh
+// the commands it runs without a prompt: `asmai`, and the read-only git and gh
 // operations. Under a Claude Code managed policy that applies only managed
 // permission rules, an administrator adds them to the managed settings.
 func CommandRules() []string {
@@ -215,7 +219,7 @@ func ClaudeCodeUnhidden() []Unhidden {
 
 // ClaudeCodeSettings returns the settings an agent session of Claude Code is
 // given with --settings: a hook for each of HookEvents that runs
-// hookCommand, the permission rules for `asmai` and selected git and gh
+// hookCommand, the permission rules for `asmai` and the read-only git and gh
 // operations and for the files in the directories perms makes editable, and
 // the write guard guard describes, which is always on and lets a guarded
 // command connect to no Unix socket but the daemon's: Claude Code does not

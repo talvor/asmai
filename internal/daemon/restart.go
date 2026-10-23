@@ -227,6 +227,6 @@ func cancellationResumption(a store.Assignment, dispatch int64) string {
 			a.ID, a.Job, dispatch)
 	}
 	return fmt.Sprintf("The factory was stopped and started again, and your session resumes where it was. Your owning leader has cancelled assignment %d of job %d: your dispatch %d stopped at a boundary before the cancellation was complete, and this dispatch resumes it.\n"+
-		"Do not submit a result. Look at your workspace and at the effects you have recorded, commit whatever you have, push your assignment branch with `git push origin %s` if it is not pushed (as its own single Bash call, never chained, piped or after a `cd`), record the push with `asmai effect push`, and stop. Never repeat an effect you already made.",
-		a.ID, a.Job, dispatch, a.Workspace.Branch)
+		"Do not submit a result. Look at your workspace and at the effects you have recorded, commit whatever you have with `asmai commit --message <one line>`, push your assignment branch with `asmai push` if it is not pushed, and stop. Never repeat an effect you already made.",
+		a.ID, a.Job, dispatch)
 }

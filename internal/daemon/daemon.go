@@ -109,6 +109,15 @@ const (
 	// CommandPush is the delivery owner asking the daemon to push a job's
 	// branch to origin, which it refuses over commits AsmAI did not make.
 	CommandPush = "push"
+	// CommandCommit, CommandMerge and, with CommandPush, the worker's push
+	// of its own assignment branch are the git writes of a worker, which the
+	// daemon makes in its workspace: no agent is approved to run a git write
+	// itself (ADR 0018). CommandPullRequestOpen and CommandPullRequestUpdate
+	// are the delivery owner's gh writes on its job's pull request.
+	CommandCommit            = "commit"
+	CommandMerge             = "merge"
+	CommandPullRequestOpen   = "pr.open"
+	CommandPullRequestUpdate = "pr.update"
 	// CommandDecisionRecord is a leader recording a decision. Of
 	// Engineering's leader, the choice rerun-failed is its judgment that a
 	// head's red checks failed for a reason unrelated to the change, on which
@@ -195,9 +204,18 @@ type Request struct {
 	Constraints   string   `json:"constraints,omitempty"`
 	Permissions   string   `json:"permissions,omitempty"`
 	Answer        string   `json:"answer,omitempty"`
-	// Kind and Ref say what effect an effect request records.
+	// Kind and Ref say what effect an effect request records, and what a
+	// merge takes in.
 	Kind string `json:"kind,omitempty"`
 	Ref  string `json:"ref,omitempty"`
+	// Message and Paths are what a commit says and, when it names any, the
+	// only files it takes; Abort has a merge end the one in progress. Title and
+	// Body are what a pull request open or update carries.
+	Message string   `json:"message,omitempty"`
+	Paths   []string `json:"paths,omitempty"`
+	Abort   bool     `json:"abort,omitempty"`
+	Title   string   `json:"title,omitempty"`
+	Body    string   `json:"body,omitempty"`
 	// Report is what a result or a blocked report says.
 	Report *store.ReportInput `json:"report,omitempty"`
 	// Assignment and Reasons say which assignment a decision is about and
@@ -342,6 +360,8 @@ type Response struct {
 	JobBranch        *store.JobBranch        `json:"job_branch,omitempty"`
 	Prototype        *store.Prototype        `json:"prototype,omitempty"`
 	Push             *store.Push             `json:"push,omitempty"`
+	// Written is what a worker's commit or merge made in its workspace.
+	Written *Written `json:"written,omitempty"`
 	// PullRequest is the pull request the delivery owner's effect named,
 	// as the daemon recorded it.
 	PullRequest *store.PullRequest `json:"pull_request,omitempty"`
@@ -799,6 +819,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.assignmentCommand(conn, req)
 	case CommandPush:
 		d.pushCommand(conn, req)
+	case CommandCommit, CommandMerge, CommandPullRequestOpen, CommandPullRequestUpdate:
+		d.writeCommand(conn, req)
 	case CommandAuthorize, CommandGrants, CommandGrantRevoke, CommandGrantInvalidate:
 		d.grantCommand(conn, req)
 	case CommandDecisionRecord:

@@ -99,25 +99,26 @@ func TestAWorkerCommitsAsTheUserWithAsmAITrailersInsideTheWriteGuardFollowingThe
 		// the session holds none of AsmAI's.
 		fakeRun(`git var GIT_AUTHOR_IDENT | sed 's/ [0-9]* [-+][0-9]*$//'`, 0, "^Una User <una@example.test>\n$"),
 		fakeRun(`env | grep -c '^GIT_\(AUTHOR\|COMMITTER\)_' || true`, 0, "^0\n$"),
-		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit --no-verify -q -m 'Add greeting.txt' && git log -1 --format='%an <%ae>|%cn <%ce>%n%B'`, 0, "(?s)^Una User <una@example.test>\\|Una User <una@example.test>\nAdd greeting.txt\n\n"+trailers),
-		// Amending never doubles the trailers, and a trailer written by hand
-		// is replaced by the real one.
-		fakeRun(`git commit --no-verify -q --amend -m 'Add greeting.txt
+		// The daemon makes the commit as the user, with the trailers.
+		fakeRun(`printf 'hello\n' > greeting.txt && asmai commit --message 'Add greeting.txt' && git log -1 --format='%an <%ae>|%cn <%ce>%n%B'`, 0, "(?s)Una User <una@example.test>\\|Una User <una@example.test>\nAdd greeting.txt\n\n"+trailers),
+		// A trailer written by hand is replaced by the real one, and the
+		// trailers are never doubled.
+		fakeRun(`printf 'more\n' >> greeting.txt && asmai commit --message 'Say more
 
-AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
+AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "(?s)\n3\n$"),
 		fakeRun(`git log -1 --format=%B | grep -c 'AsmAI-Job: 99' || true`, 0, "^0\n$"),
-		fakeRun(`asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`asmai merge asmai/job-1-add-a-greeting`, 0, "nothing to merge"),
 		// A merge commit carries them too, even when the repository's own
 		// commit-msg hook rewrites the message.
 		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && mkdir -p "$hooks" && printf '#!/bin/sh\nsed -i.bak "/^AsmAI-/d" "$1"\n' > "$hooks/commit-msg" && chmod +x "$hooks/commit-msg"`, 0, ""),
-		fakeRun(`git checkout -q -b side HEAD~1 && printf 'side\n' > side.txt && git add side.txt && git commit -q -m 'Add side.txt' && git checkout -q `+branch+` && git merge -q --no-edit side && git log -1 --format='%p%n%(trailers:only,unfold)'`, 0, "(?s)^[0-9a-f]+ [0-9a-f]+\n"+trailers),
+		fakeRun(`mover="$TMPDIR/mover" && git clone -q "$(git remote get-url origin)" "$mover" && cd "$mover" && printf 'moved\n' > base-moved.txt && git add -A && git commit -q -m 'Move the base' && git push -q origin main`, 0, ""),
+		fakeRun(`asmai merge origin/main && git log -1 --format='%p%n%(trailers:only,unfold)'`, 0, "(?s)the daemon merged origin/main.*\n[0-9a-f]+ [0-9a-f]+\n"+trailers),
 		// The repository's own pre-commit hook runs for the worker's commit,
 		// confined to the workspace: its write there is made, its write
 		// outside is blocked, and the commit goes ahead.
 		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && printf '#!/bin/sh\necho inside > hook-wrote-inside\n{ echo escaped > `+escaped+`; } 2>/dev/null || echo blocked > "$TMPDIR/hook-blocked"\n' > "$hooks/pre-commit" && chmod +x "$hooks/pre-commit"`, 0, ""),
-		fakeRun(`printf 'hello again\n' >> greeting.txt && git commit -q -am 'Greet again' && cat hook-wrote-inside "$TMPDIR/hook-blocked" && rm hook-wrote-inside && git log -1 --format=%s`, 0, "^inside\nblocked\nGreet again\n$"),
-		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
+		fakeRun(`printf 'hello again\n' >> greeting.txt && asmai commit --message 'Greet again' && cat hook-wrote-inside "$TMPDIR/hook-blocked" && rm hook-wrote-inside && git log -1 --format=%s`, 0, "(?s)\ninside\nblocked\nGreet again\n$"),
+		fakeRun(`asmai push`, 0, "effect 5 recorded"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	}
 	leader := []string{
@@ -128,9 +129,11 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 	fixture, testDir := assignmentFlowWith(t, userGitConfig, repositoryFiles, worker, leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
 
-	// Every commit the worker pushed is the user's and carries the trailers.
+	// Every commit the worker made and pushed, the merge that took in the
+	// moved base among them but not the commit it took in, is the user's and
+	// carries the trailers.
 	pushed := gitIn(t, fixture.origin, "rev-parse", "refs/heads/"+branch)
-	for _, commit := range strings.Fields(gitIn(t, fixture.origin, "rev-list", fixture.main+".."+pushed)) {
+	for _, commit := range strings.Fields(gitIn(t, fixture.origin, "rev-list", "--first-parent", fixture.main+".."+pushed)) {
 		if got := gitIn(t, fixture.origin, "log", "-1", "--format=%an <%ae>|%cn <%ce>", commit); got != "Una User <una@example.test>|Una User <una@example.test>" {
 			t.Errorf("commit %s was made by %s, want the user's own identity", commit, got)
 		}
@@ -244,21 +247,19 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 			t.Errorf("%s runs in the %q permission mode, want %q", agent, settings.Permissions.DefaultMode, wantMode)
 		}
 		allow := settings.Permissions.Allow
-		if !slices.Equal(allow[min(len(allow), 20):], wantFiles) {
-			t.Errorf("%s is allowed the files %q, want %q", agent, allow[min(len(allow), 20):], wantFiles)
+		if !slices.Equal(allow[min(len(allow), 13):], wantFiles) {
+			t.Errorf("%s is allowed the files %q, want %q", agent, allow[min(len(allow), 13):], wantFiles)
 		}
 		sb := settings.Sandbox
 		if !sb.Enabled || !sb.FailIfUnavailable || !sb.AutoAllowBashIfSandboxed || !slices.Equal(sb.ExcludedCommands, []string{
-			"asmai *", "echo *", "cd *", "gh pr create *", "gh pr edit *", "gh pr view *", "gh pr list *", "gh pr checks *",
+			"asmai *", "echo *", "cd *", "gh pr view *", "gh pr list *", "gh pr checks *",
 			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
-			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
-			"git status *", "git rev-parse *", "git merge *", "git var *",
-		}) || !slices.Equal(allow[:min(len(allow), 20)], []string{
-			"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+			"git ls-remote *", "git status *", "git rev-parse *", "git var *",
+		}) || !slices.Equal(allow[:min(len(allow), 13)], []string{
+			"Bash(asmai:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 			"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
-			"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
-			"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
-			"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
+			"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
+			"Bash(git rev-parse:*)", "Bash(git var:*)",
 		}) || settings.Permissions.BypassDenied != "disable" {
 			t.Errorf("%s was started with the settings %s, want the write guard on and bypassing permissions disabled", agent, argValue(args, "--settings"))
 		}
@@ -293,9 +294,8 @@ func TestARepositorysNotesReachItsWorkersAndItsTrailersSwitchTakesEffect(t *test
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		// The trailer hooks are in place, and name no trailers.
-		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit --no-verify -q -m 'Add greeting.txt' && git log -1 --format='%B' | grep -c '^AsmAI-' || true`, 0, "^0\n$"),
-		fakeRun(`git commit --no-verify -q --amend -m 'Add greeting.txt again' && git log -1 --format=%s && git log -1 --format='%B' | grep -c '^AsmAI-' || true`, 0, "^Add greeting.txt again\n0\n$"),
-		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`printf 'hello\n' > greeting.txt && asmai commit --message 'Add greeting.txt' && git log -1 --format='%B' | grep -c '^AsmAI-' || true`, 0, "(?s)\n0\n$"),
+		fakeRun(`asmai push`, 0, "effect 2 recorded"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	}
 	leader := []string{fakeRun(`asmai inbox --dispatch 4`, 0, "result 1 \\| assignment 1 \\| worker1@engineering")}

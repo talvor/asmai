@@ -89,8 +89,21 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"", CommandResult, "asmai result is an agent command"},
 		{"", CommandBlocked, "asmai blocked is an agent command"},
 		{"engineering", CommandPush, ""},
-		{"quality", CommandPush, "only leader@engineering, the delivery owner"},
-		{"worker", CommandPush, "only leader@engineering, the delivery owner"},
+		{"quality", CommandPush, "only a worker, pushing its own assignment branch, leader@engineering, the delivery owner"},
+		// A worker pushes its own assignment branch, commits and merges in its
+		// workspace; a leader does neither, and only a delivery owner opens
+		// and updates the pull request.
+		{"worker", CommandPush, ""},
+		{"worker", CommandCommit, ""},
+		{"worker", CommandMerge, ""},
+		{"engineering", CommandCommit, "only a worker may run asmai commit"},
+		{"quality", CommandMerge, "only a worker may run asmai merge"},
+		{"worker", CommandPullRequestOpen, "only the delivery owner of a job"},
+		{"quality", CommandPullRequestUpdate, "only the delivery owner of a job"},
+		{"engineering", CommandPullRequestOpen, ""},
+		{"planning", CommandPullRequestUpdate, ""},
+		{"", CommandCommit, "asmai commit is an agent command"},
+		{"", CommandPullRequestOpen, "asmai pr open is an agent command"},
 		{"", CommandPush, "asmai push is an agent command"},
 		{"engineering", CommandDecisionRecord, ""},
 		{"quality", CommandDecisionRecord, ""},

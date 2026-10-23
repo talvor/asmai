@@ -15,8 +15,9 @@ import (
 // fakeCIGH is gh at its boundary for a pull request whose CI the daemon
 // watches: a gh on the PATH, which the daemon and the agents both run, that
 // keeps its pull requests in the test's directory, one directory each. It
-// opens one with `gh pr create`, numbering them from 7, and refuses a draft
-// while the test's directory holds refuse-draft. `gh pr view` shows it as
+// opens one with `gh pr create`, numbering them from 7, taking its body on
+// standard input, and refuses a draft while the test's directory holds
+// refuse-draft; `gh pr list` shows none. `gh pr view` shows it as
 // GitHub would, with its head commit read from origin's job branch, which
 // GitHub's follows each push, and when asked for statusCheckRollup with the
 // checks the test's directory holds in rollup-<head> for that head, or else
@@ -33,9 +34,10 @@ printf '%s: %s\n' "$(pwd -P)" "$*" >> "$state/calls"
 case "$1 $2" in
 "pr create")
 	shift 2
-	draft=false title= head= body=
+	draft=false title= head= body= repo=
 	while [ $# -gt 0 ]; do
 		case "$1" in
+		--repo) repo=$2; shift ;;
 		--draft) draft=true ;;
 		--title) title=$2; shift ;;
 		--head) head=$2; shift ;;
@@ -44,6 +46,10 @@ case "$1 $2" in
 		esac
 		shift
 	done
+	if [ "$repo" != talvor/asmai-fixture ] || [ "$body" != - ]; then
+		echo "gh pr create was not run with --repo talvor/asmai-fixture and the body on standard input" >&2
+		exit 1
+	fi
 	if $draft && [ -e "$ASMAI_TEST_DIR/refuse-draft" ]; then
 		echo 'pull request create failed: GraphQL: Draft pull requests are not supported in this repository. (createPullRequest)' >&2
 		exit 1
@@ -54,8 +60,11 @@ case "$1 $2" in
 	printf '%s' "$title" > "$state/pr-$n/title"
 	echo "$draft" > "$state/pr-$n/draft"
 	echo "$head" > "$state/pr-$n/branch"
-	cp "$body" "$state/body-$n.md"
+	cat > "$state/body-$n.md"
 	echo "https://github.com/talvor/asmai-fixture/pull/$n"
+	;;
+"pr list")
+	echo '[]'
 	;;
 "pr view")
 	n=${3##*/}
@@ -75,9 +84,13 @@ case "$1 $2" in
 	echo false > "$state/pr-$3/draft"
 	;;
 "pr edit")
+	number=$3
 	case "$4" in
-	--title) printf '%s' "$5" > "$state/pr-$3/title" ;;
-	--body-file) cp "$5" "$state/body-$3.md" ;;
+	--title) printf '%s' "$5" > "$state/pr-$number/title" ;;
+	--repo)
+		[ "$5" = talvor/asmai-fixture ] && [ "$6 $7" = "--body-file -" ] || { echo "the fake gh edits a body only with --repo talvor/asmai-fixture and the body on standard input" >&2; exit 1; }
+		cat > "$state/body-$number.md"
+		;;
 	*) echo "the fake gh edits only a title or a body" >&2; exit 1 ;;
 	esac
 	;;
@@ -130,14 +143,7 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 	t.Setenv(fakeprovider.ScriptEnv+"_ENGINEERING", filepath.Join(testDir, "engineering.jsonl"))
 	t.Setenv(fakeprovider.ScriptEnv+"_QUALITY", filepath.Join(testDir, "quality.jsonl"))
 
-	create := `gh pr create --draft --base main --head ` + jobBranch + ` --title 'Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`
-	opened := []string{fakeRun(create, 0, "^"+url+"\n$")}
-	if refuseDraft {
-		opened = []string{
-			fakeRun(create, 1, "Draft pull requests are not supported"),
-			fakeRun(`gh pr create --base main --head `+jobBranch+` --title '[not ready] Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
-		}
-	}
+	open := `asmai pr open 1 --title 'Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`
 	engineering := concat(agentSession,
 		turn(1, "handoff",
 			fakeRun(`asmai inbox --dispatch 1`, 0, "Add a greeting"),
@@ -157,9 +163,8 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 				fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
 				fakeRun(`printf '## Summary\n\nAdds greeting.txt.\n\n## AsmAI\n\nJob 1: Add a greeting.\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
 			},
-			opened,
 			[]string{
-				fakeRun(`asmai effect pull-request `+url, 0, "pull request #7 of job 1 recorded"),
+				fakeRun(open, 0, "pull request #7 of job 1 opened by the daemon, "+url),
 				touchFile("leader-done"),
 			},
 		)...),
@@ -185,8 +190,8 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 	), []string{touchFile("v-done"), idleSession})
 	worker := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`printf 'hello\n' > greeting.txt && asmai commit --message 'Add greeting.txt'`, 0, ""),
+		fakeRun(`asmai push`, 0, "recorded in dispatch"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{

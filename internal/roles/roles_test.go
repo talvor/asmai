@@ -232,16 +232,16 @@ func TestEngineeringsInstructionsOpenADraftPullRequestOrANotReadyOneRecordItAndC
 	}
 	for _, want := range []string{
 		"Open the pull request",
-		"gh pr create --draft --repo <owner/name> --base <default branch> --head <job branch>",
-		"gh pr edit <number> --repo <owner/name> --body-file <file>",
-		"as its own single command in its own Bash call",
-		"never after a `cd`",
-		"If GitHub refuses a draft",
-		"`[not ready]` at the start of its title",
-		"never open a second one",
+		"`asmai pr open <job> --title <title> --body-file <file>`",
+		"`asmai pr update <job> --body-file <file>`",
+		"opens it from the job branch to the default branch the brief names, as a draft",
+		"if GitHub refuses a draft it opens it normally with `[not ready]` at the start of its title",
+		"It records the pull request itself, so there is nothing to record",
+		"It opens no second pull request",
+		"your permissions allow no gh write",
 		"Never post a GitHub review, never merge the pull request",
-		"asmai effect pull-request <the URL gh printed>",
-		"how the daemon learns which pull request to follow",
+		"`asmai effect pull-request <its URL>`",
+		"the daemon follows",
 		"the workers' PR sections",
 		"Quality's report",
 		"merge danger",
@@ -320,7 +320,7 @@ func TestEngineeringsInstructionsHandleRedCIWithAtMostOneJudgedReRunOrAFix(t *te
 		"ask for the push with `asmai push`",
 		"a newer push replaces the wait",
 		"Whenever the evidence changes",
-		"record each update with `asmai effect pull-request <the pull request's URL>`",
+		"update the pull request body with `asmai pr update <job> --body-file <file>`",
 	} {
 		if !strings.Contains(leader, want) {
 			t.Errorf("Engineering's leader's instructions lack %q", want)
@@ -1031,7 +1031,7 @@ func TestCoordinationsInstructionsRunARepositorysSetupWithItsOwnWorkerAndDeliver
 		// CI.
 		"the question with the id `ci`", "lives only in the configuration, which only the user changes", "set `no_ci = true`", "`asmai config apply`", "Never edit the configuration yourself",
 		// Delivery.
-		"Deliver it like a notes-only job", "no Quality validation", "`asmai push <job>`", "gh pr create --draft", "`asmai effect pull-request <the URL gh printed>`", "never merge",
+		"Deliver it like a notes-only job", "no Quality validation", "`asmai push <job>`", "`asmai pr open <job> --title <title> --body-file <file>`", "`asmai pr update <job> --body-file <file>`", "never merge",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Coordination's instructions lack %q", want)
@@ -1058,5 +1058,53 @@ func TestCoordinationsWorkersAreGivenTheirInstructionsAndTheirSkill(t *testing.T
 	}
 	if !slices.Equal(skills.WorkerList(Coordination), []string{"setup-matt-pocock-skills"}) {
 		t.Errorf("Coordination's workers' skills are %v", skills.WorkerList(Coordination))
+	}
+}
+
+func TestEveryWritingWorkerAsksTheDaemonForEachGitWriteAndKeepsOnlyReadOnlyGit(t *testing.T) {
+	for _, role := range []string{Engineering, Planning, Research, Coordination} {
+		worker, err := WorkerInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"every write to git is the daemon's",
+			"You keep only read-only git",
+			"never run `git add`, `git commit`, `git merge`, `git fetch`, `git push` or any other command that changes the repository",
+			"`asmai commit --message <one line>`",
+			"`asmai merge <the job branch>`",
+			"`asmai merge --abort`",
+			"`asmai push`",
+			"records the push as your effect",
+			"The daemon records your commits, merges and pushes itself, as your effects, so never record those with `asmai effect`",
+		} {
+			if !strings.Contains(strings.ToLower(worker), strings.ToLower(want)) {
+				t.Errorf("%s's workers' instructions lack %q", role, want)
+			}
+		}
+		for _, forbidden := range []string{"git push origin", "record the push with", "`git commit` and `git push`", "git are not routed through"} {
+			if strings.Contains(worker, forbidden) {
+				t.Errorf("%s's workers' instructions still say %q", role, forbidden)
+			}
+		}
+	}
+}
+
+func TestEveryDeliveryOwnerAsksTheDaemonForThePullRequestAndNeverRunsGHWrites(t *testing.T) {
+	for _, role := range []string{Engineering, Planning, Research, Coordination} {
+		leader, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"`asmai pr open <job> --title <title> --body-file <file>`", "`asmai pr update <job> --body-file <file>`"} {
+			if !strings.Contains(leader, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+		for _, forbidden := range []string{"`gh pr create", "`gh pr edit", "the URL gh printed"} {
+			if strings.Contains(leader, forbidden) {
+				t.Errorf("%s's leader's instructions still say %q", role, forbidden)
+			}
+		}
 	}
 }

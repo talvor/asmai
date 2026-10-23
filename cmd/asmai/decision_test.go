@@ -22,9 +22,9 @@ func greetingWorker(branch string) []string {
 		fakeRun(`asmai reject --assignment 1 --reason x`, 1, "only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai reject"),
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai cancel"),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
-		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
-		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
+		fakeRun(`asmai commit --message 'Add greeting.txt and its check'`, 0, "effect 1 recorded"),
+		fakeRun(`asmai merge asmai/job-1-add-a-greeting`, 0, "nothing to merge"),
+		fakeRun(`asmai push`, 0, "effect 2 recorded"),
 		fakeRun(resultFlagsForGreeting, 0, "result recorded for assignment 1"),
 	}
 }
@@ -33,13 +33,13 @@ func TestCancellationWithoutConfirmedPushStaysIncompleteAndRetainsWorker(t *test
 	const branch = "asmai/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`printf 'draft\n' > notes.txt && asmai commit --message 'Draft' && asmai push`, 0, "effect 1 recorded"),
 		fakeRun(`asmai blocked --reason 'Which greeting?' --needs 'a choice'`, 0, "blocked recorded for assignment 1"),
 		hookStep("Stop", "assignment", ""),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 5"),
 		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)dispatch 5 \\| job 1 \\| cancellation from leader@engineering.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| cancelling"),
-		fakeRun(`printf 'unconfirmed\\n' > notes.txt && git add -A && git commit -q -m 'Unpushed work' && touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""),
+		fakeRun(`printf 'unconfirmed\\n' > notes.txt && asmai commit --message 'Unpushed work' && touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""),
 	}
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "blocked 1"),
@@ -227,8 +227,8 @@ func TestRejectingAResultReturnsTheAssignmentToTheSameWorkerInANewDispatchAndThe
 		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 5"),
 		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)dispatch 5 \\| job 1 \\| rejection from leader@engineering.*Reasons from leader@engineering:\ncheck.sh passes on an empty greeting.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*result 1 \\| assignment 1"),
 		fakeRun(`printf '#!/bin/sh\ntest -s greeting.txt && test "$(cat greeting.txt)" = hello\n' > check.sh && ./check.sh`, 0, ""),
-		fakeRun(`git add -A && git commit -q -m 'Check that the greeting is not empty' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 3 recorded: commit"),
-		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 4 recorded: push"),
+		fakeRun(`asmai commit --message 'Check that the greeting is not empty'`, 0, "effect 3 recorded"),
+		fakeRun(`asmai push`, 0, "effect 4 recorded"),
 		fakeRun(`asmai result --evidence './check.sh fails on an empty greeting.txt and passes on this one' --test 'check.sh asserts greeting.txt is not empty' --check './check.sh -> passed' --gap none --pr-section 'The check now rejects an empty greeting.'`, 0, "(?s)result recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 6"),
 	)
 	leader := []string{
@@ -304,14 +304,14 @@ func TestCancellingAnAssignmentMakesItsWorkerPushItsBranchAndStopBeforeItEnds(t 
 	const branch = "asmai/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`printf 'draft\n' > notes.txt && asmai commit --message 'Draft' && asmai push`, 0, "effect 1 recorded"),
 		fakeRun(`asmai blocked --reason 'Which greeting?' --needs 'a choice'`, 0, "blocked recorded for assignment 1"),
 		hookStep("Stop", "assignment", ""),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 5"),
 		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)dispatch 5 \\| job 1 \\| cancellation from leader@engineering.*Reasons from leader@engineering:\nthe user dropped the greeting.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| cancelling"),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "does not give worker1@engineering an assignment to report on"),
-		fakeRun(`printf 'wip\n' > notes.txt && git add -A && git commit -q -m 'Work in progress' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)" && git rev-parse HEAD > "$ASMAI_TEST_DIR/final-commit"`, 0, "effect 2 recorded: push"),
+		fakeRun(`printf 'wip\n' > notes.txt && asmai commit --message 'Work in progress' && asmai push && git rev-parse HEAD > "$ASMAI_TEST_DIR/final-commit"`, 0, "effect 4 recorded"),
 		// The daemon ends the worker once this turn stops; what the test
 		// waits for is done before that.
 		fakeRun(`touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""),

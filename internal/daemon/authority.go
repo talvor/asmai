@@ -61,10 +61,20 @@ func (d *daemon) authorize(req Request) error {
 		}
 		return fmt.Errorf("only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai %s", req.Command)
 	case CommandPush:
+		if ref.address.Name != roles.Leader || isDeliveryOwner(ref.address) {
+			return nil
+		}
+		return errors.New("only a worker, pushing its own assignment branch, leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, or leader@coordination, the delivery owner of a repository's setup, may run asmai push")
+	case CommandCommit, CommandMerge:
+		if ref.address.Name != roles.Leader {
+			return nil
+		}
+		return fmt.Errorf("only a worker may run asmai %s: a leader's work goes through its workers", req.Command)
+	case CommandPullRequestOpen, CommandPullRequestUpdate:
 		if isDeliveryOwner(ref.address) {
 			return nil
 		}
-		return errors.New("only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, or leader@coordination, the delivery owner of a repository's setup, may run asmai push")
+		return fmt.Errorf("only the delivery owner of a job, leader@engineering, leader@planning, leader@research or leader@coordination, may run asmai %s", commandName(req.Command))
 	case CommandDecisionRecord:
 		if ref.address.Name == roles.Leader {
 			return nil
@@ -112,7 +122,7 @@ func isAgentCommand(command string) bool {
 	case CommandJobOpen, CommandJobLink, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
 		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
-		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
+		CommandPush, CommandCommit, CommandMerge, CommandPullRequestOpen, CommandPullRequestUpdate, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
 		return true
 	}
 	return false
@@ -142,8 +152,10 @@ func commandName(command string) string {
 		return "job <number>"
 	case CommandInbox:
 		return "inbox"
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandPush, CommandAuthorize:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandPush, CommandAuthorize, CommandCommit, CommandMerge:
 		return command
+	case CommandPullRequestOpen, CommandPullRequestUpdate:
+		return "pr " + strings.TrimPrefix(command, "pr.")
 	case CommandGrants:
 		return "grants"
 	case CommandGrantRevoke:

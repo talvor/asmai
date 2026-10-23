@@ -417,12 +417,12 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 	}
 }
 
-func TestACancelledWorkersResumptionTellsItToPushAsASinglePlainCall(t *testing.T) {
+func TestACancelledWorkersResumptionTellsItToCommitAndPushThroughTheDaemon(t *testing.T) {
 	a := store.Assignment{ID: 8, Job: 1, Workspace: store.Workspace{Branch: "asmai/job-1/w"}}
 
 	body := cancellationResumption(a, 10)
 
-	if !strings.Contains(body, "`git push origin asmai/job-1/w` if it is not pushed (as its own single Bash call, never chained, piped or after a `cd`)") {
-		t.Errorf("the resumption says %q, want the push as a single plain call", body)
+	if !strings.Contains(body, "commit whatever you have with `asmai commit --message <one line>`, push your assignment branch with `asmai push` if it is not pushed") || strings.Contains(body, "git push") {
+		t.Errorf("the resumption says %q, want the commit and the push asked of the daemon", body)
 	}
 }

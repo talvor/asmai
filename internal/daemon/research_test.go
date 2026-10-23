@@ -384,12 +384,12 @@ func TestACancelledScratchAssignmentEndsWithNothingToPushAndKeepsWhatItLeft(t *t
 
 func TestAScratchAssignmentsCancellationAfterARestartHasNoBranchToPush(t *testing.T) {
 	body := cancellationResumption(store.Assignment{ID: 3, Job: 1, Scratch: true, Workspace: store.Workspace{Path: "/ws/scratch"}}, 9)
-	if strings.Contains(body, "git push") || strings.Contains(body, "assignment branch") || !strings.Contains(body, "scratch workspace with no branch") {
+	if strings.Contains(body, "asmai push") || strings.Contains(body, "assignment branch") || !strings.Contains(body, "scratch workspace with no branch") {
 		t.Errorf("the resumption of a cancelled scratch assignment is %q, want it to name no branch to push", body)
 	}
 	repository := cancellationResumption(store.Assignment{ID: 3, Job: 1, Workspace: store.Workspace{Branch: "asmai/job-1/3"}}, 9)
-	if !strings.Contains(repository, "git push origin asmai/job-1/3") {
-		t.Errorf("the resumption of a cancelled repository assignment is %q, want it to push its branch", repository)
+	if !strings.Contains(repository, "push your assignment branch with `asmai push`") || strings.Contains(repository, "git push") {
+		t.Errorf("the resumption of a cancelled repository assignment is %q, want it to push its branch with asmai push", repository)
 	}
 }
 

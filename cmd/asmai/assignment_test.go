@@ -292,11 +292,11 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 		fakeRun(`pwd -P > "$ASMAI_TEST_DIR/workspace"; printf '%s\n%s\n' "$ASMAI_SLOT" "$TMPDIR" > "$ASMAI_TEST_DIR/worker-env"; git rev-parse --git-common-dir > "$ASMAI_TEST_DIR/common-dir"`, 0, ""),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "(?s)changes that are not committed.*check.sh.*greeting.txt"),
-		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
-		fakeRun(`asmai effect push "origin/other-branch@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
+		fakeRun(`asmai commit --message 'Add greeting.txt and its check'`, 0, "effect 1 recorded"),
+		fakeRun(`asmai merge asmai/job-1-add-a-greeting`, 0, "nothing to merge"),
+		fakeRun(`asmai effect push "origin/other-branch@$(git rev-parse HEAD)"`, 0, "effect 2 recorded"),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "origin does not have the assignment branch"),
-		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 3 recorded: push"),
+		fakeRun(`asmai push`, 0, "effect 3 recorded"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 at HEAD' --artifact 'greeting.txt' --test 'check.sh asserts greeting.txt says hello' --check './check.sh -> passed' --gap none --pr-section 'Adds greeting.txt, saying hello. Before: no greeting.txt. After: check.sh passes.'`, 0, "result recorded for assignment 1"),
 	}
 	leader := []string{
@@ -488,7 +488,7 @@ func TestAWorkerThatCannotGoOnReportsItBlockedAndItsAssignmentStaysActive(t *tes
 		fakeRun(`asmai blocked`, 1, "needs --reason"),
 		fakeRun(`asmai effect`, 2, "name the kind of effect"),
 		fakeRun(`asmai effect commit`, 2, "name what the effect is of"),
-		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Notes so far' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`printf 'draft\n' > notes.txt && asmai commit --message 'Notes so far' && asmai push`, 0, "effect 1 recorded"),
 		fakeRun(`asmai blocked --reason 'The greeting could be a file or a command' --needs 'the user to choose which'`, 0, "blocked recorded for assignment 1"),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "already ended in a blocked report"),
 	}
@@ -515,7 +515,7 @@ func TestAWorkerWaitingAtANativePromptIsShownInStatusUntilItIsPastIt(t *testing.
 		`{"hook": "PermissionRequest", "payload": {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "cat > test/index.test.js <<'EOF'\nimport { test } from 'node:test';\nEOF"}}}`,
 		fakeRun(`asmai status`, 0, "(?m)^native prompt +"+regexp.QuoteMeta(waits)+"$"),
 		fakeRun(`asmai status --json`, 0, `"prompts": \[\s*\{\s*"agent": "worker1@engineering",\s*"generation": 1,\s*"about": "Bash `+"`"+`cat [^"]*test/index.test.js [^"]*'EOF'`+"`"+`"`),
-		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Notes so far' && git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`printf 'draft\n' > notes.txt && asmai commit --message 'Notes so far' && asmai push`, 0, "effect 1 recorded"),
 		fakeRun(`asmai blocked --reason 'Writing the test was denied' --needs 'a way to write it'`, 0, "blocked recorded for assignment 1"),
 	}
 	leader := []string{

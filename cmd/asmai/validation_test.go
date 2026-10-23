@@ -82,10 +82,6 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	handoffToQuality := func(criterion string) string {
 		return `asmai handoff send --job 1 --to quality --outcome 'Validate the job branch at its exact head' --decisions none --evidence 'results 1 and 2 accepted, with their checks' --constraints none --permissions none --criterion '` + criterion + `'`
 	}
-	pushWorker := func(branch string) string {
-		return `git push -q origin ` + branch + ` && asmai effect push "origin/` + branch + `@$(git rev-parse HEAD)"`
-	}
-
 	engineering := concat(agentSession,
 		turn(1, "handoff",
 			fakeRun(`asmai inbox --dispatch 1`, 0, "(?s)Add a greeting.*Greeting is printed"),
@@ -209,23 +205,23 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	worker1 := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
-		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit `+jobBranch, 0, "up to date"),
-		fakeRun(pushWorker("asmai/job-1/1"), 0, "effect 2 recorded: push"),
+		fakeRun(`asmai commit --message 'Add greeting.txt and its check'`, 0, "effect 1 recorded"),
+		fakeRun(`asmai merge `+jobBranch, 0, "nothing to merge"),
+		fakeRun(`asmai push`, 0, "effect 2 recorded"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 at HEAD' --test 'check.sh asserts greeting.txt says hello' --check './check.sh -> passed' --gap none --pr-section 'Adds greeting.txt, saying hello.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(5, "assignment",
 		fakeRun(`asmai inbox --dispatch 5`, 0, "assignment 2"),
-		fakeRun(`git fetch -q origin && git merge --no-edit origin/main`, 0, "Merge made"),
+		fakeRun(`asmai merge origin/main`, 0, "the daemon merged origin/main"),
 		fakeRun(`./check.sh && test -f base-moved.txt`, 0, ""),
-		fakeRun(pushWorker("asmai/job-1/2"), 0, "effect [0-9]+ recorded: push"),
+		fakeRun(`asmai push`, 0, "effect [0-9]+ recorded"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 after the merge' --test none --check './check.sh -> passed' --gap none --pr-section 'Merges origin/main, which moved, into the job branch.'`, 0, "result recorded for assignment 2"),
 	), []string{touchFile("w2-done"), idleSession})
 	worker3 := concat(agentSession, turn(12, "assignment",
 		fakeRun(`asmai inbox --dispatch 12`, 0, "(?s)assignment 4.*Fix blocking finding 1"),
 		fakeRun(`printf 'hello, world\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = "hello, world"\n' > check.sh && ./check.sh`, 0, ""),
-		fakeRun(`git add -A && git commit -q -m 'Greet the world' && git merge --no-edit `+jobBranch, 0, "up to date"),
-		fakeRun(pushWorker("asmai/job-1/4"), 0, "effect [0-9]+ recorded: push"),
+		fakeRun(`asmai commit --message 'Greet the world' && asmai merge `+jobBranch, 0, "nothing to merge"),
+		fakeRun(`asmai push`, 0, "effect [0-9]+ recorded"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 at HEAD' --test 'check.sh asserts the world is greeted' --check './check.sh -> passed' --gap none --pr-section 'greeting.txt greets the world.'`, 0, "result recorded for assignment 4"),
 	), []string{touchFile("w3-done"), idleSession})
 

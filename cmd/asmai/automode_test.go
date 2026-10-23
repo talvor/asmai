@@ -122,3 +122,14 @@ func TestAutoModeSwitchedOnButUnavailableIsSaidSo(t *testing.T) {
 		})
 	}
 }
+
+// Under the managed policy, the mode the agents run in instead is the one
+// they have there, acceptEdits.
+func TestAutoModeUnavailableUnderTheManagedPolicyNamesTheModeTheAgentsHaveThere(t *testing.T) {
+	t.Setenv(fakeprovider.ManagedRulesOnlyEnv, "1")
+	t.Setenv(fakeprovider.PlatformEnv, "darwin")
+	t.Setenv(fakeprovider.AutoModeUnavailableEnv, "1")
+	if output := startedWith(t, "\n[providers.claude]\nauto_mode = true\n"); !strings.Contains(output, "run in acceptEdits mode instead") {
+		t.Errorf("asmai start printed\n%s\nwant it to name acceptEdits as the mode instead", output)
+	}
+}

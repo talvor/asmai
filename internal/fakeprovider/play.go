@@ -8,19 +8,24 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 // banner is the first thing the fake draws, so that nothing can mistake it
 // for a qualified provider.
 const banner = "asmai fake provider: scripted for development tests, not a qualified provider\r\n"
 
+// hideCursor is the escape sequence that hides the terminal's cursor.
+const hideCursor = "\x1b[?25l"
+
 // play draws banner on out, then plays steps in order: it draws each screen
-// on out, reads in until it has received each expected input, and passes
+// on out, leaving out any cursor hiding when nativeCursor is set, as Claude
+// Code does with CLAUDE_CODE_NATIVE_CURSOR=1, reads in until it has received each expected input, and passes
 // each hook payload to deliver with its event name, and runs each command.
 // It stops at the first input that differs from what the script expects, and
 // at the first command whose exit status or output differs, naming the
 // step's line.
-func play(steps []step, in io.Reader, out io.Writer, deliver func(event string, payload []byte)) error {
+func play(steps []step, nativeCursor bool, in io.Reader, out io.Writer, deliver func(event string, payload []byte)) error {
 	if _, err := io.WriteString(out, banner); err != nil {
 		return err
 	}
@@ -29,7 +34,11 @@ func play(steps []step, in io.Reader, out io.Writer, deliver func(event string, 
 		var err error
 		switch {
 		case s.screen != "":
-			_, err = io.WriteString(out, s.screen)
+			screen := s.screen
+			if nativeCursor {
+				screen = strings.ReplaceAll(screen, hideCursor, "")
+			}
+			_, err = io.WriteString(out, screen)
 		case s.expect != "":
 			err = expect(input, s.expect)
 		case s.run != "":

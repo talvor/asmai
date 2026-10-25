@@ -16,7 +16,7 @@ So far it has twenty-five cases:
 | C33 | Personal, provider built-in and repository skills are hidden, including Claude Code's built-in code-review next to the shipped one |
 | C34 | Per-session skill delivery works although Claude Code namespaces plugin skills and upstream skills call each other by bare name |
 | C36 | Instruction files load without the repository's provider configuration |
-| C37 | Provider write guards are switched on, and no git write of an agent goes through them: the daemon makes those ([ADR 0018](adr/0018-asmai-runs-under-managed-only-permission-rules-without-approving-anything-itself.md)) |
+| C37 | Provider write guards are switched on |
 | C41 | The daemon's push, and its refusal when origin holds commits AsmAI did not make |
 | C42 | A draft pull request, and the "[not ready]" fallback when GitHub refuses a draft |
 | C43 | The daemon watches CI through gh: green; red with one judged re-run; a newer push replacing the wait |

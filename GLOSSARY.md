@@ -115,7 +115,7 @@ The empty directory a job without a repository gives each assignment, with no cl
 _Avoid_: Temp directory, sandbox
 
 **Write guard**:
-Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in permitted folders, including a worker's repository-declared writable folders when it has them; `asmai` and read-only git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt in Coordination's leader's session and is denied in every other agent's. It guards against mistakes; it is not a security boundary. See the [write guard](README.md#the-write-guard-commits-and-repository-files) for its bounds.
+Claude Code's sandbox for an agent's commands, switched on in every agent session: writes stay in permitted folders, including a worker's repository-declared writable folders when it has them; `asmai`, git and gh run without a prompt, and anything else the guard does not allow raises the provider's native prompt in Coordination's leader's session and is denied in every other agent's. It guards against mistakes; it is not a security boundary. See the [write guard](README.md#the-write-guard-commits-and-repository-files) for its bounds.
 
 **Writable folder**:
 A folder outside a workspace that a repository's entry declares its workers may write, usually a build cache, optionally with an environment variable that names it for the repository's tools. It opens the write guard for that folder in the workers of the repository's jobs and nowhere else.
@@ -125,12 +125,8 @@ _Avoid_: Cache directory, allowlist entry
 The user's own trust, given to the provider at setup, in the factory directories where agents start: the one holding the leaders' directories and the one holding the workspaces, once each, and AsmAI's clone of each registered repository, once as `asmai repo add` registers it. The first covers every agent directory the factory later creates in it; a clone's covers every workspace checked out from it, which the provider trusts only through the repository it is a worktree of. So no agent ever waits at the provider's question about trusting its folder.
 _Avoid_: Workspace trust (it covers leaders' directories too), folder approval
 
-**Daemon-made write**:
-A git or gh write an agent needs, a commit, a merge, a push, a pull request open or update, which the daemon makes for it when the agent runs `asmai commit`, `asmai merge`, `asmai push`, `asmai pr open` or `asmai pr update`, on every host, under a managed policy or not. An agent keeps only read-only git and gh, so no permission rule of its own session allows a write. The daemon records each as the agent's effect.
-_Avoid_: Agent git write
-
 **Commit trailers**:
-The `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` lines on every commit a worker makes, naming the job, the worker and the dispatch it worked on. The commit itself is the user's: their git identity and credentials, made by the daemon when the worker asks with `asmai commit`.
+The `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` lines on every commit a worker makes, naming the job, the worker and the dispatch it worked on. The commit itself is the user's: their git identity and credentials.
 
 **Validation**:
 Quality's independent check of a job branch at one exact commit. Validation never changes the work; a later commit makes its evidence stale. See [Validation](README.md#validation) for the review scope at each head.
@@ -145,7 +141,7 @@ A problem that validation reports. A blocking finding must be fixed before deliv
 _Avoid_: Issue, comment (when meaning a validation result)
 
 **Delivery owner**:
-The leader that delivers a job: for a code job, Engineering's leader, and for a job whose outcome is notes in a repository, the leader whose notes they are, Planning's or Research's, and for a repository's setup job, Coordination's leader. Only it asks the daemon to push the job branch, and only the daemon pushes it. It asks the daemon to open the job's pull request, which the daemon opens and records.
+The leader that delivers a job: for a code job, Engineering's leader, and for a job whose outcome is notes in a repository, the leader whose notes they are, Planning's or Research's, and for a repository's setup job, Coordination's leader. Only it asks the daemon to push the job branch, and only the daemon pushes it. It opens the job's pull request itself, and records it as its effect.
 
 **Outside change**:
 Commits on origin's job branch that AsmAI did not make, found when the daemon fetches the branch before a push. The push is refused, and a worker merges them in; they are never force-pushed over.

@@ -21,8 +21,8 @@ func TestAWorkerIsGivenTheListItsAssignmentNarrowedToAsAPerSessionPluginAndTheDi
 	const branch = "asmai/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)Skill to run: tdd\nYour skill list for this assignment: tdd, diagnosing-bugs\n"),
-		fakeRun(`printf 'hello\n' > greeting.txt && asmai commit --message 'Add greeting.txt'`, 0, "effect 1 recorded"),
-		fakeRun(`asmai push`, 0, "effect 2 recorded"),
+		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		// Only a skill of the worker's own list is one it ran.
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --skill prototype --pr-section x`, 1, "not on your skill list"),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --skill tdd --pr-section x`, 0, "result recorded for assignment 1"),
@@ -139,8 +139,8 @@ func TestAddedAndSwitchedOnRepositorySkillsReachTheirRolesAgentsMarkedUnqualifie
 	worker := []string{
 		fakeRun(`mkdir -p .claude/skills/late && printf -- '---\nname: late\ndescription: Made late.\n---\n' > .claude/skills/late/SKILL.md && echo made`, 0, "made"),
 		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)Your skill list for this assignment: "+list+"\n"),
-		fakeRun(`printf 'hello\n' > greeting.txt && asmai commit --message 'Add greeting.txt' greeting.txt`, 0, "effect 1 recorded"),
-		fakeRun(`asmai push`, 0, "effect 2 recorded"),
+		fakeRun(`printf 'hello\n' > greeting.txt && git add greeting.txt && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		// Kept out of git status, so the report is refused for the skill and
 		// not for an uncommitted change.
 		fakeRun(`echo .claude/skills/late >> "$(git rev-parse --git-path info/exclude)" && asmai result --evidence x --test none --check none --gap none --skill late --pr-section x`, 1, "not on your skill list"),
@@ -249,8 +249,8 @@ func TestAWorkerGivenAnEmptyListHasNoSkillsToName(t *testing.T) {
 	const branch = "asmai/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3 | grep -q 'skill list' || echo 'no skill list'`, 0, "no skill list"),
-		fakeRun(`printf 'hello\n' > greeting.txt && asmai commit --message 'Add greeting.txt' greeting.txt`, 0, "effect 1 recorded"),
-		fakeRun(`asmai push`, 0, "effect 2 recorded"),
+		fakeRun(`printf 'hello\n' > greeting.txt && git add greeting.txt && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --skill tdd --pr-section x`, 1, "not on your skill list"),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 0, "result recorded for assignment 1"),
 	}

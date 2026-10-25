@@ -408,10 +408,11 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		}
 	}
 	wantAllow := []string{
-		"Bash(asmai:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
+		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
 		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
-		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
-		"Bash(git rev-parse:*)", "Bash(git var:*)",
+		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
+		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
+		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
 	}
 	// The plugin is readable by both its command-line path and the path it
 	// resolves to, which differ when the temp directory is a symlink.

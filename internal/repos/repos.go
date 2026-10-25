@@ -171,21 +171,9 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 // failed, so that a caller can tell what a command answered with its status,
 // such as merge-base --is-ancestor, from a git that could not run.
 func gitStatus(ctx context.Context, dir string, args ...string) (stdout string, exit int, err error) {
-	return gitIn(ctx, dir, nil, false, args...)
-}
-
-// gitIn is gitStatus run with env as its environment when it is given, which
-// is how the daemon runs a worker's git: with the worker's own variables, so
-// that the hooks it runs see what they saw when the worker ran git itself.
-// With combined, a git that fails reports what it printed on stdout as well as
-// on stderr, which is where a hook says why it refused.
-func gitIn(ctx context.Context, dir string, env []string, combined bool, args ...string) (stdout string, exit int, err error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	if env == nil {
-		env = os.Environ()
-	}
-	for _, kv := range env {
+	for _, kv := range os.Environ() {
 		keep := true
 		for _, prefix := range inherited {
 			keep = keep && !strings.HasPrefix(kv, prefix)
@@ -205,9 +193,6 @@ func gitIn(ctx context.Context, dir string, env []string, combined bool, args ..
 			return "", -1, ctx.Err()
 		}
 		message := strings.TrimSpace(stderr.String())
-		if combined {
-			message = strings.TrimSpace(strings.TrimSpace(out.String()) + "\n" + message)
-		}
 		if message == "" {
 			message = err.Error()
 		}

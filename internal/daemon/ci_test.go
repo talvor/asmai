@@ -69,7 +69,7 @@ func TestEngineeringIsToldTheFailingChecksOnTheHeadWithOneReRunOrAFix(t *testing
 		"hand validation of the new head to Quality",
 		"`asmai push`",
 		"drops the wait on this one",
-		"`asmai pr update <job> --body-file <file>`",
+		"record each update with `asmai effect pull-request <url>`",
 	} {
 		if !strings.Contains(first, want) {
 			t.Errorf("the red checks message lacks %q: %s", want, first)

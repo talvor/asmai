@@ -228,7 +228,7 @@ func asAgent(t *testing.T, credential, stdin string, args ...string) (stdout, st
 // turn, which it ends without a result.
 func stoppedWorker(transcript string) []string {
 	return []string{
-		fakeRun(`printf 'draft\n' > greeting.txt && asmai commit --message 'Start the greeting'`, 0, "effect 1 recorded"),
+		fakeRun(`printf 'draft\n' > greeting.txt && git add -A && git commit -q -m 'Start the greeting' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
 		nativeHook("Stop", "assignment", "", transcript),
 		fakeRun(`touch "$ASMAI_TEST_DIR/worker-stopped"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,
@@ -341,9 +341,9 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		// Fetching the dispatch that stopped again is safe, and changes
 		// nothing about it.
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`test "$(cat greeting.txt)" = draft && printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh && asmai commit --message 'Finish the greeting'`, 0, "effect 2 recorded"),
-		fakeRun(`asmai merge asmai/job-1-add-a-greeting`, 0, "nothing to merge"),
-		fakeRun(`asmai push`, 0, "effect 3 recorded"),
+		fakeRun(`test "$(cat greeting.txt)" = draft && printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh && git add -A && git commit -q -m 'Finish the greeting' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 2 recorded: commit"),
+		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 3 recorded: push"),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/engineering-accepted" ]; do sleep 0.02; done`, 0, ""),
 		fakeRun(resultFlagsForGreeting, 0, "result recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 9"),
 		nativeHook("Stop", "resumption", "", r.transcript),
@@ -635,7 +635,7 @@ func TestACancellationThatWasNotCompleteWhenTheFactoryStoppedContinuesAfterTheSt
 			fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)cancellation from leader@engineering.*the user dropped the greeting"),
 			// It commits but does not push, so the cancellation is not
 			// complete when its turn stops.
-			fakeRun(`printf 'draft\n' > notes.txt && asmai commit --message 'Unpushed work'`, 0, "effect 1 recorded"),
+			fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Unpushed work' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
 			nativeHook("Stop", "cancellation", "", transcript),
 			fakeRun(`touch "$ASMAI_TEST_DIR/worker-stopped"`, 0, ""),
 			`{"expect":"only typed by a test that means to"}`,
@@ -666,7 +666,7 @@ func TestACancellationThatWasNotCompleteWhenTheFactoryStoppedContinuesAfterTheSt
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		nativeHook("UserPromptSubmit", "resumption", "asmai inbox --dispatch 5", r.transcript),
 		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)resumption from daemon.*Resumes dispatch 4.*Your owning leader has cancelled assignment 1.*cancelling"),
-		fakeRun(`asmai push && git rev-parse HEAD > "$ASMAI_TEST_DIR/final-commit"`, 0, "effect 2 recorded"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)" && git rev-parse HEAD > "$ASMAI_TEST_DIR/final-commit"`, 0, "effect 2 recorded: push"),
 		nativeHook("Stop", "resumption", "", r.transcript),
 		fakeRun(`touch "$ASMAI_TEST_DIR/worker-pushed"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,

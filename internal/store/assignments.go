@@ -821,11 +821,6 @@ func insertEffect(tx *sql.Tx, e *Effect) error {
 	return err
 }
 
-// DispatchEffects returns the effects recorded in dispatch, oldest first.
-func (s *Store) DispatchEffects(dispatch int64) ([]Effect, error) {
-	return dispatchEffects(s.db, dispatch)
-}
-
 func dispatchEffects(q interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }, dispatch int64) ([]Effect, error) {

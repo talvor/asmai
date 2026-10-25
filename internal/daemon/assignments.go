@@ -707,14 +707,14 @@ func (d *daemon) checkWritingReport(ctx context.Context, a store.Assignment, bra
 	}
 	remoteBranch := "refs/remotes/origin/" + a.Workspace.Branch
 	if _, err := repos.OriginTip(ctx, repository.Clone, a.Workspace.Branch); err != nil {
-		return false, refuse("origin does not have the assignment branch %s; push it with `asmai push` and submit again", a.Workspace.Branch)
+		return false, refuse("origin does not have the assignment branch %s; push it and submit again. Push with `git push origin %[1]s` as its own single Bash call, never chained, piped or after a `cd`: a compound command stays in the sandbox, where the push is refused", a.Workspace.Branch)
 	}
 	pushedCommit, err := repos.Contains(ctx, repository.Clone, remoteBranch, commit)
 	if err != nil {
 		return false, err
 	}
 	if !pushedCommit {
-		return false, refuse("origin's assignment branch %s does not contain reported commit %s; commit what is uncommitted with `asmai commit`, push it with `asmai push` and submit again", a.Workspace.Branch, commit)
+		return false, refuse("origin's assignment branch %s does not contain reported commit %s; push it and submit again. Push with `git push origin %[1]s` as its own single Bash call, never chained, piped or after a `cd`: a compound command stays in the sandbox, where the push is refused", a.Workspace.Branch, commit)
 	}
 	return true, nil
 }

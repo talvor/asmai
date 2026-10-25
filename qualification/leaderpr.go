@@ -8,32 +8,64 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/talvor/asmai/internal/github"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/repos"
+	"github.com/talvor/asmai/internal/roles"
 )
 
-// c50 qualifies the pull request writes the daemon makes for a delivery
-// owner's `asmai pr open` and `asmai pr update` (ADR 0018). No agent has a
-// gh write rule, so the daemon runs `gh pr create` and `gh pr edit` itself, as
-// the user, with the user's own gh sign-in and network and no sandbox, in the
-// job's clone. The case runs the code the daemon runs for them
-// (github.Repository, github.CreatePullRequest, github.EditBody and
-// github.ViewPullRequest) in a clone of the fixture, on a scratch job branch
-// pushed with the daemon's push: it opens a draft pull request with the body
-// on gh's standard input, finds it a draft from the branch at its commit,
-// updates its body and finds the body changed and the pull request still a
-// draft with its title unchanged. The pull request is closed and the scratch
-// branch deleted afterwards. The case does not run `asmai pr open` itself:
-// that needs a job and a delivery owner's session, which the development
-// tests drive through the daemon with the fake provider, and C42 covers a
-// refused draft.
+// pullRequestRepository is the GitHub repository of the fixture, which the
+// leader names with --repo as its instructions say.
+var pullRequestRepository = "talvor/asmai-fixture"
+
+// leaderCommand returns the command of tried that ran exactly as asked, or
+// the reason the case cannot rely on it: never run, retried outside the
+// sandbox (dangerouslyDisableSandbox, which raises the native prompt), denied
+// or failed.
+func leaderCommand(turn Turn, command string) (Command, error) {
+	tried := turn.Tried(command)
+	if len(tried) == 0 {
+		return Command{}, fmt.Errorf("inconclusive: Engineering's leader never ran `%s` as one Bash call, so the harness cannot show how its session treats it", command)
+	}
+	for _, c := range tried {
+		switch {
+		case c.Unsandboxed:
+			return Command{}, fmt.Errorf("`%s` was retried outside the sandbox (dangerouslyDisableSandbox), so the sandbox stopped it: %s", command, strings.TrimSpace(c.Output))
+		case c.Denied || c.Failed:
+			return Command{}, fmt.Errorf("`%s` was denied or failed in the leader's session: %s", command, strings.TrimSpace(c.Output))
+		}
+	}
+	return tried[0], nil
+}
+
+// c50 qualifies that Engineering's leader can open and update the job's pull
+// request in its real session and sandbox (dontAsk, with the settings and
+// instructions the code under test gives a leader). From a working directory
+// that is not the clone, as a leader's is not the read-only view, the session
+// runs the commands its instructions give, each as its own Bash call: `gh pr
+// create --draft --repo <owner/name> ...` opens a draft pull request from a
+// scratch job branch on the fixture, and `gh pr edit <number> --repo
+// <owner/name> --body-file <file>` then updates its body. Neither may be
+// stopped by the sandbox, retried outside it or denied, and the session's
+// hooks must report no PermissionRequest. The pull request is looked up with
+// the code the daemon runs for `asmai effect pull-request`. The case does not
+// run `asmai effect pull-request` itself: that needs a job, and C42 and the
+// development tests cover the daemon's recording.
 func (h *Harness) c50(ctx context.Context, f *Factory, r *Result) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
+	if err := checkGuardDependencies(); err != nil {
+		return err
+	}
+	provider, err := h.ready(ctx, f)
+	if err != nil {
+		return err
+	}
 	realGH, err := exec.LookPath("gh")
 	if err != nil {
 		return errors.New("gh is not on the PATH: C50 opens a pull request with it")
@@ -43,7 +75,17 @@ func (h *Harness) c50(ctx context.Context, f *Factory, r *Result) (err error) {
 		return err
 	}
 	defer os.RemoveAll(scratch)
+	if scratch, err = filepath.EvalSymlinks(scratch); err != nil {
+		return err
+	}
 	clone := filepath.Join(scratch, "clone")
+	agent := filepath.Join(scratch, "agents", "leader@engineering")
+	bodies := filepath.Join(scratch, "bodies")
+	for _, dir := range []string{agent, bodies} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
 	base, err := repos.Clone(ctx, pushFixture, clone, "")
 	if err != nil {
 		return err
@@ -82,45 +124,81 @@ func (h *Harness) c50(ctx context.Context, f *Factory, r *Result) (err error) {
 		return fmt.Errorf("the push of %s found %v (%v)", branch, outside, err)
 	}
 
-	repository, err := github.Repository(ctx, clone)
+	instructions, err := roles.LeaderInstructions(roles.Engineering)
 	if err != nil {
-		return fmt.Errorf("looking up the repository of the clone with gh, as the daemon does before it opens a pull request: %w", err)
+		return err
 	}
-	title := "C50-" + token
-	url, err := github.CreatePullRequest(ctx, clone, github.Create{
-		Repository: repository, Base: base, Head: branch, Title: title, Draft: true,
-		Body: "A pull request AsmAI's qualification case C50 opens and closes. Do not merge it.\n",
-	})
+	hooks := filepath.Join(scratch, "hooks.jsonl")
+	args := providers.ClaudeCodeArgs(hookLog(hooks), guardModel, instructions, "", providers.WriteGuard{}, providers.Permissions{Unattended: true})
+	ask := func(prompt string) (Turn, error) {
+		return h.Provider.Ask(ctx, f, provider, AskSpec{Dir: agent, Args: args, Prompt: prompt})
+	}
+	const rules = "You are being qualified, as Engineering's leader, in your own session. Run the command as one single Bash tool call, exactly as written, with no other command in the call and never with dangerouslyDisableSandbox. " +
+		"If it is refused or fails, do not retry it, change it or work around it. Then reply with the single word done. The command: "
+
+	body1 := filepath.Join(bodies, "body-1.md")
+	if err := os.WriteFile(body1, []byte("A pull request AsmAI's qualification case C50 opens and closes. Do not merge it.\n"), 0o644); err != nil {
+		return err
+	}
+	create := fmt.Sprintf("gh pr create --draft --repo %s --base %s --head %s --title C50-%s --body-file %s", pullRequestRepository, base, branch, token, body1)
+	turn, err := ask(rules + "`" + create + "`")
 	if err != nil {
-		return fmt.Errorf("opening a draft pull request from %s as the daemon does for `asmai pr open`: %w", branch, err)
+		return err
+	}
+	c, err := leaderCommand(turn, create)
+	if err != nil {
+		return err
+	}
+	url := ""
+	for _, field := range strings.Fields(c.Output) {
+		if strings.HasPrefix(field, "https://") {
+			url = field
+		}
+	}
+	if url == "" {
+		return fmt.Errorf("`%s` printed no pull request URL: %q", create, c.Output)
 	}
 	opened = url
 	p, err := github.ViewPullRequest(ctx, clone, url)
 	if err != nil {
 		return err
 	}
-	if !p.Draft || p.IsNotReady() || p.HeadBranch != branch || p.HeadCommit != work || p.Title != title {
-		return fmt.Errorf("the pull request %s was found %+v, want a draft titled %q from %s at %s", url, p, title, branch, work)
+	if !p.Draft || p.IsNotReady() || p.HeadBranch != branch || p.HeadCommit != work {
+		return fmt.Errorf("the pull request %s was found %+v, want a draft from %s at %s", url, p, branch, work)
 	}
-	r.observe("the daemon's `gh pr create --draft`, run as the user in a clone of %s with the body on its standard input, opened %s; its lookup found pull request #%d a draft from %s at %s", repository, url, p.Number, branch, p.HeadCommit)
+	r.observe("Engineering's leader, in its real session in dontAsk mode and its sandbox, ran `gh pr create --draft --repo %s ...` from a directory that is not the clone, and opened %s; the daemon's lookup found pull request #%d a draft from %s at %s", pullRequestRepository, url, p.Number, branch, p.HeadCommit)
 
 	marker := "C50 updated the body " + token
-	if err := github.EditBody(ctx, clone, repository, p.Number, marker+"\n"); err != nil {
-		return fmt.Errorf("updating the body of %s as the daemon does for `asmai pr update`: %w", url, err)
+	body2 := filepath.Join(bodies, "body-2.md")
+	if err := os.WriteFile(body2, []byte(marker+"\n"), 0o644); err != nil {
+		return err
+	}
+	edit := fmt.Sprintf("gh pr edit %s --repo %s --body-file %s", path.Base(url), pullRequestRepository, body2)
+	if turn, err = ask(rules + "`" + edit + "`"); err != nil {
+		return err
+	}
+	if _, err := leaderCommand(turn, edit); err != nil {
+		return err
 	}
 	out, err := runGH(ctx, realGH, clone, "pr", "view", url, "--json", "body", "--jq", ".body")
 	if err != nil {
 		return err
 	}
 	if !strings.Contains(out, marker) {
-		return fmt.Errorf("after the daemon's body update the body of %s is %q, want it to hold %q", url, strings.TrimSpace(out), marker)
+		return fmt.Errorf("after `%s` the body of %s is %q, want it to hold %q", edit, url, strings.TrimSpace(out), marker)
 	}
-	if p, err = github.ViewPullRequest(ctx, clone, url); err != nil {
+	r.observe("the leader then ran `gh pr edit %s --repo %s --body-file ...`, which updated the body of %s, neither command denied, stopped by the sandbox or retried outside it", path.Base(url), pullRequestRepository, url)
+
+	asked, err := permissionRequests(hooks)
+	if err != nil {
 		return err
 	}
-	if !p.Draft || p.Title != title {
-		return fmt.Errorf("after the body update the pull request %s was found %+v, want it still a draft titled %q: the update changes the body and nothing else", url, p, title)
+	if len(asked) > 0 {
+		return fmt.Errorf("the leader's session raised a native permission prompt, which nobody can answer in its terminal, for %s", strings.Join(asked, ", "))
 	}
-	r.observe("the daemon's `gh pr edit --body-file -` then updated the body of %s, leaving it a draft with its title", url)
+	if !exists(hooks) {
+		return errors.New("inconclusive: the session's hooks reported nothing, so the harness cannot show that it raised no native prompt")
+	}
+	r.observe("the session's hooks reported no PermissionRequest in either turn")
 	return nil
 }

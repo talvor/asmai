@@ -11,30 +11,34 @@ import (
 	"strings"
 	"time"
 
-	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/repos"
+	"github.com/talvor/asmai/internal/roles"
 )
 
-// c51 qualifies the git writes the daemon makes in a worker's workspace for
-// its `asmai commit`, `asmai merge` and `asmai push` (ADR 0018; #151 and #182).
-// No agent runs a git write, with the managed policy or without it, so the
-// daemon runs git itself, as the user, with the worker's own environment and
-// no sandbox. The workspace is a linked checkout of a clone of the fixture on
-// GitHub, on a scratch assignment branch, as a real worker's is, with a new
-// file in it. The case runs the code the daemon runs, in the environment the
-// daemon gives the worker (providers.SessionEnv with the session credential,
-// slot and temporary directory): repos.CommitWorkspace takes the new file in a
-// commit, which a second call with nothing changed refuses; repos.MergeIntoWorkspace
-// finds origin's base already in the branch; and repos.PushWorkspaceBranch
-// pushes the branch plainly, so that origin's branch is at the commit. The
-// scratch branch is deleted afterwards. The case does not run `asmai commit`
-// itself, which needs a job and a worker's session: the development tests
-// drive those through the daemon with the fake provider, and C37 qualifies
-// that a worker's own session is denied every git write.
+// c51 qualifies that an Engineering worker can commit and push its assignment
+// branch in its real session and sandbox (dontAsk, with the settings and
+// instructions the code under test gives a worker), the stall of #151. The
+// workspace is a linked checkout of a clone of the fixture on GitHub, on a
+// scratch assignment branch, as a real worker's is, with a new file in it.
+// The session runs `git add`, `git commit` and `git push origin <branch>`,
+// each as its own Bash call, as its instructions say. None may be denied,
+// fail, be stopped by the sandbox or be retried outside it
+// (dangerouslyDisableSandbox), the session's hooks must report no
+// PermissionRequest, and origin's branch must be at the worker's commit. The
+// scratch branch is deleted afterwards. The case does not run `asmai result`
+// or `asmai blocked`, which need a job: the development tests drive those
+// through the daemon.
 func (h *Harness) c51(ctx context.Context, f *Factory, r *Result) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
+	if err := checkGuardDependencies(); err != nil {
+		return err
+	}
+	provider, err := h.ready(ctx, f)
+	if err != nil {
+		return err
+	}
 	scratch, err := os.MkdirTemp("", "asmai-qualify-workerpush")
 	if err != nil {
 		return err
@@ -83,51 +87,81 @@ func (h *Harness) c51(ctx context.Context, f *Factory, r *Result) (err error) {
 		return err
 	}
 
-	env := providers.SessionEnv(f.env, filepath.Dir(f.asmai), map[string]string{
-		daemon.SessionCredential: "qualification-" + token,
-		"TMPDIR":                 tmp,
+	instructions, err := roles.WorkerInstructions(roles.Engineering)
+	if err != nil {
+		return err
+	}
+	hooks := filepath.Join(scratch, "hooks.jsonl")
+	perms := providers.Permissions{Unattended: true, Editable: []string{workspace, tmp}}
+	args := providers.ClaudeCodeArgs(hookLog(hooks), guardModel, instructions, "", providers.WriteGuard{Writable: []string{tmp}}, perms)
+	commands := []string{
+		"git add c51.txt",
+		"git commit -q -m 'C51: a worker commits'",
+		"git push origin " + branch,
+	}
+	var list strings.Builder
+	for i, c := range commands {
+		fmt.Fprintf(&list, "%d. `%s`\n", i+1, c)
+	}
+	turn, err := h.Provider.Ask(ctx, f, provider, AskSpec{
+		Dir:  workspace,
+		Args: args,
+		Prompt: "You are being qualified, as an Engineering worker, in your own session. Run each of these commands as its own single Bash tool call, in order, exactly as written, never with dangerouslyDisableSandbox. " +
+			"If one is refused or fails, do not retry it, change it or work around it: go on to the next. When you have tried them all, reply with the single word done.\n" + list.String(),
 	})
-	commit, err := repos.CommitWorkspace(ctx, workspace, env, "C51: a worker's commit, made by the daemon", nil)
 	if err != nil {
-		return fmt.Errorf("the daemon's commit of the worker's new file: %w", err)
+		return err
 	}
-	if head, _ := git(ctx, workspace, "rev-parse", "HEAD"); strings.TrimSpace(head) != commit {
-		return fmt.Errorf("the commit the daemon reported, %s, is not the workspace's HEAD %q", commit, strings.TrimSpace(head))
-	}
-	if tracked, _ := git(ctx, workspace, "show", "--name-only", "--format=", "HEAD"); strings.TrimSpace(tracked) != "c51.txt" {
-		return fmt.Errorf("the daemon's commit holds %q, want the worker's c51.txt alone", strings.TrimSpace(tracked))
-	}
-	if _, err := repos.CommitWorkspace(ctx, workspace, env, "C51: nothing changed", nil); err == nil || !strings.Contains(err.Error(), "nothing to commit") {
-		return fmt.Errorf("a second daemon commit with nothing changed returned %v, want it to say there is nothing to commit", err)
-	}
-	r.observe("the daemon's commit, run as the user with the worker's environment and no sandbox, took the worker's new file in %s in a linked checkout of a clone of %s, and refused a second commit with nothing changed", commit, pushFixture)
-
-	merged, err := repos.MergeIntoWorkspace(ctx, workspace, env, "origin/"+base)
-	if err != nil {
-		return fmt.Errorf("the daemon's merge of origin/%s into the worker's branch: %w", base, err)
-	}
-	if !merged.UpToDate && merged.Commit == "" {
-		return fmt.Errorf("the daemon's merge of origin/%s made no commit and was not up to date: %+v", base, merged)
-	}
-	if merged.UpToDate {
-		r.observe("the daemon's merge of origin/%s found it already in the worker's branch", base)
-	} else {
-		r.observe("the daemon's merge of origin/%s into the worker's branch made %s", base, merged.Commit)
-		if commit, err = repos.Commit(ctx, workspace, "HEAD"); err != nil {
+	for _, command := range commands {
+		if err := workerCommand(turn, command); err != nil {
 			return err
 		}
 	}
-
-	if err := repos.PushWorkspaceBranch(ctx, workspace, env, branch); err != nil {
-		return fmt.Errorf("the daemon's push of the worker's branch: %w", err)
+	want, err := git(ctx, workspace, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	if subject, _ := git(ctx, workspace, "log", "-1", "--format=%s"); strings.TrimSpace(subject) != "C51: a worker commits" {
+		return fmt.Errorf("the worker's commit was not made in the workspace (HEAD is %q)", strings.TrimSpace(subject))
 	}
 	out, err := git(ctx, clone, "ls-remote", "--heads", "origin", branch)
 	if err != nil {
 		return err
 	}
-	if got, _, _ := strings.Cut(strings.TrimSpace(out), "\t"); got != commit {
-		return fmt.Errorf("after the daemon's push of %s origin's branch is at %q, want the worker's commit %s", branch, got, commit)
+	if got, _, _ := strings.Cut(strings.TrimSpace(out), "\t"); got != strings.TrimSpace(want) {
+		return fmt.Errorf("after `git push origin %s` origin's branch is at %q, want the worker's commit %s", branch, got, strings.TrimSpace(want))
 	}
-	r.observe("the daemon's plain push of %s reached origin at %s", branch, commit)
+	r.observe("an Engineering worker, in its real session in dontAsk mode and its sandbox, ran `git add`, `git commit` and `git push origin %s` in a linked checkout of a clone of %s, each as its own Bash call and none denied, stopped by the sandbox or retried outside it, and origin's branch is at its commit %s", branch, pushFixture, strings.TrimSpace(want))
+
+	asked, err := permissionRequests(hooks)
+	if err != nil {
+		return err
+	}
+	if len(asked) > 0 {
+		return fmt.Errorf("the worker's session raised a native permission prompt, which nobody can answer in its terminal, for %s", strings.Join(asked, ", "))
+	}
+	if !exists(hooks) {
+		return errors.New("inconclusive: the session's hooks reported nothing, so the harness cannot show that it raised no native prompt")
+	}
+	r.observe("the session's hooks reported no PermissionRequest")
+	return nil
+}
+
+// workerCommand returns the command of turn that ran exactly as asked, or the
+// reason the case cannot rely on it: never run, retried outside the sandbox,
+// denied or failed.
+func workerCommand(turn Turn, command string) error {
+	tried := turn.Tried(command)
+	if len(tried) == 0 {
+		return fmt.Errorf("inconclusive: the worker never ran `%s` as one Bash call, so the harness cannot show how its session treats it", command)
+	}
+	for _, c := range tried {
+		switch {
+		case c.Unsandboxed:
+			return fmt.Errorf("`%s` was retried outside the sandbox (dangerouslyDisableSandbox), so the sandbox stopped it: %s", command, strings.TrimSpace(c.Output))
+		case c.Denied || c.Failed:
+			return fmt.Errorf("`%s` was denied or failed in the worker's session: %s", command, strings.TrimSpace(c.Output))
+		}
+	}
 	return nil
 }

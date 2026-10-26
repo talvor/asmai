@@ -181,6 +181,10 @@ func assignmentFlow(t *testing.T, worker, leader []string) (fixture writingFixtu
 // `asmai assign`, to name a skill or narrow the worker's list.
 var assignmentSkillFlags string
 
+// assignmentWorkerStop is the prompt the worker's closing Stop is reported
+// under, which a test sets to another when its own steps end the turns.
+var assignmentWorkerStop = "assignment"
+
 func assignmentFlowWith(t *testing.T, setUpGit func(*testing.T), files map[string]string, worker, leader []string) (fixture writingFixture, testDir string) {
 	t.Helper()
 	return assignmentFlowConfigured(t, setUpGit, files, nil, worker, leader)
@@ -222,7 +226,7 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 3"),
 	}, worker...)
 	workerScript = append(workerScript,
-		hookStep("Stop", "assignment", ""),
+		hookStep("Stop", assignmentWorkerStop, ""),
 		fakeRun(`touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,
 	)

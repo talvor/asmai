@@ -407,3 +407,85 @@ func TestAcknowledgedUnfetchedDispatchDoesNotStarveLaterDispatch(t *testing.T) {
 	}
 	nudge(later.ID, "prompt-2")
 }
+
+// Claude Code 2.1.292 reports a prompt typed while the Stop hook of a finished
+// turn runs under that turn's prompt ID, and the turn that takes it stops
+// under another. An answered decision is nudged at exactly that boundary when
+// it arrived during the receiver's turn, so the dispatch must end at the
+// turn's own Stop, or the receiver is never nudged again.
+func TestANudgeTypedAsTheStopHookRunsEndsAtTheFollowingTurnsStop(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	const agent = "leader@engineering"
+	at := time.Now()
+	if _, err := s.SessionStarted(store.SessionStart{Agent: agent, Role: roles.Engineering, Provider: "claude-code", Version: "v", Model: "m", Executable: "/bin/sh", Dir: t.TempDir(), PID: 1, At: at}); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sess.Stop(100 * time.Millisecond) })
+	first := addPendingDispatch(t, s, agent, store.DispatchCreated, 1)
+	l := &leader{address: roles.LeaderOf(roles.Engineering), session: sess, generation: 1, ready: true}
+	d := &daemon{leaders: map[string]*leader{agent: l}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ref := sessionRef{address: l.address, generation: 1}
+	handoff := func(text string) int64 {
+		t.Helper()
+		_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: text}, "UserPromptSubmit", json.RawMessage(`{"prompt":"`+text+`"}`), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: text, Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, dispatch, err := s.SendHandoff(store.Handoff{Job: job.Number, Sender: "leader@coordination", Receiver: agent, Outcome: "outcome", Decisions: "none", Evidence: "none", Constraints: "none", Permissions: "none", Criteria: []string{"complete"}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dispatch.ID
+	}
+	// deliver nudges the next dispatch and has the provider acknowledge it
+	// under submitted, then fetch it and stop the turn under stopped.
+	deliver := func(dispatch int64, submitted, stopped string) {
+		t.Helper()
+		d.nudge(agent)
+		prompt := fmt.Sprintf("asmai inbox --dispatch %d", dispatch)
+		d.mu.Lock()
+		pending := l.pendingPrompt
+		d.mu.Unlock()
+		if pending != prompt {
+			t.Fatalf("the daemon nudged %q, want %q", pending, prompt)
+		}
+		if matched, err := d.automatedSubmitted(ref, prompt, submitted, "transcript", json.RawMessage(`{"prompt":"`+prompt+`"}`)); err != nil || !matched {
+			t.Fatalf("acknowledging %q matched=%v, err=%v", prompt, matched, err)
+		}
+		if messages, err := s.Inbox(agent, dispatch, time.Now()); err != nil || len(messages) != 1 {
+			t.Fatalf("fetching dispatch %d returned %+v (%v)", dispatch, messages, err)
+		}
+		if _, err := d.endCurrentDispatch(ref, stopped, "transcript"); err != nil {
+			t.Fatal(err)
+		}
+		d.mu.Lock()
+		current := l.currentDispatch
+		d.mu.Unlock()
+		if current != 0 {
+			t.Fatalf("dispatch %d is still the current dispatch after the turn stopped under %q", current, stopped)
+		}
+		d.mu.Lock()
+		l.ready = true
+		d.mu.Unlock()
+	}
+	deliver(first, "prompt-1", "prompt-1")
+	// The second is nudged as the first turn's Stop hook runs: the provider
+	// acknowledges it under prompt-1, and its own turn stops under prompt-2.
+	second := handoff("second")
+	deliver(second, "prompt-1", "prompt-2")
+	// The receiver still wakes for what comes next.
+	third := handoff("third")
+	deliver(third, "prompt-3", "prompt-3")
+}

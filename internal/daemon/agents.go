@@ -177,6 +177,10 @@ type leader struct {
 	pendingDispatch int64
 	currentDispatch int64
 	currentPromptID string
+	// stoppedPromptID is the prompt the provider last reported a finished
+	// turn for. A submission reported under it was typed while that turn's
+	// Stop hook ran, and belongs to the turn that follows.
+	stoppedPromptID string
 	pendingPrompt   string
 	transcript      string
 	// prompt is the native permission prompt the session waits at, if any.
@@ -901,7 +905,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.session, l.generation, l.startedAt = s, generation, at
 	l.skills = skills.NamesOf(launch.skills)
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
-	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", ""
+	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)

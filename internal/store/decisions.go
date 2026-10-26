@@ -369,6 +369,9 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 	if err != nil {
 		return Dispatch{}, err
 	}
+	if a.State == AssignmentActive && w.Dispatch.State != DispatchStopped {
+		return Dispatch{}, fmt.Errorf("assignment %d's latest worker dispatch %d is %s; wait for it to stop before redispatching", a.ID, w.Dispatch.ID, w.Dispatch.State)
+	}
 	for _, d := range unknown {
 		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
 			return Dispatch{}, err

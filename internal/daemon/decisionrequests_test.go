@@ -18,7 +18,11 @@ import (
 func (f twoResults) withWorkers(t *testing.T) {
 	t.Helper()
 	for i, a := range f.assignments {
-		inbox, err := f.s.Inbox(a.Worker, 0, 0, time.Now())
+		w, err := f.s.WorkerDispatch(a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inbox, err := f.s.Inbox(a.Worker, 0, w.Dispatch.ID, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}

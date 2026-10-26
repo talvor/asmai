@@ -35,6 +35,13 @@ func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
+			previous, err := s.WorkerDispatch(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ChangeDispatch(previous.Dispatch.ID, previous.Dispatch.Generation, store.DispatchWorking, store.DispatchStopped, "", time.Now()); err != nil {
+				t.Fatal(err)
+			}
 			redispatch, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, time.Now())
 			if err != nil {
 				t.Fatal(err)

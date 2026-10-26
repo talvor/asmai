@@ -184,7 +184,7 @@ func TestAStepTheUsersDecisionOfTheJobCoversIsSatisfiedWithoutAskingTheUser(t *t
 		t.Errorf("the answer relied on %q, want it to name the record", answered.ReliedOn)
 	}
 	// The worker is told the record to name in its result.
-	inbox, err := st.s.Inbox(st.assignment.Worker, 0, 0, st.tick())
+	inbox, err := st.s.Inbox(st.assignment.Worker, 0, dispatch.ID, st.tick())
 	if err != nil {
 		t.Fatal(err)
 	}

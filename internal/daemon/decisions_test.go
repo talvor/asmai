@@ -343,6 +343,12 @@ func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDi
 	if _, _, err := f.d.decide(Request{Session: "quality", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"x"}}); err == nil || !strings.Contains(err.Error(), "is owned by leader@engineering") {
 		t.Errorf("another leader redispatching returned %v, want it refused", err)
 	}
+	if _, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"the push works now"}}); err == nil || !strings.Contains(err.Error(), "wait for it to stop") {
+		t.Fatalf("redispatching working assignment returned %v", err)
+	}
+	if err := f.d.store.ChangeDispatch(rejected.Dispatch.ID, 1, store.DispatchWorking, store.DispatchStopped, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
 
 	resp, notify, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"the push works now"}})
 	if err != nil {

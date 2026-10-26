@@ -366,7 +366,7 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.recipient=? AND (?=0 OR d.id=?) AND NOT (d.state=? AND m.fetched_at IS NULL) ORDER BY m.id`, agent, only, only, DispatchStopped)
+	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id LEFT JOIN assignments a ON a.id=m.assignment WHERE m.recipient=? AND (?=0 OR d.id=?) AND NOT (d.state=? AND m.fetched_at IS NULL) AND (m.fetched_at IS NOT NULL OR d.id=? OR a.worker IS NULL OR a.worker<>?) ORDER BY m.id`, agent, only, only, DispatchStopped, current, agent)
 	if err != nil {
 		return nil, err
 	}
@@ -432,9 +432,6 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 				return nil, e
 			}
 			m.RequestData = &q
-		}
-		if !m.Fetched && m.Dispatch != current && m.AssignmentData != nil && m.AssignmentData.Worker == agent {
-			continue
 		}
 		if m.Fetched {
 			if m.State != DispatchNudged {

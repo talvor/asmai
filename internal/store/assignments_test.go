@@ -118,7 +118,7 @@ func TestAnAssignmentIsRecordedWithItsWorkspaceAndTheDispatchThatDeliversIt(t *t
 	}
 
 	// The worker's inbox gives the assignment itself.
-	messages, err := s.Inbox("worker1@engineering", 0, 0, assignmentsAt)
+	messages, err := s.Inbox("worker1@engineering", 0, d.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageAssignment || messages[0].AssignmentData == nil || messages[0].AssignmentData.ID != a.ID || messages[0].Handoff != 0 {
 		t.Fatalf("the worker's inbox holds %+v (%v)", messages, err)
 	}
@@ -416,8 +416,8 @@ func TestOpenMigratesAStoreWhoseMessagesAllHaveAHandoff(t *testing.T) {
 	if _, err := s.JobBranchMade(JobBranch{Job: 1, Repository: "fixture", Name: "asmai/job-1-x", StartedFrom: tipCommit, View: "/v"}, assignmentsAt); err != nil {
 		t.Fatal(err)
 	}
-	newAssignment(t, s, 1)
-	next, err := s.Inbox("worker1@engineering", 0, 0, assignmentsAt)
+	_, nextDispatch := newAssignment(t, s, 1)
+	next, err := s.Inbox("worker1@engineering", 0, nextDispatch.ID, assignmentsAt)
 	if err != nil || len(next) != 1 || next[0].ID != 2 || next[0].Handoff != 0 || next[0].Assignment != 1 {
 		t.Errorf("the first message after the migration is %+v (%v), want message 2 about assignment 1", next, err)
 	}

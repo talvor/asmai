@@ -1022,9 +1022,6 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 			return Report{}, Dispatch{}, err
 		}
 	}
-	if err := stopQueuedRedispatches(tx, a, at); err != nil {
-		return Report{}, Dispatch{}, err
-	}
 	if _, err := appendEntry(tx, at, kind, struct {
 		Report
 		Job int64 `json:"job"`
@@ -1040,40 +1037,6 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 		return Report{}, Dispatch{}, err
 	}
 	return r, d, tx.Commit()
-}
-
-func stopQueuedRedispatches(tx *sql.Tx, a Assignment, at time.Time) error {
-	rows, err := tx.Query(`SELECT d.id, d.generation, d.state FROM messages m JOIN dispatches d ON d.message = m.id
-		WHERE m.assignment = ? AND m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?, ?)`,
-		a.ID, a.Worker, MessageRedispatch, DispatchCreated, DispatchNudged, DispatchUnknown)
-	if err != nil {
-		return err
-	}
-	var queued []Dispatch
-	for rows.Next() {
-		var d Dispatch
-		if err := rows.Scan(&d.ID, &d.Generation, &d.State); err != nil {
-			rows.Close()
-			return err
-		}
-		queued = append(queued, d)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, d := range queued {
-		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
-			return err
-		}
-		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
-			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": d.State, "state": DispatchStopped,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // checkResult checks what a result holds: a writing assignment's links its

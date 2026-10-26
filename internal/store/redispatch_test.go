@@ -101,85 +101,58 @@ func TestRedispatchRefusesOtherQueuedWorkMessages(t *testing.T) {
 	}
 }
 
-func TestRedispatchAllowsWorkingDispatchButRefusesAnotherQueuedOne(t *testing.T) {
+func TestRedispatchRefusesWorkingDispatchUntilItStops(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, first := newAssignment(t, s, jobWithBranch(t, s))
 	working(t, s, first)
-	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"first nudge"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"second nudge"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
-		t.Fatalf("redispatch over queued redispatch returned %v", err)
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"first nudge"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for it to stop") {
+		t.Fatalf("redispatch over working dispatch returned %v", err)
 	}
 	var state string
 	if err := s.db.QueryRow(`SELECT state FROM dispatches WHERE id = ?`, first.ID).Scan(&state); err != nil || state != DispatchWorking {
 		t.Fatalf("the working dispatch is %s (%v)", state, err)
+	}
+	if err := s.ChangeDispatch(first.ID, 1, DispatchWorking, DispatchStopped, "", assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"cause fixed"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != queued.ID {
 		t.Fatalf("next dispatch is %+v (%v), want %d", next, err, queued.ID)
 	}
 }
 
-func TestInboxKeepsOutOfTurnRedispatchEligible(t *testing.T) {
-	for _, state := range []string{DispatchDelivered, DispatchWorking} {
-		for _, onlyQueued := range []bool{false, true} {
-			name := state + "/all"
-			if onlyQueued {
-				name = state + "/by dispatch"
-			}
-			t.Run(name, func(t *testing.T) {
-				s := open(t, filepath.Join(t.TempDir(), "store.db"))
-				a, first := newAssignment(t, s, jobWithBranch(t, s))
-				if state == DispatchWorking {
-					working(t, s, first)
-				} else {
-					if _, err := s.Inbox(a.Worker, first.ID, first.ID, assignmentsAt); err != nil {
-						t.Fatal(err)
-					}
-				}
-				queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
-				if err != nil {
-					t.Fatal(err)
-				}
-				only := int64(0)
-				if onlyQueued {
-					only = queued.ID
-				}
-				messages, err := s.Inbox(a.Worker, only, first.ID, assignmentsAt)
-				if err != nil {
-					t.Fatal(err)
-				}
-				found := false
-				for _, message := range messages {
-					if message.Dispatch == queued.ID {
-						found = true
-						if message.Fetched || message.State != DispatchCreated {
-							t.Errorf("out-of-turn redispatch is %+v", message)
-						}
-					}
-				}
-				if !found {
-					t.Fatal("out-of-turn redispatch was hidden")
-				}
-				if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != queued.ID {
-					t.Fatalf("next dispatch is %+v (%v), want redispatch %d", next, err, queued.ID)
-				}
-			})
-		}
+func TestRedispatchRefusesDeliveredDispatch(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, first := newAssignment(t, s, jobWithBranch(t, s))
+	if _, err := s.Inbox(a.Worker, first.ID, first.ID, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"again"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for it to stop") {
+		t.Fatalf("redispatch over delivered dispatch returned %v", err)
 	}
 }
 
-func TestInboxKeepsManualReadQueuedUntilRedispatchIsCurrent(t *testing.T) {
+func TestInboxOmitsOutOfTurnRedispatchUntilItIsCurrent(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, _ := stoppedAssignment(t, s)
 	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages, err := s.Inbox(a.Worker, queued.ID, 0, assignmentsAt)
-	if err != nil || len(messages) != 1 || messages[0].Fetched {
-		t.Fatalf("manual read consumed queued work: %+v (%v)", messages, err)
+	messages, err := s.Inbox(a.Worker, 0, 0, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if message.Dispatch == queued.ID {
+			t.Fatalf("all-message inbox previewed queued work: %+v", messages)
+		}
+	}
+	if messages, err := s.Inbox(a.Worker, queued.ID, 0, assignmentsAt); err == nil || len(messages) != 0 {
+		t.Fatalf("dispatch-specific inbox previewed queued work: %+v (%v)", messages, err)
 	}
 	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != queued.ID {
 		t.Fatalf("next dispatch is %+v (%v), want redispatch %d", next, err, queued.ID)
@@ -190,73 +163,7 @@ func TestInboxKeepsManualReadQueuedUntilRedispatchIsCurrent(t *testing.T) {
 	}
 }
 
-func TestInboxKeepsRedispatchQueuedWhileADecisionAnswerIsWorking(t *testing.T) {
-	s := open(t, filepath.Join(t.TempDir(), "store.db"))
-	a, _ := stoppedAssignment(t, s)
-	request, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, answer, err := s.DecisionAnswered(DecisionAnswer{Request: request.Request, Version: 1, Answerer: a.Owner, Text: "continue"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Inbox(a.Worker, answer.ID, answer.ID, assignmentsAt); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.WorkFetchedDispatch(answer.ID, a.Worker, 1, assignmentsAt); err != nil {
-		t.Fatal(err)
-	}
-	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	messages, err := s.Inbox(a.Worker, queued.ID, answer.ID, assignmentsAt)
-	if err != nil || len(messages) != 1 || messages[0].Fetched {
-		t.Fatalf("redispatch fetched during decision answer: %+v (%v)", messages, err)
-	}
-	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != queued.ID {
-		t.Fatalf("next dispatch is %+v (%v), want redispatch %d", next, err, queued.ID)
-	}
-}
-
-func TestInboxKeepsRedispatchQueuedAfterAnswerInSameRead(t *testing.T) {
-	s := open(t, filepath.Join(t.TempDir(), "store.db"))
-	a, _ := stoppedAssignment(t, s)
-	request, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, answer, err := s.DecisionAnswered(DecisionAnswer{Request: request.Request, Version: 1, Answerer: a.Owner, Text: "continue"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	messages, err := s.Inbox(a.Worker, 0, answer.ID, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var gotAnswer, gotQueued bool
-	for _, message := range messages {
-		switch message.Dispatch {
-		case answer.ID:
-			gotAnswer = message.Fetched
-		case queued.ID:
-			gotQueued = !message.Fetched && message.State == DispatchCreated
-		}
-	}
-	if !gotAnswer || !gotQueued {
-		t.Fatalf("answer and redispatch after inbox are %+v", messages)
-	}
-	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != queued.ID {
-		t.Fatalf("next dispatch is %+v (%v), want redispatch %d", next, err, queued.ID)
-	}
-}
-
-func TestInboxKeepsOutOfTurnCancellationEligible(t *testing.T) {
+func TestInboxOmitsOutOfTurnCancellation(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, first := newAssignment(t, s, jobWithBranch(t, s))
 	working(t, s, first)
@@ -265,23 +172,22 @@ func TestInboxKeepsOutOfTurnCancellationEligible(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages, err := s.Inbox(a.Worker, cancellation.ID, first.ID, assignmentsAt)
-	if err != nil || len(messages) != 1 || messages[0].Fetched {
-		t.Fatalf("out-of-turn cancellation was fetched: %+v (%v)", messages, err)
+	if err == nil || len(messages) != 0 {
+		t.Fatalf("out-of-turn cancellation was previewed: %+v (%v)", messages, err)
 	}
 	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != cancellation.ID {
 		t.Fatalf("next dispatch is %+v (%v), want cancellation %d", next, err, cancellation.ID)
 	}
 }
 
-func TestAReportOnWorkingDispatchRetiresQueuedRedispatch(t *testing.T) {
+func TestAReportAfterRefusedRedispatchLeavesNoQueuedWork(t *testing.T) {
 	for _, kind := range []string{ReportResult, ReportBlocked} {
 		t.Run(kind, func(t *testing.T) {
 			s := open(t, filepath.Join(t.TempDir(), "store.db"))
 			a, workingDispatch := newAssignment(t, s, jobWithBranch(t, s))
 			working(t, s, workingDispatch)
-			queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
-			if err != nil {
-				t.Fatal(err)
+			if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for it to stop") {
+				t.Fatalf("redispatch during active work returned %v", err)
 			}
 			if kind == ReportResult {
 				if _, err := s.EffectRecorded(a.Worker, 1, workingDispatch.ID, "push", "origin/"+a.Workspace.Branch, assignmentsAt); err != nil {
@@ -298,11 +204,8 @@ func TestAReportOnWorkingDispatchRetiresQueuedRedispatch(t *testing.T) {
 			if got, err := s.Assignment(a.ID); err != nil || got.State != want {
 				t.Fatalf("assignment after %s is %+v (%v)", kind, got, err)
 			}
-			if _, err := s.Inbox(a.Worker, queued.ID, queued.ID, assignmentsAt); err == nil {
-				t.Fatalf("the queued redispatch remained deliverable after %s", kind)
-			}
 			if _, err := s.NextDispatch(a.Worker); err != sql.ErrNoRows {
-				t.Fatalf("the worker has stale queued work (%v)", err)
+				t.Fatalf("the refused redispatch left queued work after %s (%v)", kind, err)
 			}
 		})
 	}
@@ -310,8 +213,7 @@ func TestAReportOnWorkingDispatchRetiresQueuedRedispatch(t *testing.T) {
 
 func TestRedispatchPreservesQueuedDecisionAnswer(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
-	a, workingDispatch := newAssignment(t, s, jobWithBranch(t, s))
-	working(t, s, workingDispatch)
+	a, _ := stoppedAssignment(t, s)
 	request, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
@@ -323,6 +225,15 @@ func TestRedispatchPreservesQueuedDecisionAnswer(t *testing.T) {
 	redispatch, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
+	}
+	preview, err := s.Inbox(a.Worker, 0, 0, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range preview {
+		if message.Dispatch == answer.ID || message.Dispatch == redispatch.ID {
+			t.Fatalf("inbox previewed queued answer or redispatch: %+v", preview)
+		}
 	}
 	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != answer.ID {
 		t.Fatalf("next dispatch is %+v (%v), want queued decision answer %d", next, err, answer.ID)

@@ -190,6 +190,56 @@ func (s *Store) AssignmentResumed(id, previous int64, nativeSession, body string
 	return d, tx.Commit()
 }
 
+// CancellationRestarted continues the cancelling assignment id of a cancelled
+// job after a restart that cannot resume its worker's session, in a new
+// cancellation dispatch with body, which starts the worker in a new session.
+// previous is the worker's dispatch the stop left; if it was still on its way
+// or at work, it becomes unknown. A job cancel ends every assignment as
+// cancelled, so none of a cancelled job is held for reconciliation.
+func (s *Store) CancellationRestarted(id, previous int64, body string, at time.Time) (Dispatch, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer tx.Rollback()
+	w, err := workerDispatch(tx, id)
+	if err != nil {
+		return Dispatch{}, fmt.Errorf("assignment %d: %w", id, err)
+	}
+	a := w.Assignment
+	j, err := job(tx, a.Job)
+	if err != nil {
+		return Dispatch{}, fmt.Errorf("job %d: %w", a.Job, err)
+	}
+	switch {
+	case a.State != AssignmentCancelling || j.State != JobCancelled:
+		return Dispatch{}, fmt.Errorf("assignment %d is %s in job %d, which is %s: only a cancelling assignment of a cancelled job has its cancellation started again", a.ID, a.State, j.Number, j.State)
+	case w.Dispatch.ID != previous:
+		return Dispatch{}, fmt.Errorf("dispatch %d is not the latest dispatch of %s's assignment %d", previous, a.Worker, a.ID)
+	}
+	switch w.Dispatch.State {
+	case DispatchCreated, DispatchNudged, DispatchDelivered, DispatchWorking:
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchUnknown, timestamp(at), previous); err != nil {
+			return Dispatch{}, err
+		}
+		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
+			"id": previous, "agent": w.Dispatch.Agent, "generation": w.Dispatch.Generation, "from": w.Dispatch.State, "state": DispatchUnknown, "assignment": a.ID,
+		}); err != nil {
+			return Dispatch{}, err
+		}
+	}
+	d, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, Daemon, a.Worker, MessageCancellation, body, at)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if _, err := appendEntry(tx, at, KindCancellationRestarted, map[string]any{
+		"assignment": a.ID, "job": a.Job, "worker": a.Worker, "owner": a.Owner, "previous": previous, "dispatch": d.ID,
+	}); err != nil {
+		return Dispatch{}, err
+	}
+	return d, tx.Commit()
+}
+
 // AssignmentNeedsReconciliation holds the active or cancelling assignment id
 // for its owning leader to reconcile, because why: its worker's turn was cut off, or
 // its native session cannot be resumed. dispatch is the worker's dispatch

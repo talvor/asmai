@@ -107,11 +107,11 @@ func cancellableJob(q queryer, number int64) (Job, error) {
 // reason; every active or submitted assignment, and every one that needs
 // reconciliation, is cancelling, with its worker told to push its assignment
 // branch and stop, and the results submitted but not reviewed are discarded
-// with it; the pending decision requests are
-// withdrawn, which ends their pages; and the daemon's closing of the pull
-// request is recorded as its effect. Coordination's leader is told what the
-// cancellation did, and every other leader with work in the job that it was
-// cancelled. Nothing changes when it is refused.
+// with it; the pending decision requests are withdrawn, which ends their
+// pages; and the daemon's closing of the pull request is recorded as its
+// effect. Coordination's leader is told what the cancellation did, and every
+// other leader with work in the job that it was cancelled. Nothing changes
+// when it is refused.
 func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -205,7 +205,7 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 		return JobCancellation{}, err
 	}
 	notice := fmt.Sprintf("Job %d is cancelled at the user's word, in witnessed message %d: %q. "+
-		"Stop assigning, accepting and delivering its work: the daemon refuses new work for it, discards its unreviewed results, and has told the workers of its live assignments to push their assignment branches and stop; each ends as cancelled once the daemon confirms the push. "+
+		"Stop assigning, accepting and delivering its work: the daemon refuses new work for it, discards its unreviewed results, and has told the workers of its live assignments, and of those that needed reconciliation, to push their assignment branches and stop; each ends as cancelled once the daemon confirms the push. "+
 		"Its branches stay on origin.", j.Number, witness, reason)
 	for _, l := range leaders {
 		if l == CoordinationLeader || !strings.HasPrefix(l, "leader@") {

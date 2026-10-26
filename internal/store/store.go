@@ -431,9 +431,12 @@ const (
 	// KindAssignmentResumed records a stopped worker's assignment continuing
 	// after a restart, in a new dispatch that resumes the one that stopped,
 	// and KindAssignmentNeedsReconciliation an assignment held for its
-	// owning leader to reconcile.
+	// owning leader to reconcile. KindCancellationRestarted records a
+	// cancelled job's cancelling assignment, whose worker's session cannot be
+	// resumed, given a new cancellation dispatch in a new session instead.
 	KindAssignmentResumed             = "assignment.resumed"
 	KindAssignmentNeedsReconciliation = "assignment.needs_reconciliation"
+	KindCancellationRestarted         = "assignment.cancellation_restarted"
 	// KindJobBranchPushed records the daemon pushing a job branch for its
 	// delivery owner, with the effect it records and the outside changes the
 	// pushed commit took in. KindOutsideChange records a push refused because

@@ -128,6 +128,50 @@ func (c cancellableJob) stops(t *testing.T) {
 	}
 }
 
+// sessionsEnded has the daemon start the workers of the job's assignments
+// on a Claude Code that records how it was started, their sessions having
+// ended, and returns where it records it.
+func (c cancellableJob) sessionsEnded(t *testing.T) string {
+	t.Helper()
+	configFile, out := recordingClaude(t, c.s, c.d.cfg.Paths, c.origin, "trunk")
+	startsRecordingClaude(t, c.d, c.d.cfg.Paths, configFile)
+	for _, a := range c.assignments {
+		c.d.leaders[a.Worker].session = nil
+	}
+	return out
+}
+
+// startedForCancellation fails t unless the worker of assignment a runs in
+// a new session for its assignment, whose dispatch is a cancellation that
+// tells it to push its assignment branch.
+func (c cancellableJob) startedForCancellation(t *testing.T, a store.Assignment, out string) {
+	t.Helper()
+	c.d.mu.Lock()
+	l := c.d.leaders[a.Worker]
+	running, carries := l.session != nil, l.assignment
+	c.d.mu.Unlock()
+	if !running || carries != a.ID {
+		t.Errorf("%s is running %v, carrying assignment %d; want it started again for assignment %d", a.Worker, running, carries, a.ID)
+	}
+	w, err := c.s.WorkerDispatch(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Kind != store.MessageCancellation || w.Dispatch.NativeSession != "" {
+		t.Errorf("%s was started for %s dispatch %d resuming %q, want its cancellation in a new session", a.Worker, w.Kind, w.Dispatch.ID, w.Dispatch.NativeSession)
+	}
+	inbox, err := c.s.Inbox(a.Worker, 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := inbox[len(inbox)-1]; last.Dispatch != w.Dispatch.ID || !strings.Contains(last.Body, "push your assignment branch") {
+		t.Errorf("%s was last told %q in dispatch %d, want its cancellation in dispatch %d", a.Worker, last.Body, last.Dispatch, w.Dispatch.ID)
+	}
+	if args := waitForFile(t, filepath.Join(out, "args")); strings.Contains(args, "--resume") {
+		t.Errorf("%s was started resuming a session: %s", a.Worker, args)
+	}
+}
+
 func TestCoordinationCancelsAJobAtTheUsersWordAndEveryBranchStaysOnOrigin(t *testing.T) {
 	c := newCancellableJob(t, newTwoResults(t), true)
 	branch := JobBranchName(c.job)
@@ -212,6 +256,7 @@ func TestAnAssignmentNeedingReconciliationIsCancelledWithItsJob(t *testing.T) {
 	if _, err := c.s.AssignmentNeedsReconciliation(held.ID, 0, "its turn was cut off", "reconcile it", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	out := c.sessionsEnded(t)
 	resp, err := c.cancel("coordination", c.job.Number)
 	if err != nil {
 		t.Fatal(err)
@@ -233,6 +278,8 @@ func TestAnAssignmentNeedingReconciliationIsCancelledWithItsJob(t *testing.T) {
 	if last := inbox[len(inbox)-1]; last.Kind != store.MessageCancellation || !strings.Contains(last.Body, "push your assignment branch") {
 		t.Errorf("%s was last told %s: %q, want its cancellation", held.Worker, last.Kind, last.Body)
 	}
+	// The held worker is started again, in a new session, for it.
+	c.startedForCancellation(t, held, out)
 	told, err := c.s.Inbox("leader@coordination", 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -265,6 +312,71 @@ func TestAnAssignmentNeedingReconciliationIsCancelledWithItsJob(t *testing.T) {
 		if tip := git(t, c.origin, "rev-parse", "refs/heads/"+a.Workspace.Branch); tip != c.commits[i] {
 			t.Errorf("origin's %s is at %s, want it kept at %s", a.Workspace.Branch, tip, c.commits[i])
 		}
+	}
+}
+
+func TestARestartDuringAJobCancelStartsTheWorkersAgainForTheirCancellationAndHoldsNone(t *testing.T) {
+	c := newCancellableJob(t, newTwoResults(t), true)
+	resp, err := c.cancel("coordination", c.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each worker fetched its cancellation, and the factory stopped: the
+	// first's dispatch at a boundary, in a session the provider reported no
+	// native session of, so it cannot be resumed; the second's while it was
+	// at work, so what it did is not known.
+	at := time.Now()
+	for i, a := range c.assignments {
+		j := slices.IndexFunc(resp.Cancellation.Dispatches, func(d store.Dispatch) bool { return d.Agent == a.Worker })
+		if j < 0 {
+			t.Fatalf("%s was not told of the cancellation: %+v", a.Worker, resp.Cancellation.Dispatches)
+		}
+		dispatch := resp.Cancellation.Dispatches[j].ID
+		if err := c.s.ChangeDispatch(dispatch, 1, store.DispatchCreated, store.DispatchNudged, "", at); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.s.Inbox(a.Worker, dispatch, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.s.WorkFetchedDispatch(dispatch, a.Worker, 1, at); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			if stopped, err := c.s.StopDispatchIfWorking(dispatch, 1, "", at); err != nil || !stopped {
+				t.Fatalf("stopping %s's cancellation: %v, %v", a.Worker, stopped, err)
+			}
+		}
+	}
+
+	// The factory starts again.
+	out := c.sessionsEnded(t)
+	c.d.recoverWork(true)
+	c.d.restoreLeaders()
+
+	for _, a := range c.assignments {
+		if state := assignmentState(t, c.s, a.ID); state != store.AssignmentCancelling {
+			t.Errorf("assignment %d is %s after the restart, want it still cancelling", a.ID, state)
+		}
+		c.startedForCancellation(t, a, out)
+	}
+	snapshot, err := c.d.dashboardSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].Assignments != (AssignmentCounts{Cancelling: 2}) {
+		t.Errorf("the Jobs tab shows %+v, want nothing of the cancelled job needing reconciliation", snapshot.Jobs)
+	}
+
+	// Once their pushes are confirmed they end as cancelled, and the job's
+	// local view goes.
+	c.stops(t)
+	for _, a := range c.assignments {
+		if state := assignmentState(t, c.s, a.ID); state != store.AssignmentCancelled {
+			t.Errorf("assignment %d is %s, want it cancelled", a.ID, state)
+		}
+	}
+	if done, err := c.s.LocalRemoved(c.job.Number); err != nil || !done {
+		t.Errorf("the cancelled job's local view removed = %v (%v), want it removed", done, err)
 	}
 }
 

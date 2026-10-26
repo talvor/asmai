@@ -21,11 +21,12 @@ import (
 // cancelled, and then nothing changes. Otherwise it first closes the job's
 // open pull request with a comment giving the reason, through gh: if that
 // fails, nothing is cancelled and the failure is the refusal. Then, in one
-// step, the job ends as cancelled, its live assignments are cancelling, its
-// unreviewed results are discarded, its pending decision requests are
-// withdrawn and the closing is recorded as the daemon's effect. The workers
-// are started to push their assignment branches and stop, and each
-// assignment ends as cancelled once the daemon has confirmed its push.
+// step, the job ends as cancelled, its live assignments and those that
+// needed reconciliation are cancelling, its unreviewed results are
+// discarded, its pending decision requests are withdrawn and the closing is
+// recorded as the daemon's effect. The workers are started to push their
+// assignment branches and stop, and each assignment ends as cancelled once
+// the daemon has confirmed its push.
 // Every branch stays on origin.
 func (d *daemon) cancelJob(req Request) (store.JobCancellation, error) {
 	d.mu.Lock()

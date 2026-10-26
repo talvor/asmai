@@ -56,7 +56,7 @@ func (d *daemon) recoverWorkers() {
 		case w.Dispatch.State == store.DispatchStopped:
 			d.resumeWorker(w)
 		default:
-			d.holdForReconciliation(w, fmt.Sprintf("its dispatch %d was %s when the factory stopped, so what %s did in it is not known",
+			d.cannotContinue(w, fmt.Sprintf("its dispatch %d was %s when the factory stopped, so what %s did in it is not known",
 				w.Dispatch.ID, w.Dispatch.State, w.Assignment.Worker))
 		}
 	}
@@ -65,20 +65,21 @@ func (d *daemon) recoverWorkers() {
 // resumeWorker continues the assignment of the worker w, whose dispatch
 // stopped at a boundary, with a new dispatch that resumes it in the provider's
 // session where the worker was. If that session cannot be resumed, the
-// assignment needs reconciliation instead. The worker is started for the
+// assignment needs reconciliation instead, unless cannotContinue starts a
+// cancelled job's assignment's cancellation again. The worker is started for the
 // dispatch with the other agents that have messages waiting.
 func (d *daemon) resumeWorker(w store.WorkerDispatch) {
 	a := w.Assignment
 	native, err := d.store.ResumableSession(a.ID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		d.holdForReconciliation(w, fmt.Sprintf("the native session of %s cannot be resumed: the provider reported none for its assignment", a.Worker))
+		d.cannotContinue(w, fmt.Sprintf("the native session of %s cannot be resumed: the provider reported none for its assignment", a.Worker))
 		return
 	case err != nil:
 		d.log.Error("reading the native session of a stopped worker", "assignment", a.ID, "error", err.Error())
 		return
 	case native.Provider != providers.ClaudeCode:
-		d.holdForReconciliation(w, fmt.Sprintf("the native session of %s cannot be resumed: it ran on %s, which this factory does not run workers on", a.Worker, native.Provider))
+		d.cannotContinue(w, fmt.Sprintf("the native session of %s cannot be resumed: it ran on %s, which this factory does not run workers on", a.Worker, native.Provider))
 		return
 	}
 	if _, err := os.Stat(a.Workspace.Path); err != nil {
@@ -87,7 +88,7 @@ func (d *daemon) resumeWorker(w store.WorkerDispatch) {
 	}
 	if native.Transcript != "" {
 		if _, err := os.Stat(native.Transcript); err != nil {
-			d.holdForReconciliation(w, fmt.Sprintf("the native session of %s cannot be resumed: the provider's transcript %s of it is gone", a.Worker, native.Transcript))
+			d.cannotContinue(w, fmt.Sprintf("the native session of %s cannot be resumed: the provider's transcript %s of it is gone", a.Worker, native.Transcript))
 			return
 		}
 	}
@@ -103,6 +104,45 @@ func (d *daemon) resumeWorker(w store.WorkerDispatch) {
 		return
 	}
 	d.log.Info("assignment resumed", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "resumes", w.Dispatch.ID, "dispatch", dispatch.ID, "native_session", native.ID)
+}
+
+// cannotContinue handles the assignment of the worker w, whose session cannot
+// be resumed, for why. A cancelling assignment of a cancelled job whose
+// workspace is still there gets a new cancellation dispatch, for which its
+// worker is started in a new session, and it reports true: a job cancel ends
+// every assignment as cancelled, so none of it is held. Any other assignment
+// is held for reconciliation.
+func (d *daemon) cannotContinue(w store.WorkerDispatch, why string) bool {
+	a := w.Assignment
+	if a.State == store.AssignmentCancelling {
+		j, err := d.store.Job(a.Job)
+		if err != nil {
+			d.log.Error("reading the job of a cancelling assignment", "assignment", a.ID, "job", a.Job, "error", err.Error())
+		}
+		if _, stat := os.Stat(a.Workspace.Path); err == nil && j.State == store.JobCancelled && stat == nil {
+			dispatch, err := d.store.CancellationRestarted(a.ID, w.Dispatch.ID, cancellationRestart(j, a, why), time.Now())
+			if err != nil {
+				d.log.Error("starting a cancelled job's assignment's cancellation again", "assignment", a.ID, "error", err.Error())
+				return false
+			}
+			d.log.Info("a cancelled job's assignment's cancellation started again in a new session", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "previous", w.Dispatch.ID, "dispatch", dispatch.ID, "why", why)
+			return true
+		}
+	}
+	d.holdForReconciliation(w, why)
+	return false
+}
+
+// cancellationRestart is the message that starts the worker of assignment a
+// of the cancelled job j again, in a new session, because why.
+func cancellationRestart(j store.Job, a store.Assignment, why string) string {
+	lead := fmt.Sprintf("The factory was stopped and started again, and your earlier session cannot be resumed: %s. Job %d is cancelled at the user's word, in witnessed message %d, so assignment %d is cancelled with it, and this dispatch continues its cancellation in a new session.\n",
+		why, j.Number, j.CancelWitness, a.ID)
+	if a.Scratch {
+		return lead + "Do not submit a result. Your workspace is a scratch workspace with no branch, so there is nothing to commit or push: what you wrote stays in it. Stop."
+	}
+	return lead + fmt.Sprintf("Do not submit a result. Look at `asmai brief %d`, your workspace and the effects recorded for the assignment, commit whatever you have, push your assignment branch with `git push origin %s` if it is not pushed (as its own single Bash call, never chained, piped or after a `cd`), record the push with `asmai effect push`, and stop. Never repeat an effect already made.",
+		j.Number, a.Workspace.Branch)
 }
 
 // holdForReconciliation marks the assignment of the worker w as needing
@@ -138,7 +178,12 @@ func (d *daemon) cannotResume(l *leader, exit string) {
 	if w.Assignment.State != store.AssignmentActive && w.Assignment.State != store.AssignmentCancelling {
 		return
 	}
-	d.holdForReconciliation(w, fmt.Sprintf("the native session of %s cannot be resumed: its session ended before it came up (%s)", w.Assignment.Worker, exit))
+	if d.cannotContinue(w, fmt.Sprintf("the native session of %s cannot be resumed: its session ended before it came up (%s)", w.Assignment.Worker, exit)) {
+		if err := d.ensureAgent(l.address); err != nil {
+			d.log.Error("starting the worker of a cancelled job's assignment again", "agent", l.address.String(), "assignment", l.assignment, "error", err.Error())
+		}
+		return
+	}
 	if owner, err := roles.ParseAddress(w.Assignment.Owner); err == nil {
 		if err := d.ensureAgent(owner); err != nil {
 			d.log.Error("starting the owning leader to tell it", "agent", w.Assignment.Owner, "error", err.Error())

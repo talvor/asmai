@@ -303,6 +303,26 @@ func TestAnAssignmentThatNeedsReconciliationIsHeldWithItsWorkerAndItsOwnerIsTold
 
 // A resumption the worker never fetched is not waiting for a worker whose
 // assignment then needs reconciliation.
+func TestOnlyACancellingAssignmentOfACancelledJobHasItsCancellationStartedAgain(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, d := stoppedAssignment(t, s)
+	if _, err := s.CancellationRestarted(a.ID, d.ID, "push and stop", assignmentsAt); err == nil || !strings.Contains(err.Error(), "only a cancelling assignment of a cancelled job") {
+		t.Fatalf("restarting an active assignment's cancellation = %v, want it refused", err)
+	}
+	// An assignment its owning leader cancelled, in a job still open, is held
+	// for reconciliation as before, never started again.
+	_, cancelling, err := s.CancellationRequested(a.ID, a.Owner, []string{"not wanted"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CancellationRestarted(a.ID, cancelling.ID, "push and stop", assignmentsAt); err == nil || !strings.Contains(err.Error(), "only a cancelling assignment of a cancelled job") {
+		t.Fatalf("restarting the cancellation of an open job's assignment = %v, want it refused", err)
+	}
+	if w, err := s.WorkerDispatch(a.ID); err != nil || w.Dispatch.ID != cancelling.ID || w.Dispatch.State != DispatchCreated {
+		t.Errorf("the worker's dispatch is %+v (%v), want the cancellation left as it was", w.Dispatch, err)
+	}
+}
+
 func TestAResumptionThatCouldNotStartLeavesNoMessageWaitingForItsWorker(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, d := stoppedAssignment(t, s)

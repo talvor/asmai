@@ -10,7 +10,6 @@ import (
 	"github.com/talvor/asmai/internal/fakeprovider"
 )
 
-// dispatchStates returns the states dispatch id went through, in order.
 func answerDispatchStates(t *testing.T, id int64) string {
 	t.Helper()
 	var states []string
@@ -29,9 +28,9 @@ func answerDispatchStates(t *testing.T, id int64) string {
 
 // Claude Code 2.1.292 reports a prompt typed as a finished turn's Stop hook
 // runs under that turn's prompt ID, and the turn that takes it stops under
-// another. The scripts below acknowledge the answer's nudge so, the way the
-// provider did in the M3 demo: the answer must still be a dispatch that
-// started the receiver's turn, which ended at its own Stop.
+// another. The scripts below acknowledge the answer's nudge under the
+// finished turn's ID. The answer must still start the receiver's next turn
+// and end at that turn's own Stop.
 
 func TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop(t *testing.T) {
 	const branch = "asmai/job-1/1"
@@ -58,6 +57,8 @@ func TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOw
 	assignmentFlow(t, worker, leader)
 	if got := answerDispatchStates(t, 5); got != "created,unknown,nudged,delivered,working,stopped" {
 		t.Errorf("the answer's dispatch states: %s", got)
+	} else {
+		t.Logf("leader answer reached worker1@engineering without a restart: dispatch 5 %s", got)
 	}
 }
 
@@ -123,5 +124,7 @@ func TestTheUsersAnswerWakesTheLeaderThatAskedAndItsTurnEndsAtItsOwnStop(t *test
 	waitFor(t, "the leader that asked to read the answer", touched(dir, "engineering-done"))
 	if got := answerDispatchStates(t, 4); got != "created,unknown,nudged,delivered,working,stopped" {
 		t.Errorf("the answer's dispatch states: %s", got)
+	} else {
+		t.Logf("user answer reached leader@engineering without a restart: dispatch 4 %s", got)
 	}
 }

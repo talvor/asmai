@@ -496,6 +496,13 @@ func (d *daemon) automatedSubmitted(ref sessionRef, prompt, promptID, transcript
 	}
 	l.currentDispatch = l.pendingDispatch
 	l.currentPromptID = promptID
+	if promptID != "" && promptID == l.stoppedPromptID {
+		// Claude Code reports a prompt typed while the Stop hook of a finished
+		// turn runs under that turn's prompt, not its own. The turn that
+		// takes it ends with a Stop under another prompt, which ends this
+		// dispatch: matching the finished turn's prompt would never happen.
+		l.currentPromptID = ""
+	}
 	l.pendingDispatch = 0
 	l.pendingPrompt = ""
 	l.inputUnknown = false
@@ -513,7 +520,18 @@ func (d *daemon) endCurrentDispatch(ref sessionRef, promptID, transcript string)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	l := d.leaders[ref.address.String()]
-	if l == nil || l.session == nil || l.generation != ref.generation || l.currentDispatch == 0 || promptID == "" || promptID != l.currentPromptID {
+	if l == nil || l.session == nil || l.generation != ref.generation {
+		return 0, nil
+	}
+	if promptID != "" {
+		l.stoppedPromptID = promptID
+	}
+	if l.currentDispatch == 0 || promptID == "" {
+		return 0, nil
+	}
+	// With no prompt recorded for the dispatch, the first Stop after its
+	// submission is its own turn's.
+	if l.currentPromptID != "" && promptID != l.currentPromptID {
 		return 0, nil
 	}
 	id := l.currentDispatch

@@ -92,6 +92,59 @@ func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T
 	}
 }
 
+func TestWorkerExitBeforeFetchingNudgeAllowsReconciliationRedispatch(t *testing.T) {
+	s, ids := restartStore(t, []restartCase{{name: "stopped", leave: store.DispatchStopped}})
+	a, err := s.Assignment(ids["stopped"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := s.SessionStarted(store.SessionStart{Agent: a.Worker, Role: roles.Engineering, Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: a.Workspace.Path, PID: 8, At: time.Now(), Assignment: a.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nudge, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeDispatch(nudge.ID, generation, store.DispatchCreated, store.DispatchUnknown, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worker := roles.WorkerOf(roles.Engineering, 1)
+	proc, err := session.Start(session.Spec{Path: "/bin/true", Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &leader{address: worker, session: proc, generation: generation, assignment: a.ID}
+	owner := roles.LeaderOf(roles.Engineering)
+	d := &daemon{store: s, work: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), leaders: map[string]*leader{
+		worker.String(): l, owner.String(): {address: owner, session: &session.Session{}},
+	}}
+	d.agents.Add(1)
+	d.watch(l, proc, generation, false)
+	if got, err := s.Assignment(a.ID); err != nil || got.State != store.AssignmentNeedsReconciliation {
+		t.Fatalf("assignment after exit is %+v (%v)", got, err)
+	}
+	replacement, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"cause fixed"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ID == nudge.ID {
+		t.Fatal("redispatch reused the undeliverable nudge")
+	}
+	if got, err := s.Assignment(a.ID); err != nil || got.State != store.AssignmentActive {
+		t.Fatalf("assignment after redispatch is %+v (%v)", got, err)
+	}
+	if _, err := s.Inbox(a.Worker, nudge.ID, time.Now()); err == nil {
+		t.Fatal("the undeliverable nudge was still available")
+	}
+	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != replacement.ID {
+		t.Fatalf("next dispatch is %+v (%v), want replacement %d", next, err, replacement.ID)
+	}
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"again"}, time.Now()); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+		t.Fatalf("redispatch over deliverable queued work returned %v", err)
+	}
+}
+
 func TestDecisionRequestOrQueuedAnswerDoesNotSilenceWorkerStallNotice(t *testing.T) {
 	for _, answered := range []bool{false, true} {
 		name := "pending request"

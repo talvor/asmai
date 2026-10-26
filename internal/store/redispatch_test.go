@@ -34,6 +34,38 @@ func TestRedispatchRefusesAnUnfetchedAssignment(t *testing.T) {
 	}
 }
 
+func TestRedispatchRetiresUnknownWorkAfterReconciliationButRefusesDeliverableWork(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, first := stoppedAssignment(t, s)
+	unknown, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeDispatch(unknown.ID, 1, DispatchCreated, DispatchUnknown, "", assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AssignmentNeedsReconciliation(a.ID, unknown.ID, "worker exited", "Reconcile it.", assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"cause fixed"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ID == unknown.ID || replacement.ID == first.ID {
+		t.Fatalf("replacement dispatch is %+v", replacement)
+	}
+	var state string
+	if err := s.db.QueryRow(`SELECT state FROM dispatches WHERE id = ?`, unknown.ID).Scan(&state); err != nil || state != DispatchStopped {
+		t.Fatalf("unknown dispatch remained %s (%v)", state, err)
+	}
+	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != replacement.ID {
+		t.Fatalf("next dispatch is %+v (%v), want replacement %d", next, err, replacement.ID)
+	}
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"again"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+		t.Fatalf("redispatch over deliverable queued work returned %v", err)
+	}
+}
+
 func TestRedispatchRefusesOtherQueuedWorkMessages(t *testing.T) {
 	for _, kind := range []string{MessageRedispatch, MessageRejection, MessageMovedTip, MessageResumption} {
 		t.Run(kind, func(t *testing.T) {

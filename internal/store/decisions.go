@@ -339,18 +339,45 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 	if err != nil {
 		return Dispatch{}, err
 	}
-	var queued int64
-	var kind string
-	err = tx.QueryRow(`SELECT d.id, m.kind FROM messages m JOIN dispatches d ON d.message = m.id
-		WHERE m.assignment = ? AND m.recipient = ? AND m.fetched_at IS NULL
-		AND m.kind IN (?, ?, ?, ?, ?) AND d.state IN (?, ?, ?) ORDER BY d.id LIMIT 1`,
+	rows, err := tx.Query(`SELECT d.id, d.generation, d.state, m.kind, m.fetched_at IS NULL
+		FROM messages m JOIN dispatches d ON d.message = m.id
+		WHERE m.assignment = ? AND m.recipient = ?
+		AND m.kind IN (?, ?, ?, ?, ?) AND d.state IN (?, ?, ?) ORDER BY d.id`,
 		a.ID, a.Worker, MessageAssignment, MessageRedispatch, MessageRejection, MessageMovedTip, MessageResumption,
-		DispatchCreated, DispatchNudged, DispatchUnknown).Scan(&queued, &kind)
-	if err == nil {
-		return Dispatch{}, fmt.Errorf("assignment %d has queued %s dispatch %d for %s; wait for the worker to receive it or cancel the assignment", a.ID, kind, queued, a.Worker)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+		DispatchCreated, DispatchNudged, DispatchUnknown)
+	if err != nil {
 		return Dispatch{}, err
+	}
+	var unknown []Dispatch
+	for rows.Next() {
+		var d Dispatch
+		var kind string
+		var unfetched bool
+		if err := rows.Scan(&d.ID, &d.Generation, &d.State, &kind, &unfetched); err != nil {
+			rows.Close()
+			return Dispatch{}, err
+		}
+		if d.State == DispatchUnknown && a.State == AssignmentNeedsReconciliation {
+			unknown = append(unknown, d)
+		} else if unfetched {
+			rows.Close()
+			return Dispatch{}, fmt.Errorf("assignment %d has queued %s dispatch %d for %s; wait for the worker to receive it or cancel the assignment", a.ID, kind, d.ID, a.Worker)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	for _, d := range unknown {
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
+			return Dispatch{}, err
+		}
+		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
+			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": DispatchUnknown, "state": DispatchStopped, "assignment": a.ID,
+		}); err != nil {
+			return Dispatch{}, err
+		}
 	}
 	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentActive, a.ID); err != nil {
 		return Dispatch{}, err

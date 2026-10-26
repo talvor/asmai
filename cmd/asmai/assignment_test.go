@@ -510,6 +510,17 @@ func TestAWorkerThatCannotGoOnReportsItBlockedAndItsAssignmentStaysActive(t *tes
 	}
 }
 
+func TestBlockedWithoutPushEndsWithAReceipt(t *testing.T) {
+	worker := []string{
+		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
+		fakeRun(`asmai blocked --reason 'the push failed' --needs 'origin to recover'`, 0, `^blocked recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 4\n$`),
+	}
+	leader := []string{
+		fakeRun(`asmai inbox --dispatch 4`, 0, "blocked 1 \\| assignment 1"),
+	}
+	assignmentFlow(t, worker, leader)
+}
+
 // A worker's native prompt waits for an answer nobody can give, so the
 // factory shows it until the worker's session is past it.
 func TestAWorkerWaitingAtANativePromptIsShownInStatusUntilItIsPastIt(t *testing.T) {

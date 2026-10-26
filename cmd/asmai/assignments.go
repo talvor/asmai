@@ -284,10 +284,10 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 		return 0
 	}
 	fmt.Fprintf(o.stdout, "%s recorded for assignment %d at commit %s; sent to %s as dispatch %d\n", r.Kind, r.Assignment, r.Commit, resp.Dispatch.Agent, resp.Dispatch.ID)
-	if !r.TookInTip {
+	if r.Kind == store.ReportResult && !r.TookInTip {
 		fmt.Fprintf(o.stdout, "note: this commit does not have the job branch's tip %s in its history; take the tip in and submit again\n", r.JobTip)
 	}
-	if !slices.ContainsFunc(r.Effects, func(e store.Effect) bool { return e.Kind == "push" }) {
+	if r.Kind == store.ReportResult && !slices.ContainsFunc(r.Effects, func(e store.Effect) bool { return e.Kind == "push" }) {
 		fmt.Fprintln(o.stdout, "note: no push was recorded in this dispatch; push your assignment branch and record it with `asmai effect push <ref>`")
 	}
 	return 0

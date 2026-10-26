@@ -56,11 +56,13 @@ func (d *daemon) decide(req Request) (resp Response, notify string, err error) {
 	switch req.Command {
 	case CommandAccept:
 		resp, err = d.accept(req, ref)
+	case CommandRedispatch:
+		resp, err = d.redispatch(req)
 	default:
 		resp, err = d.returnOrCancel(req, ref)
 	}
-	// A rejection or a cancellation goes to the assignment's worker, and an
-	// accepted validation to the delivery owner.
+	// A rejection, a cancellation or a redispatch goes to the assignment's
+	// worker, and an accepted validation to the delivery owner.
 	if err == nil && resp.Dispatch != nil {
 		notify = resp.Dispatch.Agent
 	}
@@ -472,6 +474,34 @@ func (d *daemon) returnOrCancel(req Request, ref sessionRef) (Response, error) {
 	return Response{Assignment: &a, Decision: &decision, Dispatch: &dispatch}, nil
 }
 
+// redispatch serves redispatch: the owning leader sends its assignment, which
+// is active or needs reconciliation, to its worker again in a new dispatch,
+// and the worker is started if it is not running. The returned dispatch is the
+// worker's, to nudge.
+func (d *daemon) redispatch(req Request) (Response, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ref, _, err := d.caller(req)
+	if err != nil {
+		return Response{}, err
+	}
+	dispatch, err := d.store.AssignmentRedispatched(req.Assignment, ref.address.String(), req.Reasons, time.Now())
+	if err != nil {
+		return Response{}, refuse("%v", err)
+	}
+	a, err := d.store.Assignment(req.Assignment)
+	if err != nil {
+		return Response{}, err
+	}
+	d.log.Info("assignment redispatched", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "leader", ref.address.String(), "dispatch", dispatch.ID)
+	if worker, err := roles.ParseAddress(a.Worker); err == nil {
+		if err := d.ensureAgent(worker); err != nil {
+			d.log.Error("starting the assignment's worker", "agent", a.Worker, "dispatch", dispatch.ID, "error", err.Error())
+		}
+	}
+	return Response{Assignment: &a, Dispatch: &dispatch}, nil
+}
+
 // stopWorker stops the session of the worker that carried a, which has ended,
 // and returns once it is cleared, so that the worker's number can be given
 // out again.
@@ -533,7 +563,8 @@ func (d *daemon) removeWorkspace(ctx context.Context, a store.Assignment, reposi
 // dispatchStopped is told that the turn ref's session ran for dispatch has
 // finished. When the dispatch told a worker its assignment is cancelled, or
 // resumed it after a restart while it was, the worker has stopped: the
-// assignment ends.
+// assignment ends. Any other dispatch that gave a worker its assignment may
+// have ended with no report, which its owning leader is told.
 func (d *daemon) dispatchStopped(ref sessionRef, dispatch int64) {
 	kind, assignment, err := d.store.DispatchKind(dispatch)
 	if err != nil {
@@ -547,6 +578,7 @@ func (d *daemon) dispatchStopped(ref sessionRef, dispatch int64) {
 		}
 	}
 	if kind != store.MessageCancellation {
+		d.workerStopped(ref, dispatch, kind, assignment)
 		return
 	}
 	d.mu.Lock()
@@ -560,6 +592,111 @@ func (d *daemon) dispatchStopped(ref sessionRef, dispatch int64) {
 		defer d.agents.Done()
 		d.cancelled(ref, assignment)
 	}()
+}
+
+// workerStopped is told that the turn ref's session, a worker's, ran for
+// dispatch, which is of kind kind and about assignment, has finished. If the
+// dispatch gave the worker its active assignment and ended with no result and
+// no blocked report, and the worker is not waiting for the answer to a
+// decision it asked for, the assignment is active but nothing is working on
+// it: its owning leader is told in a message, with what origin holds of the
+// assignment branch. Nothing is retried.
+func (d *daemon) workerStopped(ref sessionRef, dispatch int64, kind string, assignment int64) {
+	if ref.address.Name == roles.Leader || assignment == 0 {
+		return
+	}
+	switch kind {
+	case store.MessageAssignment, store.MessageRejection, store.MessageMovedTip, store.MessageResumption, store.MessageRedispatch, store.MessageDecisionAnswer:
+	default:
+		return
+	}
+	w, err := d.store.WorkerDispatch(assignment)
+	if err != nil || w.Dispatch.ID != dispatch || w.Report != "" || w.Assignment.State != store.AssignmentActive || w.Assignment.Worker != ref.address.String() {
+		return
+	}
+	if waiting, err := d.store.PendingRequestsOf(ref.address.String()); err != nil || len(waiting) > 0 {
+		return
+	}
+	d.mu.Lock()
+	if d.stopping {
+		d.mu.Unlock()
+		return
+	}
+	d.agents.Add(1)
+	d.mu.Unlock()
+	go func() {
+		defer d.agents.Done()
+		d.tellStalled(w.Assignment, dispatch)
+	}()
+}
+
+// tellStalled tells the owning leader of a that its worker's turn for dispatch
+// ended with no result and no blocked report, and starts the leader if it is
+// not running.
+func (d *daemon) tellStalled(a store.Assignment, dispatch int64) {
+	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
+	defer cancel()
+	body := fmt.Sprintf("%s's turn for dispatch %d of assignment %d of job %d ended with no result and no blocked report. The assignment is still active and nothing is retried.\n%s\n"+
+		"Look at `asmai brief %d` and the effects %s recorded. If the cause was outside the factory and is fixed, send the assignment to %s again in a new dispatch with `asmai redispatch --assignment %d --reason <why>`; otherwise decide with `asmai reject`, `asmai cancel` or by assigning the work again.",
+		a.Worker, dispatch, a.ID, a.Job, d.originHolds(ctx, a), a.Job, a.Worker, a.Worker, a.ID)
+	d.mu.Lock()
+	if d.stopping {
+		d.mu.Unlock()
+		return
+	}
+	told, err := d.store.WorkerStalled(a.ID, dispatch, body, time.Now())
+	if err != nil {
+		d.mu.Unlock()
+		d.log.Error("telling an owning leader that its worker stopped without a report", "assignment", a.ID, "dispatch", dispatch, "error", err.Error())
+		return
+	}
+	d.log.Warn("a worker stopped without a result or a blocked report", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "owner", a.Owner, "dispatch", dispatch, "told", told.ID)
+	if owner, err := roles.ParseAddress(a.Owner); err == nil {
+		if err := d.ensureAgent(owner); err != nil {
+			d.log.Error("starting the owning leader to tell it", "agent", a.Owner, "dispatch", told.ID, "error", err.Error())
+		}
+	}
+	d.mu.Unlock()
+	d.nudge(a.Owner)
+}
+
+// originHolds says what origin holds of the assignment branch of a, whose
+// worker stopped without a report, against the commit its workspace is at.
+func (d *daemon) originHolds(ctx context.Context, a store.Assignment) string {
+	switch {
+	case a.Scratch:
+		return fmt.Sprintf("Its workspace %s is a scratch directory with no repository, no branch and no commit.", a.Workspace.Path)
+	case a.ReadOnly:
+		return fmt.Sprintf("Its workspace %s is a read-only checkout fixed at %s, with no branch on origin.", a.Workspace.Path, a.Commit)
+	}
+	commit, err := repos.Commit(ctx, a.Workspace.Path, "HEAD")
+	if err != nil {
+		return fmt.Sprintf("Its workspace %s could not be read (%v), so whether origin holds its work is not known.", a.Workspace.Path, err)
+	}
+	uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
+	left := ""
+	if err == nil && len(uncommitted) > 0 {
+		left = fmt.Sprintf(" It also has %d uncommitted change(s), which no commit holds.", len(uncommitted))
+	}
+	j, err := d.store.Job(a.Job)
+	if err != nil {
+		return fmt.Sprintf("Its workspace is at commit %s; whether origin holds it is not known: %v.%s", commit, err, left)
+	}
+	repository, err := d.store.Repository(j.Repository)
+	if err != nil {
+		return fmt.Sprintf("Its workspace is at commit %s; whether origin holds it is not known: %v.%s", commit, err, left)
+	}
+	if err := repos.Fetch(ctx, repository.Clone); err != nil {
+		return fmt.Sprintf("Its workspace is at commit %s; origin could not be read, so whether it holds the commit is not known: %v.%s", commit, err, left)
+	}
+	tip, err := repos.OriginTip(ctx, repository.Clone, a.Workspace.Branch)
+	if err != nil {
+		return fmt.Sprintf("Its workspace is at commit %s, and origin has no branch %s: the work is not pushed.%s", commit, a.Workspace.Branch, left)
+	}
+	if held, err := repos.Contains(ctx, repository.Clone, "refs/remotes/origin/"+a.Workspace.Branch, commit); err != nil || !held {
+		return fmt.Sprintf("Its workspace is at commit %s, and origin's branch %s is at %s, which does not hold it: the commit is not pushed.%s", commit, a.Workspace.Branch, tip, left)
+	}
+	return fmt.Sprintf("Its workspace is at commit %s, and origin's branch %s is at %s, which holds it: the work is pushed.%s", commit, a.Workspace.Branch, tip, left)
 }
 
 // cancelled ends the cancelling assignment whose worker, ref's session, has

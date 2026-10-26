@@ -72,7 +72,11 @@ asmai result \
 - Name the records your human steps relied on with `--record` and `--grant`, as the answer to each step gave them: an answer from the user's recorded decision or a grant needs its ID in your result, and the daemon refuses a result without it.
 - The daemon records the commit your workspace is at, and refuses a result while changes are uncommitted.
 
-If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>` after you commit and push your assignment branch.
+If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>` after you commit and push your assignment branch. If the push itself fails, run it anyway and say so in `--reason`: a blocked report needs no recorded push.
+
+## When your owning leader sends the assignment again
+
+A new dispatch of kind `redispatch` means your owning leader sends the assignment to you again, for the reasons it gives: fetch it with `asmai inbox --dispatch <id>`. The assignment is still yours and active. Load `asmai brief <job>`, look at your workspace and at the effects you have recorded, and continue from where you stopped; never repeat an effect you already made. Your result or blocked report is tied to this dispatch.
 
 ## When the factory restarts
 

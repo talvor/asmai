@@ -285,7 +285,7 @@ func TestOnlyTheOwningLeaderDecidesOnAResult(t *testing.T) {
 	other := roles.WorkerOf(roles.Engineering, 1)
 	f.d.leaders[other.String()] = &leader{address: other, session: &session.Session{}, generation: 1}
 	f.d.sessions["worker"] = sessionRef{address: other, generation: 1}
-	for _, command := range []string{CommandAccept, CommandReject, CommandCancel} {
+	for _, command := range []string{CommandAccept, CommandReject, CommandCancel, CommandRedispatch} {
 		if _, _, err := f.d.decide(Request{Session: "worker", Command: command, Assignment: id, Reasons: []string{"x"}}); err == nil || !strings.Contains(err.Error(), "only leader@engineering") {
 			t.Errorf("%s by a worker returned %v", command, err)
 		}
@@ -316,5 +316,57 @@ func TestOnlyTheOwningLeaderDecidesOnAResult(t *testing.T) {
 	}
 	if _, err := f.decide(CommandAccept, id, "x"); err == nil || !strings.Contains(err.Error(), "active") {
 		t.Errorf("accepting an active assignment returned %v", err)
+	}
+}
+
+func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDispatch(t *testing.T) {
+	f := newTwoResults(t)
+	a := f.assignments[0]
+	quality := roles.LeaderOf(roles.Quality)
+	f.d.leaders[quality.String()] = &leader{address: quality, session: &session.Session{}, generation: 1}
+	f.d.sessions["quality"] = sessionRef{address: quality, generation: 1}
+
+	// A result that has been submitted is decided, not sent again.
+	if _, err := f.decide(CommandRedispatch, a.ID, "the push works now"); err == nil || !strings.Contains(err.Error(), "submitted") {
+		t.Fatalf("redispatching a submitted assignment returned %v", err)
+	}
+	if _, err := f.decide(CommandReject, a.ID, "no test covers the empty case"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.d.decide(Request{Session: "quality", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"x"}}); err == nil || !strings.Contains(err.Error(), "is owned by leader@engineering") {
+		t.Errorf("another leader redispatching returned %v, want it refused", err)
+	}
+
+	resp, notify, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"the push works now"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Assignment.State != store.AssignmentActive || resp.Decision != nil || resp.Dispatch == nil || resp.Dispatch.Agent != a.Worker || notify != a.Worker {
+		t.Fatalf("the redispatch answered %+v, %+v and %+v, notifying %q, want the active assignment and a dispatch for %s", resp.Assignment, resp.Decision, resp.Dispatch, notify, a.Worker)
+	}
+	w, err := f.d.store.WorkerDispatch(a.ID)
+	if err != nil || w.Kind != store.MessageRedispatch || w.Dispatch.ID != resp.Dispatch.ID {
+		t.Errorf("the worker's latest dispatch is %+v (%v), want the redispatch %d", w, err, resp.Dispatch.ID)
+	}
+	// Each redispatch is a dispatch of its own.
+	again, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"still stuck"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Dispatch.ID == resp.Dispatch.ID {
+		t.Errorf("two redispatches share dispatch %d", again.Dispatch.ID)
+	}
+
+	// An assignment held for reconciliation is active again when its owning
+	// leader, which has looked at it, sends it to its worker again.
+	if _, err := f.d.store.AssignmentNeedsReconciliation(a.ID, again.Dispatch.ID, "its session cannot be resumed", "Reconcile it.", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	held, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"I looked: the branch is on origin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Assignment.State != store.AssignmentActive || held.Dispatch.ID == again.Dispatch.ID {
+		t.Errorf("redispatching an assignment that needed reconciliation answered %+v and %+v, want it active in a new dispatch", held.Assignment, held.Dispatch)
 	}
 }

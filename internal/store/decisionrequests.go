@@ -931,6 +931,13 @@ func (s *Store) PendingDecisions() ([]DecisionRequest, error) {
 	return decisionRequests(s.db, `state = ? AND recipient = ?`, RequestPending, ToUser)
 }
 
+// PendingRequestsOf returns the pending versions of the decision requests
+// that agent made, by request: a worker that asked its owning leader is waiting
+// for the answer.
+func (s *Store) PendingRequestsOf(agent string) ([]DecisionRequest, error) {
+	return decisionRequests(s.db, `state = ? AND requester = ?`, RequestPending, agent)
+}
+
 // BlockingDecisions returns the pending versions of decision requests that
 // the work of assignment waits for.
 func (s *Store) BlockingDecisions(assignment int64) ([]DecisionRequest, error) {

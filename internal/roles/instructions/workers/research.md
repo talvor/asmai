@@ -61,7 +61,11 @@ asmai result \
 - In a repository the PR section is your own part of the notes: what changed, and what the findings settle. If you merged the job branch's tip in or resolved conflicts, write a section for those changes too. In a scratch workspace there is no pull request, so give no PR section.
 - In a repository the daemon records the commit your workspace is at, and refuses a result while changes are uncommitted. In a scratch workspace there is no commit to record.
 
-If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>`, after you commit and push your assignment branch if you are in a repository.
+If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblock you>`, after you commit and push your assignment branch if you are in a repository. If the push itself fails, run it anyway and say so in `--reason`: a blocked report needs no recorded push.
+
+## When your owning leader sends the assignment again
+
+A new dispatch of kind `redispatch` means your owning leader sends the assignment to you again, for the reasons it gives: fetch it with `asmai inbox --dispatch <id>`. The assignment is still yours and active. Load `asmai brief <job>`, look at your workspace and at the effects you have recorded, and continue from where you stopped; never repeat an effect you already made. Your result or blocked report is tied to this dispatch.
 
 ## When the factory restarts
 

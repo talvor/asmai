@@ -54,6 +54,20 @@ type restartRun struct {
 // waits unfetched in its inbox.
 var busyLeader = []string{fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/never" ]; do sleep 0.02; done`, 0, "")}
 
+// tellsStalled is what Engineering's leader does in the first run after it has
+// assigned the work, when the worker's first turn ends with no report: it ends
+// its own turn and is told so, in dispatch 4, a message the daemon makes when
+// a worker's turn ends without a result or a blocked report.
+var tellsStalled = []string{
+	hookStep("Stop", "handoff", ""),
+	`{"expect":"asmai inbox --dispatch 4\r"}`,
+	hookStep("UserPromptSubmit", "stalled", "asmai inbox --dispatch 4"),
+	fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)stalled from daemon.*worker1@engineering's turn for dispatch 3 of assignment 1 of job 1 ended with no result and no blocked report"),
+	hookStep("Stop", "stalled", ""),
+	fakeRun(`touch "$ASMAI_TEST_DIR/stalled-told"`, 0, ""),
+	`{"expect":"only typed by a test that means to"}`,
+}
+
 // firstRun runs a factory to that point, and then until the test's own
 // condition: worker is what the worker does after it fetches its assignment,
 // leader what Engineering's leader does in its turn after it has assigned it,
@@ -90,14 +104,20 @@ func firstRun(t *testing.T, worker func(transcript string) []string, leader []st
 	}
 	t.Setenv(fakeprovider.ScriptEnv+"_ENGINEERING", writeScript(t, "engineering-first", engineering))
 
-	workerScript := append([]string{
+	workerScript := []string{
 		nativeHook("SessionStart", "", "", transcript),
 		`{"screen":"\u001b[?2004h> "}`,
 		`{"expect":"asmai inbox --dispatch 3\r"}`,
 		nativeHook("UserPromptSubmit", "assignment", "asmai inbox --dispatch 3", transcript),
 		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Add greeting.txt.*Decision records passed to you with this assignment:\n  decision 1 \\| job 1 \\| delegated"),
 		fakeRun(`printf '%s' "$ASMAI_SESSION" > "$ASMAI_TEST_DIR/worker-credential"`, 0, ""),
-	}, worker(transcript)...)
+	}
+	if secondHandoff {
+		// The worker's turn ends after the second handoff is sent, so that
+		// the dispatches are numbered the same way in every run.
+		workerScript = append(workerScript, fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/second-sent" ]; do sleep 0.02; done`, 0, ""))
+	}
+	workerScript = append(workerScript, worker(transcript)...)
 	t.Setenv(fakeprovider.ScriptEnv+"_WORKER", writeScript(t, "worker-first", workerScript))
 
 	coordination := []string{
@@ -116,6 +136,7 @@ func firstRun(t *testing.T, worker func(transcript string) []string, leader []st
 		coordination = append(coordination,
 			fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/assigned" ]; do sleep 0.02; done`, 0, ""),
 			fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'Second request' --decisions none --evidence none --constraints none --permissions none --criterion Answered`, 0, "dispatch 4"),
+			fakeRun(`touch "$ASMAI_TEST_DIR/second-sent"`, 0, ""),
 		)
 	}
 	coordination = append(coordination, hookStep("Stop", "reply", ""), `{"expect":"only typed by a test that means to"}`)
@@ -292,15 +313,15 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 	coordination := []string{
 		hookStep("SessionStart", "", ""),
 		`{"screen":"\u001b[?2004h> "}`,
-		`{"expect":"asmai inbox --dispatch 6\r"}`,
-		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 6"),
-		fakeRun(`asmai inbox --dispatch 6`, 0, restoration),
+		`{"expect":"asmai inbox --dispatch 7\r"}`,
+		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 7"),
+		fakeRun(`asmai inbox --dispatch 7`, 0, restoration),
 		fakeRun(`asmai brief 1`, 0, "(?s)Handoffs:\n- 1 leader@coordination -> leader@engineering: accepted"),
 		fakeRun(`asmai brief 1`, 0, "(?s)Decisions:\n- decision 1 \\| job 1 \\| delegated \\| accountable leader leader@engineering \\| [^\n]+\n  Choice: put the greeting in greeting.txt\n  Relied on: the job mandate\n  Rationale: one file needs no design\n  Evidence: the request names one greeting\n  Assumptions: one file is enough\n  Reopen when: the greeting needs configuration\n"),
 		hookStep("Stop", "restore", ""),
-		`{"expect":"asmai inbox --dispatch 8\r"}`,
-		hookStep("UserPromptSubmit", "reply", "asmai inbox --dispatch 8"),
-		fakeRun(`asmai inbox --dispatch 8`, 0, "accepted from leader@engineering"),
+		`{"expect":"asmai inbox --dispatch 9\r"}`,
+		hookStep("UserPromptSubmit", "reply", "asmai inbox --dispatch 9"),
+		fakeRun(`asmai inbox --dispatch 9`, 0, "accepted from leader@engineering"),
 		hookStep("Stop", "reply", ""),
 		fakeRun(`touch "$ASMAI_TEST_DIR/coordination-done"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,
@@ -313,19 +334,25 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		`{"expect":"asmai inbox --dispatch 4\r"}`,
 		hookStep("UserPromptSubmit", "second", "asmai inbox --dispatch 4"),
 		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)handoff 2 .*Second request"),
-		fakeRun(`asmai handoff accept --handoff 2`, 0, "reply dispatch 8"),
+		fakeRun(`asmai handoff accept --handoff 2`, 0, "reply dispatch 9"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/engineering-accepted"`, 0, ""),
 		hookStep("Stop", "second", ""),
-		`{"expect":"asmai inbox --dispatch 7\r"}`,
-		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 7"),
-		fakeRun(`asmai inbox --dispatch 7`, 0, restoration),
+		// The daemon told the leader that the worker's turn ended with no
+		// report, while the leader was busy, before the stop.
+		`{"expect":"asmai inbox --dispatch 5\r"}`,
+		hookStep("UserPromptSubmit", "stalled", "asmai inbox --dispatch 5"),
+		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)stalled from daemon.*worker1@engineering's turn for dispatch 3 of assignment 1 of job 1 ended with no result and no blocked report"),
+		hookStep("Stop", "stalled", ""),
+		`{"expect":"asmai inbox --dispatch 8\r"}`,
+		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 8"),
+		fakeRun(`asmai inbox --dispatch 8`, 0, restoration),
 		fakeRun(`asmai brief 1`, 0, "(?s)Assignments:\n- 1 worker1@engineering \\(owner leader@engineering\\) (active|submitted) on branch "+branch+": Add greeting.txt, saying hello \\[decisions passed on: 1\\]\n"),
 		hookStep("Stop", "restore", ""),
 		// The worker's result reaches the leader in the dispatch the worker
 		// was given after the restart.
-		`{"expect":"asmai inbox --dispatch 9\r"}`,
-		hookStep("UserPromptSubmit", "result", "asmai inbox --dispatch 9"),
-		fakeRun(`asmai inbox --dispatch 9`, 0, "(?s)result from worker1@engineering.*result 1 \\| assignment 1 \\| worker1@engineering"),
+		`{"expect":"asmai inbox --dispatch 10\r"}`,
+		hookStep("UserPromptSubmit", "result", "asmai inbox --dispatch 10"),
+		fakeRun(`asmai inbox --dispatch 10`, 0, "(?s)result from worker1@engineering.*result 1 \\| assignment 1 \\| worker1@engineering"),
 		waitForWorker,
 		fakeRun(`asmai accept --assignment 1 --reason 'greeting.txt says hello: the check passed at the commit'`, 0, "assignment 1 accepted by leader@engineering"),
 		hookStep("Stop", "result", ""),
@@ -335,9 +362,9 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 	resumed := []string{
 		nativeHook("SessionStart", "", "", r.transcript),
 		`{"screen":"\u001b[?2004h> "}`,
-		`{"expect":"asmai inbox --dispatch 5\r"}`,
-		nativeHook("UserPromptSubmit", "resumption", "asmai inbox --dispatch 5", r.transcript),
-		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)resumption from daemon.*Resumes dispatch 3.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Decision records passed to you with this assignment:\n  decision 1 \\| job 1 \\| delegated \\| accountable leader leader@engineering.*Choice: put the greeting in greeting.txt"),
+		`{"expect":"asmai inbox --dispatch 6\r"}`,
+		nativeHook("UserPromptSubmit", "resumption", "asmai inbox --dispatch 6", r.transcript),
+		fakeRun(`asmai inbox --dispatch 6`, 0, "(?s)resumption from daemon.*Resumes dispatch 3.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Decision records passed to you with this assignment:\n  decision 1 \\| job 1 \\| delegated \\| accountable leader leader@engineering.*Choice: put the greeting in greeting.txt"),
 		// Fetching the dispatch that stopped again is safe, and changes
 		// nothing about it.
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
@@ -345,7 +372,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 3 recorded: push"),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/engineering-accepted" ]; do sleep 0.02; done`, 0, ""),
-		fakeRun(resultFlagsForGreeting, 0, "result recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 9"),
+		fakeRun(resultFlagsForGreeting, 0, "result recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 10"),
 		nativeHook("Stop", "resumption", "", r.transcript),
 		fakeRun(`touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,
@@ -415,14 +442,14 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		Dispatch      int64  `json:"dispatch"`
 		NativeSession string `json:"native_session"`
 	}](t, resumptions[0])
-	if resumption.Assignment != 1 || resumption.Job != 1 || resumption.Worker != "worker1@engineering" || resumption.Resumes != 3 || resumption.Dispatch != 5 || resumption.NativeSession != nativeSession {
+	if resumption.Assignment != 1 || resumption.Job != 1 || resumption.Worker != "worker1@engineering" || resumption.Resumes != 3 || resumption.Dispatch != 6 || resumption.NativeSession != nativeSession {
 		t.Errorf("the resumption is %+v", resumption)
 	}
 	states := dispatchStates(t, restart)
 	if got := states[3]; len(got) != 0 {
 		t.Errorf("dispatch 3 changed to %v after the restart: evidence from before it never completes a new dispatch", got)
 	}
-	if got := strings.Join(states[5], ","); got != "created,unknown,nudged,delivered,working,stopped" {
+	if got := strings.Join(states[6], ","); got != "created,unknown,nudged,delivered,working,stopped" {
 		t.Errorf("the resumption's states are %s", got)
 	}
 	if got := strings.Join(states[4], ","); got != "unknown,nudged,delivered,working,stopped" {
@@ -443,11 +470,11 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 			Dispatch int64 `json:"dispatch"`
 		} `json:"effects"`
 	}](t, results[0])
-	if submitted.Assignment != 1 || submitted.Dispatch != 5 || submitted.Agent != "worker1@engineering" {
-		t.Errorf("the result is %+v, want it tied to the resumption, dispatch 5", submitted)
+	if submitted.Assignment != 1 || submitted.Dispatch != 6 || submitted.Agent != "worker1@engineering" {
+		t.Errorf("the result is %+v, want it tied to the resumption, dispatch 6", submitted)
 	}
 	for _, e := range submitted.Effects {
-		if e.Dispatch != 5 {
+		if e.Dispatch != 6 {
 			t.Errorf("the result lists effect %d of dispatch %d, which is not the dispatch it came from", e.ID, e.Dispatch)
 		}
 	}
@@ -457,7 +484,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 			Dispatch int64 `json:"dispatch"`
 		}](t, e).Dispatch)
 	}
-	if want := []int64{3, 5, 5}; !slices.Equal(effectDispatches, want) {
+	if want := []int64{3, 6, 6}; !slices.Equal(effectDispatches, want) {
 		t.Errorf("the effects are tied to dispatches %v, want %v", effectDispatches, want)
 	}
 	if got := len(journaled(t, "result.accepted")); got != 1 {
@@ -477,7 +504,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		want  string
 	}{
 		{`{"hook_event_name":"Stop","prompt_id":"assignment","session_id":"` + nativeSession + `"}`, []string{"hook"}, "unknown or superseded"},
-		{"", []string{"inbox", "--dispatch", "5"}, "unknown or superseded"},
+		{"", []string{"inbox", "--dispatch", "6"}, "unknown or superseded"},
 		{"", []string{"result", "--evidence", "x", "--test", "none", "--check", "none", "--gap", "none", "--pr-section", "x"}, "unknown or superseded"},
 		{"", []string{"effect", "commit", "0000000000000000000000000000000000000000"}, "unknown or superseded"},
 	} {
@@ -492,7 +519,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 }
 
 func TestAnAssignmentWhoseNativeSessionCannotBeResumedNeedsReconciliationAndItsOwnerIsTold(t *testing.T) {
-	r := firstRun(t, stoppedWorker, nil, false, "worker-stopped")
+	r := firstRun(t, stoppedWorker, tellsStalled, false, "stalled-told")
 	stopFactory(t)
 
 	// Claude Code has no record of the session: it says so and exits.
@@ -500,24 +527,24 @@ func TestAnAssignmentWhoseNativeSessionCannotBeResumedNeedsReconciliationAndItsO
 	coordination := []string{
 		hookStep("SessionStart", "", ""),
 		`{"screen":"\u001b[?2004h> "}`,
-		`{"expect":"asmai inbox --dispatch 5\r"}`,
-		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 5"),
-		fakeRun(`asmai inbox --dispatch 5`, 0, restoration),
+		`{"expect":"asmai inbox --dispatch 6\r"}`,
+		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 6"),
+		fakeRun(`asmai inbox --dispatch 6`, 0, restoration),
 		hookStep("Stop", "restore", ""),
 		`{"expect":"only typed by a test that means to"}`,
 	}
 	engineering := []string{
 		hookStep("SessionStart", "", ""),
 		`{"screen":"\u001b[?2004h> "}`,
-		`{"expect":"asmai inbox --dispatch 6\r"}`,
-		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 6"),
-		fakeRun(`asmai inbox --dispatch 6`, 0, restoration),
+		`{"expect":"asmai inbox --dispatch 7\r"}`,
+		hookStep("UserPromptSubmit", "restore", "asmai inbox --dispatch 7"),
+		fakeRun(`asmai inbox --dispatch 7`, 0, restoration),
 		hookStep("Stop", "restore", ""),
 		// The owning leader is told that the assignment needs reconciliation,
 		// and holds it: it can be neither accepted nor cancelled yet.
-		`{"expect":"asmai inbox --dispatch 7\r"}`,
-		hookStep("UserPromptSubmit", "reconcile", "asmai inbox --dispatch 7"),
-		fakeRun(`asmai inbox --dispatch 7`, 0, "(?s)reconciliation from daemon.*Assignment 1 of job 1 needs reconciliation: the native session of worker1@engineering cannot be resumed.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| needs_reconciliation"),
+		`{"expect":"asmai inbox --dispatch 8\r"}`,
+		hookStep("UserPromptSubmit", "reconcile", "asmai inbox --dispatch 8"),
+		fakeRun(`asmai inbox --dispatch 8`, 0, "(?s)reconciliation from daemon.*Assignment 1 of job 1 needs reconciliation: the native session of worker1@engineering cannot be resumed.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| needs_reconciliation"),
 		fakeRun(`asmai brief 1`, 0, "(?s)Assignments:\n- 1 worker1@engineering \\(owner leader@engineering\\) needs_reconciliation on branch asmai/job-1/1"),
 		fakeRun(`asmai accept --assignment 1 --reason x`, 1, "is needs_reconciliation, so it has no result to accept"),
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "is needs_reconciliation, so it cannot be cancelled"),
@@ -539,14 +566,14 @@ func TestAnAssignmentWhoseNativeSessionCannotBeResumedNeedsReconciliationAndItsO
 		Dispatch   int64  `json:"dispatch"`
 		Reason     string `json:"reason"`
 	}](t, held[0])
-	if h.Assignment != 1 || h.Worker != "worker1@engineering" || h.Owner != "leader@engineering" || h.Dispatch != 4 || !strings.Contains(h.Reason, "cannot be resumed") {
-		t.Errorf("the assignment was held as %+v, want assignment 1 with its resumption, dispatch 4", h)
+	if h.Assignment != 1 || h.Worker != "worker1@engineering" || h.Owner != "leader@engineering" || h.Dispatch != 5 || !strings.Contains(h.Reason, "cannot be resumed") {
+		t.Errorf("the assignment was held as %+v, want assignment 1 with its resumption, dispatch 5", h)
 	}
 	if got := len(journaled(t, "assignment.resumed")); got != 1 {
 		t.Errorf("assignments resumed: %d, want the one resumption that could not start", got)
 	}
 	states := dispatchStates(t, 0)
-	if got := strings.Join(states[4], ","); got != "created,unknown" {
+	if got := strings.Join(states[5], ","); got != "created,unknown" {
 		t.Errorf("the resumption that could not start moved through %s, want it unknown", got)
 	}
 	// The worker is not started again and again for it.

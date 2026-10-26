@@ -356,17 +356,12 @@ func TestABlockedReportLeavesTheAssignmentActiveAndEndsItsDispatchOnce(t *testin
 	if _, _, err := s.ReportSubmitted(Submission{Agent: "worker1@engineering", Generation: 1, Dispatch: d.ID, Kind: ReportBlocked, Commit: otherCommit}, assignmentsAt); err == nil {
 		t.Error("a blocked report that says nothing was recorded")
 	}
-	if _, _, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt); err == nil || !strings.Contains(err.Error(), "push") {
-		t.Errorf("a blocked report without a recorded push returned %v", err)
-	}
 	withoutTip := submission(d, ReportBlocked)
 	withoutTip.TookInTip = false
 	if _, _, err := s.ReportSubmitted(withoutTip, assignmentsAt); err == nil || !strings.Contains(err.Error(), "tip") {
 		t.Errorf("a blocked report that has not taken in the job tip returned %v", err)
 	}
-	if _, err := s.EffectRecorded("worker1@engineering", 1, d.ID, "push", "origin/asmai/job-1/1", assignmentsAt); err != nil {
-		t.Fatal(err)
-	}
+	// It needs no recorded push: a worker whose push failed can still say so.
 	r, leaderDispatch, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt)
 	if err != nil {
 		t.Fatal(err)

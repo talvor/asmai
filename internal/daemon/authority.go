@@ -60,7 +60,7 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return fmt.Errorf("only leader@engineering, leader@planning, leader@research or leader@coordination, for writing work, or leader@quality, for validation, may run asmai assign")
-	case CommandAccept, CommandReject, CommandCancel:
+	case CommandAccept, CommandReject, CommandCancel, CommandRedispatch:
 		if ownsWorkers(ref.address) {
 			return nil
 		}
@@ -116,7 +116,7 @@ func isAgentCommand(command string) bool {
 	switch command {
 	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
-		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel,
+		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch,
 		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
 		return true
 	}
@@ -149,7 +149,7 @@ func commandName(command string) string {
 		return "job <number>"
 	case CommandInbox:
 		return "inbox"
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandPush, CommandAuthorize:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch, CommandPush, CommandAuthorize:
 		return command
 	case CommandGrants:
 		return "grants"

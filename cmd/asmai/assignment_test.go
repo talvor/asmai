@@ -554,6 +554,7 @@ func TestTheAssignmentCommandsAreAgentCommands(t *testing.T) {
 		{"accept", "--assignment", "1", "--reason", "x"},
 		{"reject", "--assignment", "1", "--reason", "x"},
 		{"cancel", "--assignment", "1", "--reason", "x"},
+		{"redispatch", "--assignment", "1", "--reason", "x"},
 	} {
 		if _, stderr, code := runAsmai(t, args...); code != 1 || !strings.Contains(stderr, "is an agent command") {
 			t.Errorf("asmai %s exited %d printing %q, want a refusal: it is an agent command", args[0], code, stderr)

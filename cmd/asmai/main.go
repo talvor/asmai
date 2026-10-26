@@ -191,6 +191,9 @@ commands agents run:
   asmai cancel --assignment <id> --reason <text>
                               a leader cancels an assignment it owns; its worker pushes its assignment
                               branch, if it has one, and stops
+  asmai redispatch --assignment <id> --reason <text>
+                              a leader sends an active assignment it owns, or one that needs reconciliation,
+                              to its worker again, in a new dispatch
   asmai push <number>         the delivery owner, Engineering's leader for a code job and Coordination's for a
                               repository's setup, asks the daemon to
                               push the job branch: it fetches the branch from origin, refuses and records an
@@ -475,7 +478,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "blocked":
 		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
 		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker")
-	case "accept", "reject", "cancel":
+	case "accept", "reject", "cancel", "redispatch":
 		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
 		flags.BoolVar(&endsJob, "ends-job", false, "with accept, the owning leader accepts the outcome of a job with no repository against its mandate, which ends the job")
@@ -571,7 +574,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "redispatch", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -657,7 +660,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return result(o, paths, resultArgs)
 	case "blocked":
 		return blocked(o, paths, blockedReason, blockedNeeds)
-	case "accept", "reject", "cancel":
+	case "accept", "reject", "cancel", "redispatch":
 		return decide(o, paths, name, decidedAssignment, reasons, endsJob, prototype)
 	case "push":
 		return push(o, paths, arg)

@@ -65,6 +65,10 @@ If you cannot go on, run `asmai blocked --reason <why> --needs <what would unblo
 
 Your owning leader may reject your report. The assignment is then active again and yours, and a new dispatch brings you the leader's reasons: fetch it with `asmai inbox --dispatch <id>`. Correct what the reasons name, in the same workspace and at the same commit, and submit a new report with `asmai result`.
 
+## When your owning leader sends the assignment again
+
+A new dispatch of kind `redispatch` means your owning leader sends the assignment to you again, for the reasons it gives: fetch it with `asmai inbox --dispatch <id>`. The assignment is still yours and active. Load `asmai brief <job>`, look at your workspace, and continue the validation from where you stopped. Your report is tied to this dispatch.
+
 ## When your assignment is cancelled
 
 Your owning leader may cancel your assignment. A new dispatch tells you so, with its reasons. Do not submit a report. There is no branch to push: stop. The daemon ends the assignment and removes your workspace.

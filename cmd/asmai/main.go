@@ -145,7 +145,7 @@ commands agents run:
                               is the reason: the daemon cancels every assignment, each ending once its branch
                               push is confirmed, closes the open pull request with a comment, withdraws the
                               pending decision requests and discards unreviewed results; branches stay on origin
-  asmai brief <number>       read a job's canonical brief
+  asmai brief <number>        read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
   asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>] [--assignment <id>]
                               repeat --record for each of the job's decision records that goes with the handoff;

@@ -49,12 +49,13 @@ func (d *daemon) cancelJob(req Request) (store.JobCancellation, error) {
 		d.assignMu.Unlock()
 		return store.JobCancellation{}, refuse("%v", err)
 	}
-	witness, witnessed, err := d.store.CoordinationWitnessed(req.Witness, req.LatestWitness)
+	// Every check JobCancelled refuses on is made before gh writes, so a
+	// refusal changes nothing, on GitHub either.
+	witness, reason, err := d.store.CancelReason(req.Witness, req.LatestWitness)
 	if err != nil {
 		d.assignMu.Unlock()
 		return store.JobCancellation{}, refuse("%v", err)
 	}
-	reason := strings.TrimSpace(witnessed.Text)
 	closed, err := d.closeCancelledPullRequest(j, witness, reason)
 	if err != nil {
 		d.assignMu.Unlock()
@@ -87,7 +88,9 @@ func (d *daemon) cancelJob(req Request) (store.JobCancellation, error) {
 
 // closeCancelledPullRequest closes job j's latest recorded pull request, if
 // GitHub still has it open, with a comment giving the user's words reason,
-// and returns it; it returns nil when the job has none open. A failure to
+// and returns it; it returns nil when the job has none open. One an earlier
+// attempt closed, whose cancellation then failed, is found closed with
+// AsmAI's comment for the job, and is returned as closed. A failure to
 // look it up or close it is returned as a refusal that says nothing was
 // cancelled. assignMu is held.
 func (d *daemon) closeCancelledPullRequest(j store.Job, witness int64, reason string) (*store.PullRequest, error) {
@@ -109,16 +112,46 @@ func (d *daemon) closeCancelledPullRequest(j store.Job, witness int64, reason st
 	if err != nil {
 		return nil, refuse("nothing is cancelled: looking up job %d's pull request #%d %s with gh failed: %v; run asmai job cancel again once gh can reach GitHub", j.Number, p.Number, p.URL, err)
 	}
+	if found.State == "CLOSED" {
+		// A cancellation whose step failed after gh closed the pull request
+		// left AsmAI's comment on it: the closing is still the daemon's.
+		comments, err := github.PullRequestComments(ctx, repository.Clone, found.Number)
+		if err != nil {
+			return nil, refuse("nothing is cancelled: reading the comments on job %d's closed pull request #%d %s with gh failed: %v; run asmai job cancel again once gh can reach GitHub", j.Number, found.Number, p.URL, err)
+		}
+		if closedForCancellation(comments, j.Number) {
+			d.log.Info("a cancelled job's pull request was already closed by an earlier attempt", "job", j.Number, "number", found.Number, "url", p.URL)
+			return &p, nil
+		}
+	}
 	if found.State != "OPEN" {
 		d.log.Info("a cancelled job's pull request is no longer open, so it is not closed", "job", j.Number, "number", found.Number, "state", found.State)
 		return nil, nil
 	}
-	comment := fmt.Sprintf("AsmAI closed this pull request: job %d was cancelled at the user's word (witnessed message %d):\n\n> %s\n\nThe job branch and every assignment branch stay on origin.", j.Number, witness, strings.ReplaceAll(reason, "\n", "\n> "))
+	comment := fmt.Sprintf("%s (witnessed message %d):\n\n> %s\n\nThe job branch and every assignment branch stay on origin.", cancelCommentLead(j.Number), witness, strings.ReplaceAll(reason, "\n", "\n> "))
 	if err := github.ClosePullRequest(ctx, repository.Clone, found.Number, comment); err != nil {
 		return nil, refuse("nothing is cancelled: closing job %d's pull request #%d %s with gh failed: %v; run asmai job cancel again once gh can close it", j.Number, found.Number, p.URL, err)
 	}
 	d.log.Info("a cancelled job's pull request closed with the reason", "job", j.Number, "number", found.Number, "url", p.URL)
 	return &p, nil
+}
+
+// cancelCommentLead is how the comment AsmAI closes a cancelled job's pull
+// request with starts.
+func cancelCommentLead(job int64) string {
+	return fmt.Sprintf("AsmAI closed this pull request: job %d was cancelled at the user's word", job)
+}
+
+// closedForCancellation reports whether comments, the bodies gh printed, hold
+// the comment AsmAI closed job's pull request with.
+func closedForCancellation(comments string, job int64) bool {
+	lead := cancelCommentLead(job) + " "
+	for line := range strings.Lines(comments) {
+		if strings.HasPrefix(line, lead) {
+			return true
+		}
+	}
+	return false
 }
 
 // cancelledJobEnded removes what is local to job once it is cancelled and

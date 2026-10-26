@@ -79,6 +79,13 @@ func ClosePullRequest(ctx context.Context, dir string, number int, comment strin
 	return err
 }
 
+// PullRequestComments returns the bodies of the comments on the pull request
+// number, with gh run in dir, one after another as gh prints them.
+func PullRequestComments(ctx context.Context, dir string, number int) (string, error) {
+	out, err := gh(ctx, dir, "pr", "view", strconv.Itoa(number), "--json", "comments", "--jq", ".comments[].body")
+	return string(out), err
+}
+
 // RepositoryURL returns the URL on GitHub of the repository `gh repo view`
 // run in dir shows, dir's origin.
 func RepositoryURL(ctx context.Context, dir string) (string, error) {

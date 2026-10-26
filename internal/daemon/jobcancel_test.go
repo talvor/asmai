@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -19,12 +20,16 @@ import (
 // fakeCloseGH is a gh on the PATH that shows one pull request, #7 of the job
 // branch, in the state the test's pr-state file holds, and closes it: it
 // keeps the comment it was closed with and leaves the pull request CLOSED.
-// With a close-fails file, closing fails as GitHub would.
+// It shows the bodies of the comments the pull request was closed with. With a
+// close-fails file, closing fails as GitHub would.
 const fakeCloseGH = `#!/bin/sh
-case "$1 $2" in
-"pr view")
+case "$1 $2 $5" in
+"pr view comments")
+	[ "$3 $6 $7" = "7 --jq .comments[].body" ] || { echo "the fake gh shows only #7's comment bodies: $*" >&2; exit 1; }
+	[ -e "$ASMAI_TEST_DIR/close-comment" ] && cat "$ASMAI_TEST_DIR/close-comment" ;;
+"pr view "*)
 	printf '{"number":7,"url":"https://github.com/talvor/asmai-fixture/pull/7","title":"Add a greeting","isDraft":false,"headRefName":"%s","headRefOid":"abc","state":"%s"}\n' "$(cat "$ASMAI_TEST_DIR/pr-branch")" "$(cat "$ASMAI_TEST_DIR/pr-state")" ;;
-"pr close")
+"pr close "*)
 	[ -e "$ASMAI_TEST_DIR/close-fails" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
 	[ "$3 $4" = "7 --comment" ] || { echo "the fake gh closes only #7 with a comment: $*" >&2; exit 1; }
 	printf '%s' "$5" > "$ASMAI_TEST_DIR/close-comment"
@@ -86,11 +91,18 @@ func newCancellableJob(t *testing.T, f twoResults, withPullRequest bool) cancell
 			t.Fatal(err)
 		}
 	}
-	_, witness, err := f.s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: cancelWords}, "UserPromptSubmit", json.RawMessage(`{"prompt":"cancel"}`), time.Now())
+	return cancellableJob{twoResults: f, testDir: testDir, words: cancelWords, witness: witnessed(t, f.s, cancelWords)}
+}
+
+// witnessed has the user tell Coordination's leader text, and returns the
+// witnessed message.
+func witnessed(t *testing.T, s *store.Store, text string) int64 {
+	t.Helper()
+	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: text}, "UserPromptSubmit", json.RawMessage(`{"prompt":"cancel"}`), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cancellableJob{twoResults: f, testDir: testDir, words: cancelWords, witness: witness}
+	return witness
 }
 
 // cancel runs asmai job cancel with the credential, citing the user's words.
@@ -313,6 +325,96 @@ func TestJobCancelRefusesUnknownFinishedAndCancelledJobsAndChangesNothing(t *tes
 		t.Fatal(err)
 	}
 	unchanged(t, func() error { _, err := c.cancel("coordination", c.job.Number); return err }, "job 1 is already cancelled")
+}
+
+func TestAWitnessWithNoWordsIsRefusedBeforeThePullRequestIsClosed(t *testing.T) {
+	c := newCancellableJob(t, newTwoResults(t), true)
+	blank := c
+	blank.witness = witnessed(t, c.s, " \n\t ")
+	before, err := c.s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blank.cancel("coordination", c.job.Number); err == nil || !strings.Contains(err.Error(), "has no words to give as the reason") {
+		t.Errorf("job cancel citing a blank message returned %v, want it refused for having no words", err)
+	}
+	if after, err := c.s.Journal(); err != nil || len(after) != len(before) {
+		t.Errorf("a refused cancellation journaled %d entries (%v)", len(after)-len(before), err)
+	}
+	if state, _ := os.ReadFile(filepath.Join(c.testDir, "pr-state")); strings.TrimSpace(string(state)) != "OPEN" {
+		t.Errorf("the pull request is %s, want it left open", state)
+	}
+	if _, err := os.Stat(filepath.Join(c.testDir, "close-comment")); !os.IsNotExist(err) {
+		t.Errorf("gh closed the pull request (%v), want no write to GitHub", err)
+	}
+	if j, err := c.s.Job(c.job.Number); err != nil || j.State != store.JobOpen {
+		t.Errorf("after the refusal the job is %+v (%v), want it open", j, err)
+	}
+
+	// The user's own words then cancel it.
+	resp, err := c.cancel("coordination", c.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Cancellation; got.Job.State != store.JobCancelled || got.Job.CancelReason != c.words || got.Closed == nil {
+		t.Errorf("the cancellation is %+v, want the job cancelled with the user's words and its pull request closed", got)
+	}
+}
+
+func TestARerunAfterTheStoreFailedRecordsThePullRequestTheDaemonClosed(t *testing.T) {
+	c := newCancellableJob(t, newTwoResults(t), true)
+	db, err := sql.Open("sqlite3", "file:"+c.d.cfg.Paths.Store+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER fail_cancel BEFORE UPDATE OF state ON jobs WHEN NEW.state = 'cancelled' BEGIN SELECT RAISE(ABORT, 'the disk is full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.cancel("coordination", c.job.Number); err == nil || !strings.Contains(err.Error(), "pull request #7") || !strings.Contains(err.Error(), "the job was not cancelled") {
+		t.Fatalf("job cancel with the store failing returned %v, want the closed pull request reported", err)
+	}
+	if state, _ := os.ReadFile(filepath.Join(c.testDir, "pr-state")); strings.TrimSpace(string(state)) != "CLOSED" {
+		t.Fatalf("the pull request is %s, want gh to have closed it", state)
+	}
+	if _, err := db.Exec(`DROP TRIGGER fail_cancel`); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := c.cancel("coordination", c.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resp.Cancellation
+	if got.Job.State != store.JobCancelled || got.Closed == nil || got.Closed.Agent != store.Daemon || got.Closed.Kind != store.EffectPullRequestClosed || got.Closed.Ref != "https://github.com/talvor/asmai-fixture/pull/7" {
+		t.Errorf("the re-run's cancellation is %+v, want the daemon's closing of #7 recorded", got)
+	}
+	inbox, err := c.s.Inbox("leader@coordination", 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(inbox, func(m store.Message) bool {
+		return m.Kind == store.MessageJobCancelled && strings.Contains(m.Body, "pull request #7") && strings.Contains(m.Body, "is closed with a comment") && !strings.Contains(m.Body, "no open pull request")
+	}) {
+		t.Errorf("Coordination's leader was not told the pull request was closed: %+v", inbox)
+	}
+}
+
+func TestAPullRequestClosedByAnotherHandIsNotTheDaemonsEffect(t *testing.T) {
+	c := newCancellableJob(t, newTwoResults(t), true)
+	if err := os.WriteFile(filepath.Join(c.testDir, "pr-state"), []byte("CLOSED"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.testDir, "close-comment"), []byte("Closing: superseded by #8"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.cancel("coordination", c.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Cancellation; got.Job.State != store.JobCancelled || got.Closed != nil {
+		t.Errorf("the cancellation is %+v, want the job cancelled with nothing closed by the daemon", got)
+	}
 }
 
 func TestOnlyCoordinationsLeaderMayCancelAJob(t *testing.T) {

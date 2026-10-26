@@ -56,16 +56,29 @@ type JobCancellation struct {
 	Dispatches []Dispatch `json:"dispatches"`
 }
 
-// CoordinationWitnessed returns the witnessed message witness, or with latest
-// the latest one, if it holds the user's own words submitted to
-// Coordination's leader, with its journal ID.
-func (s *Store) CoordinationWitnessed(witness int64, latest bool) (int64, Witnessed, error) {
+// CancelReason returns the reason for cancelling a job: the user's own words
+// in the witnessed message witness, or with latest the latest one, submitted
+// to Coordination's leader, with the message's journal ID. It refuses a
+// message that is not such words, or has no words to give as the reason.
+func (s *Store) CancelReason(witness int64, latest bool) (int64, string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, Witnessed{}, err
+		return 0, "", err
 	}
 	defer tx.Rollback()
-	return coordinationWitnessed(tx, witness, latest)
+	return cancelReason(tx, witness, latest)
+}
+
+func cancelReason(tx *sql.Tx, witness int64, latest bool) (int64, string, error) {
+	witness, witnessed, err := coordinationWitnessed(tx, witness, latest)
+	if err != nil {
+		return 0, "", err
+	}
+	reason := strings.TrimSpace(witnessed.Text)
+	if reason == "" {
+		return 0, "", fmt.Errorf("witnessed message %d has no words to give as the reason: cite the message in which the user asked for the cancellation", witness)
+	}
+	return witness, reason, nil
 }
 
 // CheckJobCancellable returns job if it can be cancelled, or why not: a job
@@ -110,13 +123,9 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 	if err != nil {
 		return JobCancellation{}, err
 	}
-	witness, witnessed, err := coordinationWitnessed(tx, c.Witness, c.Latest)
+	witness, reason, err := cancelReason(tx, c.Witness, c.Latest)
 	if err != nil {
 		return JobCancellation{}, err
-	}
-	reason := strings.TrimSpace(witnessed.Text)
-	if reason == "" {
-		return JobCancellation{}, fmt.Errorf("witnessed message %d has no words to give as the reason", witness)
 	}
 	if _, err := tx.Exec(`UPDATE jobs SET state = ?, cancel_reason = ?, cancel_witness = ? WHERE number = ?`, JobCancelled, reason, witness, j.Number); err != nil {
 		return JobCancellation{}, err

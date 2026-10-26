@@ -18,6 +18,18 @@ const JobOpen = "open"
 // requests stay answerable.
 const JobPaused = "paused"
 
+// JobCancelled is the state of a job the user cancelled through Coordination's
+// leader, with their own words as the reason. Like an ended job, it takes no
+// new work and is never reopened; its assignments that were live end as
+// cancelled once their workers have pushed their branches and stopped.
+const JobCancelled = "cancelled"
+
+// Ended reports whether the job has ended: delivered, replaced, ended on its
+// leader's acceptance, or cancelled.
+func (j Job) Ended() bool {
+	return j.State == JobEnded || j.State == JobCancelled
+}
+
 // The mandates a job has. A tested-PR job is authorized to inspect, plan,
 // research, make scoped edits, run checks, commit, push and open and update
 // its pull request. A planning-only job is authorized only to produce its
@@ -57,6 +69,10 @@ type Job struct {
 	OpenedAt   time.Time `json:"opened_at"`
 	// Follows is the job this one is a follow-up to, or zero (02 rule 20).
 	Follows int64 `json:"follows,omitempty"`
+	// CancelReason is the user's own words a cancelled job was cancelled
+	// for, and CancelWitness the witnessed message that holds them.
+	CancelReason  string `json:"cancel_reason,omitempty"`
+	CancelWitness int64  `json:"cancel_witness,omitempty"`
 }
 
 // JobOpened verifies a witnessed message and a registered repository in the
@@ -76,28 +92,9 @@ func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 		return Job{}, err
 	}
 	defer tx.Rollback()
-	if latest {
-		if err := tx.QueryRow(`SELECT id FROM journal WHERE kind = ? AND json_extract(data, '$.agent') = 'leader@coordination' ORDER BY id DESC LIMIT 1`, KindMessageWitnessed).Scan(&job.Witness); errors.Is(err, sql.ErrNoRows) {
-			return Job{}, errors.New("Coordination has no witnessed message to cite")
-		} else if err != nil {
-			return Job{}, err
-		}
-	}
-	var kind, data string
-	if err := tx.QueryRow(`SELECT kind, data FROM journal WHERE id = ?`, job.Witness).Scan(&kind, &data); errors.Is(err, sql.ErrNoRows) {
-		return Job{}, fmt.Errorf("witnessed message %d does not exist", job.Witness)
-	} else if err != nil {
-		return Job{}, err
-	}
-	if kind != KindMessageWitnessed {
-		return Job{}, fmt.Errorf("journal entry %d is %s, not a witnessed message", job.Witness, kind)
-	}
 	var witnessed Witnessed
-	if err := json.Unmarshal([]byte(data), &witnessed); err != nil {
+	if job.Witness, witnessed, err = coordinationWitnessed(tx, job.Witness, latest); err != nil {
 		return Job{}, err
-	}
-	if witnessed.Role != "coordination" || witnessed.Agent != "leader@coordination" {
-		return Job{}, fmt.Errorf("witnessed message %d was not submitted to Coordination's leader", job.Witness)
 	}
 	// Only a research-only job may target no repository, and its assignments
 	// then work in scratch workspaces (02 rule 19, 05 rule 8). A job that
@@ -130,6 +127,36 @@ func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 		return Job{}, err
 	}
 	return job, tx.Commit()
+}
+
+// coordinationWitnessed returns the witnessed message witness, or with latest
+// the latest one, which must be the user's own words submitted to
+// Coordination's leader: a nudge or observation never stands in for them.
+func coordinationWitnessed(tx *sql.Tx, witness int64, latest bool) (int64, Witnessed, error) {
+	if latest {
+		if err := tx.QueryRow(`SELECT id FROM journal WHERE kind = ? AND json_extract(data, '$.agent') = 'leader@coordination' ORDER BY id DESC LIMIT 1`, KindMessageWitnessed).Scan(&witness); errors.Is(err, sql.ErrNoRows) {
+			return 0, Witnessed{}, errors.New("Coordination has no witnessed message to cite")
+		} else if err != nil {
+			return 0, Witnessed{}, err
+		}
+	}
+	var kind, data string
+	if err := tx.QueryRow(`SELECT kind, data FROM journal WHERE id = ?`, witness).Scan(&kind, &data); errors.Is(err, sql.ErrNoRows) {
+		return 0, Witnessed{}, fmt.Errorf("witnessed message %d does not exist", witness)
+	} else if err != nil {
+		return 0, Witnessed{}, err
+	}
+	if kind != KindMessageWitnessed {
+		return 0, Witnessed{}, fmt.Errorf("journal entry %d is %s, not a witnessed message", witness, kind)
+	}
+	var witnessed Witnessed
+	if err := json.Unmarshal([]byte(data), &witnessed); err != nil {
+		return 0, Witnessed{}, err
+	}
+	if witnessed.Role != "coordination" || witnessed.Agent != "leader@coordination" {
+		return 0, Witnessed{}, fmt.Errorf("witnessed message %d was not submitted to Coordination's leader", witness)
+	}
+	return witness, witnessed, nil
 }
 
 // JobLinked links the follow-up job to the job it follows, and journals it.
@@ -194,7 +221,7 @@ func job(q queryer, number int64) (Job, error) {
 	var j Job
 	var repo sql.NullString
 	var criteria, opened string
-	err := q.QueryRow(`SELECT number, repository, state, role, witness, words, reading, mandate, criteria, opened_at, follows FROM jobs WHERE number = ?`, number).Scan(&j.Number, &repo, &j.State, &j.Role, &j.Witness, &j.Words, &j.Reading, &j.Mandate, &criteria, &opened, &j.Follows)
+	err := q.QueryRow(`SELECT number, repository, state, role, witness, words, reading, mandate, criteria, opened_at, follows, cancel_reason, cancel_witness FROM jobs WHERE number = ?`, number).Scan(&j.Number, &repo, &j.State, &j.Role, &j.Witness, &j.Words, &j.Reading, &j.Mandate, &criteria, &opened, &j.Follows, &j.CancelReason, &j.CancelWitness)
 	if err != nil {
 		return Job{}, err
 	}

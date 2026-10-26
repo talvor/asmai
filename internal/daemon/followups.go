@@ -125,7 +125,7 @@ func (d *daemon) continuationOf(ctx context.Context, j store.Job, repository sto
 	} else if holder != 0 && holder != pred.Number {
 		return nil, fmt.Sprintf("open job %d holds the job branch %s", holder, branch.Name), nil
 	}
-	if pred.State != store.JobEnded {
+	if !pred.Ended() {
 		checkCtx, cancel := context.WithTimeout(ctx, gitTimeout)
 		why, err := d.replaceableAssignments(checkCtx, pred.Number)
 		cancel()

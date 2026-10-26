@@ -498,15 +498,16 @@ func (s *Store) NextDispatch(agent string) (Dispatch, error) {
 
 // PendingLeaders returns the agents with a message waiting for them, which
 // the daemon starts a session for. A worker whose assignment is held for
-// reconciliation has none: it is not started again for it.
+// reconciliation, or has been cancelled, has none: it is not started again
+// for it.
 func (s *Store) PendingLeaders() ([]string, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT m.recipient FROM messages m JOIN dispatches d ON d.message=m.id WHERE (
 		(m.fetched_at IS NULL AND d.state IN (?,?,?)) OR
 		(m.kind='handoff' AND m.fetched_at IS NOT NULL AND d.state IN (?,?) AND EXISTS (
 			SELECT 1 FROM handoffs h WHERE h.id=m.handoff AND h.state=?
 		))) AND NOT EXISTS (
-			SELECT 1 FROM assignments a WHERE a.id=m.assignment AND a.worker=m.recipient AND a.state=?
-		) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending, AssignmentNeedsReconciliation)
+			SELECT 1 FROM assignments a WHERE a.id=m.assignment AND a.worker=m.recipient AND a.state IN (?,?)
+		) ORDER BY m.recipient`, DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered, DispatchNudged, HandoffPending, AssignmentNeedsReconciliation, AssignmentCancelled)
 	if err != nil {
 		return nil, err
 	}

@@ -827,6 +827,17 @@ func (s *Store) JobDecisionsWithdrawn(job int64, at time.Time) ([]DecisionReques
 		return nil, err
 	}
 	defer tx.Rollback()
+	pending, err := withdrawJobDecisions(tx, job, at)
+	if err != nil {
+		return nil, err
+	}
+	return pending, tx.Commit()
+}
+
+// withdrawJobDecisions withdraws every pending decision request of job and
+// journals each, which ends their Lavish pages. It returns the versions it
+// withdrew.
+func withdrawJobDecisions(tx *sql.Tx, job int64, at time.Time) ([]DecisionRequest, error) {
 	pending, err := decisionRequests(tx, `job = ? AND state = ?`, job, RequestPending)
 	if err != nil {
 		return nil, err
@@ -842,7 +853,7 @@ func (s *Store) JobDecisionsWithdrawn(job int64, at time.Time) ([]DecisionReques
 			return nil, err
 		}
 	}
-	return pending, tx.Commit()
+	return pending, nil
 }
 
 // PromptRequestWithdrawn withdraws request if it is a native prompt request

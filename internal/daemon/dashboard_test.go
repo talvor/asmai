@@ -259,7 +259,8 @@ func TestAJobsStageFollowsTheStatedPrecedence(t *testing.T) {
 		work store.JobWork
 		want JobStage
 	}{
-		{"delivered beats everything", store.JobWork{Ended: true, NeedsYou: 1, Validating: true, PullRequest: 4}, StageDelivered},
+		{"cancelled beats everything", store.JobWork{Cancelled: true, NeedsYou: 1, Validating: true, Pushed: true, PRCurrent: true, PullRequest: 4}, StageCancelled},
+		{"delivered beats everything but cancelled", store.JobWork{Ended: true, NeedsYou: 1, Validating: true, PullRequest: 4}, StageDelivered},
 		{"a needs-you finding beats validation and delivery", store.JobWork{NeedsYou: 1, Validating: true, PullRequest: 4}, StageNeedsYou},
 		{"a live validation is validating", store.JobWork{Validating: true, Validated: true}, StageValidating},
 		{"a current pull request is delivering", store.JobWork{PullRequest: 4, PRCurrent: true}, StageDelivering},
@@ -294,7 +295,7 @@ func TestAJobsStageFollowsTheStatedPrecedence(t *testing.T) {
 
 func TestEveryStageHasItsOwnWord(t *testing.T) {
 	seen := map[string]JobStage{}
-	for _, s := range []JobStage{StageWorking, StageValidating, StageDelivering, StageNeedsYou, StageDelivered} {
+	for _, s := range []JobStage{StageWorking, StageValidating, StageDelivering, StageNeedsYou, StageDelivered, StageCancelled} {
 		word := s.Word()
 		if other, dup := seen[word]; dup || strings.TrimSpace(word) == "" {
 			t.Errorf("%s reads %q, which %s already does", s, word, other)

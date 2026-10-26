@@ -90,8 +90,12 @@ func (s *Store) AgentWorks() (map[string]AgentWork, error) {
 // derive its stage from.
 type JobWork struct {
 	Number int64
-	// Ended is whether the job is ended, which a delivery does.
-	Ended bool
+	// Ended is whether the job is ended, which a delivery or a cancellation
+	// does. Cancelled is whether it was cancelled, and Reason the user's own
+	// words it was cancelled for.
+	Ended     bool
+	Cancelled bool
+	Reason    string
 	// Words is the user's request, for a job with no pull request to name it.
 	Words string
 	// PullRequest and Title are the latest pull request recorded for the
@@ -151,7 +155,7 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 		), pushed_heads AS (
 			SELECT job, commit_id, 1 pushed FROM pushes WHERE result = ? GROUP BY job, commit_id
 		)
-		SELECT j.number, j.state = ?, j.words, COALESCE(p.number, 0), COALESCE(p.title, ''),
+		SELECT j.number, j.state IN (?, ?), j.state = ?, j.cancel_reason, j.words, COALESCE(p.number, 0), COALESCE(p.title, ''),
 			COALESCE(a.validating, 0), COALESCE(a.writing, 0),
 			COALESCE(f.needs_you, 0), COALESCE(f.open_blocking, 0),
 			COALESCE(v.validated, 0), COALESCE(x.pushed, 0), COALESCE(p.head = b.tip, 0)
@@ -162,7 +166,7 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 		LEFT JOIN finding_state f ON f.job = j.number
 		LEFT JOIN validations v ON v.job = j.number AND v.commit_id = b.tip
 		LEFT JOIN pushed_heads x ON x.job = j.number AND x.commit_id = b.tip
-		ORDER BY j.number`, AssignmentAccepted, AssignmentCancelled, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation, ReviewEarly, PushPushed, JobEnded)
+		ORDER BY j.number`, AssignmentAccepted, AssignmentCancelled, AssignmentAccepted, AssignmentCancelled, FindingNeedsYou, FindingBlocking, MessageValidation, ReviewEarly, PushPushed, JobEnded, JobCancelled, JobCancelled)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +174,7 @@ func jobWorks(tx *sql.Tx) ([]JobWork, error) {
 	works := []JobWork{}
 	for rows.Next() {
 		w := JobWork{Assignments: map[string]int{}}
-		if err := rows.Scan(&w.Number, &w.Ended, &w.Words, &w.PullRequest, &w.Title, &w.Validating, &w.Writing, &w.NeedsYou, &w.OpenBlocking, &w.Validated, &w.Pushed, &w.PRCurrent); err != nil {
+		if err := rows.Scan(&w.Number, &w.Ended, &w.Cancelled, &w.Reason, &w.Words, &w.PullRequest, &w.Title, &w.Validating, &w.Writing, &w.NeedsYou, &w.OpenBlocking, &w.Validated, &w.Pushed, &w.PRCurrent); err != nil {
 			return nil, err
 		}
 		works = append(works, w)
@@ -222,7 +226,7 @@ type NeedsYouFinding struct {
 func (s *Store) NeedsYouFindings() ([]NeedsYouFinding, error) {
 	rows, err := s.db.Query(`SELECT f.id, f.job, f.text, f.created_at FROM findings f
 		JOIN jobs j ON j.number = f.job
-		WHERE f.kind = ? AND j.state <> ? ORDER BY f.id`, FindingNeedsYou, JobEnded)
+		WHERE f.kind = ? AND j.state NOT IN (?, ?) ORDER BY f.id`, FindingNeedsYou, JobEnded, JobCancelled)
 	if err != nil {
 		return nil, err
 	}
@@ -311,6 +315,7 @@ type HandoffWork struct {
 var assignmentChanges = []string{
 	KindResultSubmitted, KindBlockedReported, KindResultAccepted, KindResultRejected, KindResultReturned,
 	KindCancellationRequested, KindAssignmentCancelled, KindAssignmentResumed, KindAssignmentNeedsReconciliation,
+	KindCancellationRestarted,
 }
 
 func jobChangeTimes(tx *sql.Tx, job int64) (map[int64]string, map[int64]string, error) {

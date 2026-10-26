@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -68,6 +69,21 @@ func ViewPullRequest(ctx context.Context, dir, ref string) (PullRequest, error) 
 // GitHub is repository, from a branch of that repository.
 func (p PullRequest) In(repository string) bool {
 	return !p.CrossRepository && strings.HasPrefix(p.URL, strings.TrimSuffix(repository, "/")+"/pull/")
+}
+
+// ClosePullRequest closes the pull request number, with gh run in dir, and
+// leaves comment on it in the same step. It never deletes the pull request's
+// branch.
+func ClosePullRequest(ctx context.Context, dir string, number int, comment string) error {
+	_, err := gh(ctx, dir, "pr", "close", strconv.Itoa(number), "--comment", comment)
+	return err
+}
+
+// PullRequestComments returns the bodies of the comments on the pull request
+// number, with gh run in dir, one after another as gh prints them.
+func PullRequestComments(ctx context.Context, dir string, number int) (string, error) {
+	out, err := gh(ctx, dir, "pr", "view", strconv.Itoa(number), "--json", "comments", "--jq", ".comments[].body")
+	return string(out), err
 }
 
 // RepositoryURL returns the URL on GitHub of the repository `gh repo view`

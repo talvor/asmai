@@ -17,6 +17,7 @@ import (
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/session"
+	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -175,28 +176,8 @@ func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 // workspace exists.
 func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 	t.Helper()
-	root := t.TempDir()
-	out = filepath.Join(root, "out")
-	if err := os.MkdirAll(out, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("ASMAI_TEST_OUT", out)
-	configFile := filepath.Join(root, "config.toml")
-	var config strings.Builder
-	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
-		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
-	}
-	config.WriteString("[repositories.fixture]\norigin = \"/origin\"\ndefault_branch = \"main\"\n")
-	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	paths := stateDir(t)
-	provider := filepath.Join(paths.Providers, "claude-code", "v", "claude")
-	if err := os.MkdirAll(filepath.Dir(provider), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s' \"$ASMAI_SLOT\" > \"$ASMAI_TEST_OUT/slot\"\nprintf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir\"\nprintf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.tmp\" && mv \"$ASMAI_TEST_OUT/args.tmp\" \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
-	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
+	if err := os.MkdirAll(paths.Providers, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	s, err := store.Open(paths.Store)
@@ -204,10 +185,8 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
+	configFile, out := recordingClaude(t, s, paths, "/origin", "main")
 	at := time.Now()
-	if _, err := s.ProviderInstalled(store.ProviderInstall{Name: providers.ClaudeCode, Version: "v", Path: provider, SHA256: strings.Repeat("a", 64), InstalledAt: at}); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: "/origin", DefaultBranch: "main", Clone: "/clone", AddedAt: at}); err != nil {
 		t.Fatal(err)
 	}
@@ -237,14 +216,65 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d = &daemon{cfg: Config{Paths: paths, ConfigFile: configFile, Pins: testPins("v"), ClaudeVersion: reportsVersion("v"), ClaudeRecord: trustingRecord(t, paths)}, leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	d = &daemon{leaders: map[string]*leader{}, sessions: map[string]sessionRef{}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	startsRecordingClaude(t, d, paths, configFile)
+	return d, a, out
+}
+
+// recordingClaude installs in s a pinned Claude Code that records where and
+// how it was started in the directory out, a worker's arguments also in
+// args-<its slot>, and waits, and writes the
+// configuration file of a factory with every role staffed on it and fixture
+// registered with origin and defaultBranch.
+func recordingClaude(t *testing.T, s *store.Store, paths statedir.Paths, origin, defaultBranch string) (configFile, out string) {
+	t.Helper()
+	root := t.TempDir()
+	out = filepath.Join(root, "out")
+	if err := os.MkdirAll(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ASMAI_TEST_OUT", out)
+	configFile = filepath.Join(root, "config.toml")
+	var config strings.Builder
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
+		config.WriteString("[roles." + role + "]\nleader_provider = \"claude\"\nleader_model = \"opus\"\nworker_provider = \"claude\"\nworker_model = \"sonnet\"\n")
+	}
+	config.WriteString("[repositories.fixture]\norigin = \"" + origin + "\"\ndefault_branch = \"" + defaultBranch + "\"\n")
+	if err := os.WriteFile(configFile, []byte(config.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := filepath.Join(paths.Providers, "claude-code", "v", "claude")
+	if err := os.MkdirAll(filepath.Dir(provider), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s' \"$ASMAI_SLOT\" > \"$ASMAI_TEST_OUT/slot\"\nprintf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir\"\nprintf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.tmp\" && mv \"$ASMAI_TEST_OUT/args.tmp\" \"$ASMAI_TEST_OUT/args\"\n[ -n \"$ASMAI_SLOT\" ] && printf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT.tmp\" && mv \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT.tmp\" \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT\"\nexec sleep 60\n"
+	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ProviderInstalled(store.ProviderInstall{Name: providers.ClaudeCode, Version: "v", Path: provider, SHA256: strings.Repeat("a", 64), InstalledAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	return configFile, out
+}
+
+// startsRecordingClaude has d start its agents on the Claude Code
+// recordingClaude installed, with the configuration file configFile, and stop
+// them when the test ends.
+func startsRecordingClaude(t *testing.T, d *daemon, paths statedir.Paths, configFile string) {
+	t.Helper()
+	d.cfg.Paths, d.cfg.ConfigFile, d.cfg.Pins, d.cfg.ClaudeVersion, d.cfg.ClaudeRecord = paths, configFile, testPins("v"), reportsVersion("v"), trustingRecord(t, paths)
 	d.applied = readApplied(configFile)
+	// The sessions a test gave its agents before are not real ones to stop.
+	given := map[*session.Session]bool{}
+	for _, l := range d.leaders {
+		given[l.session] = true
+	}
 	t.Cleanup(func() {
 		d.mu.Lock()
 		d.stopping = true
 		var running []*session.Session
 		for _, l := range d.leaders {
-			if l.session != nil {
+			if l.session != nil && !given[l.session] {
 				running = append(running, l.session)
 			}
 		}
@@ -254,7 +284,6 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 		}
 		d.agents.Wait()
 	})
-	return d, a, out
 }
 
 func waitForFile(t *testing.T, path string) string {

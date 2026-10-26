@@ -4,6 +4,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -301,6 +302,26 @@ func TestAnAssignmentThatNeedsReconciliationIsHeldWithItsWorkerAndItsOwnerIsTold
 	}
 }
 
+func TestOnlyACancellingAssignmentOfACancelledJobHasItsCancellationStartedAgain(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, d := stoppedAssignment(t, s)
+	if _, err := s.CancellationRestarted(a.ID, d.ID, "push and stop", assignmentsAt); err == nil || !strings.Contains(err.Error(), "only a cancelling assignment of a cancelled job") {
+		t.Fatalf("restarting an active assignment's cancellation = %v, want it refused", err)
+	}
+	// An assignment its owning leader cancelled, in a job still open, is held
+	// for reconciliation as before, never started again.
+	_, cancelling, err := s.CancellationRequested(a.ID, a.Owner, []string{"not wanted"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CancellationRestarted(a.ID, cancelling.ID, "push and stop", assignmentsAt); err == nil || !strings.Contains(err.Error(), "only a cancelling assignment of a cancelled job") {
+		t.Fatalf("restarting the cancellation of an open job's assignment = %v, want it refused", err)
+	}
+	if w, err := s.WorkerDispatch(a.ID); err != nil || w.Dispatch.ID != cancelling.ID || w.Dispatch.State != DispatchCreated {
+		t.Errorf("the worker's dispatch is %+v (%v), want the cancellation left as it was", w.Dispatch, err)
+	}
+}
+
 // A resumption the worker never fetched is not waiting for a worker whose
 // assignment then needs reconciliation.
 func TestAResumptionThatCouldNotStartLeavesNoMessageWaitingForItsWorker(t *testing.T) {
@@ -325,6 +346,88 @@ func TestAResumptionThatCouldNotStartLeavesNoMessageWaitingForItsWorker(t *testi
 	if err != nil || !slices.Equal(pending, []string{"leader@engineering"}) {
 		t.Errorf("the agents with a message waiting are %v (%v), want only the owner told", pending, err)
 	}
+}
+
+func TestACancelledJobsAssignmentWithNoWorkspaceEndsCancelledWithNoPushAndNothingWaitsForItsWorker(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	a, _ := newAssignment(t, s, job)
+	// An assignment of a job still open is never ended this way.
+	if _, err := s.CancelledWithoutWorkspace(a.ID, "its workspace is gone", assignmentsAt); err == nil || !strings.Contains(err.Error(), "only an assignment of a cancelled job") {
+		t.Fatalf("ending an open job's assignment without a push = %v, want it refused", err)
+	}
+	if state := assignmentStateOf(t, s, a.ID); state != AssignmentActive {
+		t.Fatalf("the refused assignment is %s, want it still active", state)
+	}
+
+	_, witness, err := s.ObservedWitnessed(Witnessed{Agent: "leader@coordination", Role: "coordination", Generation: 1, Terminal: "/dev/pts/3", Text: "cancel job 1"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"cancel job 1"}`), assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.JobCancelled(JobCancel{Job: job, Witness: witness}, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := s.PendingLeaders(); err != nil || !slices.Contains(pending, a.Worker) {
+		t.Fatalf("the agents with a message waiting are %v (%v), want the worker for its cancellation", pending, err)
+	}
+
+	got, err := s.CancelledWithoutWorkspace(a.ID, "its workspace /ws/repo is gone", assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != AssignmentCancelled || assignmentStateOf(t, s, a.ID) != AssignmentCancelled {
+		t.Errorf("the assignment is %s, want it cancelled", got.State)
+	}
+	// Its worker is never started for it: nothing waits for it.
+	if pending, err := s.PendingLeaders(); err != nil || slices.Contains(pending, a.Worker) {
+		t.Errorf("the agents with a message waiting are %v (%v), want none for the ended assignment's worker", pending, err)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := entries[len(entries)-1]
+	var data struct {
+		Assignment    int64  `json:"assignment"`
+		Pushed        bool   `json:"pushed"`
+		WorkspaceGone bool   `json:"workspace_gone"`
+		Reason        string `json:"reason"`
+	}
+	if err := json.Unmarshal(last.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if last.Kind != KindAssignmentCancelled || data.Assignment != a.ID || data.Pushed || !data.WorkspaceGone || data.Reason != "its workspace /ws/repo is gone" {
+		t.Errorf("the journal's last entry is %s %s, want the assignment cancelled with no push because its workspace is gone", last.Kind, last.Data)
+	}
+	if _, err := s.CancelledWithoutWorkspace(a.ID, "again", assignmentsAt); err == nil {
+		t.Error("an assignment was cancelled twice")
+	}
+}
+
+// A cancelled job's assignment held for reconciliation, whose workspace is
+// gone, ends cancelled too.
+func TestACancelledJobsAssignmentNeedingReconciliationWithNoWorkspaceEndsCancelled(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	job := jobWithBranch(t, s)
+	a, d := newAssignment(t, s, job)
+	if _, err := s.AssignmentNeedsReconciliation(a.ID, d.ID, "its turn was cut off", "reconcile it", assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE jobs SET state = ?, cancel_reason = 'x', cancel_witness = 1 WHERE number = ?`, JobCancelled, job); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.CancelledWithoutWorkspace(a.ID, "its workspace is gone", assignmentsAt); err != nil || got.State != AssignmentCancelled {
+		t.Errorf("the assignment needing reconciliation is %+v (%v), want it cancelled", got, err)
+	}
+}
+
+func assignmentStateOf(t *testing.T, s *Store, id int64) string {
+	t.Helper()
+	a, err := s.Assignment(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a.State
 }
 
 func TestEachLeaderWithOpenWorkInAJobIsToldOnceToLoadItsBrief(t *testing.T) {

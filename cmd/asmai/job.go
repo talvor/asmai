@@ -80,6 +80,53 @@ func jobLink(o *output, paths statedir.Paths, job, follows int64) int {
 	return 0
 }
 
+// jobCancel cancels a job at the user's word, for Coordination's leader: the
+// witnessed message message names holds the user's own words, the reason.
+func jobCancel(o *output, paths statedir.Paths, number, message string) int {
+	n, err := jobNumber(number)
+	if err != nil {
+		return o.fail(err)
+	}
+	if message == "" {
+		return o.fail(fmt.Errorf("job cancel needs the user's own words: --message latest or --message <witnessed-id>"))
+	}
+	var witness int64
+	if message != "latest" {
+		if witness, err = jobNumber(message); err != nil {
+			return o.fail(fmt.Errorf("--message: %w", err))
+		}
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandJobCancel, Job: n, Witness: witness, LatestWitness: message == "latest"})
+	if err != nil {
+		return o.fail(err)
+	}
+	c := resp.Cancellation
+	if o.structured() {
+		return o.printData(map[string]any{"cancellation": c})
+	}
+	fmt.Fprintf(o.stdout, "Job %d is cancelled at the user's word, in witnessed message %d: %s\n", n, c.Job.CancelWitness, c.Job.CancelReason)
+	if c.Closed != nil {
+		fmt.Fprintf(o.stdout, "Its pull request %s is closed with a comment giving the reason (effect %d).\n", c.Closed.Ref, c.Closed.ID)
+	} else {
+		fmt.Fprintln(o.stdout, "It had no open pull request to close.")
+	}
+	for _, a := range c.Cancelling {
+		if a.State == store.AssignmentCancelled {
+			fmt.Fprintf(o.stdout, "Assignment %d is cancelled with no push: its workspace is gone, so %s has nothing to push from and is not started; its branch, if pushed earlier, stays on origin.\n", a.ID, a.Worker)
+			continue
+		}
+		fmt.Fprintf(o.stdout, "Assignment %d is cancelling: %s pushes its assignment branch and stops, and it ends as cancelled once the daemon confirms the push.\n", a.ID, a.Worker)
+	}
+	if len(c.Discarded) > 0 {
+		fmt.Fprintf(o.stdout, "Unreviewed results discarded: reports %v.\n", c.Discarded)
+	}
+	for _, r := range c.Withdrawn {
+		fmt.Fprintf(o.stdout, "Decision request %d (version %d) is withdrawn, and its page ends.\n", r.Request, r.Version)
+	}
+	fmt.Fprintln(o.stdout, "Every branch stays on origin.")
+	return 0
+}
+
 func jobs(o *output, paths statedir.Paths) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandJobs})
 	if err != nil {

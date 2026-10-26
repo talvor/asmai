@@ -371,7 +371,7 @@ func (s *Store) JobBranchMade(b JobBranch, at time.Time, checked ...int64) (JobB
 // repository is called name, or zero when none is.
 func openJobHolding(q queryer, repository, name string, except int64) (int64, error) {
 	var holder int64
-	err := q.QueryRow(`SELECT COALESCE(MIN(b.job), 0) FROM job_branches b JOIN jobs j ON j.number = b.job WHERE b.repository = ? AND b.name = ? AND b.job <> ? AND j.state <> ?`, repository, name, except, JobEnded).Scan(&holder)
+	err := q.QueryRow(`SELECT COALESCE(MIN(b.job), 0) FROM job_branches b JOIN jobs j ON j.number = b.job WHERE b.repository = ? AND b.name = ? AND b.job <> ? AND j.state NOT IN (?, ?)`, repository, name, except, JobEnded, JobCancelled).Scan(&holder)
 	return holder, err
 }
 

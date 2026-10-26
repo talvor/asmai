@@ -190,6 +190,134 @@ func (s *Store) AssignmentResumed(id, previous int64, nativeSession, body string
 	return d, tx.Commit()
 }
 
+// CancellationRestarted continues the cancelling assignment id of a cancelled
+// job after a restart that cannot resume its worker's session, in a new
+// cancellation dispatch with body, which starts the worker in a new session.
+// previous is the worker's dispatch the stop left; if it was still on its way
+// or at work, it becomes unknown. A job cancel ends every assignment as
+// cancelled, so a cancelled job's assignment whose workspace is still there
+// is started again with this rather than held for reconciliation; one whose
+// workspace is gone ends with CancelledWithoutWorkspace instead.
+func (s *Store) CancellationRestarted(id, previous int64, body string, at time.Time) (Dispatch, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer tx.Rollback()
+	w, err := workerDispatch(tx, id)
+	if err != nil {
+		return Dispatch{}, fmt.Errorf("assignment %d: %w", id, err)
+	}
+	a := w.Assignment
+	j, err := job(tx, a.Job)
+	if err != nil {
+		return Dispatch{}, fmt.Errorf("job %d: %w", a.Job, err)
+	}
+	switch {
+	case a.State != AssignmentCancelling || j.State != JobCancelled:
+		return Dispatch{}, fmt.Errorf("assignment %d is %s in job %d, which is %s: only a cancelling assignment of a cancelled job has its cancellation started again", a.ID, a.State, j.Number, j.State)
+	case w.Dispatch.ID != previous:
+		return Dispatch{}, fmt.Errorf("dispatch %d is not the latest dispatch of %s's assignment %d", previous, a.Worker, a.ID)
+	}
+	switch w.Dispatch.State {
+	case DispatchCreated, DispatchNudged, DispatchDelivered, DispatchWorking:
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchUnknown, timestamp(at), previous); err != nil {
+			return Dispatch{}, err
+		}
+		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
+			"id": previous, "agent": w.Dispatch.Agent, "generation": w.Dispatch.Generation, "from": w.Dispatch.State, "state": DispatchUnknown, "assignment": a.ID,
+		}); err != nil {
+			return Dispatch{}, err
+		}
+	}
+	d, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, Daemon, a.Worker, MessageCancellation, body, at)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if _, err := appendEntry(tx, at, KindCancellationRestarted, map[string]any{
+		"assignment": a.ID, "job": a.Job, "worker": a.Worker, "owner": a.Owner, "previous": previous, "dispatch": d.ID,
+	}); err != nil {
+		return Dispatch{}, err
+	}
+	return d, tx.Commit()
+}
+
+// CancelledWithoutWorkspace ends the cancelling assignment id of a cancelled
+// job, or one that needs reconciliation, as cancelled with no push, because
+// why: its workspace is gone, so its worker has nothing to push from and is
+// never started for it. A job cancel ends every assignment as cancelled, so
+// this is how one with no workspace ends; its branch, if pushed earlier,
+// stays on origin. Each of the worker's dispatches for it still on its way
+// or at work becomes unknown, and no message about it waits for the worker.
+func (s *Store) CancelledWithoutWorkspace(id int64, why string, at time.Time) (Assignment, error) {
+	if why == "" {
+		return Assignment{}, errors.New("an assignment cancelled without a push says why")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Assignment{}, err
+	}
+	defer tx.Rollback()
+	a, err := assignment(tx, id)
+	if err != nil {
+		return Assignment{}, fmt.Errorf("assignment %d: %w", id, err)
+	}
+	j, err := job(tx, a.Job)
+	if err != nil {
+		return Assignment{}, fmt.Errorf("job %d: %w", a.Job, err)
+	}
+	if (a.State != AssignmentCancelling && a.State != AssignmentNeedsReconciliation) || j.State != JobCancelled {
+		return Assignment{}, fmt.Errorf("assignment %d is %s in job %d, which is %s: only an assignment of a cancelled job that is cancelling or needs reconciliation ends cancelled without a push", a.ID, a.State, j.Number, j.State)
+	}
+	rows, err := tx.Query(`SELECT d.id, d.agent, d.generation, d.state FROM dispatches d JOIN messages m ON m.id = d.message
+		WHERE m.assignment = ? AND m.recipient = ? AND d.state IN (?,?,?,?) ORDER BY d.id`,
+		a.ID, a.Worker, DispatchCreated, DispatchNudged, DispatchDelivered, DispatchWorking)
+	if err != nil {
+		return Assignment{}, err
+	}
+	type open struct {
+		id         int64
+		agent      string
+		generation int
+		state      string
+	}
+	var waiting []open
+	for rows.Next() {
+		var o open
+		if err := rows.Scan(&o.id, &o.agent, &o.generation, &o.state); err != nil {
+			rows.Close()
+			return Assignment{}, err
+		}
+		waiting = append(waiting, o)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Assignment{}, err
+	}
+	for _, o := range waiting {
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchUnknown, timestamp(at), o.id); err != nil {
+			return Assignment{}, err
+		}
+		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
+			"id": o.id, "agent": o.agent, "generation": o.generation, "from": o.state, "state": DispatchUnknown, "assignment": a.ID,
+		}); err != nil {
+			return Assignment{}, err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelled, a.ID); err != nil {
+		return Assignment{}, err
+	}
+	from := a.State
+	a.State = AssignmentCancelled
+	if _, err := appendEntry(tx, at, KindAssignmentCancelled, map[string]any{
+		"assignment": a.ID, "job": a.Job, "worker": a.Worker, "from": from,
+		"commit": "", "pushed": false, "workspace_gone": true, "workspace": a.Workspace.Path, "reason": why,
+	}); err != nil {
+		return Assignment{}, err
+	}
+	return a, tx.Commit()
+}
+
 // AssignmentNeedsReconciliation holds the active or cancelling assignment id
 // for its owning leader to reconcile, because why: its worker's turn was cut off, or
 // its native session cannot be resumed. dispatch is the worker's dispatch

@@ -282,9 +282,27 @@ func (s *Store) CancellationRequested(id int64, leader string, reasons []string,
 	if err != nil {
 		return Decision{}, Dispatch{}, err
 	}
+	d, dispatch, err := requestCancellation(tx, a, leader, reasons, at)
+	if err != nil {
+		return Decision{}, Dispatch{}, err
+	}
+	return d, dispatch, tx.Commit()
+}
+
+// requestCancellation makes the active or submitted assignment a cancelling,
+// records leader's decision with its reasons, and tells the worker with a
+// message and a new dispatch, which is returned.
+func requestCancellation(tx *sql.Tx, a Assignment, leader string, reasons []string, at time.Time) (Decision, Dispatch, error) {
 	if a.State != AssignmentActive && a.State != AssignmentSubmitted {
 		return Decision{}, Dispatch{}, fmt.Errorf("assignment %d is %s, so it cannot be cancelled", a.ID, a.State)
 	}
+	return cancelAssignment(tx, a, leader, reasons, at)
+}
+
+// cancelAssignment makes a cancelling, whatever its state, records leader's
+// decision with its reasons, and tells the worker with a message and a new
+// dispatch, which is returned.
+func cancelAssignment(tx *sql.Tx, a Assignment, leader string, reasons []string, at time.Time) (Decision, Dispatch, error) {
 	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentCancelling, a.ID); err != nil {
 		return Decision{}, Dispatch{}, err
 	}
@@ -296,7 +314,7 @@ func (s *Store) CancellationRequested(id int64, leader string, reasons []string,
 	if err != nil {
 		return Decision{}, Dispatch{}, err
 	}
-	return d, dispatch, tx.Commit()
+	return d, dispatch, nil
 }
 
 // Cancellation is how a cancelled assignment's worker left its workspace

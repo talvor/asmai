@@ -92,7 +92,7 @@ func (s *Store) ScratchCleaned(job int64, removed []string, at time.Time) error 
 		if j.Repository != "" {
 			return "", nil, fmt.Errorf("job %d targets repository %s, so it has no scratch workspaces", job, j.Repository)
 		}
-		if j.State != JobEnded {
+		if !j.Ended() {
 			return "", nil, fmt.Errorf("job %d is still open", job)
 		}
 		return KindScratchCleaned, map[string]any{"job": job, "removed": removed}, nil

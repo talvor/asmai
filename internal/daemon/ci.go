@@ -330,8 +330,15 @@ func (d *daemon) removeJobLocal(job int64) {
 		return
 	}
 	j, err := d.store.Job(job)
-	if err != nil || j.State != store.JobEnded {
+	if err != nil || !j.Ended() {
 		return
+	}
+	// A cancelled job's cancelling assignments keep their workspaces until
+	// their workers have pushed and stopped.
+	if j.State == store.JobCancelled {
+		if held, err := d.holdsWorkspace(job); err != nil || held {
+			return
+		}
 	}
 	// A job with no repository has no clone, view or branches to remove, and
 	// its scratch workspaces are kept until the user cleans them.
@@ -358,6 +365,12 @@ func (d *daemon) removeJobLocal(job int64) {
 				failed = errors.Join(failed, err)
 			} else {
 				removed = append(removed, a.Workspace.Path)
+			}
+		} else if a.State == store.AssignmentCancelled {
+			// A cancelled assignment's workspace that was gone leaves the
+			// clone's record of it, which holds its branch until pruned.
+			if err := repos.RemoveView(ctx, repository.Clone, a.Workspace.Path); err != nil {
+				failed = errors.Join(failed, err)
 			}
 		}
 		if a.Workspace.Branch != "" {
@@ -421,7 +434,7 @@ func (d *daemon) removeEndedJobsLocal() {
 		return
 	}
 	for _, j := range jobs {
-		if j.State == store.JobEnded {
+		if j.Ended() {
 			d.removeJobLocal(j.Number)
 		}
 	}

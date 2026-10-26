@@ -116,9 +116,6 @@ func jobCancel(o *output, paths statedir.Paths, number, message string) int {
 	if len(c.Discarded) > 0 {
 		fmt.Fprintf(o.stdout, "Unreviewed results discarded: reports %v.\n", c.Discarded)
 	}
-	if len(c.Held) > 0 {
-		fmt.Fprintf(o.stdout, "Assignments %v need reconciliation and stay held with their owning leaders.\n", c.Held)
-	}
 	for _, r := range c.Withdrawn {
 		fmt.Fprintf(o.stdout, "Decision request %d (version %d) is withdrawn, and its page ends.\n", r.Request, r.Version)
 	}

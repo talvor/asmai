@@ -37,15 +37,13 @@ type JobCancel struct {
 // JobCancellation is what cancelling a job did.
 type JobCancellation struct {
 	Job Job `json:"job"`
-	// Cancelling are the assignments that were live: each is cancelling
-	// until its worker has pushed its assignment branch and stopped.
+	// Cancelling are the assignments that were live or needed
+	// reconciliation: each is cancelling until its worker has pushed its
+	// assignment branch and stopped.
 	Cancelling []Assignment `json:"cancelling"`
 	// Discarded are the unreviewed results, of assignments that were
 	// submitted, which no leader accepts now.
 	Discarded []int64 `json:"discarded"`
-	// Held are the assignments that need reconciliation, which stay held
-	// with their owning leaders.
-	Held []int64 `json:"held"`
 	// Withdrawn are the decision requests that were pending.
 	Withdrawn []DecisionRequest `json:"withdrawn"`
 	// Closed is the daemon's effect of closing the pull request, nil when it
@@ -106,9 +104,10 @@ func cancellableJob(q queryer, number int64) (Job, error) {
 
 // JobCancelled cancels the job c names at the user's word, in one step that
 // journals it: the job ends as cancelled with the user's own words as the
-// reason; every active or submitted assignment is cancelling, with its worker
-// told to push its assignment branch and stop, and the results submitted
-// but not reviewed are discarded with it; the pending decision requests are
+// reason; every active or submitted assignment, and every one that needs
+// reconciliation, is cancelling, with its worker told to push its assignment
+// branch and stop, and the results submitted but not reviewed are discarded
+// with it; the pending decision requests are
 // withdrawn, which ends their pages; and the daemon's closing of the pull
 // request is recorded as its effect. Coordination's leader is told what the
 // cancellation did, and every other leader with work in the job that it was
@@ -131,7 +130,7 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 		return JobCancellation{}, err
 	}
 	j.State, j.CancelReason, j.CancelWitness = JobCancelled, reason, witness
-	out := JobCancellation{Job: j, Cancelling: []Assignment{}, Discarded: []int64{}, Held: []int64{}, Dispatches: []Dispatch{}}
+	out := JobCancellation{Job: j, Cancelling: []Assignment{}, Discarded: []int64{}, Dispatches: []Dispatch{}}
 
 	ids, err := int64s(tx, `SELECT id FROM assignments WHERE job = ? ORDER BY id`, j.Number)
 	if err != nil {
@@ -144,10 +143,7 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 			return JobCancellation{}, err
 		}
 		switch a.State {
-		case AssignmentActive, AssignmentSubmitted:
-		case AssignmentNeedsReconciliation:
-			out.Held = append(out.Held, a.ID)
-			continue
+		case AssignmentActive, AssignmentSubmitted, AssignmentNeedsReconciliation:
 		default:
 			continue
 		}
@@ -158,7 +154,7 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 			}
 			out.Discarded = append(out.Discarded, r.ID)
 		}
-		_, dispatch, err := requestCancellation(tx, a, CoordinationLeader, reasons, at)
+		_, dispatch, err := cancelAssignment(tx, a, CoordinationLeader, reasons, at)
 		if err != nil {
 			return JobCancellation{}, err
 		}
@@ -179,7 +175,7 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 		withdrawn[i] = r.Request
 	}
 	entry := map[string]any{"job": j.Number, "witness": witness, "reason": reason, "by": CoordinationLeader,
-		"cancelling": cancelling, "discarded": out.Discarded, "held": out.Held, "withdrawn": withdrawn}
+		"cancelling": cancelling, "discarded": out.Discarded, "withdrawn": withdrawn}
 	if c.Closed != nil {
 		entry["pull_request"] = c.Closed.Number
 	}
@@ -238,9 +234,6 @@ func cancellationSummary(c JobCancellation, closed *PullRequest, cancelling, wit
 	}
 	if len(c.Discarded) > 0 {
 		fmt.Fprintf(&b, " The unreviewed results (reports %v) are discarded.", c.Discarded)
-	}
-	if len(c.Held) > 0 {
-		fmt.Fprintf(&b, " Assignments %v need reconciliation and stay held with their owning leaders.", c.Held)
 	}
 	if len(withdrawn) > 0 {
 		fmt.Fprintf(&b, " Decision requests %v are withdrawn, and their Lavish pages end.", withdrawn)

@@ -206,6 +206,68 @@ func TestCoordinationCancelsAJobAtTheUsersWordAndEveryBranchStaysOnOrigin(t *tes
 	}
 }
 
+func TestAnAssignmentNeedingReconciliationIsCancelledWithItsJob(t *testing.T) {
+	c := newCancellableJob(t, newTwoResults(t), true)
+	held := c.assignments[0]
+	if _, err := c.s.AssignmentNeedsReconciliation(held.ID, 0, "its turn was cut off", "reconcile it", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.cancel("coordination", c.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resp.Cancellation
+	if got.Job.State != store.JobCancelled || got.Job.CancelReason != c.words {
+		t.Errorf("the job is %+v, want it cancelled with the user's words", got.Job)
+	}
+	if !slices.ContainsFunc(got.Cancelling, func(a store.Assignment) bool { return a.ID == held.ID }) {
+		t.Fatalf("cancelling %+v, want the assignment needing reconciliation among them", got.Cancelling)
+	}
+	if a, err := c.s.Assignment(held.ID); err != nil || a.State != store.AssignmentCancelling {
+		t.Errorf("assignment %d is %s (%v), want it cancelling", held.ID, a.State, err)
+	}
+	inbox, err := c.s.Inbox(held.Worker, 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := inbox[len(inbox)-1]; last.Kind != store.MessageCancellation || !strings.Contains(last.Body, "push your assignment branch") {
+		t.Errorf("%s was last told %s: %q, want its cancellation", held.Worker, last.Kind, last.Body)
+	}
+	told, err := c.s.Inbox("leader@coordination", 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(told, func(m store.Message) bool {
+		return m.Kind == store.MessageJobCancelled && strings.Contains(m.Body, "stay held")
+	}) {
+		t.Errorf("Coordination's leader was told an assignment stays held: %+v", told)
+	}
+
+	// Once its push is confirmed it ends as cancelled, nothing is left
+	// held, and the job's local view goes while its branches stay on origin.
+	c.stops(t)
+	for _, a := range c.assignments {
+		if a, err := c.s.Assignment(a.ID); err != nil || a.State != store.AssignmentCancelled {
+			t.Errorf("assignment %d is %s (%v), want it cancelled", a.ID, a.State, err)
+		}
+	}
+	snapshot, err := c.d.dashboardSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].Assignments != (AssignmentCounts{Cancelled: 2}) {
+		t.Errorf("the Jobs tab shows %+v, want both assignments cancelled and none needing reconciliation", snapshot.Jobs)
+	}
+	if done, err := c.s.LocalRemoved(c.job.Number); err != nil || !done {
+		t.Errorf("the cancelled job's local view removed = %v (%v), want it removed", done, err)
+	}
+	for i, a := range c.assignments {
+		if tip := git(t, c.origin, "rev-parse", "refs/heads/"+a.Workspace.Branch); tip != c.commits[i] {
+			t.Errorf("origin's %s is at %s, want it kept at %s", a.Workspace.Branch, tip, c.commits[i])
+		}
+	}
+}
+
 func TestTheJobsTabShowsACancelledJobWithTheUsersWordsAsEnded(t *testing.T) {
 	c := newCancellableJob(t, newTwoResults(t), true)
 	if _, err := c.cancel("coordination", c.job.Number); err != nil {

@@ -222,7 +222,8 @@ func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 }
 
 // recordingClaude installs in s a pinned Claude Code that records where and
-// how it was started in the directory out and waits, and writes the
+// how it was started in the directory out, a worker's arguments also in
+// args-<its slot>, and waits, and writes the
 // configuration file of a factory with every role staffed on it and fixture
 // registered with origin and defaultBranch.
 func recordingClaude(t *testing.T, s *store.Store, paths statedir.Paths, origin, defaultBranch string) (configFile, out string) {
@@ -246,7 +247,7 @@ func recordingClaude(t *testing.T, s *store.Store, paths statedir.Paths, origin,
 	if err := os.MkdirAll(filepath.Dir(provider), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s' \"$ASMAI_SLOT\" > \"$ASMAI_TEST_OUT/slot\"\nprintf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir\"\nprintf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.tmp\" && mv \"$ASMAI_TEST_OUT/args.tmp\" \"$ASMAI_TEST_OUT/args\"\nexec sleep 60\n"
+	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s' \"$ASMAI_SLOT\" > \"$ASMAI_TEST_OUT/slot\"\nprintf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir\"\nprintf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.tmp\" && mv \"$ASMAI_TEST_OUT/args.tmp\" \"$ASMAI_TEST_OUT/args\"\n[ -n \"$ASMAI_SLOT\" ] && printf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT.tmp\" && mv \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT.tmp\" \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT\"\nexec sleep 60\n"
 	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

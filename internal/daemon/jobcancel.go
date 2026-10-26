@@ -26,8 +26,9 @@ import (
 // discarded, its pending decision requests are withdrawn and the closing is
 // recorded as the daemon's effect. The workers are started to push their
 // assignment branches and stop, and each assignment ends as cancelled once
-// the daemon has confirmed its push.
-// Every branch stays on origin.
+// the daemon has confirmed its push; one whose workspace is gone has nothing
+// to push from, so it ends as cancelled at once, with no push and no worker
+// started. Every branch stays on origin.
 func (d *daemon) cancelJob(req Request) (store.JobCancellation, error) {
 	d.mu.Lock()
 	ref, _, err := d.caller(req)
@@ -66,7 +67,11 @@ func (d *daemon) cancelJob(req Request) (store.JobCancellation, error) {
 	d.mu.Lock()
 	c, err := d.store.JobCancelled(store.JobCancel{Job: j.Number, Witness: witness, Closed: closed}, time.Now())
 	if err == nil {
-		for _, a := range c.Cancelling {
+		for i, a := range c.Cancelling {
+			if d.cancelledWithoutWorkspace(a) {
+				c.Cancelling[i].State = store.AssignmentCancelled
+				continue
+			}
 			if worker, err := roles.ParseAddress(a.Worker); err == nil {
 				if err := d.ensureAgent(worker); err != nil {
 					d.log.Error("starting the worker of a cancelled job's assignment", "agent", a.Worker, "assignment", a.ID, "error", err.Error())

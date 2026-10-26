@@ -5,6 +5,7 @@ package daemon
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/lavish"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
 )
@@ -167,8 +169,100 @@ func (c cancellableJob) startedForCancellation(t *testing.T, a store.Assignment,
 	if last := inbox[len(inbox)-1]; last.Dispatch != w.Dispatch.ID || !strings.Contains(last.Body, "push your assignment branch") {
 		t.Errorf("%s was last told %q in dispatch %d, want its cancellation in dispatch %d", a.Worker, last.Body, last.Dispatch, w.Dispatch.ID)
 	}
-	if args := waitForFile(t, filepath.Join(out, "args")); strings.Contains(args, "--resume") {
+	if args := waitForFile(t, filepath.Join(out, fmt.Sprintf("args-%d", a.Workspace.Slot))); strings.Contains(args, "--resume") {
 		t.Errorf("%s was started resuming a session: %s", a.Worker, args)
+	}
+}
+
+// endedWithoutPush fails t unless assignment a, whose workspace is gone,
+// ended as cancelled with no push, its worker never started for it, the
+// journal saying so, and its branch stays on origin at commit.
+func (c cancellableJob) endedWithoutPush(t *testing.T, a store.Assignment, commit, out string) {
+	t.Helper()
+	if state := assignmentState(t, c.s, a.ID); state != store.AssignmentCancelled {
+		t.Errorf("assignment %d, whose workspace is gone, is %s, want it cancelled", a.ID, state)
+	}
+	c.d.mu.Lock()
+	l := c.d.leaders[a.Worker]
+	running := l != nil && l.session != nil
+	c.d.mu.Unlock()
+	if running {
+		t.Errorf("%s was started for assignment %d, whose workspace is gone", a.Worker, a.ID)
+	}
+	if _, err := os.Stat(filepath.Join(out, fmt.Sprintf("args-%d", a.Workspace.Slot))); err == nil {
+		t.Errorf("a provider was started for %s, whose workspace is gone", a.Worker)
+	}
+	entries, err := c.s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(entries, func(e store.Entry) bool {
+		var data struct {
+			Assignment    int64 `json:"assignment"`
+			Pushed        bool  `json:"pushed"`
+			WorkspaceGone bool  `json:"workspace_gone"`
+		}
+		return e.Kind == store.KindAssignmentCancelled && json.Unmarshal(e.Data, &data) == nil && data.Assignment == a.ID && !data.Pushed && data.WorkspaceGone
+	}) {
+		t.Errorf("the journal has no entry of assignment %d ending cancelled with no push because its workspace is gone", a.ID)
+	}
+	if tip := git(t, c.origin, "rev-parse", "refs/heads/"+a.Workspace.Branch); tip != commit {
+		t.Errorf("origin's %s is at %s, want it kept at %s", a.Workspace.Branch, tip, commit)
+	}
+}
+
+// localViewRemoved fails t unless the cancelled job's local view is gone.
+func (c cancellableJob) localViewRemoved(t *testing.T) {
+	t.Helper()
+	if done, err := c.s.LocalRemoved(c.job.Number); err != nil || !done {
+		t.Errorf("the cancelled job's local view removed = %v (%v), want it removed", done, err)
+	}
+}
+
+func TestAJobCancelEndsAnAssignmentWhoseWorkspaceIsGoneAsCancelledWithNoPush(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		t.Run(map[bool]string{false: "active", true: "needing reconciliation"}[held], func(t *testing.T) {
+			c := newCancellableJob(t, newTwoResults(t), true)
+			gone, other := c.assignments[0], c.assignments[1]
+			if held {
+				if _, err := c.s.AssignmentNeedsReconciliation(gone.ID, 0, "its turn was cut off", "reconcile it", time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.RemoveAll(gone.Workspace.Path); err != nil {
+				t.Fatal(err)
+			}
+			out := c.sessionsEnded(t)
+			resp, err := c.cancel("coordination", c.job.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Coordination's leader is shown it ended, not that it pushes.
+			if !slices.ContainsFunc(resp.Cancellation.Cancelling, func(a store.Assignment) bool {
+				return a.ID == gone.ID && a.State == store.AssignmentCancelled
+			}) {
+				t.Errorf("the cancellation shows %+v, want assignment %d cancelled", resp.Cancellation.Cancelling, gone.ID)
+			}
+			c.endedWithoutPush(t, gone, c.commits[0], out)
+			c.startedForCancellation(t, other, out)
+			// The job's local view stays while the other assignment holds its
+			// workspace, and goes once its push is confirmed.
+			if done, err := c.s.LocalRemoved(c.job.Number); err != nil || done {
+				t.Errorf("the cancelled job's local view removed = %v (%v), want it kept while an assignment holds it", done, err)
+			}
+			c.stops(t)
+			if state := assignmentState(t, c.s, other.ID); state != store.AssignmentCancelled {
+				t.Errorf("assignment %d is %s, want it cancelled", other.ID, state)
+			}
+			c.localViewRemoved(t)
+			snapshot, err := c.d.dashboardSnapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].Assignments != (AssignmentCounts{Cancelled: 2}) {
+				t.Errorf("the Jobs tab shows %+v, want both assignments cancelled", snapshot.Jobs)
+			}
+		})
 	}
 }
 
@@ -378,6 +472,163 @@ func TestARestartDuringAJobCancelStartsTheWorkersAgainForTheirCancellationAndHol
 	if done, err := c.s.LocalRemoved(c.job.Number); err != nil || !done {
 		t.Errorf("the cancelled job's local view removed = %v (%v), want it removed", done, err)
 	}
+}
+
+// stopsInCancellation has the factory stop during the job cancel resp did,
+// with the worker of a left as leave says: its cancellation unfetched, at
+// work, or stopped at a boundary. With a provider, the worker's session ran
+// on it, and the provider identified it with transcript.
+func (c cancellableJob) stopsInCancellation(t *testing.T, resp Response, a store.Assignment, leave, provider, transcript string) {
+	t.Helper()
+	at := time.Now()
+	j := slices.IndexFunc(resp.Cancellation.Dispatches, func(d store.Dispatch) bool { return d.Agent == a.Worker })
+	if j < 0 {
+		t.Fatalf("%s was not told of the cancellation: %+v", a.Worker, resp.Cancellation.Dispatches)
+	}
+	dispatch, generation := resp.Cancellation.Dispatches[j].ID, 1
+	if provider != "" {
+		g, err := c.s.SessionStarted(store.SessionStart{Agent: a.Worker, Role: roles.Engineering, Provider: provider, Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: a.Workspace.Path, PID: 7, At: at, Assignment: a.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		generation = g
+		if err := c.s.SessionIdentified(a.Worker, g, "native-"+a.Worker, transcript, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if leave == store.DispatchCreated {
+		return
+	}
+	if err := c.s.ChangeDispatch(dispatch, generation, store.DispatchCreated, store.DispatchNudged, "", at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.s.Inbox(a.Worker, dispatch, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.s.WorkFetchedDispatch(dispatch, a.Worker, generation, at); err != nil {
+		t.Fatal(err)
+	}
+	if leave == store.DispatchStopped {
+		if stopped, err := c.s.StopDispatchIfWorking(dispatch, generation, "", at); err != nil || !stopped {
+			t.Fatalf("stopping %s's cancellation: %v, %v", a.Worker, stopped, err)
+		}
+	}
+}
+
+func TestARestartDuringAJobCancelEndsAnAssignmentWhoseWorkspaceIsGoneAsCancelledWithNoPush(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, leave, provider string
+	}{
+		// The session could be resumed, but not in a workspace that is gone.
+		{"resumable session", store.DispatchStopped, providers.ClaudeCode},
+		{"no native session", store.DispatchStopped, ""},
+		{"cut off", store.DispatchWorking, providers.ClaudeCode},
+		{"never fetched", store.DispatchCreated, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCancellableJob(t, newTwoResults(t), true)
+			resp, err := c.cancel("coordination", c.job.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, a := range c.assignments {
+				c.stopsInCancellation(t, resp, a, tc.leave, tc.provider, transcript)
+				if err := os.RemoveAll(a.Workspace.Path); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// The factory starts again.
+			out := c.sessionsEnded(t)
+			c.d.recoverWork(true)
+			c.d.restoreLeaders()
+
+			for i, a := range c.assignments {
+				c.endedWithoutPush(t, a, c.commits[i], out)
+			}
+			if pending, err := c.s.PendingLeaders(); err != nil || slices.ContainsFunc(pending, func(p string) bool { return strings.HasPrefix(p, "worker") }) {
+				t.Errorf("the agents with a message waiting are %v (%v), want no worker of the cancelled job", pending, err)
+			}
+			snapshot, err := c.d.dashboardSnapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Jobs) != 1 || snapshot.Jobs[0].Assignments != (AssignmentCounts{Cancelled: 2}) {
+				t.Errorf("the Jobs tab shows %+v, want both assignments cancelled and none needing reconciliation", snapshot.Jobs)
+			}
+			c.localViewRemoved(t)
+		})
+	}
+}
+
+func TestARestartDuringAJobCancelStartsAgainAWorkerWhoseTranscriptIsGoneOrThatRanOnAnotherProvider(t *testing.T) {
+	c := newCancellableJob(t, newTwoResults(t), true)
+	resp, err := c.cancel("coordination", c.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.stopsInCancellation(t, resp, c.assignments[0], store.DispatchStopped, providers.ClaudeCode, filepath.Join(t.TempDir(), "gone.jsonl"))
+	c.stopsInCancellation(t, resp, c.assignments[1], store.DispatchStopped, "codex", "")
+
+	out := c.sessionsEnded(t)
+	c.d.recoverWork(true)
+	c.d.restoreLeaders()
+
+	for _, a := range c.assignments {
+		if state := assignmentState(t, c.s, a.ID); state != store.AssignmentCancelling {
+			t.Errorf("assignment %d is %s after the restart, want it still cancelling", a.ID, state)
+		}
+		c.startedForCancellation(t, a, out)
+	}
+	c.stops(t)
+	for _, a := range c.assignments {
+		if state := assignmentState(t, c.s, a.ID); state != store.AssignmentCancelled {
+			t.Errorf("assignment %d is %s, want it cancelled", a.ID, state)
+		}
+	}
+	c.localViewRemoved(t)
+}
+
+// A worker whose resumed session ended before it came up has its cancelled
+// job's assignment's cancellation started again in a new session, or, its
+// workspace gone, the assignment ends as cancelled with no push.
+func TestACancelledJobsWorkerThatCouldNotResumeIsStartedAgainOrEndsWithNoWorkspace(t *testing.T) {
+	c := newCancellableJob(t, newTwoResults(t), true)
+	resp, err := c.cancel("coordination", c.job.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumes, gone := c.assignments[0], c.assignments[1]
+	for _, a := range c.assignments {
+		c.stopsInCancellation(t, resp, a, store.DispatchStopped, providers.ClaudeCode, "")
+	}
+	if err := os.RemoveAll(gone.Workspace.Path); err != nil {
+		t.Fatal(err)
+	}
+	out := c.sessionsEnded(t)
+	c.d.mu.Lock()
+	for _, a := range c.assignments {
+		l := c.d.leaders[a.Worker]
+		l.assignment = a.ID
+		c.d.cannotResume(l, "exit status 1")
+	}
+	c.d.mu.Unlock()
+	c.d.agents.Wait()
+
+	c.startedForCancellation(t, resumes, out)
+	c.endedWithoutPush(t, gone, c.commits[1], out)
+	if state := assignmentState(t, c.s, resumes.ID); state != store.AssignmentCancelling {
+		t.Errorf("assignment %d is %s, want it still cancelling", resumes.ID, state)
+	}
+	c.stops(t)
+	if state := assignmentState(t, c.s, resumes.ID); state != store.AssignmentCancelled {
+		t.Errorf("assignment %d is %s, want it cancelled", resumes.ID, state)
+	}
+	c.localViewRemoved(t)
 }
 
 func TestTheJobsTabShowsACancelledJobWithTheUsersWordsAsEnded(t *testing.T) {

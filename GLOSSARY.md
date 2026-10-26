@@ -54,7 +54,7 @@ One identified delivery of work to a specific agent session. Only evidence tied 
 _Avoid_: Attempt, run
 
 **Reconciliation**:
-The owning leader's determination of what actually happened when a dispatch's outcome is unknown, recorded with what is known, what is not, and the chosen way forward. An assignment waiting for one is said to need reconciliation, and is held as it is until it is recorded, except that a job cancel cancels it with the rest of its job.
+The owning leader's determination of what actually happened when a dispatch's outcome is unknown, recorded with what is known, what is not, and the chosen way forward. An assignment waiting for one is said to need reconciliation, and is held as it is until it is recorded, except that a job cancel cancels it with the rest of its job, with no push when its workspace is gone.
 _Avoid_: Retry (reconciliation decides whether anything is retried)
 
 **Store**:

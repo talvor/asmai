@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -16,15 +17,18 @@ import (
 )
 
 // recoverWork is what every start does with the work the previous daemon left,
-// before it restores the leaders (02 rules 7 and 11). It only reads and makes
-// records, so it runs before any agent does.
+// before it restores the leaders (02 rules 7 and 11). It makes records, and
+// removes what is local to a cancelled job nothing holds any more, so it runs
+// before any agent does.
 //
 // After a clean stop, each worker whose dispatch stopped at a boundary
 // continues its assignment, in a new dispatch that resumes the one that
 // stopped; one whose turn was cut off, or whose native session cannot be
 // resumed, has its assignment held for its owning leader to reconcile, and
-// the leader is told. After an unclean stop, which is reconciled in full
-// later, no worker is resumed.
+// the leader is told. A cancelled job's cancelling assignment is never held:
+// its worker is started again in a new session for its cancellation, or, when
+// its workspace is gone, it ends as cancelled with no push. After an unclean
+// stop, which is reconciled in full later, no worker is resumed.
 //
 // Every leader with open work is then told, in a message of its own, to load
 // the brief of each job it has it in, which is how a leader loads its briefs
@@ -38,7 +42,8 @@ func (d *daemon) recoverWork(clean bool) {
 
 // recoverWorkers continues or holds the assignment of each worker the
 // previous daemon left carrying one that is active, or that is being
-// cancelled, in assignment order.
+// cancelled, in assignment order. A cancelled job's assignment whose
+// workspace is gone ends as cancelled first, whatever its worker's dispatch.
 func (d *daemon) recoverWorkers() {
 	workers, err := d.store.WorkersInState(store.AssignmentActive, store.AssignmentCancelling)
 	if err != nil {
@@ -46,6 +51,10 @@ func (d *daemon) recoverWorkers() {
 		return
 	}
 	for _, w := range workers {
+		if d.cancelledWithoutWorkspace(w.Assignment) {
+			d.cancelledJobEnded(w.Assignment.Job)
+			continue
+		}
 		switch {
 		case !w.Fetched:
 			// The worker never fetched what it was given, so nothing of it
@@ -64,10 +73,10 @@ func (d *daemon) recoverWorkers() {
 
 // resumeWorker continues the assignment of the worker w, whose dispatch
 // stopped at a boundary, with a new dispatch that resumes it in the provider's
-// session where the worker was. If that session cannot be resumed, the
-// assignment needs reconciliation instead, unless cannotContinue starts a
-// cancelled job's assignment's cancellation again. The worker is started for the
-// dispatch with the other agents that have messages waiting.
+// session where the worker was. If that session cannot be resumed, or its
+// workspace is gone, cannotContinue handles the assignment instead. The
+// worker is started for the dispatch with the other agents that have
+// messages waiting.
 func (d *daemon) resumeWorker(w store.WorkerDispatch) {
 	a := w.Assignment
 	native, err := d.store.ResumableSession(a.ID)
@@ -83,7 +92,7 @@ func (d *daemon) resumeWorker(w store.WorkerDispatch) {
 		return
 	}
 	if _, err := os.Stat(a.Workspace.Path); err != nil {
-		d.holdForReconciliation(w, fmt.Sprintf("%s cannot be run again: the workspace %s of its assignment is gone", a.Worker, a.Workspace.Path))
+		d.cannotContinue(w, fmt.Sprintf("%s cannot be run again: the workspace %s of its assignment is gone", a.Worker, a.Workspace.Path))
 		return
 	}
 	if native.Transcript != "" {
@@ -106,31 +115,90 @@ func (d *daemon) resumeWorker(w store.WorkerDispatch) {
 	d.log.Info("assignment resumed", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "resumes", w.Dispatch.ID, "dispatch", dispatch.ID, "native_session", native.ID)
 }
 
+// recovery is what cannotContinue did with an assignment.
+type recovery int
+
+const (
+	// recoveryHeld: the assignment needs reconciliation, and its owning
+	// leader is told.
+	recoveryHeld recovery = iota
+	// recoveryRestarted: a cancelled job's assignment has a new cancellation
+	// dispatch, for which its worker is to be started in a new session.
+	recoveryRestarted
+	// recoveryEnded: a cancelled job's assignment whose workspace is gone
+	// ended as cancelled with no push, and nobody is started for it.
+	recoveryEnded
+	// recoveryFailed: recording what was to be done failed, so the
+	// assignment stays as it was, and is looked at again at the next start.
+	recoveryFailed
+)
+
 // cannotContinue handles the assignment of the worker w, whose session cannot
-// be resumed, for why. A cancelling assignment of a cancelled job whose
-// workspace is still there gets a new cancellation dispatch, for which its
-// worker is started in a new session, and it reports true: a job cancel ends
-// every assignment as cancelled, so none of it is held. Any other assignment
-// is held for reconciliation.
-func (d *daemon) cannotContinue(w store.WorkerDispatch, why string) bool {
+// be resumed, for why, and says what it did. A job cancel ends every
+// assignment as cancelled, so none of a cancelled job is held: a cancelling
+// assignment of a cancelled job whose workspace is gone ends as cancelled
+// with no push, and one whose workspace is there gets a new cancellation
+// dispatch, for which its worker is started in a new session. Any other
+// assignment is held for reconciliation.
+func (d *daemon) cannotContinue(w store.WorkerDispatch, why string) recovery {
 	a := w.Assignment
-	if a.State == store.AssignmentCancelling {
-		j, err := d.store.Job(a.Job)
-		if err != nil {
-			d.log.Error("reading the job of a cancelling assignment", "assignment", a.ID, "job", a.Job, "error", err.Error())
-		}
-		if _, stat := os.Stat(a.Workspace.Path); err == nil && j.State == store.JobCancelled && stat == nil {
-			dispatch, err := d.store.CancellationRestarted(a.ID, w.Dispatch.ID, cancellationRestart(j, a, why), time.Now())
-			if err != nil {
-				d.log.Error("starting a cancelled job's assignment's cancellation again", "assignment", a.ID, "error", err.Error())
-				return false
-			}
-			d.log.Info("a cancelled job's assignment's cancellation started again in a new session", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "previous", w.Dispatch.ID, "dispatch", dispatch.ID, "why", why)
-			return true
-		}
+	if a.State != store.AssignmentCancelling {
+		d.holdForReconciliation(w, why)
+		return recoveryHeld
 	}
-	d.holdForReconciliation(w, why)
-	return false
+	j, err := d.store.Job(a.Job)
+	if err != nil {
+		d.log.Error("reading the job of a cancelling assignment failed; it stays cancelling until the next start", "assignment", a.ID, "job", a.Job, "error", err.Error())
+		return recoveryFailed
+	}
+	if j.State != store.JobCancelled {
+		d.holdForReconciliation(w, why)
+		return recoveryHeld
+	}
+	if d.cancelledWithoutWorkspace(a) {
+		return recoveryEnded
+	}
+	if _, err := os.Stat(a.Workspace.Path); err != nil {
+		d.log.Error("reading the workspace of a cancelled job's assignment failed; it stays cancelling until the next start", "assignment", a.ID, "workspace", a.Workspace.Path, "error", err.Error())
+		return recoveryFailed
+	}
+	dispatch, err := d.store.CancellationRestarted(a.ID, w.Dispatch.ID, cancellationRestart(j, a, why), time.Now())
+	if err != nil {
+		d.log.Error("starting a cancelled job's assignment's cancellation again failed; it stays cancelling until the next start", "assignment", a.ID, "error", err.Error())
+		return recoveryFailed
+	}
+	d.log.Info("a cancelled job's assignment's cancellation started again in a new session", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "previous", w.Dispatch.ID, "dispatch", dispatch.ID, "why", why)
+	return recoveryRestarted
+}
+
+// cancelledWithoutWorkspace ends a, an assignment of a cancelled job that is
+// cancelling or needs reconciliation, as cancelled with no push when its
+// workspace is gone, and reports whether it did. Nothing can be pushed from
+// a workspace that is gone, so its worker is never started for it, and its
+// branch, if pushed earlier, stays on origin. The caller removes what is
+// local to the job once nothing else holds it, with cancelledJobEnded.
+func (d *daemon) cancelledWithoutWorkspace(a store.Assignment) bool {
+	if a.State != store.AssignmentCancelling && a.State != store.AssignmentNeedsReconciliation {
+		return false
+	}
+	if _, err := os.Stat(a.Workspace.Path); !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	j, err := d.store.Job(a.Job)
+	if err != nil {
+		d.log.Error("reading the job of an assignment whose workspace is gone", "assignment", a.ID, "job", a.Job, "error", err.Error())
+		return false
+	}
+	if j.State != store.JobCancelled {
+		return false
+	}
+	why := fmt.Sprintf("its workspace %s is gone, so nothing can be pushed from it", a.Workspace.Path)
+	if _, err := d.store.CancelledWithoutWorkspace(a.ID, why, time.Now()); err != nil {
+		d.log.Error("ending a cancelled job's assignment whose workspace is gone", "assignment", a.ID, "error", err.Error())
+		return false
+	}
+	d.log.Warn("a cancelled job's assignment ended as cancelled with no push: its workspace is gone", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "workspace", a.Workspace.Path, "branch", a.Workspace.Branch)
+	return true
 }
 
 // cancellationRestart is the message that starts the worker of assignment a
@@ -166,9 +234,13 @@ func (d *daemon) holdForReconciliation(w store.WorkerDispatch, why string) {
 	d.log.Warn("assignment needs reconciliation", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "owner", a.Owner, "dispatch", w.Dispatch.ID, "why", why, "told", told.ID)
 }
 
-// cannotResume holds the assignment of l, a worker whose session resumed the
-// provider's session and ended without coming up, for reconciliation, and
-// starts its owning leader to tell it. d.mu is held.
+// cannotResume handles the assignment of l, a worker whose session resumed
+// the provider's session and ended without coming up, with cannotContinue.
+// An assignment held for reconciliation has its owning leader started to
+// tell it; a cancelled job's assignment whose cancellation is started again
+// has its worker started in a new session; and one that ended as cancelled,
+// its workspace gone, has what is local to its job removed once nothing
+// else holds it. d.mu is held.
 func (d *daemon) cannotResume(l *leader, exit string) {
 	w, err := d.store.WorkerDispatch(l.assignment)
 	if err != nil {
@@ -178,15 +250,28 @@ func (d *daemon) cannotResume(l *leader, exit string) {
 	if w.Assignment.State != store.AssignmentActive && w.Assignment.State != store.AssignmentCancelling {
 		return
 	}
-	if d.cannotContinue(w, fmt.Sprintf("the native session of %s cannot be resumed: its session ended before it came up (%s)", w.Assignment.Worker, exit)) {
+	switch d.cannotContinue(w, fmt.Sprintf("the native session of %s cannot be resumed: its session ended before it came up (%s)", w.Assignment.Worker, exit)) {
+	case recoveryRestarted:
 		if err := d.ensureAgent(l.address); err != nil {
 			d.log.Error("starting the worker of a cancelled job's assignment again", "agent", l.address.String(), "assignment", l.assignment, "error", err.Error())
 		}
-		return
-	}
-	if owner, err := roles.ParseAddress(w.Assignment.Owner); err == nil {
-		if err := d.ensureAgent(owner); err != nil {
-			d.log.Error("starting the owning leader to tell it", "agent", w.Assignment.Owner, "error", err.Error())
+	case recoveryEnded:
+		// Removing the job's local view takes assignMu, which is never
+		// taken while d.mu is held.
+		job := w.Assignment.Job
+		if d.stopping {
+			return
+		}
+		d.agents.Add(1)
+		go func() {
+			defer d.agents.Done()
+			d.cancelledJobEnded(job)
+		}()
+	case recoveryHeld:
+		if owner, err := roles.ParseAddress(w.Assignment.Owner); err == nil {
+			if err := d.ensureAgent(owner); err != nil {
+				d.log.Error("starting the owning leader to tell it", "agent", w.Assignment.Owner, "error", err.Error())
+			}
 		}
 	}
 }

@@ -111,6 +111,10 @@ func jobCancel(o *output, paths statedir.Paths, number, message string) int {
 		fmt.Fprintln(o.stdout, "It had no open pull request to close.")
 	}
 	for _, a := range c.Cancelling {
+		if a.State == store.AssignmentCancelled {
+			fmt.Fprintf(o.stdout, "Assignment %d is cancelled with no push: its workspace is gone, so %s has nothing to push from and is not started; its branch, if pushed earlier, stays on origin.\n", a.ID, a.Worker)
+			continue
+		}
 		fmt.Fprintf(o.stdout, "Assignment %d is cancelling: %s pushes its assignment branch and stops, and it ends as cancelled once the daemon confirms the push.\n", a.ID, a.Worker)
 	}
 	if len(c.Discarded) > 0 {

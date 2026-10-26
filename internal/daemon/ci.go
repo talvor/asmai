@@ -366,6 +366,12 @@ func (d *daemon) removeJobLocal(job int64) {
 			} else {
 				removed = append(removed, a.Workspace.Path)
 			}
+		} else if a.State == store.AssignmentCancelled {
+			// A cancelled assignment's workspace that was gone leaves the
+			// clone's record of it, which holds its branch until pruned.
+			if err := repos.RemoveView(ctx, repository.Clone, a.Workspace.Path); err != nil {
+				failed = errors.Join(failed, err)
+			}
 		}
 		if a.Workspace.Branch != "" {
 			deleted, err := repos.DeleteBranch(ctx, repository.Clone, a.Workspace.Branch)

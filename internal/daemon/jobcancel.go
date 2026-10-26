@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 
@@ -65,7 +67,16 @@ func (d *daemon) cancelJob(req Request) (store.JobCancellation, error) {
 	}
 
 	d.mu.Lock()
-	c, err := d.store.JobCancelled(store.JobCancel{Job: j.Number, Witness: witness, Closed: closed}, time.Now())
+	gone, err := d.goneWorkspaces(j.Number)
+	if err != nil {
+		d.mu.Unlock()
+		d.assignMu.Unlock()
+		if closed != nil {
+			return store.JobCancellation{}, refuse("pull request #%d %s is closed, but the job was not cancelled: %v; run asmai job cancel again", closed.Number, closed.URL, err)
+		}
+		return store.JobCancellation{}, refuse("%v", err)
+	}
+	c, err := d.store.JobCancelled(store.JobCancel{Job: j.Number, Witness: witness, Closed: closed, WorkspaceGone: gone}, time.Now())
 	if err == nil {
 		for i, a := range c.Cancelling {
 			if d.cancelledWithoutWorkspace(a) {
@@ -90,6 +101,28 @@ func (d *daemon) cancelJob(req Request) (store.JobCancellation, error) {
 	d.log.Info("job cancelled at the user's word", "job", j.Number, "witness", witness, "cancelling", len(c.Cancelling), "discarded", len(c.Discarded), "withdrawn", len(c.Withdrawn), "pull_request_closed", closed != nil)
 	d.cancelledJobEnded(j.Number)
 	return c, nil
+}
+
+// goneWorkspaces returns the assignments of job that a cancellation makes
+// cancelling whose workspaces are gone, so that the messages of the
+// cancellation say each ends as cancelled with no push.
+func (d *daemon) goneWorkspaces(job int64) ([]int64, error) {
+	assignments, err := d.store.AssignmentsForJob(job)
+	if err != nil {
+		return nil, err
+	}
+	var gone []int64
+	for _, a := range assignments {
+		switch a.State {
+		case store.AssignmentActive, store.AssignmentSubmitted, store.AssignmentNeedsReconciliation:
+		default:
+			continue
+		}
+		if _, err := os.Stat(a.Workspace.Path); errors.Is(err, fs.ErrNotExist) {
+			gone = append(gone, a.ID)
+		}
+	}
+	return gone, nil
 }
 
 // closeCancelledPullRequest closes job j's latest recorded pull request, if

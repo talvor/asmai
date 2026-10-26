@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -32,6 +33,10 @@ type JobCancel struct {
 	// Closed is the job's pull request the daemon closed for the
 	// cancellation, nil when it closed none.
 	Closed *PullRequest
+	// WorkspaceGone are the assignments whose workspaces the daemon found
+	// gone: each ends as cancelled at once with no push, which the messages
+	// to the leaders say.
+	WorkspaceGone []int64
 }
 
 // JobCancellation is what cancelling a job did.
@@ -110,7 +115,9 @@ func cancellableJob(q queryer, number int64) (Job, error) {
 // with it; the pending decision requests are withdrawn, which ends their
 // pages; and the daemon's closing of the pull request is recorded as its
 // effect. Coordination's leader is told what the cancellation did, and every
-// other leader with work in the job that it was cancelled. Nothing changes
+// other leader with work in the job that it was cancelled; both are told
+// that the assignments c.WorkspaceGone names end as cancelled with no push,
+// which the daemon does next. Nothing changes
 // when it is refused.
 func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error) {
 	tx, err := s.db.Begin()
@@ -183,7 +190,15 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 		return JobCancellation{}, err
 	}
 
-	told, err := createMessage(tx, messageRef{}, j.Number, Daemon, CoordinationLeader, MessageJobCancelled, cancellationSummary(out, c.Closed, cancelling, withdrawn), at)
+	var pushing, gone []int64
+	for _, id := range cancelling {
+		if slices.Contains(c.WorkspaceGone, id) {
+			gone = append(gone, id)
+		} else {
+			pushing = append(pushing, id)
+		}
+	}
+	told, err := createMessage(tx, messageRef{}, j.Number, Daemon, CoordinationLeader, MessageJobCancelled, cancellationSummary(out, c.Closed, pushing, gone, withdrawn), at)
 	if err != nil {
 		return JobCancellation{}, err
 	}
@@ -204,9 +219,17 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 	if err != nil {
 		return JobCancellation{}, err
 	}
+	stops := "has told the workers of its live assignments, and of those that needed reconciliation, to push their assignment branches and stop; each ends as cancelled once the daemon confirms the push."
+	if len(gone) > 0 {
+		stops = "has no worker to tell to push."
+		if len(pushing) > 0 {
+			stops = fmt.Sprintf("has told the workers of assignments %v to push their assignment branches and stop; each ends as cancelled once the daemon confirms the push.", pushing)
+		}
+		stops += " " + endedWithoutPush(gone)
+	}
 	notice := fmt.Sprintf("Job %d is cancelled at the user's word, in witnessed message %d: %q. "+
-		"Stop assigning, accepting and delivering its work: the daemon refuses new work for it, discards its unreviewed results, and has told the workers of its live assignments, and of those that needed reconciliation, to push their assignment branches and stop; each ends as cancelled once the daemon confirms the push. "+
-		"Its branches stay on origin.", j.Number, witness, reason)
+		"Stop assigning, accepting and delivering its work: the daemon refuses new work for it, discards its unreviewed results, and %s "+
+		"Its branches stay on origin.", j.Number, witness, reason, stops)
 	for _, l := range leaders {
 		if l == CoordinationLeader || !strings.HasPrefix(l, "leader@") {
 			continue
@@ -221,7 +244,9 @@ func (s *Store) JobCancelled(c JobCancel, at time.Time) (JobCancellation, error)
 }
 
 // cancellationSummary tells Coordination's leader what cancelling the job did.
-func cancellationSummary(c JobCancellation, closed *PullRequest, cancelling, withdrawn []int64) string {
+// Pushing are the assignments whose workers push and stop, and gone those
+// that end as cancelled with no push, their workspaces gone.
+func cancellationSummary(c JobCancellation, closed *PullRequest, pushing, gone, withdrawn []int64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Job %d is cancelled at the user's word, in witnessed message %d: %q.", c.Job.Number, c.Job.CancelWitness, c.Job.CancelReason)
 	if closed != nil {
@@ -229,8 +254,11 @@ func cancellationSummary(c JobCancellation, closed *PullRequest, cancelling, wit
 	} else {
 		b.WriteString(" It had no open pull request to close.")
 	}
-	if len(cancelling) > 0 {
-		fmt.Fprintf(&b, " Assignments %v are cancelling: their workers push their assignment branches and stop, and each ends as cancelled once the daemon confirms the push.", cancelling)
+	if len(pushing) > 0 {
+		fmt.Fprintf(&b, " Assignments %v are cancelling: their workers push their assignment branches and stop, and each ends as cancelled once the daemon confirms the push.", pushing)
+	}
+	if len(gone) > 0 {
+		b.WriteString(" " + endedWithoutPush(gone))
 	}
 	if len(c.Discarded) > 0 {
 		fmt.Fprintf(&b, " The unreviewed results (reports %v) are discarded.", c.Discarded)
@@ -240,6 +268,12 @@ func cancellationSummary(c JobCancellation, closed *PullRequest, cancelling, wit
 	}
 	fmt.Fprintf(&b, " Every branch stays on origin. Tell the user, in a line tagged with job %d.", c.Job.Number)
 	return b.String()
+}
+
+// endedWithoutPush says that the assignments gone, whose workspaces are
+// gone, ended as cancelled with no push.
+func endedWithoutPush(gone []int64) string {
+	return fmt.Sprintf("Assignments %v ended as cancelled with no push and no worker started: their workspaces are gone, so there is nothing to push from, and a branch of theirs pushed earlier stays on origin.", gone)
 }
 
 // int64s returns the single integer column query selects.

@@ -211,6 +211,33 @@ func (c cancellableJob) endedWithoutPush(t *testing.T, a store.Assignment, commi
 	}
 }
 
+// toldEndedWithoutPush fails t unless Coordination's leader and
+// Engineering's leader were told that assignment gone, whose workspace is
+// gone, ended as cancelled with no push, its branch staying on origin, and
+// that only the worker of assignment pushing pushes and stops.
+func (c cancellableJob) toldEndedWithoutPush(t *testing.T, gone, pushing store.Assignment) {
+	t.Helper()
+	ended := fmt.Sprintf("Assignments [%d] ended as cancelled with no push", gone.ID)
+	for leader, pushes := range map[string]string{
+		"leader@coordination": fmt.Sprintf("Assignments [%d] are cancelling: their workers push", pushing.ID),
+		"leader@engineering":  fmt.Sprintf("told the workers of assignments [%d] to push", pushing.ID),
+	} {
+		inbox, err := c.s.Inbox(leader, 0, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := slices.IndexFunc(inbox, func(m store.Message) bool { return m.Kind == store.MessageJobCancelled })
+		if i < 0 {
+			t.Errorf("%s was not told the job was cancelled: %+v", leader, inbox)
+			continue
+		}
+		body := inbox[i].Body
+		if !strings.Contains(body, ended) || !strings.Contains(body, "pushed earlier stays on origin") || !strings.Contains(body, pushes) {
+			t.Errorf("%s was told %q, want assignment %d ended with no push, its branch on origin, and only assignment %d pushing", leader, body, gone.ID, pushing.ID)
+		}
+	}
+}
+
 // localViewRemoved fails t unless the cancelled job's local view is gone.
 func (c cancellableJob) localViewRemoved(t *testing.T) {
 	t.Helper()
@@ -244,6 +271,7 @@ func TestAJobCancelEndsAnAssignmentWhoseWorkspaceIsGoneAsCancelledWithNoPush(t *
 				t.Errorf("the cancellation shows %+v, want assignment %d cancelled", resp.Cancellation.Cancelling, gone.ID)
 			}
 			c.endedWithoutPush(t, gone, c.commits[0], out)
+			c.toldEndedWithoutPush(t, gone, other)
 			c.startedForCancellation(t, other, out)
 			// The job's local view stays while the other assignment holds its
 			// workspace, and goes once its push is confirmed.
@@ -617,7 +645,10 @@ func TestACancelledJobsWorkerThatCouldNotResumeIsStartedAgainOrEndsWithNoWorkspa
 		c.d.cannotResume(l, "exit status 1")
 	}
 	c.d.mu.Unlock()
-	c.d.agents.Wait()
+	// The workspace-gone assignment ended as cancelled within cannotResume;
+	// d.agents also counts the restarted worker's running session, so it is
+	// not waited on here, and the fixture's cleanup waits on it once the
+	// sessions have ended.
 
 	c.startedForCancellation(t, resumes, out)
 	c.endedWithoutPush(t, gone, c.commits[1], out)

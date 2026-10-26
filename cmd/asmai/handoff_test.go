@@ -37,7 +37,9 @@ func TestHandoffInboxNudgeAndReplyWithCorrelatedEvidence(t *testing.T) {
 	engineering := []string{
 		`{"hook":"SessionStart","payload":{"hook_event_name":"SessionStart","transcript_path":"/fake/engineering.jsonl"}}`,
 		fakeRun(`touch "$ASMAI_TEST_DIR/engineering-before-boundary"; while [ ! -f "$ASMAI_TEST_DIR/boundary" ]; do sleep 0.02; done`, 0, ""),
-		`{"screen":"\u001b[?2004h> "}`,
+		// Claude Code hides the terminal's cursor at its idle prompt unless
+		// its native cursor is on, as the daemon starts it.
+		`{"screen":"\u001b[?25l\u001b[?2004h> "}`,
 		`{"expect":"asmai inbox --dispatch 1\r"}`,
 		`{"hook":"UserPromptSubmit","payload":{"hook_event_name":"UserPromptSubmit","prompt_id":"nudge-1","prompt":"asmai inbox --dispatch 1","transcript_path":"/fake/engineering.jsonl"}}`,
 		fakeRun(`asmai inbox --dispatch 1`, 0, "(?s)job 1.*handoff.*Implement fixture.*Decision one.*Evidence one.*Constraint one.*Permission one.*Tests pass"),

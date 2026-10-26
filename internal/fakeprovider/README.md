@@ -49,7 +49,7 @@ A script is a [JSON Lines](https://jsonlines.org/) file: one JSON object per lin
 
 | Step | Fields | What the fake does |
 | --- | --- | --- |
-| Screen output | `"screen"`: a non-empty string | Draws the string on its terminal exactly as given, escape sequences included |
+| Screen output | `"screen"`: a non-empty string | Draws the string on its terminal exactly as given, escape sequences included, except that with `CLAUDE_CODE_NATIVE_CURSOR=1` in its environment it leaves out each `\u001b[?25l` that hides the cursor, as Claude Code does |
 | Expected input | `"expect"`: a non-empty string | Reads its terminal until it has received exactly these bytes, then goes on. If a byte differs, it stops and exits 1 |
 | Hook payload | `"hook"`: the event name, and `"payload"`: any JSON value | Delivers the payload, byte for byte as written in the script, to the hook commands for that event |
 | Command | `"run"`: a non-empty shell command, and optionally `"status"`: an exit status and `"output"`: a regular expression | Runs the command through `/bin/sh -c` and waits for it, then checks it. If it exited with another status than `"status"`, or what it printed on stdout and stderr together does not match `"output"`, it stops and exits 1 |

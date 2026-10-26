@@ -867,7 +867,9 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	if launch.resume != "" {
 		args = providers.ClaudeCodeResumeArgs(hook, launch.model, launch.instructions, pluginDir, guard, perms, launch.resume)
 	}
-	set := map[string]string{SessionCredential: credential}
+	// Claude Code hides the terminal's cursor at its idle prompt unless its
+	// native cursor is on, and initialBoundary waits for a visible cursor.
+	set := map[string]string{SessionCredential: credential, "CLAUDE_CODE_NATIVE_CURSOR": "1"}
 	maps.Copy(set, launch.env)
 	env := providers.SessionEnv(os.Environ(), d.cfg.Paths.Bin, set)
 	s, err := session.Start(session.Spec{Path: install.Path, Args: args, Env: env, Dir: launch.dir, Columns: terminalColumns, Rows: terminalRows})

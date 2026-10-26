@@ -179,6 +179,19 @@ func TestTheFakeDrawsItsScreensInOrderAfterNamingItselfAFake(t *testing.T) {
 	}
 }
 
+func TestTheFakeShowsItsCursorWithClaudeCodesNativeCursor(t *testing.T) {
+	script := writeScript(t, `{"screen": "\u001b[?25l\u001b[?2004hready"}`)
+	for _, native := range []string{"", "1"} {
+		t.Setenv("CLAUDE_CODE_NATIVE_CURSOR", native)
+		s := start(t, "--script", script)
+		s.waitForScreen("ready")
+		s.exit()
+		if hidden := strings.Contains(s.drawn(), "\x1b[?25l"); hidden != (native == "") {
+			t.Errorf("with CLAUDE_CODE_NATIVE_CURSOR=%q the fake drew %q", native, s.drawn())
+		}
+	}
+}
+
 // hookLog is where the hooks configured by hookSettings record each delivery, one
 // line per payload: the event name, a tab, and the payload as delivered.
 type hookLog string

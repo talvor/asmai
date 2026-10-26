@@ -251,7 +251,7 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		defer term.Restore(int(stdin.Fd()), state)
 	}
 
-	if err := play(steps, stdin, stdout, hooks.deliver(stderr)); err != nil {
+	if err := play(steps, os.Getenv("CLAUDE_CODE_NATIVE_CURSOR") == "1", stdin, stdout, hooks.deliver(stderr)); err != nil {
 		fmt.Fprintf(stderr, "fake-provider: %v\n", err)
 		return 1
 	}

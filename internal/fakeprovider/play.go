@@ -20,8 +20,9 @@ const hideCursor = "\x1b[?25l"
 
 // play draws banner on out, then plays steps in order: it draws each screen
 // on out, leaving out any cursor hiding when nativeCursor is set, as Claude
-// Code does with CLAUDE_CODE_NATIVE_CURSOR=1, reads in until it has received each expected input, and passes
-// each hook payload to deliver with its event name, and runs each command.
+// Code does with CLAUDE_CODE_NATIVE_CURSOR=1, reads in until it has received
+// each expected input, and passes each hook payload to deliver with its event
+// name, and runs each command.
 // It stops at the first input that differs from what the script expects, and
 // at the first command whose exit status or output differs, naming the
 // step's line.

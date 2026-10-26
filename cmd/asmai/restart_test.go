@@ -550,8 +550,20 @@ func TestAnAssignmentWhoseNativeSessionCannotBeResumedNeedsReconciliationAndItsO
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "is needs_reconciliation, so it cannot be cancelled"),
 		hookStep("Stop", "reconcile", ""),
 		fakeRun(`touch "$ASMAI_TEST_DIR/leader-told"`, 0, ""),
+		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/redispatch-now" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`asmai redispatch --assignment 1 --reason 'the origin is available again' | tee "$ASMAI_TEST_DIR/reconciliation-redispatch"`, 0, "assignment 1: sent to worker1@engineering again by leader@engineering; it is active, in dispatch 9, a new dispatch"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/redispatched"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,
 	}
+	t.Setenv(fakeprovider.ScriptEnv+"_WORKER", writeScript(t, "worker-after-reconciliation", []string{
+		hookStep("SessionStart", "", ""),
+		`{"screen":"\u001b[?2004h> "}`,
+		`{"expect":"asmai inbox --dispatch 9\r"}`,
+		hookStep("UserPromptSubmit", "redispatch", "asmai inbox --dispatch 9"),
+		fakeRun(`asmai inbox --dispatch 9 | tee "$ASMAI_TEST_DIR/reconciliation-worker-inbox"`, 0, "(?s)redispatch from leader@engineering.*Reasons from leader@engineering:\nthe origin is available again"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/worker-fetched-redispatch"`, 0, ""),
+		`{"expect":"only typed by a test that means to"}`,
+	}))
 	secondRun(t, coordination, engineering, nil)
 	waitFor(t, "the owning leader to be told", touched(r.testDir, "leader-told"))
 
@@ -583,6 +595,24 @@ func TestAnAssignmentWhoseNativeSessionCannotBeResumedNeedsReconciliationAndItsO
 	}
 	if len(journaled(t, "result.submitted")) != 0 {
 		t.Error("a result was submitted for an assignment that needs reconciliation")
+	}
+	if err := os.WriteFile(filepath.Join(r.testDir, "redispatch-now"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the owner's reconciliation redispatch", touched(r.testDir, "redispatched"))
+	waitFor(t, "the worker to fetch the reconciliation redispatch", touched(r.testDir, "worker-fetched-redispatch"))
+	if got := len(journaled(t, "assignment.redispatched")); got != 1 {
+		t.Errorf("assignments redispatched after reconciliation: %d, want one", got)
+	}
+	if got := strings.Join(dispatchStates(t, 0)[9], ","); !strings.HasPrefix(got, "created,unknown,nudged,delivered,working") {
+		t.Errorf("the reconciliation redispatch moved through %s, want it delivered and worked on", got)
+	}
+	for _, name := range []string{"reconciliation-redispatch", "reconciliation-worker-inbox"} {
+		output, err := os.ReadFile(filepath.Join(r.testDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s:\n%s", name, output)
 	}
 }
 

@@ -185,6 +185,14 @@ var assignmentSkillFlags string
 // under, which a test sets to another when its own steps end the turns.
 var assignmentWorkerStop = "assignment"
 
+// assignmentWorkerNoStop makes the scripted provider exit with unreported
+// work, without delivering a Stop hook.
+var assignmentWorkerNoStop bool
+
+// assignmentLeaderBeforeStop lets a flow check the owning leader's commands
+// while its worker is still in the first assignment turn.
+var assignmentLeaderBeforeStop []string
+
 func assignmentFlowWith(t *testing.T, setUpGit func(*testing.T), files map[string]string, worker, leader []string) (fixture writingFixture, testDir string) {
 	t.Helper()
 	return assignmentFlowConfigured(t, setUpGit, files, nil, worker, leader)
@@ -208,10 +216,13 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 		fakeRun(`asmai brief 1`, 0, "(?s)Job branch: asmai/job-1-add-a-greeting \\(started from [0-9a-f]{40}, tip [0-9a-f]{40}\\).*Read-only view of the job at the job branch's tip: \\S+/views/job-1"),
 		fakeRun(`asmai handoff accept --handoff 1`, 0, "reply dispatch 2"),
 		fakeRun(`asmai assign --job 1 --outcome 'Add greeting.txt, with a check that it says hello' --criterion 'greeting.txt says hello' --criterion 'the check passes'`+assignmentSkillFlags, 0, "assignment 1 of job 1 given to worker1@engineering; dispatch 3"),
+	}, assignmentLeaderBeforeStop...)
+	engineering = append(engineering,
 		hookStep("Stop", "handoff", ""),
 		`{"expect":"asmai inbox --dispatch 4\r"}`,
 		hookStep("UserPromptSubmit", "report", "asmai inbox --dispatch 4"),
-	}, leader...)
+	)
+	engineering = append(engineering, leader...)
 	engineering = append(engineering,
 		hookStep("Stop", "report", ""),
 		fakeRun(`touch "$ASMAI_TEST_DIR/leader-done"`, 0, ""),
@@ -225,11 +236,13 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 		`{"expect":"asmai inbox --dispatch 3\r"}`,
 		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 3"),
 	}, worker...)
-	workerScript = append(workerScript,
-		hookStep("Stop", assignmentWorkerStop, ""),
-		fakeRun(`touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""),
-		`{"expect":"only typed by a test that means to"}`,
-	)
+	if !assignmentWorkerNoStop {
+		workerScript = append(workerScript, hookStep("Stop", assignmentWorkerStop, ""))
+	}
+	workerScript = append(workerScript, fakeRun(`touch "$ASMAI_TEST_DIR/worker-done"`, 0, ""))
+	if !assignmentWorkerNoStop {
+		workerScript = append(workerScript, `{"expect":"only typed by a test that means to"}`)
+	}
 	t.Setenv(fakeprovider.ScriptEnv+"_WORKER", writeScript(t, "worker", workerScript))
 
 	coordination := []string{
@@ -513,12 +526,19 @@ func TestAWorkerThatCannotGoOnReportsItBlockedAndItsAssignmentStaysActive(t *tes
 func TestBlockedWithoutPushEndsWithAReceipt(t *testing.T) {
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`asmai blocked --reason 'the push failed' --needs 'origin to recover'`, 0, `^blocked recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 4\n$`),
+		fakeRun(`asmai blocked --reason 'the push failed' --needs 'origin to recover' | tee "$ASMAI_TEST_DIR/blocked-receipt"`, 0, `^blocked recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 4\n$`),
 	}
 	leader := []string{
-		fakeRun(`asmai inbox --dispatch 4`, 0, "blocked 1 \\| assignment 1"),
+		fakeRun(`asmai inbox --dispatch 4 | tee "$ASMAI_TEST_DIR/blocked-notice"`, 0, "blocked 1 \\| assignment 1"),
 	}
-	assignmentFlow(t, worker, leader)
+	_, testDir := assignmentFlow(t, worker, leader)
+	for _, name := range []string{"blocked-receipt", "blocked-notice"} {
+		output, err := os.ReadFile(filepath.Join(testDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s:\n%s", name, output)
+	}
 }
 
 // A worker's native prompt waits for an answer nobody can give, so the

@@ -940,7 +940,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if a.ReadOnly && sub.Commit != a.Commit {
 		return Report{}, Dispatch{}, fmt.Errorf("the workspace is at %s, but assignment %d is fixed at %s: validation never changes the work", sub.Commit, a.ID, a.Commit)
 	}
-	if !a.ReadOnly && !a.Scratch && !sub.TookInTip {
+	if sub.Kind == ReportResult && !a.ReadOnly && !a.Scratch && !sub.TookInTip {
 		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
 	// The skills a worker ran are those its session was given, as the

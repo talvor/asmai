@@ -358,15 +358,12 @@ func TestABlockedReportLeavesTheAssignmentActiveAndEndsItsDispatchOnce(t *testin
 	}
 	withoutTip := submission(d, ReportBlocked)
 	withoutTip.TookInTip = false
-	if _, _, err := s.ReportSubmitted(withoutTip, assignmentsAt); err == nil || !strings.Contains(err.Error(), "tip") {
-		t.Errorf("a blocked report that has not taken in the job tip returned %v", err)
-	}
 	// It needs no recorded push: a worker whose push failed can still say so.
-	r, leaderDispatch, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt)
+	r, leaderDispatch, err := s.ReportSubmitted(withoutTip, assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Kind != ReportBlocked || r.Reason != "which format?" || r.Needs != "the user" || leaderDispatch.Agent != "leader@engineering" {
+	if r.Kind != ReportBlocked || r.Reason != "which format?" || r.Needs != "the user" || r.TookInTip || leaderDispatch.Agent != "leader@engineering" {
 		t.Errorf("the blocked report is %+v for %+v", r, leaderDispatch)
 	}
 	if got, _ := s.Assignment(a.ID); got.State != AssignmentActive {

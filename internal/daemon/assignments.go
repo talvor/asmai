@@ -676,10 +676,10 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 }
 
 // checkWritingReport checks that a writing assignment's workspace is at a
-// commit that can be reported: everything is committed, the job branch's tip
-// is taken in, and origin's assignment branch holds the commit. It returns
-// whether the commit has the tip in its history. A blocked report needs no
-// push: the worker may be blocked because its push failed.
+// commit that can be reported: everything is committed, and a result takes in
+// the job branch's tip and has its commit on origin's assignment branch. It
+// returns whether the commit has the tip in its history. A blocked report
+// needs no push: the worker may be blocked because its push failed.
 func (d *daemon) checkWritingReport(ctx context.Context, a store.Assignment, branch store.JobBranch, commit, kind string) (bool, error) {
 	uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
 	if err != nil {
@@ -692,11 +692,11 @@ func (d *daemon) checkWritingReport(ctx context.Context, a store.Assignment, bra
 	if err != nil {
 		return false, err
 	}
-	if !tookIn {
+	if kind == store.ReportResult && !tookIn {
 		return false, refuse("the assignment branch does not contain the job branch's tip %s; take it in and submit again", branch.Tip)
 	}
 	if kind == store.ReportBlocked {
-		return true, nil
+		return tookIn, nil
 	}
 	job, err := d.store.Job(a.Job)
 	if err != nil {

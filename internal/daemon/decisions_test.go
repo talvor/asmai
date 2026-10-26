@@ -162,6 +162,55 @@ func (f twoResults) decide(command string, assignment int64, reasons ...string) 
 	return resp, err
 }
 
+func TestABlockedWorkerCanReportAfterAnotherAssignmentMovesTheJobTip(t *testing.T) {
+	f := newTwoResults(t)
+	id, err := f.s.NextAssignmentID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	number, slot, err := f.s.Allocate(roles.Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := roles.WorkerOf(roles.Engineering, number)
+	dir := filepath.Join(f.d.cfg.Paths.Workspaces, "job-1", "assignment-3")
+	w := store.Workspace{Slot: slot, Path: filepath.Join(dir, "repo"), Tmp: filepath.Join(dir, "tmp"), Branch: "asmai/job-1/3", Base: f.started}
+	if err := repos.AddWorkspace(context.Background(), f.clone, w.Path, w.Branch, w.Base); err != nil {
+		t.Fatal(err)
+	}
+	a, dispatch, err := f.s.AssignmentCreated(store.NewAssignment{ID: id, Job: f.job.Number, Owner: "leader@engineering", Worker: worker.String(), Outcome: "outcome", Criteria: []string{"done"}, Workspace: w}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Path, "blocked.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, w.Path, "add", "blocked.txt")
+	git(t, w.Path, "commit", "-m", "unpublished work")
+	if err := f.s.ChangeDispatch(dispatch.ID, 1, store.DispatchCreated, store.DispatchWorking, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.d.leaders[worker.String()] = &leader{address: worker, session: &session.Session{}, generation: 1, currentDispatch: dispatch.ID, assignment: a.ID}
+	f.d.sessions["blocked-worker"] = sessionRef{address: worker, generation: 1}
+	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "file-1.txt is there"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := f.d.report(Request{Session: "blocked-worker", Command: CommandResult, Report: &store.ReportInput{Evidence: []string{"work"}, PRSection: "Work"}}); err == nil || !strings.Contains(err.Error(), "does not contain the job branch's tip") {
+		t.Fatalf("a result without the moved tip returned %v", err)
+	}
+	r, notice, err := f.d.report(Request{Session: "blocked-worker", Command: CommandBlocked, Report: &store.ReportInput{Reason: "push failed", Needs: "restore origin access"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Assignment != a.ID || r.Kind != store.ReportBlocked || r.TookInTip || r.JobTip != f.commits[0] || notice.Agent != a.Owner {
+		t.Errorf("the blocked report is %+v and its notice is %+v", r, notice)
+	}
+	if got, err := f.s.Assignment(a.ID); err != nil || got.State != store.AssignmentActive {
+		t.Errorf("the blocked assignment is %+v (%v), want active", got, err)
+	}
+}
+
 func TestAResultSubmittedAgainstAnOldTipGoesBackToItsWorkerWithoutBeingRejected(t *testing.T) {
 	f := newTwoResults(t)
 	view := filepath.Join(f.d.cfg.Paths.Views, "job-1")

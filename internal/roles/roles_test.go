@@ -233,7 +233,16 @@ func TestEngineeringsInstructionsOpenADraftPullRequestOrANotReadyOneRecordItAndC
 	}
 	for _, want := range []string{
 		"Open the pull request",
+		"gh pr create --draft --repo <owner/name> --base <default branch> --head <job branch>",
+		"gh pr edit <number> --repo <owner/name> --body-file <file>",
+		"as its own single command in its own Bash call",
+		"never after a `cd`",
+		"If GitHub refuses a draft",
+		"`[not ready]` at the start of its title",
+		"never open a second one",
 		"Never post a GitHub review, never merge the pull request",
+		"asmai effect pull-request <the URL gh printed>",
+		"how the daemon learns which pull request to follow",
 		"the workers' PR sections",
 		"Quality's report",
 		"merge danger",
@@ -312,6 +321,7 @@ func TestEngineeringsInstructionsHandleRedCIWithAtMostOneJudgedReRunOrAFix(t *te
 		"ask for the push with `asmai push`",
 		"a newer push replaces the wait",
 		"Whenever the evidence changes",
+		"record each update with `asmai effect pull-request <the pull request's URL>`",
 	} {
 		if !strings.Contains(leader, want) {
 			t.Errorf("Engineering's leader's instructions lack %q", want)
@@ -1039,7 +1049,7 @@ func TestCoordinationsInstructionsRunARepositorysSetupWithItsOwnWorkerAndDeliver
 		// CI.
 		"the question with the id `ci`", "lives only in the configuration, which only the user changes", "set `no_ci = true`", "`asmai config apply`", "Never edit the configuration yourself",
 		// Delivery.
-		"Deliver it like a notes-only job", "no Quality validation", "`asmai push <job>`", "never merge",
+		"Deliver it like a notes-only job", "no Quality validation", "`asmai push <job>`", "gh pr create --draft", "`asmai effect pull-request <the URL gh printed>`", "never merge",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Coordination's instructions lack %q", want)

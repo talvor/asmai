@@ -48,7 +48,8 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 	updateBody := func(text string) []string {
 		return []string{
 			fakeRun(`printf '## Summary\n\nAdds greeting.txt.\n\n## AsmAI\n\nJob 1: Add a greeting. `+text+`\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
-			fakeRun(`asmai pr update 1 --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull request #7 of job 1 updated by the daemon"),
+			fakeRun(`gh pr edit 7 --body-file "$ASMAI_TEST_DIR/body.md"`, 0, ""),
+			fakeRun(`asmai effect pull-request `+url, 0, "pull request #7 of job 1 recorded"),
 		}
 	}
 	rerun := `asmai decision record --job 1 --choice rerun-failed --rationale 'the runner lost its network, which the change cannot cause' --evidence 'the log of CI / test shows a DNS failure fetching a dependency'`
@@ -73,7 +74,8 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 				fakeRun(rerun, 1, "no pushed head with a pull request"),
 				fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
 				fakeRun(`printf '## Summary\n\nAdds greeting.txt.\n\n## AsmAI\n\nJob 1: Add a greeting. CI has not reported yet.\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
-				fakeRun(`asmai pr open 1 --title 'Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull request #7 of job 1 opened by the daemon"),
+				fakeRun(`gh pr create --draft --base main --head `+jobBranch+` --title 'Add a greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
+				fakeRun(`asmai effect pull-request `+url, 0, "pull request #7 of job 1 recorded"),
 				// The checks are not red yet.
 				fakeRun(rerun, 1, "are not red, so there is nothing to re-run"),
 			},
@@ -161,14 +163,14 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 	}
 	worker1 := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`printf 'hello\n' > greeting.txt && asmai commit --message 'Add greeting.txt'`, 0, ""),
-		fakeRun(`asmai push`, 0, "recorded in dispatch"),
+		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt'`, 0, ""),
+		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(12, "fix",
 		fakeRun(`asmai inbox --dispatch 12`, 0, "(?s)assignment 3.*Fix the failing check CI / test.*Decision records passed to you with this assignment:\n  decision 2 \\| job 1 \\| delegated .*Reopen when: CI / test fails on a second head"),
-		fakeRun(`printf 'hello\n' > greeting.txt && printf 'ok\n' > ci-fixed.txt && asmai commit --message 'Fix CI / test'`, 0, ""),
-		fakeRun(`asmai push`, 0, "recorded in dispatch"),
+		fakeRun(`printf 'hello\n' > greeting.txt && printf 'ok\n' > ci-fixed.txt && git add -A && git commit -q -m 'Fix CI / test'`, 0, ""),
+		fakeRun(`git push -q origin asmai/job-1/3 && asmai effect push "origin/asmai/job-1/3@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'CI / test passes' --test none --check 'grep hello greeting.txt -> passed' --gap none --pr-section 'Fixes CI / test.'`, 0, "result recorded for assignment 3"),
 	), []string{touchFile("w2-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{

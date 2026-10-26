@@ -57,15 +57,16 @@ func deliverNotes(t *testing.T, noCI bool) {
 			fakeRun(`asmai handoff send --job 1 --to quality --outcome 'Validate the notes' --decisions none --evidence none --constraints none --permissions none --criterion 'cited'`, 1, "only leader@engineering hands a job branch to Quality for validation"),
 			fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
 			fakeRun(`printf 'Notes only: this pull request changes no code.\n\n- docs/research/greeting.md: how the greeting is spelled, with its source.\n\nRefs #12\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
-			fakeRun(`asmai pr open 1 --title 'Research the greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull request #7 of job 1 opened by the daemon"),
+			fakeRun(`gh pr create --draft --base main --head `+jobBranch+` --title 'Research the greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
+			fakeRun(`asmai effect pull-request `+url, 0, "pull request #7 of job 1 recorded"),
 			touchFile("leader-done"),
 		),
 		[]string{idleSession},
 	)
 	worker := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`mkdir -p docs/research && printf '# The greeting\nIt is spelled hello (https://example.test/spec#greeting).\n' > docs/research/greeting.md && asmai commit --message 'Add the greeting research notes'`, 0, ""),
-		fakeRun(`asmai push`, 0, "recorded in dispatch"),
+		fakeRun(`mkdir -p docs/research && printf '# The greeting\nIt is spelled hello (https://example.test/spec#greeting).\n' > docs/research/greeting.md && git add -A && git commit -q -m 'Add the greeting research notes'`, 0, ""),
+		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'https://example.test/spec#greeting' --artifact docs/research/greeting.md --test none --check none --gap none --skill research --pr-section 'Adds the research notes on the greeting.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{"research.jsonl": research, "worker.jsonl": worker})
@@ -215,7 +216,7 @@ func deliverNotes(t *testing.T, noCI bool) {
 		dir, args, _ := strings.Cut(line, ": ")
 		switch {
 		case strings.HasPrefix(args, "pr create"):
-			if !strings.HasPrefix(args, "pr create --repo talvor/asmai-fixture ") || !strings.HasSuffix(args, " --body-file - --draft") {
+			if !strings.HasPrefix(args, "pr create --draft ") {
 				t.Errorf("the pull request was opened with gh %s, want a draft", args)
 			}
 		case strings.HasPrefix(args, "pr ready"), strings.HasPrefix(args, "pr edit"):
@@ -292,21 +293,22 @@ func TestAPrototypeStaysOnItsAssignmentBranchWithAVerdictNotePointingToItInTheNo
 			fakeRun(`asmai accept --assignment 2 --reason 'the note points to branch asmai/job-1/1'`, 0, "fast-forwarded"),
 			fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
 			fakeRun(`printf 'Notes only: this pull request changes no code.\n\n- docs/research/greeting-verdict.md: the verdict on the prototype, which stays on branch asmai/job-1/1.\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
-			fakeRun(`asmai pr open 1 --title 'Prototype the greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull request #7 of job 1 opened by the daemon"),
+			fakeRun(`gh pr create --draft --base main --head `+jobBranch+` --title 'Prototype the greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
+			fakeRun(`asmai effect pull-request `+url, 0, "pull request #7 of job 1 recorded"),
 			touchFile("leader-done"),
 		),
 		[]string{idleSession},
 	)
 	worker1 := concat(agentSession, turn(3, "prototype",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
-		fakeRun(`mkdir -p prototype && printf 'echo hello\n' > prototype/greeting.sh && asmai commit --message 'Prototype the greeting'`, 0, ""),
-		fakeRun(`asmai push`, 0, "recorded in dispatch"),
+		fakeRun(`mkdir -p prototype && printf 'echo hello\n' > prototype/greeting.sh && git add -A && git commit -q -m 'Prototype the greeting'`, 0, ""),
+		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'prototype/greeting.sh prints hello' --artifact prototype/greeting.sh --test none --check none --gap none --pr-section 'A prototype that stays on its own branch.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(5, "verdict",
 		fakeRun(`asmai inbox --dispatch 5`, 0, "assignment 2"),
-		fakeRun(`mkdir -p docs/research && printf '# The greeting prototype\nVerdict: the greeting is formed as hello. The prototype is on branch asmai/job-1/1 on origin.\n' > docs/research/greeting-verdict.md && asmai commit --message 'Add the greeting prototype verdict'`, 0, ""),
-		fakeRun(`asmai push`, 0, "recorded in dispatch"),
+		fakeRun(`mkdir -p docs/research && printf '# The greeting prototype\nVerdict: the greeting is formed as hello. The prototype is on branch asmai/job-1/1 on origin.\n' > docs/research/greeting-verdict.md && git add -A && git commit -q -m 'Add the greeting prototype verdict'`, 0, ""),
+		fakeRun(`git push -q origin asmai/job-1/2 && asmai effect push "origin/asmai/job-1/2@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'the verdict names branch asmai/job-1/1' --artifact docs/research/greeting-verdict.md --test none --check none --gap none --pr-section 'Adds the verdict on the prototype.'`, 0, "result recorded for assignment 2"),
 	), []string{touchFile("w2-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{"research.jsonl": research, "worker.jsonl": worker1, "worker-2.jsonl": worker2})

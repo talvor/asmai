@@ -247,7 +247,7 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		fmt.Fprintf(&b, "Job branch: %s (continues job %d's job branch, started from origin's copy at %s, tip %s)\n", branch.Name, branch.Continues, branch.StartedFrom, branch.Tip)
 		if len(continued) > 0 {
 			p := continued[len(continued)-1]
-			fmt.Fprintf(&b, "Continues job %d's pull request #%d %s, still open: it is this job's pull request, so never ask for another with `asmai pr open`. Once the daemon has pushed the job branch, record it with `asmai effect pull-request %s` and update its body with `asmai pr update %d --body-file <file>`.\n", branch.Continues, p.Number, p.URL, p.URL, j.Number)
+			fmt.Fprintf(&b, "Continues job %d's pull request #%d %s, still open: it is this job's pull request, so never open another. Once the daemon has pushed the job branch, record it with `asmai effect pull-request %s` and update its body.\n", branch.Continues, p.Number, p.URL, p.URL)
 		}
 		fmt.Fprintf(&b, "Read-only view of the job at the job branch's tip: %s\nRead the job's code and the repository's instructions there. Never write in it: it is not a workspace.\n", branch.View)
 	case branch != nil:

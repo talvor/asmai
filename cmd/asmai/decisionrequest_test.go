@@ -20,9 +20,9 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
-		fakeRun(`asmai commit --message 'Add greeting.txt and its check'`, 0, "effect 1 recorded"),
-		fakeRun(`asmai merge asmai/job-1-add-a-greeting`, 0, "nothing to merge"),
-		fakeRun(`asmai push`, 0, "effect 2 recorded"),
+		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
+		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai decision request --title 'Which greeting?' --option hello --option hi --recommend hello`, 0, "decision request 1, version 1, recorded for job 1; it goes to leader@engineering and is answered in conversation"),
 		// The work that depends on the choice waits.
 		fakeRun(resultFlagsForGreeting, 1, "assignment 1 waits for decision request 1 \\(version 1\\), which is pending"),

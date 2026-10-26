@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,7 +60,7 @@ case "$1 $2" in
 	shift 3
 	while [ $# -gt 0 ]; do
 		case "$1" in
-		--body-file) if [ "$2" = - ]; then cat > "$state/body-$n"; else cp "$2" "$state/body-$n"; fi; shift ;;
+		--body-file) cp "$2" "$state/body-$n"; shift ;;
 		--repo) shift ;;
 		esac
 		shift
@@ -67,7 +68,6 @@ case "$1 $2" in
 	echo "https://github.com/o/r/pull/$n"
 	;;
 "pr close") touch "$state/closed-${3##*/}" ;;
-"repo view") echo '{"url":"https://github.com/o/r"}' ;;
 *) echo "the fake gh does not do: $*" >&2; exit 1 ;;
 esac
 `
@@ -125,18 +125,54 @@ func TestC42FailsWhenTheDraftPullRequestIsNotADraft(t *testing.T) {
 	}
 }
 
-// The daemon makes the pull request writes of a delivery owner's `asmai pr
-// open` and `asmai pr update`, with the code the case runs.
-func TestC50PassesWhenTheDaemonsGhOpensTheDraftAndUpdatesItsBody(t *testing.T) {
+// leaderSession plays Engineering's leader for C50: it runs each command the
+// prompt names, as the fake gh on the PATH answers it, in the directory the
+// case asks it to run in, and reports it as a turn, with the hook payloads of
+// a session that raised permission requests as asked.
+func leaderSession(t *testing.T, request, unsandbox bool) func(AskSpec) (Turn, error) {
+	was := checkGuardDependencies
+	checkGuardDependencies = func() error { return nil }
+	t.Cleanup(func() { checkGuardDependencies = was })
+	return func(spec AskSpec) (Turn, error) {
+		var settings struct {
+			Hooks map[string][]struct {
+				Hooks []struct {
+					Command string `json:"command"`
+				} `json:"hooks"`
+			} `json:"hooks"`
+		}
+		if err := json.Unmarshal([]byte(spec.Args[1]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		hook := settings.Hooks["Stop"][0].Hooks[0].Command
+		payload := `{"hook_event_name":"Stop"}`
+		if request {
+			payload = `{"hook_event_name":"PermissionRequest","tool_name":"Bash"}`
+		}
+		cmd := exec.Command("sh", "-c", hook)
+		cmd.Stdin = strings.NewReader(payload)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		_, command, _ := strings.Cut(spec.Prompt, "The command: `")
+		command = strings.TrimSuffix(command, "`")
+		run := exec.Command("sh", "-c", command)
+		run.Dir = spec.Dir
+		out, err := run.CombinedOutput()
+		return Turn{Commands: []Command{{Text: command, Output: string(out), Failed: err != nil, Unsandboxed: unsandbox}}}, nil
+	}
+}
+
+func TestC50PassesWhenTheLeaderOpensTheDraftAndUpdatesItsBodyWithNoPromptOrRetry(t *testing.T) {
 	origin := localPushFixture(t)
 	usePushFixture(t, origin)
 	state := fakeGitHub(t, origin, false)
-	r := result(t, harness(t, signedIn, startsDirectly), "C50")
+	r := result(t, harness(t, fakeClaude{auth: AuthStatus{SignedIn: true, Method: "claude.ai"}, ask: leaderSession(t, false, false)}, startsDirectly), "C50")
 	if r.Outcome != Passed {
 		t.Fatalf("C50 %s: %s", r.Outcome, r.Failure)
 	}
 	evidence := strings.Join(r.Evidence, "\n")
-	for _, want := range []string{"`gh pr create --draft`, run as the user", "found pull request #1 a draft", "`gh pr edit --body-file -` then updated the body", "leaving it a draft with its title"} {
+	for _, want := range []string{"ran `gh pr create --draft --repo", "found pull request #1 a draft", "ran `gh pr edit 1 --repo", "no PermissionRequest"} {
 		if !strings.Contains(evidence, want) {
 			t.Errorf("C50's evidence\n%s\ndoes not say %q", evidence, want)
 		}
@@ -144,24 +180,30 @@ func TestC50PassesWhenTheDaemonsGhOpensTheDraftAndUpdatesItsBody(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(state, "closed-1")); err != nil {
 		t.Error("the pull request was not closed")
 	}
-	if body, err := os.ReadFile(filepath.Join(state, "body-1")); err != nil || !strings.Contains(string(body), "C50 updated the body") {
-		t.Errorf("the pull request's body is %q (%v), want the update", body, err)
-	}
-	out, err := exec.Command("git", "-C", origin, "branch", "--list", "asmai/*").CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "" {
-		t.Errorf("origin still has branches %q (%v)", out, err)
+	if _, err := os.Stat(filepath.Join(state, "body-1")); err != nil {
+		t.Error("the pull request's body was not updated")
 	}
 }
 
-func TestC50FailsWhenTheOpenedPullRequestIsNotADraft(t *testing.T) {
-	origin := localPushFixture(t)
-	usePushFixture(t, origin)
-	state := fakeGitHub(t, origin, true)
-	r := result(t, harness(t, signedIn, startsDirectly), "C50")
-	if r.Outcome != Failed || !strings.Contains(r.Failure, "want a draft") {
-		t.Errorf("C50 %s: %q, want it to fail finding the pull request not a draft", r.Outcome, r.Failure)
-	}
-	if _, err := os.Stat(filepath.Join(state, "closed-1")); err != nil {
-		t.Error("the pull request was not closed after the case failed")
+func TestC50FailsWhenTheLeadersCommandIsRetriedOutsideTheSandboxOrRaisesAPrompt(t *testing.T) {
+	for name, c := range map[string]struct {
+		request, unsandbox bool
+		want               string
+	}{
+		"retried outside the sandbox": {unsandbox: true, want: "retried outside the sandbox"},
+		"a permission request":        {request: true, want: "native permission prompt"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			origin := localPushFixture(t)
+			usePushFixture(t, origin)
+			state := fakeGitHub(t, origin, false)
+			r := result(t, harness(t, fakeClaude{auth: AuthStatus{SignedIn: true, Method: "claude.ai"}, ask: leaderSession(t, c.request, c.unsandbox)}, startsDirectly), "C50")
+			if r.Outcome != Failed || !strings.Contains(r.Failure, c.want) {
+				t.Errorf("C50 %s: %q, want it to fail with %q", r.Outcome, r.Failure, c.want)
+			}
+			if _, err := os.Stat(filepath.Join(state, "closed-1")); c.request && err != nil {
+				t.Error("the pull request was not closed after the case failed")
+			}
+		})
 	}
 }

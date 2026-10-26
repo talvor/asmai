@@ -160,11 +160,9 @@ commands agents run:
                               whether it reviews the changes or only re-runs the checks, from what changed
                               since the last validated commit. With --of it is the early review of an assignment
                               that a leader asked for, fixed at the commit of its result
-  asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch.
-                              The daemon records the commits, merges and pushes it makes for a worker itself, and
-                              the pull request it opens or updates for the delivery owner; the delivery owner's
-                              "asmai effect pull-request <url>" records a pull request that already exists, as
-                              gh shows it, its number and whether it is a draft or "[not ready]"
+  asmai effect <kind> <ref>   a worker or the delivery owner records an effect it made, tagged with its dispatch;
+                              the delivery owner's "asmai effect pull-request <url>" also records the pull
+                              request as gh shows it, its number and whether it is a draft or "[not ready]"
   asmai result --evidence <text> --test <text>|none --check '<command> -> <outcome>'|none --gap <text>|none --pr-section <text> [--artifact <text>] [--record <id>] [--grant <id>]
                               a worker submits its assignment's result; repeat a flag for each value. A result
                               names the record each human step of its skills relied on: --record for the user's
@@ -193,28 +191,6 @@ commands agents run:
                               push the job branch: it fetches the branch from origin, refuses and records an
                               outside change if origin has commits AsmAI did not make, and otherwise pushes
                               it with a plain push, never forced, recorded as the daemon's effect
-  asmai push                  a worker asks the daemon to push its own assignment branch to origin with a plain
-                              push, never forced, recorded as the worker's effect
-  asmai commit --message <text> [<path>...]
-                              a worker asks the daemon to commit the changes in its workspace, as you, with
-                              the repository's hooks and the AsmAI trailers: all of them, or only the files
-                              named. It also finishes a merge whose conflicts the worker resolved, and the
-                              commit is recorded as the worker's effect
-  asmai merge <ref>           a worker asks the daemon to merge a ref into its assignment branch: the job branch,
-                              origin/<the job branch>, origin/<the repository's default branch> or
-                              origin/<its own assignment branch>, fetched first. A conflict is left in the
-                              workspace for the worker to resolve and commit
-  asmai merge --abort         a worker ends the merge in progress
-  asmai pr open <number> --title <text> --body-file <file>
-                              the delivery owner of a job asks the daemon to open its pull request, from the
-                              job branch the daemon pushed to the repository's default branch, as a draft, or
-                              with "[not ready]" at the start of its title if GitHub refuses a draft, and to
-                              record it as pull-request effect, as gh shows it. It opens no second pull
-                              request: one the job has, one from the branch on GitHub and one a follow-up
-                              continues are named instead
-  asmai pr update <number> --body-file <file>
-                              the delivery owner replaces the body of its job's pull request, which changes
-                              nothing else, and the daemon records the pull request again
   asmai decision record --job <number> --choice <text> --relied-on <text> --rationale <text> --evidence <text> --assumption <text>|none --reopen-when <text>|none [--source delegated|human --cites <witnessed message or Lavish answer>]
                               a leader records a decision that affects later work, with the fields of rule 25:
                               itself as the accountable leader, the mandate or grant it relied on, the choice,
@@ -309,7 +285,6 @@ var groups = map[string][]string{
 	"handoff":   {"send", "accept", "clarify", "decline"},
 	"decision":  {"record", "request", "answer", "present"},
 	"grant":     {"revoke", "invalidate"},
-	"pr":        {"open", "update"},
 	"config":    {"check", "show", "edit", "apply", "example"},
 	"role":      {"list", "set"},
 }
@@ -325,8 +300,7 @@ var positional = map[string][]string{
 	"job show":         {"name the job number, as `asmai jobs` shows it"},
 	"job clean":        {"name the job number, as `asmai jobs` shows it"},
 	"brief":            {"name the job number, as `asmai jobs` shows it"},
-	"pr open":          {"name the job number, as `asmai jobs` shows it"},
-	"pr update":        {"name the job number, as `asmai jobs` shows it"},
+	"push":             {"name the job number, as `asmai jobs` shows it"},
 	"grant revoke":     {"name the grant, as `asmai grants` lists them"},
 	"grant invalidate": {"name the grant, as `asmai grants` lists them"},
 	"effect":           {"name the kind of effect, one word such as commit or push", "name what the effect is of, such as the commit or the branch pushed"},
@@ -415,8 +389,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var authorizing authorizeFlags
 	var invalidation string
 	var resultArgs resultFlags
-	var commitMessage, prTitle, prBodyFile string
-	var mergeAbort bool
 	switch name {
 	case "init":
 		assumeYes = flags.Bool("yes", false, "confirm the install and agree to open Claude Code without asking")
@@ -556,16 +528,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&request.records, "record", "the ID of the user's decision record of the job that satisfies the step the request asks for; may be repeated")
 		flags.Var(&request.grants, "grant", "the ID of a grant of a decision, whose scope covers the job, that satisfies the step the request asks for; may be repeated")
 		flags.Int64Var(&request.userAnswer, "user-answer", 0, "instead of --answer, your request that carried the worker's question to the user, which the user answered in Lavish: its words are the worker's answer, as the user gave them")
-	case "commit":
-		flags.StringVar(&commitMessage, "message", "", "the commit's message, one line")
-	case "merge":
-		flags.BoolVar(&mergeAbort, "abort", false, "end the merge in progress, putting the files back as they were before it")
-	case "pr open":
-		flags.StringVar(&prTitle, "title", "", "the pull request's title")
-		flags.StringVar(&prBodyFile, "body-file", "", "the file that holds the pull request's body, outside every repository")
-	case "pr update":
-		flags.StringVar(&prBodyFile, "body-file", "", "the file that holds the pull request's new body, outside every repository")
-	case "push", "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "job clean", "brief", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
+	case "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "job clean", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
 		return 2
@@ -574,25 +537,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	var operands []string
-	// A commit names the files it takes, and a merge the ref it takes in, after
-	// its flags, and a push the job whose branch the delivery owner pushes.
-	var rest []string
-	switch name {
-	case "commit":
-		for flags.NArg() > 0 {
-			rest = append(rest, flags.Arg(0))
-			if err := flags.Parse(flags.Args()[1:]); err != nil {
-				return 2
-			}
-		}
-	case "merge", "push":
-		if flags.NArg() > 0 {
-			rest = append(rest, flags.Arg(0))
-			if err := flags.Parse(flags.Args()[1:]); err != nil {
-				return 2
-			}
-		}
-	}
 	for _, want := range positional[name] {
 		if flags.NArg() == 0 {
 			fmt.Fprintf(stderr, "asmai %s: %s\n\n%s", name, want, usage)
@@ -607,8 +551,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var arg string
 	if len(operands) > 0 {
 		arg = operands[0]
-	} else if name == "push" || name == "merge" {
-		arg = strings.Join(rest, "")
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "asmai %s: unexpected argument %q\n\n%s", name, flags.Arg(0), usage)
@@ -619,7 +561,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "commit", "merge", "pr open", "pr update", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -707,14 +649,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return decide(o, paths, name, decidedAssignment, reasons, endsJob, prototype)
 	case "push":
 		return push(o, paths, arg)
-	case "commit":
-		return commit(o, paths, commitMessage, rest)
-	case "merge":
-		return merge(o, paths, arg, mergeAbort)
-	case "pr open":
-		return prOpen(o, paths, arg, prTitle, prBodyFile, stdin)
-	case "pr update":
-		return prUpdate(o, paths, arg, prBodyFile, stdin)
 	case "decision record":
 		return decisionRecord(o, paths, decision)
 	case "decision request":

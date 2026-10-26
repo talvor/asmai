@@ -116,8 +116,8 @@ func TestARepositoryWithoutItsSetupIsSetUpByCoordinationAndDeliveredAsASetupPull
 
 	worker := concat(agentSession, turn(2, "assignment",
 		fakeRun(`asmai inbox --dispatch 2`, 0, "assignment 1"),
-		fakeRun(`mkdir -p docs/agents && printf '# Issue tracker\n\nIssues live in GitHub.\n' > docs/agents/issue-tracker.md && printf '# Triage labels\n' > docs/agents/triage-labels.md && printf '# Domain docs\n' > docs/agents/domain.md && asmai commit --message 'Set the repository up for the skills'`, 0, ""),
-		fakeRun(`asmai push`, 0, "recorded in dispatch"),
+		fakeRun(`mkdir -p docs/agents && printf '# Issue tracker\n\nIssues live in GitHub.\n' > docs/agents/issue-tracker.md && printf '# Triage labels\n' > docs/agents/triage-labels.md && printf '# Domain docs\n' > docs/agents/domain.md && git add -A && git commit -q -m 'Set the repository up for the skills'`, 0, ""),
+		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'the issue tracker is GitHub' --artifact docs/agents/issue-tracker.md --test none --check none --gap none --skill setup-matt-pocock-skills --pr-section 'Adds the setup files.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{"worker.jsonl": worker})
@@ -138,7 +138,8 @@ func TestARepositoryWithoutItsSetupIsSetUpByCoordinationAndDeliveredAsASetupPull
 			fakeRun(`asmai handoff send --job 1 --to quality --outcome 'Validate the setup' --decisions none --evidence none --constraints none --permissions none --criterion 'done'`, 1, "only leader@engineering hands a job branch to Quality for validation"),
 			fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
 			fakeRun(`printf 'Setup only: this pull request changes no code.\n\n- docs/agents/issue-tracker.md, triage-labels.md and domain.md.\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
-			fakeRun(`asmai pr open 1 --title 'Set fixture up for the skills' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull request #7 of job 1 opened by the daemon"),
+			fakeRun(`gh pr create --draft --base main --head `+jobBranch+` --title 'Set fixture up for the skills' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
+			fakeRun(`asmai effect pull-request `+url, 0, "pull request #7 of job 1 recorded"),
 			touchFile("leader-done"),
 		),
 		turn(4, "delivery",
@@ -253,7 +254,7 @@ func TestARepositoryWithoutItsSetupIsSetUpByCoordinationAndDeliveredAsASetupPull
 		dir, args, _ := strings.Cut(line, ": ")
 		switch {
 		case strings.HasPrefix(args, "pr create"):
-			if !strings.HasPrefix(args, "pr create --repo talvor/asmai-fixture ") || !strings.HasSuffix(args, " --body-file - --draft") {
+			if !strings.HasPrefix(args, "pr create --draft ") {
 				t.Errorf("the pull request was opened with gh %s, want a draft", args)
 			}
 		case strings.HasPrefix(args, "pr ready"), strings.HasPrefix(args, "pr edit"):

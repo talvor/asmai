@@ -31,6 +31,7 @@ var stageGlyphs = map[daemon.JobStage]string{
 	daemon.StageDelivering: "▶",
 	daemon.StageNeedsYou:   "▲",
 	daemon.StageDelivered:  "✓",
+	daemon.StageCancelled:  "✗",
 }
 
 var stageStyles = map[daemon.JobStage]lipgloss.Style{
@@ -39,6 +40,17 @@ var stageStyles = map[daemon.JobStage]lipgloss.Style{
 	daemon.StageDelivering: lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
 	daemon.StageNeedsYou:   lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
 	daemon.StageDelivered:  lipgloss.NewStyle().Faint(true),
+	daemon.StageCancelled:  lipgloss.NewStyle().Faint(true),
+}
+
+// jobTitle is the title a job's row shows: a cancelled job's leads with the
+// user's own words it was cancelled for.
+func jobTitle(j daemon.DashboardJob) string {
+	if j.Stage == daemon.StageCancelled && j.Reason != "" {
+		reason, _, _ := strings.Cut(strings.TrimSpace(j.Reason), "\n")
+		return "cancelled: " + reason + " · " + j.Title
+	}
+	return j.Title
 }
 
 // jobColumns says which optional columns fit in width.
@@ -111,7 +123,7 @@ func (m model) jobsBody() []string {
 	end := min(m.jobOffset+m.listRows(), len(jobs))
 	for i := m.jobOffset; i < end; i++ {
 		j := jobs[i]
-		cells := jobCells{job: fmt.Sprintf("#%d", j.Job), stage: stageGlyphs[j.Stage] + " " + j.Stage.Word(), assignments: assignmentWords(j.Assignments), pr: "-", title: j.Title}
+		cells := jobCells{job: fmt.Sprintf("#%d", j.Job), stage: stageGlyphs[j.Stage] + " " + j.Stage.Word(), assignments: assignmentWords(j.Assignments), pr: "-", title: jobTitle(j)}
 		if j.PullRequest != 0 {
 			cells.pr = fmt.Sprintf("#%d", j.PullRequest)
 		}

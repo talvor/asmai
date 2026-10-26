@@ -336,6 +336,10 @@ ALTER TABLE assignments ADD COLUMN requester TEXT NOT NULL DEFAULT '';
 ALTER TABLE decision_requests ADD COLUMN quoted TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE findings ADD COLUMN cleared_decision INTEGER REFERENCES decision_records(id);
 `,
+	`
+ALTER TABLE jobs ADD COLUMN cancel_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE jobs ADD COLUMN cancel_witness INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

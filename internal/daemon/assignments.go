@@ -432,7 +432,7 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		if err != nil {
 			return store.JobBranch{}, err
 		}
-		if predecessor.State != store.JobEnded {
+		if !predecessor.Ended() {
 			assignments, err := d.store.AssignmentsForJob(continues)
 			if err != nil {
 				return store.JobBranch{}, err

@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// JobEnded is the state of a job whose outcome was delivered or whose
-// cancellation completed. Every other state is open, a paused job's too.
+// JobEnded is the state of a job whose outcome was delivered, or that was
+// replaced or ended on its leader's acceptance. A cancelled job has ended too,
+// in JobCancelled. Every other state is open, a paused job's too.
 const JobEnded = "ended"
 
 // Repository is a registered repository: what `asmai repo add` recorded.
@@ -87,7 +88,8 @@ func (s *Store) RepositoryRemoved(name string, at time.Time) (Repository, error)
 		if err != nil {
 			return "", nil, err
 		}
-		rows, err := tx.Query(`SELECT number FROM jobs WHERE repository = ? AND state <> ? ORDER BY number`, name, JobEnded)
+		// A cancelled job is open until its cancelling assignments end.
+		rows, err := tx.Query(`SELECT number FROM jobs WHERE repository = ? AND (state NOT IN (?, ?) OR number IN (SELECT job FROM assignments WHERE state = ?)) ORDER BY number`, name, JobEnded, JobCancelled, AssignmentCancelling)
 		if err != nil {
 			return "", nil, err
 		}

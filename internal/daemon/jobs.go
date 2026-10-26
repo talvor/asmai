@@ -60,6 +60,19 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 				err = d.settleFollowUp(j, &resp)
 			}
 		}
+	case CommandJobCancel:
+		// Closing the pull request goes through gh, and the workers'
+		// workspaces are read for what they left.
+		conn.SetDeadline(time.Now().Add(2*ghTimeout + gitTimeout + time.Minute))
+		var c store.JobCancellation
+		if c, err = d.cancelJob(req); err == nil {
+			resp.Cancellation, resp.Job = &c, &c.Job
+			defer func() {
+				for _, dispatch := range c.Dispatches {
+					d.nudge(dispatch.Agent)
+				}
+			}()
+		}
 	case CommandJobClean:
 		resp.Removed, err = d.cleanScratch(req.Job)
 	case CommandJobs:
@@ -180,7 +193,7 @@ func (d *daemon) cleanScratch(job int64) ([]string, error) {
 	switch {
 	case j.Repository != "":
 		return nil, refuse("job %d targets repository %s, whose workspaces the daemon removes itself when the job ends: only a job with no repository has scratch workspaces to clean", job, j.Repository)
-	case j.State != store.JobEnded:
+	case !j.Ended():
 		return nil, refuse("job %d is still open, so its scratch workspaces are kept: `asmai job clean %d` removes them once the job has ended", job, job)
 	}
 	if cleaned, err := d.store.CleanedScratch(job); err != nil || cleaned {
@@ -237,12 +250,17 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 	if j.Follows != 0 {
 		fmt.Fprintf(&b, "Follow-up to job %d (linked with `asmai job link`)\n", j.Follows)
 	}
+	if j.State == store.JobCancelled {
+		fmt.Fprintf(&b, "Cancelled at the user's word, in witnessed message %d: %s\nThe job takes no new work, and none of its results is accepted: its live assignments end as cancelled once their workers have pushed their branches and stopped.\n", j.CancelWitness, j.CancelReason)
+	}
 	if repository.Clone != "" {
 		fmt.Fprintf(&b, "Repository origin: %s\nRepository clone: %s\nDefault branch (the base the job branch takes in): %s\n", repository.Origin, repository.Clone, repository.DefaultBranch)
 	}
 	switch {
 	case branch != nil && j.State == store.JobEnded:
 		fmt.Fprintf(&b, "Job branch: %s (started from %s, tip %s), kept on origin; the job ended, so its view and its branches in AsmAI's clone are removed\n", branch.Name, branch.StartedFrom, branch.Tip)
+	case branch != nil && j.State == store.JobCancelled:
+		fmt.Fprintf(&b, "Job branch: %s (started from %s, tip %s), and every assignment branch, kept on origin; the job was cancelled, so its view and its branches in AsmAI's clone are removed once its cancelling assignments have ended\n", branch.Name, branch.StartedFrom, branch.Tip)
 	case branch != nil && branch.Continues != 0:
 		fmt.Fprintf(&b, "Job branch: %s (continues job %d's job branch, started from origin's copy at %s, tip %s)\n", branch.Name, branch.Continues, branch.StartedFrom, branch.Tip)
 		if len(continued) > 0 {

@@ -600,6 +600,7 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	}
 	d.log.Info("assignment cancelled", "assignment", id, "job", a.Job, "worker", a.Worker, "commit", left.Commit, "pushed", left.Pushed)
 	d.stopWorker(a)
+	d.cancelledJobEnded(a.Job)
 }
 
 // cancelledScratch ends the cancelling assignment a, of a job with no
@@ -645,8 +646,9 @@ func (d *daemon) cancelledValidation(ctx context.Context, a store.Assignment) {
 		return
 	}
 	d.assignMu.Lock()
-	defer d.assignMu.Unlock()
 	d.removeWorkspace(ctx, a, repository)
+	d.assignMu.Unlock()
+	d.cancelledJobEnded(a.Job)
 }
 
 // pushed reports whether origin's branch of a holds commit, as AsmAI's clone

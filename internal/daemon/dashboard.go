@@ -107,6 +107,7 @@ type JobStage string
 // The stages, in the precedence they are derived in: a job is at the first
 // that holds.
 const (
+	StageCancelled  JobStage = "cancelled"
 	StageDelivered  JobStage = "delivered"
 	StageNeedsYou   JobStage = "needs-you"
 	StageValidating JobStage = "validating"
@@ -117,6 +118,8 @@ const (
 // Word is how the stage reads.
 func (s JobStage) Word() string {
 	switch s {
+	case StageCancelled:
+		return "Cancelled"
 	case StageDelivered:
 		return "Delivered"
 	case StageNeedsYou:
@@ -151,6 +154,8 @@ type DashboardJob struct {
 	// Title is the pull request's title, or the first line of the user's
 	// request while the job has no pull request.
 	Title string `json:"title"`
+	// Reason is the user's own words a cancelled job was cancelled for.
+	Reason string `json:"reason,omitempty"`
 }
 
 // The kinds of item the factory cannot continue without the user for, in the
@@ -270,7 +275,7 @@ func doing(w store.AgentWork) string {
 // deriveJob derives the stage of a job from what its records say. This is the
 // one derivation of the stage vocabulary; the Dashboard only shows it.
 func deriveJob(w store.JobWork) DashboardJob {
-	out := DashboardJob{Job: w.Number, PullRequest: w.PullRequest, Title: w.Title}
+	out := DashboardJob{Job: w.Number, PullRequest: w.PullRequest, Title: w.Title, Reason: w.Reason}
 	if out.Title == "" {
 		out.Title, _, _ = strings.Cut(strings.TrimSpace(w.Words), "\n")
 	}
@@ -283,6 +288,8 @@ func deriveJob(w store.JobWork) DashboardJob {
 		Cancelled:      w.Assignments[store.AssignmentCancelled],
 	}
 	switch {
+	case w.Cancelled:
+		out.Stage = StageCancelled
 	case w.Ended:
 		out.Stage = StageDelivered
 	case w.NeedsYou > 0:
@@ -638,6 +645,8 @@ type DashboardJobDetail struct {
 	Title           string   `json:"title"`
 	Stage           JobStage `json:"stage"`
 	HandoffComplete bool     `json:"handoff_complete"`
+	// Reason is the user's own words a cancelled job was cancelled for.
+	Reason string `json:"reason,omitempty"`
 	// Branch and Head are the job branch and its tip, empty for a job with no
 	// repository.
 	Branch string `json:"branch,omitempty"`
@@ -778,7 +787,7 @@ func (d *daemon) dashboardJob(number int64) (DashboardJobDetail, error) {
 	}
 	job := deriveJob(work)
 	out := DashboardJobDetail{
-		Job: number, Title: job.Title, Stage: job.Stage, Branch: detail.Branch, Head: detail.Head,
+		Job: number, Title: job.Title, Stage: job.Stage, Reason: job.Reason, Branch: detail.Branch, Head: detail.Head,
 		PullRequest: job.PullRequest, CI: "no pull request", Validation: validationWords(work, detail.Head),
 		HandoffComplete: slices.ContainsFunc(detail.Handoffs, func(h store.HandoffWork) bool { return h.State == store.HandoffAccepted }),
 	}

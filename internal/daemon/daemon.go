@@ -80,7 +80,11 @@ const (
 	CommandJobClean = "job.clean"
 	// CommandJobLink links a follow-up job to the job it follows (02 rule
 	// 20).
-	CommandJobLink        = "job.link"
+	CommandJobLink = "job.link"
+	// CommandJobCancel is Coordination's leader cancelling a job at the
+	// user's word: the daemon cancels its assignments, closes its pull
+	// request, withdraws its decision requests and ends it as cancelled.
+	CommandJobCancel      = "job.cancel"
 	CommandJobs           = "jobs"
 	CommandJob            = "job"
 	CommandBrief          = "brief"
@@ -315,6 +319,8 @@ type Response struct {
 	Writable []config.Folder `json:"writable,omitempty"`
 	// Removed are the paths a job clean removed.
 	Removed []string `json:"removed,omitempty"`
+	// Cancellation is what a job cancel did.
+	Cancellation *store.JobCancellation `json:"cancellation,omitempty"`
 	// Returned says an accept found the job branch moved after the result
 	// was submitted, so it returned the result to its worker instead of
 	// accepting it: not a rejection, and Decision is nil.
@@ -795,7 +801,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.repoCommand(conn, req)
 	case CommandConfigApply:
 		d.configApplyCommand(conn, req)
-	case CommandJobOpen, CommandJobLink, CommandJobClean, CommandJobs, CommandJob, CommandBrief:
+	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandJobClean, CommandJobs, CommandJob, CommandBrief:
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)

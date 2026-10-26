@@ -333,9 +333,15 @@ func (m model) detailHeader() []string {
 	if d.PullRequest != 0 {
 		pr = fmt.Sprintf("#%d %s", d.PullRequest, d.PullRequestState)
 	}
+	progressLine := m.progressWords(d.Stage, d.HandoffComplete)
+	if d.Stage == daemon.StageCancelled {
+		// A cancelled job has ended without passing the stages to come.
+		reason, _, _ := strings.Cut(strings.TrimSpace(d.Reason), "\n")
+		progressLine = stageStyles[d.Stage].Render(stageGlyphs[d.Stage] + " Cancelled at your word: " + reason)
+	}
 	return []string{
 		boldStyle.Render(pad(fmt.Sprintf(" #%d  %s", d.Job, d.Title), width)),
-		pad(" "+m.progressWords(d.Stage, d.HandoffComplete), width),
+		pad(" "+progressLine, width),
 		pad(fmt.Sprintf(" Stage %s %s · Branch %s · Head %s", stageGlyphs[d.Stage], d.Stage.Word(), none(d.Branch), none(head)), width),
 		pad(fmt.Sprintf(" Pull request %s · CI %s", pr, d.CI), width),
 		pad(" Validation "+d.Validation, width),

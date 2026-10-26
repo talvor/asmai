@@ -140,7 +140,12 @@ commands agents run:
                               Coordination's leader links a follow-up job to the job it follows; where the
                               earlier job's pull request is still open the follow-up continues its job branch
                               and pull request, and otherwise starts afresh
-  asmai brief <number>        read a job's canonical brief
+  asmai job cancel <number> --message latest|<id>
+                              Coordination's leader cancels a job at the user's word, whose witnessed message
+                              is the reason: the daemon cancels every assignment, each ending once its branch
+                              push is confirmed, closes the open pull request with a comment, withdraws the
+                              pending decision requests and discards unreviewed results; branches stay on origin
+  asmai brief <number>       read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
   asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>] [--assignment <id>]
                               repeat --record for each of the job's decision records that goes with the handoff;
@@ -299,6 +304,7 @@ var positional = map[string][]string{
 	"role set":         {"name the role, one of " + strings.Join(roles.All, ", ")},
 	"job show":         {"name the job number, as `asmai jobs` shows it"},
 	"job clean":        {"name the job number, as `asmai jobs` shows it"},
+	"job cancel":       {"name the job number, as `asmai jobs` shows it"},
 	"brief":            {"name the job number, as `asmai jobs` shows it"},
 	"push":             {"name the job number, as `asmai jobs` shows it"},
 	"grant revoke":     {"name the grant, as `asmai grants` lists them"},
@@ -343,6 +349,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			name, args = "job link", args[1:]
 		case len(args) > 0 && args[0] == "clean":
 			name, args = "job clean", args[1:]
+		case len(args) > 0 && args[0] == "cancel":
+			name, args = "job cancel", args[1:]
 		default:
 			name = "job show"
 		}
@@ -421,6 +429,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "job link":
 		flags.Int64Var(&linkJob, "job", 0, "the follow-up job's number")
 		flags.Int64Var(&linkFollows, "follows", 0, "the number of the job it follows")
+	case "job cancel":
+		flags.StringVar(&message, "message", "", "latest or the journal ID of the witnessed message whose words are the reason")
 	case "handoff send":
 		flags.Int64Var(&handoffJob, "job", 0, "job number")
 		flags.StringVar(&recipient, "to", "", "receiving leader")
@@ -561,7 +571,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -627,6 +637,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return jobClean(o, paths, arg)
 	case "job link":
 		return jobLink(o, paths, linkJob, linkFollows)
+	case "job cancel":
+		return jobCancel(o, paths, arg, message)
 	case "job open":
 		return jobOpen(o, paths, message, repository, reading, mandate, criteria)
 	case "brief":

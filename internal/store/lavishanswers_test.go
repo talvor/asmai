@@ -156,7 +156,7 @@ func TestAPartlyAnsweredPageRoutesWhatWasSentAndTheVersionStaysPending(t *testin
 	if got.Owner == nil || got.Owner.Agent != owner || got.Confirm == nil || got.Confirm.Agent != CoordinationLeader {
 		t.Fatalf("owner %+v, confirm %+v", got.Owner, got.Confirm)
 	}
-	ownerInbox, err := l.s.Inbox(owner, got.Owner.ID, l.tick())
+	ownerInbox, err := l.s.Inbox(owner, got.Owner.ID, got.Owner.ID, l.tick())
 	if err != nil || len(ownerInbox) != 1 {
 		t.Fatalf("owner's inbox = %+v (%v)", ownerInbox, err)
 	}
@@ -169,7 +169,7 @@ func TestAPartlyAnsweredPageRoutesWhatWasSentAndTheVersionStaysPending(t *testin
 			t.Errorf("the owning leader's message lacks %q:\n%s", want, m.Body)
 		}
 	}
-	coordinationInbox, err := l.s.Inbox(CoordinationLeader, 0, l.tick())
+	coordinationInbox, err := l.s.Inbox(CoordinationLeader, 0, 0, l.tick())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func TestACoordinationRequestTakesOneMessageThatAlsoAsksForTheConfirmation(t *te
 	if err != nil || got.Owner == nil || got.Owner != got.Confirm && got.Owner.ID != got.Confirm.ID {
 		t.Fatalf("collected = %+v (%v)", got, err)
 	}
-	inbox, err := s.Inbox(CoordinationLeader, 0, assignmentsAt.Add(3*time.Second))
+	inbox, err := s.Inbox(CoordinationLeader, 0, 0, assignmentsAt.Add(3*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}

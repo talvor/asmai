@@ -338,7 +338,7 @@ func TestAnyLeaderMayAskQualityToReviewAnAssignmentEarlierAtItsResult(t *testing
 	if err := f.s.ChangeDispatch(hd.ID, 1, store.DispatchCreated, store.DispatchDelivered, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.s.Inbox("leader@quality", hd.ID, time.Now()); err != nil {
+	if _, err := f.s.Inbox("leader@quality", hd.ID, hd.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := f.s.AnswerHandoff(h.ID, "leader@quality", hd.ID, 1, store.HandoffAccepted, "", time.Now()); err != nil {

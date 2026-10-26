@@ -140,7 +140,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 			}
 		}
 	case CommandInbox:
-		resp.Messages, err = d.store.Inbox(ref.address.String(), req.Dispatch, time.Now())
+		resp.Messages, err = d.store.Inbox(ref.address.String(), req.Dispatch, l.currentDispatch, time.Now())
 		if err == nil {
 			for i := range resp.Messages {
 				if a := resp.Messages[i].AssignmentData; a != nil {

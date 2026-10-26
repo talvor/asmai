@@ -39,7 +39,7 @@ func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Inbox(a.Worker, redispatch.ID, time.Now()); err != nil {
+			if _, err := s.Inbox(a.Worker, redispatch.ID, redispatch.ID, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.ChangeDispatch(redispatch.ID, generation, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
@@ -75,7 +75,7 @@ func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T
 			if w, err := s.WorkerDispatch(a.ID); err != nil || w.Dispatch.ID != redispatch.ID || w.Dispatch.State != store.DispatchUnknown {
 				t.Fatalf("worker dispatch after exit is %+v (%v)", w, err)
 			}
-			messages, err := s.Inbox(a.Owner, 0, time.Now())
+			messages, err := s.Inbox(a.Owner, 0, 0, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func TestWorkerExitBeforeFetchingNudgeAllowsReconciliationRedispatch(t *testing.
 	if got, err := s.Assignment(a.ID); err != nil || got.State != store.AssignmentActive {
 		t.Fatalf("assignment after redispatch is %+v (%v)", got, err)
 	}
-	if _, err := s.Inbox(a.Worker, nudge.ID, time.Now()); err == nil {
+	if _, err := s.Inbox(a.Worker, nudge.ID, nudge.ID, time.Now()); err == nil {
 		t.Fatal("the undeliverable nudge was still available")
 	}
 	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != replacement.ID {
@@ -179,7 +179,7 @@ func TestDecisionRequestOrQueuedAnswerDoesNotSilenceWorkerStallNotice(t *testing
 			}}
 			d.workerStopped(sessionRef{address: roles.WorkerOf(roles.Engineering, 1), generation: 1}, w.Dispatch.ID, w.Kind, a.ID)
 			d.agents.Wait()
-			messages, err := s.Inbox(a.Owner, 0, time.Now())
+			messages, err := s.Inbox(a.Owner, 0, 0, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -296,7 +296,7 @@ func restartStore(t *testing.T, cases []restartCase) (*store.Store, map[string]i
 			}
 		}
 		if c.cancel {
-			if _, err := s.Inbox(worker.String(), dispatch.ID, at); err != nil {
+			if _, err := s.Inbox(worker.String(), dispatch.ID, dispatch.ID, at); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.WorkFetchedDispatch(dispatch.ID, worker.String(), generation, at); err != nil {
@@ -318,7 +318,7 @@ func restartStore(t *testing.T, cases []restartCase) (*store.Store, map[string]i
 		if c.leave == store.DispatchCreated {
 			continue
 		}
-		if _, err := s.Inbox(worker.String(), dispatch.ID, at); err != nil {
+		if _, err := s.Inbox(worker.String(), dispatch.ID, dispatch.ID, at); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.WorkFetchedDispatch(dispatch.ID, worker.String(), generation, at); err != nil {
@@ -573,7 +573,7 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 
 	d.recoverWork(true)
 
-	messages, err := s.Inbox("leader@coordination", 0, time.Now())
+	messages, err := s.Inbox("leader@coordination", 0, 0, time.Now())
 	if err != nil || len(messages) != 1 {
 		t.Fatalf("Coordination's inbox holds %+v (%v), want one message for both jobs", messages, err)
 	}
@@ -587,7 +587,7 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 		}
 	}
 	// Engineering has open work in the first job alone.
-	messages, err = s.Inbox("leader@engineering", 0, time.Now())
+	messages, err = s.Inbox("leader@engineering", 0, 0, time.Now())
 	var restorations []store.Message
 	for _, m := range messages {
 		if m.Kind == store.MessageRestoration {

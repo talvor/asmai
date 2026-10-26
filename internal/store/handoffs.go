@@ -360,7 +360,7 @@ func (s *Store) HandoffsForJob(number int64) ([]Handoff, error) {
 	return handoffs, nil
 }
 
-func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error) {
+func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Message, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -432,6 +432,9 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 				return nil, e
 			}
 			m.RequestData = &q
+		}
+		if !m.Fetched && m.Dispatch != current && m.AssignmentData != nil && m.AssignmentData.Worker == agent {
+			continue
 		}
 		if m.Fetched {
 			if m.State != DispatchNudged {

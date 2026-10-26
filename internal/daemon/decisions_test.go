@@ -334,7 +334,7 @@ func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.d.store.Inbox(a.Worker, rejected.Dispatch.ID, time.Now()); err != nil {
+	if _, err := f.d.store.Inbox(a.Worker, rejected.Dispatch.ID, rejected.Dispatch.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.d.store.ChangeDispatch(rejected.Dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
@@ -361,7 +361,7 @@ func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDi
 
 	// An assignment held for reconciliation is active again when its owning
 	// leader, which has looked at it, sends it to its worker again.
-	if _, err := f.d.store.Inbox(a.Worker, resp.Dispatch.ID, time.Now()); err != nil {
+	if _, err := f.d.store.Inbox(a.Worker, resp.Dispatch.ID, resp.Dispatch.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.d.store.ChangeDispatch(resp.Dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {

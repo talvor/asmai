@@ -118,7 +118,7 @@ func TestAnAssignmentIsRecordedWithItsWorkspaceAndTheDispatchThatDeliversIt(t *t
 	}
 
 	// The worker's inbox gives the assignment itself.
-	messages, err := s.Inbox("worker1@engineering", 0, assignmentsAt)
+	messages, err := s.Inbox("worker1@engineering", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageAssignment || messages[0].AssignmentData == nil || messages[0].AssignmentData.ID != a.ID || messages[0].Handoff != 0 {
 		t.Fatalf("the worker's inbox holds %+v (%v)", messages, err)
 	}
@@ -331,7 +331,7 @@ func TestAResultSubmitsTheAssignmentAndGoesToItsOwningLeader(t *testing.T) {
 	if leaderDispatch.Agent != "leader@engineering" || leaderDispatch.State != DispatchCreated {
 		t.Errorf("the result's dispatch is %+v, want a created one for the owning leader", leaderDispatch)
 	}
-	messages, err := s.Inbox("leader@engineering", 0, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != ReportResult || messages[0].ReportData == nil || messages[0].ReportData.PRSection != "Adds greeting.txt." || messages[0].AssignmentData.State != AssignmentSubmitted {
 		t.Fatalf("the leader's inbox holds %+v (%v)", messages, err)
 	}
@@ -403,7 +403,7 @@ func TestOpenMigratesAStoreWhoseMessagesAllHaveAHandoff(t *testing.T) {
 	db.Close()
 
 	s := open(t, path)
-	messages, err := s.Inbox("leader@engineering", 0, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Handoff != 1 || messages[0].Body != "outcome" || !messages[0].Fetched || messages[0].HandoffData == nil {
 		t.Fatalf("the migrated inbox holds %+v (%v)", messages, err)
 	}
@@ -417,7 +417,7 @@ func TestOpenMigratesAStoreWhoseMessagesAllHaveAHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	newAssignment(t, s, 1)
-	next, err := s.Inbox("worker1@engineering", 0, assignmentsAt)
+	next, err := s.Inbox("worker1@engineering", 0, 0, assignmentsAt)
 	if err != nil || len(next) != 1 || next[0].ID != 2 || next[0].Handoff != 0 || next[0].Assignment != 1 {
 		t.Errorf("the first message after the migration is %+v (%v), want message 2 about assignment 1", next, err)
 	}

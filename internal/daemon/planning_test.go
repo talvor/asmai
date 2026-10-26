@@ -643,7 +643,7 @@ func workersQuestionReachesTheUserThroughItsLeader(t *testing.T, role, kind stri
 	if returned.Answer != done.Answer || !strings.Contains(returned.ReliedOn, "the user's own answer") || !strings.Contains(returned.ReliedOn, fmt.Sprint(done.Cites)) {
 		t.Errorf("the worker's answer is %q relying on %q, want the user's words %q and the Lavish answer %d", returned.Answer, returned.ReliedOn, done.Answer, done.Cites)
 	}
-	inbox, err := f.s.Inbox(f.assignments[0].Worker, 0, time.Now())
+	inbox, err := f.s.Inbox(f.assignments[0].Worker, 0, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

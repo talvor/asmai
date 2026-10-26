@@ -141,7 +141,7 @@ func TestJobDetailCarriesTheTimeEachItemLastChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	answered := assignmentsAt.Add(-time.Hour + 2*time.Second)
-	if _, err := s.Inbox(h.Receiver, inbound.ID, answered.Add(-time.Second)); err != nil {
+	if _, err := s.Inbox(h.Receiver, inbound.ID, inbound.ID, answered.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.AnswerHandoff(sent.ID, h.Receiver, inbound.ID, 0, HandoffAccepted, "Accepted", answered); err != nil {

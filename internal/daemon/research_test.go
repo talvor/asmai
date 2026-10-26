@@ -265,7 +265,7 @@ func TestAResearchOnlyJobWithNoRepositoryRunsInScratchWorkspacesAndEndsOnTheLead
 	}
 
 	// Coordination is told where the results are.
-	messages, err := p.s.Inbox("leader@coordination", 0, time.Now())
+	messages, err := p.s.Inbox("leader@coordination", 0, 0, time.Now())
 	if err != nil || len(messages) != 1 || messages[0].Kind != store.MessageDelivery {
 		t.Fatalf("Coordination's inbox holds %+v (%v), want the message that the job ended", messages, err)
 	}

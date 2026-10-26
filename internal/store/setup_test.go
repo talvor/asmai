@@ -51,7 +51,7 @@ func TestARepositoryAddedWithoutItsSetupOpensASetupJobAndTellsCoordination(t *te
 	if dispatch.Agent != "leader@coordination" {
 		t.Fatalf("Coordination is told in %+v", dispatch)
 	}
-	inbox, err := s.Inbox("leader@coordination", dispatch.ID, assignmentsAt)
+	inbox, err := s.Inbox("leader@coordination", dispatch.ID, dispatch.ID, assignmentsAt)
 	if err != nil || len(inbox) != 1 || inbox[0].Kind != MessageSetup || inbox[0].Body != setupOpening.Body || inbox[0].Sender != Daemon {
 		t.Fatalf("Coordination's inbox holds %+v, %v", inbox, err)
 	}

@@ -102,7 +102,7 @@ func TestAChoiceBetweenTwoApproachesIsPresentedOnceAndTheUsersOwnMessageAnswersI
 	if dispatch == nil || dispatch.Agent != "leader@engineering" {
 		t.Fatalf("dispatch = %+v, want one to the owning leader", dispatch)
 	}
-	inbox, err := f.s.Inbox("leader@engineering", dispatch.ID, time.Now())
+	inbox, err := f.s.Inbox("leader@engineering", dispatch.ID, dispatch.ID, time.Now())
 	if err != nil || len(inbox) != 1 || !strings.Contains(inbox[0].Body, "go with in-memory") || !strings.Contains(inbox[0].Body, "the user chose the in-memory cache") {
 		t.Fatalf("owning leader's inbox = %+v (%v)", inbox, err)
 	}

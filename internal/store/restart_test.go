@@ -46,7 +46,7 @@ func stoppedAssignment(t *testing.T, s *Store) (Assignment, Dispatch) {
 	if err := s.SessionIdentified("worker1@engineering", 1, nativeID, transcript, assignmentsAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Inbox("worker1@engineering", d.ID, assignmentsAt); err != nil {
+	if _, err := s.Inbox("worker1@engineering", d.ID, d.ID, assignmentsAt); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.WorkFetchedDispatch(d.ID, "worker1@engineering", 1, assignmentsAt); err != nil {
@@ -149,7 +149,7 @@ func TestAStoppedWorkersAssignmentIsResumedInANewDispatchThatIsRecordedAsOne(t *
 	}
 
 	// The worker fetches it as it does any message, and sees what it resumes.
-	messages, err := s.Inbox("worker1@engineering", resumed.ID, assignmentsAt)
+	messages, err := s.Inbox("worker1@engineering", resumed.ID, resumed.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageResumption || messages[0].Resumes != d.ID || messages[0].Body != "Continue." || messages[0].AssignmentData == nil || messages[0].Sender != Daemon {
 		t.Fatalf("the worker's inbox holds %+v (%v)", messages, err)
 	}
@@ -221,7 +221,7 @@ func TestEvidenceFromBeforeARestartNeverChangesTheResumedDispatchAndEveryResultS
 			t.Fatal(err)
 		}
 	}
-	messages, err := s.Inbox("worker1@engineering", resumed.ID, assignmentsAt)
+	messages, err := s.Inbox("worker1@engineering", resumed.ID, resumed.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 {
 		t.Fatalf("the inbox holds %+v (%v)", messages, err)
 	}
@@ -278,7 +278,7 @@ func TestAnAssignmentThatNeedsReconciliationIsHeldWithItsWorkerAndItsOwnerIsTold
 	if err != nil || !slices.Equal(pending, []string{"leader@engineering"}) {
 		t.Errorf("the agents with a message waiting are %v (%v), want only the owner", pending, err)
 	}
-	messages, err := s.Inbox("leader@engineering", told.ID, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", told.ID, told.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageReconciliation || messages[0].Body != "Reconcile it." || messages[0].AssignmentData == nil || messages[0].AssignmentData.State != AssignmentNeedsReconciliation {
 		t.Fatalf("the owner's inbox holds %+v (%v)", messages, err)
 	}
@@ -458,7 +458,7 @@ func TestEachLeaderWithOpenWorkInAJobIsToldOnceToLoadItsBrief(t *testing.T) {
 	if again, made, err := s.LeaderRestored("leader@engineering", job, "Load the brief.", assignmentsAt); err != nil || made || again.ID != 0 {
 		t.Errorf("telling the leader again made %+v, %v (%v)", again, made, err)
 	}
-	messages, err := s.Inbox("leader@engineering", d.ID, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", d.ID, d.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageRestoration || messages[0].Job != job || messages[0].Sender != Daemon || messages[0].Handoff != 0 || messages[0].Assignment != 0 {
 		t.Fatalf("the restored leader's inbox holds %+v (%v)", messages, err)
 	}
@@ -490,7 +490,7 @@ func TestPendingRestorationTracksNewOpenJobs(t *testing.T) {
 	if _, made, err := s.LeaderRestored("leader@engineering", job2, body, assignmentsAt); err != nil || made {
 		t.Fatalf("refreshing the pending restoration: made %v (%v)", made, err)
 	}
-	messages, err := s.Inbox("leader@engineering", d.ID, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", d.ID, d.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Job != job2 || messages[0].Body != body {
 		t.Fatalf("the pending restoration is %+v (%v), want the current jobs and body", messages, err)
 	}
@@ -532,7 +532,7 @@ func TestOpenMigratesAStoreThatRecordsNoNativeSessions(t *testing.T) {
 	db.Close()
 
 	s := open(t, path)
-	messages, err := s.Inbox("leader@engineering", 0, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Resumes != 0 || messages[0].Dispatch != 1 {
 		t.Fatalf("the migrated inbox holds %+v (%v)", messages, err)
 	}

@@ -205,7 +205,7 @@ func TestAcceptingAValidationRecordsItsFindingsAndOnlyAReValidationClearsABlocki
 	}
 
 	// The report goes to Engineering's leader with its findings and their IDs.
-	messages, err := s.Inbox(owner, 0, assignmentsAt)
+	messages, err := s.Inbox(owner, 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageValidation || messages[0].ReportData == nil || len(messages[0].ReportData.Findings) != 2 || messages[0].ReportData.Findings[0].ID != findings[0].ID {
 		t.Fatalf("Engineering's inbox holds %+v (%v)", messages, err)
 	}
@@ -216,7 +216,7 @@ func TestAcceptingAValidationRecordsItsFindingsAndOnlyAReValidationClearsABlocki
 	// The next validation is told which blocking findings are open, and must
 	// say for each whether it is resolved.
 	b, bd := newValidation(t, s, job)
-	messages, err = s.Inbox("worker1@quality", bd.ID, assignmentsAt)
+	messages, err = s.Inbox("worker1@quality", bd.ID, bd.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || len(messages[0].AssignmentData.OpenFindings) != 1 || messages[0].AssignmentData.OpenFindings[0].ID != findings[0].ID {
 		t.Fatalf("the re-validation's worker is given %+v (%v)", messages, err)
 	}

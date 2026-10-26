@@ -35,7 +35,7 @@ func TestAWorkersRequestGoesToItsOwningLeaderAndNeverToTheUser(t *testing.T) {
 	if dispatch == nil || dispatch.Agent != "leader@engineering" {
 		t.Fatalf("dispatch = %+v, want one to the owning leader", dispatch)
 	}
-	inbox, err := s.Inbox("leader@engineering", dispatch.ID, assignmentsAt)
+	inbox, err := s.Inbox("leader@engineering", dispatch.ID, dispatch.ID, assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
 	}

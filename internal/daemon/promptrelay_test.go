@@ -104,7 +104,7 @@ func TestUnderThePolicyANativePromptAtAWorkerIsRaisedToTheUserAndOnlyTheirWitnes
 			// Coordination, which presents it, is told in a dispatch of its own.
 			if dispatch, err := f.s.NextDispatch("leader@coordination"); err != nil {
 				t.Fatalf("Coordination was not told: %v", err)
-			} else if inbox, err := f.s.Inbox("leader@coordination", dispatch.ID, time.Now()); err != nil || len(inbox) != 1 || inbox[0].RequestData == nil || inbox[0].RequestData.Request != r.Request {
+			} else if inbox, err := f.s.Inbox("leader@coordination", dispatch.ID, dispatch.ID, time.Now()); err != nil || len(inbox) != 1 || inbox[0].RequestData == nil || inbox[0].RequestData.Request != r.Request {
 				t.Fatalf("Coordination's inbox = %+v (%v)", inbox, err)
 			}
 			// The status shows it as the user's to decide, not as one nobody can answer.

@@ -1021,6 +1021,9 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 		if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentSubmitted, a.ID); err != nil {
 			return Report{}, Dispatch{}, err
 		}
+		if err := stopQueuedDispatches(tx, a, MessageRedispatch, at); err != nil {
+			return Report{}, Dispatch{}, err
+		}
 	}
 	if _, err := appendEntry(tx, at, kind, struct {
 		Report

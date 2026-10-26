@@ -60,6 +60,59 @@ func TestRedispatchKeepsWorkingDispatchAndSupersedesTheNextQueuedOne(t *testing.
 	}
 }
 
+func TestResultOnWorkingDispatchRetiresQueuedRedispatch(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, workingDispatch := newAssignment(t, s, jobWithBranch(t, s))
+	working(t, s, workingDispatch)
+	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EffectRecorded(a.Worker, 1, workingDispatch.ID, "push", "origin/"+a.Workspace.Branch, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReportSubmitted(submission(workingDispatch, ReportResult), assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Assignment(a.ID); err != nil || got.State != AssignmentSubmitted {
+		t.Fatalf("assignment after result is %+v (%v)", got, err)
+	}
+	if _, err := s.Inbox(a.Worker, queued.ID, assignmentsAt); err == nil {
+		t.Fatal("the queued redispatch remained deliverable after the result")
+	}
+	if _, err := s.NextDispatch(a.Worker); err != sql.ErrNoRows {
+		t.Fatalf("the worker has stale queued work (%v)", err)
+	}
+}
+
+func TestRedispatchPreservesQueuedDecisionAnswer(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, workingDispatch := newAssignment(t, s, jobWithBranch(t, s))
+	working(t, s, workingDispatch)
+	request, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, answer, err := s.DecisionAnswered(DecisionAnswer{Request: request.Request, Version: 1, Answerer: a.Owner, Text: "in-memory"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redispatch, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != answer.ID {
+		t.Fatalf("next dispatch is %+v (%v), want queued decision answer %d", next, err, answer.ID)
+	}
+	messages, err := s.Inbox(a.Worker, answer.ID, assignmentsAt)
+	if err != nil || len(messages) != 1 || messages[0].Kind != MessageDecisionAnswer || messages[0].RequestData == nil || messages[0].RequestData.Request != request.Request {
+		t.Fatalf("worker's decision answer is %+v (%v)", messages, err)
+	}
+	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != redispatch.ID {
+		t.Fatalf("next dispatch is %+v (%v), want redispatch %d", next, err, redispatch.ID)
+	}
+}
+
 func TestStallNoticeRequiresTheStoppedDispatchToRemainLatest(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, stopped := stoppedAssignment(t, s)

@@ -339,33 +339,8 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 	if err := tx.QueryRow(`SELECT d.id FROM messages m JOIN dispatches d ON d.message = m.id WHERE m.assignment = ? AND m.recipient = ? ORDER BY d.id DESC LIMIT 1`, a.ID, a.Worker).Scan(&previous); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Dispatch{}, err
 	}
-	rows, err := tx.Query(`SELECT d.id, d.generation, d.state FROM messages m JOIN dispatches d ON d.message = m.id
-		WHERE m.assignment = ? AND m.recipient = ? AND m.fetched_at IS NULL AND d.state IN (?, ?, ?)`,
-		a.ID, a.Worker, DispatchCreated, DispatchNudged, DispatchUnknown)
-	if err != nil {
-		return Dispatch{}, err
-	}
-	var queued []Dispatch
-	for rows.Next() {
-		var d Dispatch
-		if err := rows.Scan(&d.ID, &d.Generation, &d.State); err != nil {
-			rows.Close()
-			return Dispatch{}, err
-		}
-		queued = append(queued, d)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return Dispatch{}, err
-	}
-	for _, d := range queued {
-		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
-			return Dispatch{}, err
-		}
-		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
-			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": d.State, "state": DispatchStopped,
-		}); err != nil {
+	for _, kind := range []string{MessageAssignment, MessageRedispatch} {
+		if err := stopQueuedDispatches(tx, a, kind, at); err != nil {
 			return Dispatch{}, err
 		}
 	}
@@ -386,6 +361,40 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 		return Dispatch{}, err
 	}
 	return dispatch, tx.Commit()
+}
+
+func stopQueuedDispatches(tx *sql.Tx, a Assignment, kind string, at time.Time) error {
+	rows, err := tx.Query(`SELECT d.id, d.generation, d.state FROM messages m JOIN dispatches d ON d.message = m.id
+		WHERE m.assignment = ? AND m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?, ?)`,
+		a.ID, a.Worker, kind, DispatchCreated, DispatchNudged, DispatchUnknown)
+	if err != nil {
+		return err
+	}
+	var queued []Dispatch
+	for rows.Next() {
+		var d Dispatch
+		if err := rows.Scan(&d.ID, &d.Generation, &d.State); err != nil {
+			rows.Close()
+			return err
+		}
+		queued = append(queued, d)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, d := range queued {
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
+			return err
+		}
+		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
+			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": d.State, "state": DispatchStopped,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WorkerStalled tells the owning leader of the active assignment id, with a

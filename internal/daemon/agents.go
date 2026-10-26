@@ -926,7 +926,8 @@ func newCredential() (string, error) {
 // leader is restarted after a session that ended on its own, as Coordination
 // always runs while the factory runs. A worker's session that resumed the
 // provider's session and ended without coming up could not resume it; a
-// worker's session that exited with unreported work also needs reconciliation.
+// worker's session that exits with an unreported delivered, working, or unknown
+// work dispatch in its generation needs reconciliation.
 func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bool) {
 	defer d.agents.Done()
 	<-s.Done()

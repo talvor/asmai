@@ -342,9 +342,10 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 	rows, err := tx.Query(`SELECT d.id, d.generation, d.state, m.kind, m.fetched_at IS NULL
 		FROM messages m JOIN dispatches d ON d.message = m.id
 		WHERE m.assignment = ? AND m.recipient = ?
-		AND m.kind IN (?, ?, ?, ?, ?) AND d.state IN (?, ?, ?) ORDER BY d.id`,
+		AND ((m.kind IN (?, ?, ?, ?, ?) AND d.state IN (?, ?, ?))
+		OR (m.kind = ? AND d.state IN (?, ?))) ORDER BY d.id`,
 		a.ID, a.Worker, MessageAssignment, MessageRedispatch, MessageRejection, MessageMovedTip, MessageResumption,
-		DispatchCreated, DispatchNudged, DispatchUnknown)
+		DispatchCreated, DispatchNudged, DispatchUnknown, MessageDecisionAnswer, DispatchCreated, DispatchNudged)
 	if err != nil {
 		return Dispatch{}, err
 	}

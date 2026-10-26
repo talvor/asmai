@@ -211,7 +211,7 @@ func TestAReportAfterRefusedRedispatchLeavesNoQueuedWork(t *testing.T) {
 	}
 }
 
-func TestRedispatchPreservesQueuedDecisionAnswer(t *testing.T) {
+func TestRedispatchWaitsForQueuedDecisionAnswer(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, _ := stoppedAssignment(t, s)
 	request, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt)
@@ -222,17 +222,16 @@ func TestRedispatchPreservesQueuedDecisionAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	redispatch, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "queued "+MessageDecisionAnswer) {
+		t.Fatalf("redispatch over queued decision answer returned %v", err)
 	}
 	preview, err := s.Inbox(a.Worker, 0, 0, assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, message := range preview {
-		if message.Dispatch == answer.ID || message.Dispatch == redispatch.ID {
-			t.Fatalf("inbox previewed queued answer or redispatch: %+v", preview)
+		if message.Dispatch == answer.ID {
+			t.Fatalf("inbox previewed queued answer: %+v", preview)
 		}
 	}
 	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != answer.ID {
@@ -241,6 +240,16 @@ func TestRedispatchPreservesQueuedDecisionAnswer(t *testing.T) {
 	messages, err := s.Inbox(a.Worker, answer.ID, answer.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageDecisionAnswer || !messages[0].Fetched || messages[0].RequestData == nil || messages[0].RequestData.Request != request.Request {
 		t.Fatalf("worker's decision answer is %+v (%v)", messages, err)
+	}
+	if err := s.WorkFetchedDispatch(answer.ID, a.Worker, 1, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if stopped, err := s.StopDispatchIfWorking(answer.ID, 1, transcript, assignmentsAt); err != nil || !stopped {
+		t.Fatalf("stopping the answered dispatch: %v (%v)", stopped, err)
+	}
+	redispatch, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != redispatch.ID {
 		t.Fatalf("next dispatch is %+v (%v), want redispatch %d", next, err, redispatch.ID)

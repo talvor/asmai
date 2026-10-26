@@ -378,3 +378,32 @@ func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDi
 		t.Errorf("redispatching an assignment that needed reconciliation answered %+v and %+v, want it active in a new dispatch", held.Assignment, held.Dispatch)
 	}
 }
+
+func TestStalledOriginStatusReportsFailedChecksAsUnknown(t *testing.T) {
+	f := newTwoResults(t)
+	a := f.assignments[0]
+	missing := a
+	missing.Workspace.Branch = "asmai/job-1/absent"
+	if got := f.d.originHolds(context.Background(), missing); !strings.Contains(got, "origin has no branch") {
+		t.Fatalf("confirmed missing branch: %s", got)
+	}
+
+	foreign := a
+	foreign.Workspace.Path = t.TempDir()
+	git(t, foreign.Workspace.Path, "init")
+	git(t, foreign.Workspace.Path, "commit", "--allow-empty", "-m", "foreign")
+	if got := f.d.originHolds(context.Background(), foreign); !strings.Contains(got, "whether it holds the commit is not known") || strings.Contains(got, "the commit is not pushed") {
+		t.Fatalf("failed ancestry check: %s", got)
+	}
+
+	index := git(t, a.Workspace.Path, "rev-parse", "--git-path", "index")
+	if !filepath.IsAbs(index) {
+		index = filepath.Join(a.Workspace.Path, index)
+	}
+	if err := os.WriteFile(index, []byte("invalid index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.d.originHolds(context.Background(), a); !strings.Contains(got, "Whether its workspace has uncommitted changes is not known") || !strings.Contains(got, "the work is pushed") {
+		t.Fatalf("failed uncommitted-change check: %s", got)
+	}
+}

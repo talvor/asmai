@@ -186,6 +186,9 @@ func TestDecisionRequestOrQueuedAnswerDoesNotSilenceWorkerStallNotice(t *testing
 			found := false
 			for _, message := range messages {
 				if message.Kind == store.MessageStalled && message.Assignment == a.ID {
+					if !strings.Contains(message.Body, "asmai redispatch --assignment") || strings.Contains(message.Body, "asmai reject") || strings.Contains(message.Body, "asmai cancel") || strings.Contains(message.Body, "assigning the work again") {
+						t.Errorf("stalled notice offers the wrong recovery: %q", message.Body)
+					}
 					found = true
 				}
 			}

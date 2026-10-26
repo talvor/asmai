@@ -633,7 +633,7 @@ func (d *daemon) tellStalled(a store.Assignment, dispatch int64) {
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
 	body := fmt.Sprintf("%s's turn for dispatch %d of assignment %d of job %d ended with no result and no blocked report. The assignment is still active and nothing is retried.\n%s\n"+
-		"Look at `asmai brief %d` and the effects %s recorded. If the cause was outside the factory and is fixed, send the assignment to %s again in a new dispatch with `asmai redispatch --assignment %d --reason <why>`; otherwise decide with `asmai reject`, `asmai cancel` or by assigning the work again.",
+		"Look at `asmai brief %d` and the effects %s recorded. Once the cause is fixed, send the assignment to %s again in a new dispatch with `asmai redispatch --assignment %d --reason <why>`.",
 		a.Worker, dispatch, a.ID, a.Job, d.originHolds(ctx, a), a.Job, a.Worker, a.Worker, a.ID)
 	d.mu.Lock()
 	if d.stopping {
@@ -671,7 +671,9 @@ func (d *daemon) originHolds(ctx context.Context, a store.Assignment) string {
 	}
 	uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
 	left := ""
-	if err == nil && len(uncommitted) > 0 {
+	if err != nil {
+		left = fmt.Sprintf(" Whether its workspace has uncommitted changes is not known: %v.", err)
+	} else if len(uncommitted) > 0 {
 		left = fmt.Sprintf(" It also has %d uncommitted change(s), which no commit holds.", len(uncommitted))
 	}
 	j, err := d.store.Job(a.Job)
@@ -687,9 +689,16 @@ func (d *daemon) originHolds(ctx context.Context, a store.Assignment) string {
 	}
 	tip, err := repos.OriginTip(ctx, repository.Clone, a.Workspace.Branch)
 	if err != nil {
-		return fmt.Sprintf("Its workspace is at commit %s, and origin has no branch %s: the work is not pushed.%s", commit, a.Workspace.Branch, left)
+		if errors.Is(err, repos.ErrNoOriginBranch) {
+			return fmt.Sprintf("Its workspace is at commit %s, and origin has no branch %s: the work is not pushed.%s", commit, a.Workspace.Branch, left)
+		}
+		return fmt.Sprintf("Its workspace is at commit %s; whether origin has branch %s is not known: %v.%s", commit, a.Workspace.Branch, err, left)
 	}
-	if held, err := repos.Contains(ctx, repository.Clone, "refs/remotes/origin/"+a.Workspace.Branch, commit); err != nil || !held {
+	held, err := repos.Contains(ctx, repository.Clone, "refs/remotes/origin/"+a.Workspace.Branch, commit)
+	if err != nil {
+		return fmt.Sprintf("Its workspace is at commit %s, and origin's branch %s is at %s; whether it holds the commit is not known: %v.%s", commit, a.Workspace.Branch, tip, err, left)
+	}
+	if !held {
 		return fmt.Sprintf("Its workspace is at commit %s, and origin's branch %s is at %s, which does not hold it: the commit is not pushed.%s", commit, a.Workspace.Branch, tip, left)
 	}
 	return fmt.Sprintf("Its workspace is at commit %s, and origin's branch %s is at %s, which holds it: the work is pushed.%s", commit, a.Workspace.Branch, tip, left)

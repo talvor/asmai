@@ -4,6 +4,7 @@ package repos
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -299,8 +300,13 @@ func TestAJobBranchStartsFromTheDefaultBranchAsFetchedFromOrigin(t *testing.T) {
 	if err := CreateBranch(ctx, clone, "asmai/job-1-x", first); err == nil {
 		t.Error("a branch that exists was made again")
 	}
-	if _, err := OriginTip(ctx, clone, "nowhere"); err == nil {
-		t.Error("origin's tip of a branch it does not have was found")
+	if _, err := OriginTip(ctx, clone, "nowhere"); !errors.Is(err, ErrNoOriginBranch) {
+		t.Errorf("missing branch returned %v", err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := OriginTip(cancelled, clone, "main"); err == nil || errors.Is(err, ErrNoOriginBranch) {
+		t.Errorf("failed branch check returned %v as branch absence", err)
 	}
 }
 

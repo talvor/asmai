@@ -335,66 +335,40 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 	if a.State != AssignmentActive && a.State != AssignmentNeedsReconciliation {
 		return Dispatch{}, fmt.Errorf("assignment %d is %s, so it is not sent to its worker again: only an active assignment, or one that needs reconciliation, is", a.ID, a.State)
 	}
-	var previous int64
-	if err := tx.QueryRow(`SELECT d.id FROM messages m JOIN dispatches d ON d.message = m.id WHERE m.assignment = ? AND m.recipient = ? ORDER BY d.id DESC LIMIT 1`, a.ID, a.Worker).Scan(&previous); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	w, err := workerDispatch(tx, a.ID)
+	if err != nil {
 		return Dispatch{}, err
 	}
-	for _, kind := range []string{MessageAssignment, MessageRedispatch} {
-		if err := stopQueuedDispatches(tx, a, kind, at); err != nil {
-			return Dispatch{}, err
-		}
+	var queued int64
+	var kind string
+	err = tx.QueryRow(`SELECT d.id, m.kind FROM messages m JOIN dispatches d ON d.message = m.id
+		WHERE m.assignment = ? AND m.recipient = ? AND m.fetched_at IS NULL
+		AND m.kind IN (?, ?, ?, ?, ?) AND d.state IN (?, ?, ?) ORDER BY d.id LIMIT 1`,
+		a.ID, a.Worker, MessageAssignment, MessageRedispatch, MessageRejection, MessageMovedTip, MessageResumption,
+		DispatchCreated, DispatchNudged, DispatchUnknown).Scan(&queued, &kind)
+	if err == nil {
+		return Dispatch{}, fmt.Errorf("assignment %d has queued %s dispatch %d for %s; wait for the worker to receive it or cancel the assignment", a.ID, kind, queued, a.Worker)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Dispatch{}, err
 	}
 	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentActive, a.ID); err != nil {
 		return Dispatch{}, err
 	}
 	body := fmt.Sprintf("%[1]s sends assignment %[2]d of job %[3]d to you again, in a new dispatch; your earlier dispatch, %[4]d, is not reused.\nReasons from %[1]s:\n%[5]s\n\n"+
 		"Load `asmai brief %[3]d`, look at your workspace and at the effects you have recorded, and continue the assignment from where you stopped. Never repeat an effect you already made. If your assignment has a branch and a push of it failed, push it again and record the push. Submit a result with `asmai result`, or if you cannot go on, `asmai blocked --reason <why> --needs <what would unblock you>`, which needs no push.",
-		leader, a.ID, a.Job, previous, strings.Join(reasons, "\n"))
+		leader, a.ID, a.Job, w.Dispatch.ID, strings.Join(reasons, "\n"))
 	dispatch, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, leader, a.Worker, MessageRedispatch, body, at)
 	if err != nil {
 		return Dispatch{}, err
 	}
 	if _, err := appendEntry(tx, at, KindAssignmentRedispatched, map[string]any{
 		"assignment": a.ID, "job": a.Job, "worker": a.Worker, "owner": a.Owner, "from": a.State,
-		"previous": previous, "dispatch": dispatch.ID, "reasons": reasons,
+		"previous": w.Dispatch.ID, "dispatch": dispatch.ID, "reasons": reasons,
 	}); err != nil {
 		return Dispatch{}, err
 	}
 	return dispatch, tx.Commit()
-}
-
-func stopQueuedDispatches(tx *sql.Tx, a Assignment, kind string, at time.Time) error {
-	rows, err := tx.Query(`SELECT d.id, d.generation, d.state FROM messages m JOIN dispatches d ON d.message = m.id
-		WHERE m.assignment = ? AND m.recipient = ? AND m.kind = ? AND m.fetched_at IS NULL AND d.state IN (?, ?, ?)`,
-		a.ID, a.Worker, kind, DispatchCreated, DispatchNudged, DispatchUnknown)
-	if err != nil {
-		return err
-	}
-	var queued []Dispatch
-	for rows.Next() {
-		var d Dispatch
-		if err := rows.Scan(&d.ID, &d.Generation, &d.State); err != nil {
-			rows.Close()
-			return err
-		}
-		queued = append(queued, d)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, d := range queued {
-		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
-			return err
-		}
-		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
-			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": d.State, "state": DispatchStopped,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // WorkerStalled tells the owning leader of the active assignment id, with a
@@ -407,26 +381,19 @@ func (s *Store) WorkerStalled(id, dispatch int64, body string, at time.Time) (Di
 		return Dispatch{}, err
 	}
 	defer tx.Rollback()
-	a, err := assignment(tx, id)
+	w, err := workerDispatch(tx, id)
 	if err != nil {
 		return Dispatch{}, fmt.Errorf("assignment %d: %w", id, err)
 	}
+	a := w.Assignment
 	if a.State != AssignmentActive {
 		return Dispatch{}, fmt.Errorf("assignment %d is %s, not active", a.ID, a.State)
 	}
-	var reported int
-	if err := tx.QueryRow(`SELECT count(*) FROM reports WHERE dispatch = ?`, dispatch).Scan(&reported); err != nil {
-		return Dispatch{}, err
-	}
-	if reported > 0 {
-		return Dispatch{}, fmt.Errorf("dispatch %d ended in a report", dispatch)
-	}
-	var latest int64
-	if err := tx.QueryRow(`SELECT d.id FROM messages m JOIN dispatches d ON d.message = m.id WHERE m.assignment = ? AND m.recipient = ? ORDER BY d.id DESC LIMIT 1`, a.ID, a.Worker).Scan(&latest); err != nil {
-		return Dispatch{}, err
-	}
-	if latest != dispatch {
+	if w.Dispatch.ID != dispatch {
 		return Dispatch{}, fmt.Errorf("dispatch %d is no longer the worker's latest dispatch for assignment %d", dispatch, a.ID)
+	}
+	if w.Report != "" {
+		return Dispatch{}, fmt.Errorf("dispatch %d ended in a report", dispatch)
 	}
 	told, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, Daemon, a.Owner, MessageStalled, body, at)
 	if err != nil {

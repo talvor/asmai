@@ -330,7 +330,14 @@ func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDi
 	if _, err := f.decide(CommandRedispatch, a.ID, "the push works now"); err == nil || !strings.Contains(err.Error(), "submitted") {
 		t.Fatalf("redispatching a submitted assignment returned %v", err)
 	}
-	if _, err := f.decide(CommandReject, a.ID, "no test covers the empty case"); err != nil {
+	rejected, err := f.decide(CommandReject, a.ID, "no test covers the empty case")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.store.Inbox(a.Worker, rejected.Dispatch.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.d.store.ChangeDispatch(rejected.Dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := f.d.decide(Request{Session: "quality", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"x"}}); err == nil || !strings.Contains(err.Error(), "is owned by leader@engineering") {
@@ -348,25 +355,26 @@ func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDi
 	if err != nil || w.Kind != store.MessageRedispatch || w.Dispatch.ID != resp.Dispatch.ID {
 		t.Errorf("the worker's latest dispatch is %+v (%v), want the redispatch %d", w, err, resp.Dispatch.ID)
 	}
-	// Each redispatch is a dispatch of its own.
-	again, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"still stuck"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.Dispatch.ID == resp.Dispatch.ID {
-		t.Errorf("two redispatches share dispatch %d", again.Dispatch.ID)
+	if _, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"still stuck"}}); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+		t.Fatalf("redispatching over queued work returned %v", err)
 	}
 
 	// An assignment held for reconciliation is active again when its owning
 	// leader, which has looked at it, sends it to its worker again.
-	if _, err := f.d.store.AssignmentNeedsReconciliation(a.ID, again.Dispatch.ID, "its session cannot be resumed", "Reconcile it.", time.Now()); err != nil {
+	if _, err := f.d.store.Inbox(a.Worker, resp.Dispatch.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.d.store.ChangeDispatch(resp.Dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.store.AssignmentNeedsReconciliation(a.ID, resp.Dispatch.ID, "its session cannot be resumed", "Reconcile it.", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	held, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"I looked: the branch is on origin"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if held.Assignment.State != store.AssignmentActive || held.Dispatch.ID == again.Dispatch.ID {
+	if held.Assignment.State != store.AssignmentActive || held.Dispatch.ID == resp.Dispatch.ID {
 		t.Errorf("redispatching an assignment that needed reconciliation answered %+v and %+v, want it active in a new dispatch", held.Assignment, held.Dispatch)
 	}
 }

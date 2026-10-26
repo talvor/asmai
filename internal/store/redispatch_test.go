@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestRedispatchSupersedesEarlierUnfetchedWork(t *testing.T) {
+func TestRedispatchRefusesAnUnfetchedAssignment(t *testing.T) {
 	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown} {
 		t.Run(state, func(t *testing.T) {
 			s := open(t, filepath.Join(t.TempDir(), "store.db"))
@@ -19,24 +19,57 @@ func TestRedispatchSupersedesEarlierUnfetchedWork(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			latest, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
-			if err != nil {
-				t.Fatal(err)
+			if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+				t.Fatalf("redispatch over queued assignment returned %v", err)
 			}
-			if _, err := s.Inbox(a.Worker, first.ID, assignmentsAt); err == nil {
-				t.Fatal("the superseded dispatch remained deliverable")
+			if state != DispatchUnknown {
+				if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != first.ID {
+					t.Fatalf("next dispatch is %+v (%v), want original assignment %d", next, err, first.ID)
+				}
 			}
-			if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != latest.ID {
-				t.Fatalf("next dispatch is %+v (%v), want %d", next, err, latest.ID)
-			}
-			if messages, err := s.Inbox(a.Worker, 0, assignmentsAt); err != nil || len(messages) != 1 || messages[0].Dispatch != latest.ID {
-				t.Fatalf("worker inbox is %+v (%v), want only the latest dispatch", messages, err)
+			if messages, err := s.Inbox(a.Worker, first.ID, assignmentsAt); err != nil || len(messages) != 1 || messages[0].Kind != MessageAssignment {
+				t.Fatalf("original assignment is %+v (%v), want it delivered", messages, err)
 			}
 		})
 	}
 }
 
-func TestRedispatchKeepsWorkingDispatchAndSupersedesTheNextQueuedOne(t *testing.T) {
+func TestRedispatchRefusesOtherQueuedWorkMessages(t *testing.T) {
+	for _, kind := range []string{MessageRedispatch, MessageRejection, MessageMovedTip, MessageResumption} {
+		t.Run(kind, func(t *testing.T) {
+			s := open(t, filepath.Join(t.TempDir(), "store.db"))
+			var a Assignment
+			var queued Dispatch
+			var err error
+			switch kind {
+			case MessageRedispatch:
+				a, _ = stoppedAssignment(t, s)
+				queued, err = s.AssignmentRedispatched(a.ID, a.Owner, []string{"first nudge"}, assignmentsAt)
+			case MessageRejection:
+				a = submitted(t, s)
+				_, queued, err = s.ResultRejected(a.ID, a.Owner, []string{"revise"}, assignmentsAt)
+			case MessageMovedTip:
+				a = submitted(t, s)
+				queued, err = s.ResultReturned(a.ID, a.Owner, tipCommit, assignmentsAt)
+			case MessageResumption:
+				var first Dispatch
+				a, first = stoppedAssignment(t, s)
+				queued, err = s.AssignmentResumed(a.ID, first.ID, nativeID, "Continue.", assignmentsAt)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"again"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+				t.Fatalf("redispatch over queued %s returned %v", kind, err)
+			}
+			if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != queued.ID {
+				t.Fatalf("next dispatch is %+v (%v), want queued %s %d", next, err, kind, queued.ID)
+			}
+		})
+	}
+}
+
+func TestRedispatchAllowsWorkingDispatchButRefusesAnotherQueuedOne(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, first := newAssignment(t, s, jobWithBranch(t, s))
 	working(t, s, first)
@@ -44,44 +77,50 @@ func TestRedispatchKeepsWorkingDispatchAndSupersedesTheNextQueuedOne(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"second nudge"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"second nudge"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+		t.Fatalf("redispatch over queued redispatch returned %v", err)
 	}
 	var state string
 	if err := s.db.QueryRow(`SELECT state FROM dispatches WHERE id = ?`, first.ID).Scan(&state); err != nil || state != DispatchWorking {
 		t.Fatalf("the working dispatch is %s (%v)", state, err)
 	}
-	if _, err := s.Inbox(a.Worker, queued.ID, assignmentsAt); err == nil {
-		t.Fatal("the first redispatch remained deliverable")
-	}
-	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != latest.ID {
-		t.Fatalf("next dispatch is %+v (%v), want %d", next, err, latest.ID)
+	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != queued.ID {
+		t.Fatalf("next dispatch is %+v (%v), want %d", next, err, queued.ID)
 	}
 }
 
-func TestResultOnWorkingDispatchRetiresQueuedRedispatch(t *testing.T) {
-	s := open(t, filepath.Join(t.TempDir(), "store.db"))
-	a, workingDispatch := newAssignment(t, s, jobWithBranch(t, s))
-	working(t, s, workingDispatch)
-	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.EffectRecorded(a.Worker, 1, workingDispatch.ID, "push", "origin/"+a.Workspace.Branch, assignmentsAt); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.ReportSubmitted(submission(workingDispatch, ReportResult), assignmentsAt); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := s.Assignment(a.ID); err != nil || got.State != AssignmentSubmitted {
-		t.Fatalf("assignment after result is %+v (%v)", got, err)
-	}
-	if _, err := s.Inbox(a.Worker, queued.ID, assignmentsAt); err == nil {
-		t.Fatal("the queued redispatch remained deliverable after the result")
-	}
-	if _, err := s.NextDispatch(a.Worker); err != sql.ErrNoRows {
-		t.Fatalf("the worker has stale queued work (%v)", err)
+func TestAReportOnWorkingDispatchRetiresQueuedRedispatch(t *testing.T) {
+	for _, kind := range []string{ReportResult, ReportBlocked} {
+		t.Run(kind, func(t *testing.T) {
+			s := open(t, filepath.Join(t.TempDir(), "store.db"))
+			a, workingDispatch := newAssignment(t, s, jobWithBranch(t, s))
+			working(t, s, workingDispatch)
+			queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == ReportResult {
+				if _, err := s.EffectRecorded(a.Worker, 1, workingDispatch.ID, "push", "origin/"+a.Workspace.Branch, assignmentsAt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := s.ReportSubmitted(submission(workingDispatch, kind), assignmentsAt); err != nil {
+				t.Fatal(err)
+			}
+			want := AssignmentActive
+			if kind == ReportResult {
+				want = AssignmentSubmitted
+			}
+			if got, err := s.Assignment(a.ID); err != nil || got.State != want {
+				t.Fatalf("assignment after %s is %+v (%v)", kind, got, err)
+			}
+			if _, err := s.Inbox(a.Worker, queued.ID, assignmentsAt); err == nil {
+				t.Fatalf("the queued redispatch remained deliverable after %s", kind)
+			}
+			if _, err := s.NextDispatch(a.Worker); err != sql.ErrNoRows {
+				t.Fatalf("the worker has stale queued work (%v)", err)
+			}
+		})
 	}
 }
 

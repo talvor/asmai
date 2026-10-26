@@ -339,6 +339,36 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 	if err := tx.QueryRow(`SELECT d.id FROM messages m JOIN dispatches d ON d.message = m.id WHERE m.assignment = ? AND m.recipient = ? ORDER BY d.id DESC LIMIT 1`, a.ID, a.Worker).Scan(&previous); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Dispatch{}, err
 	}
+	rows, err := tx.Query(`SELECT d.id, d.generation, d.state FROM messages m JOIN dispatches d ON d.message = m.id
+		WHERE m.assignment = ? AND m.recipient = ? AND m.fetched_at IS NULL AND d.state IN (?, ?, ?)`,
+		a.ID, a.Worker, DispatchCreated, DispatchNudged, DispatchUnknown)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	var queued []Dispatch
+	for rows.Next() {
+		var d Dispatch
+		if err := rows.Scan(&d.ID, &d.Generation, &d.State); err != nil {
+			rows.Close()
+			return Dispatch{}, err
+		}
+		queued = append(queued, d)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	for _, d := range queued {
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
+			return Dispatch{}, err
+		}
+		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
+			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": d.State, "state": DispatchStopped,
+		}); err != nil {
+			return Dispatch{}, err
+		}
+	}
 	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentActive, a.ID); err != nil {
 		return Dispatch{}, err
 	}
@@ -381,6 +411,13 @@ func (s *Store) WorkerStalled(id, dispatch int64, body string, at time.Time) (Di
 	}
 	if reported > 0 {
 		return Dispatch{}, fmt.Errorf("dispatch %d ended in a report", dispatch)
+	}
+	var latest int64
+	if err := tx.QueryRow(`SELECT d.id FROM messages m JOIN dispatches d ON d.message = m.id WHERE m.assignment = ? AND m.recipient = ? ORDER BY d.id DESC LIMIT 1`, a.ID, a.Worker).Scan(&latest); err != nil {
+		return Dispatch{}, err
+	}
+	if latest != dispatch {
+		return Dispatch{}, fmt.Errorf("dispatch %d is no longer the worker's latest dispatch for assignment %d", dispatch, a.ID)
 	}
 	told, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, Daemon, a.Owner, MessageStalled, body, at)
 	if err != nil {

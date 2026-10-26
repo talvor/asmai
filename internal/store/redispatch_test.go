@@ -3,10 +3,76 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRedispatchSupersedesEarlierUnfetchedWork(t *testing.T) {
+	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown} {
+		t.Run(state, func(t *testing.T) {
+			s := open(t, filepath.Join(t.TempDir(), "store.db"))
+			a, first := newAssignment(t, s, jobWithBranch(t, s))
+			if state != DispatchCreated {
+				if err := s.ChangeDispatch(first.ID, 1, DispatchCreated, state, "", assignmentsAt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			latest, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Inbox(a.Worker, first.ID, assignmentsAt); err == nil {
+				t.Fatal("the superseded dispatch remained deliverable")
+			}
+			if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != latest.ID {
+				t.Fatalf("next dispatch is %+v (%v), want %d", next, err, latest.ID)
+			}
+			if messages, err := s.Inbox(a.Worker, 0, assignmentsAt); err != nil || len(messages) != 1 || messages[0].Dispatch != latest.ID {
+				t.Fatalf("worker inbox is %+v (%v), want only the latest dispatch", messages, err)
+			}
+		})
+	}
+}
+
+func TestRedispatchKeepsWorkingDispatchAndSupersedesTheNextQueuedOne(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, first := newAssignment(t, s, jobWithBranch(t, s))
+	working(t, s, first)
+	queued, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"first nudge"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"second nudge"}, assignmentsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := s.db.QueryRow(`SELECT state FROM dispatches WHERE id = ?`, first.ID).Scan(&state); err != nil || state != DispatchWorking {
+		t.Fatalf("the working dispatch is %s (%v)", state, err)
+	}
+	if _, err := s.Inbox(a.Worker, queued.ID, assignmentsAt); err == nil {
+		t.Fatal("the first redispatch remained deliverable")
+	}
+	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != latest.ID {
+		t.Fatalf("next dispatch is %+v (%v), want %d", next, err, latest.ID)
+	}
+}
+
+func TestStallNoticeRequiresTheStoppedDispatchToRemainLatest(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, stopped := stoppedAssignment(t, s)
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WorkerStalled(a.ID, stopped.ID, "old turn", assignmentsAt); err == nil {
+		t.Fatal("the old dispatch generated a stall notice after redispatch")
+	}
+	if _, err := s.NextDispatch(a.Owner); err != sql.ErrNoRows {
+		t.Fatalf("the owner has a stale dispatch (%v)", err)
+	}
+}
 
 func TestAnActiveAssignmentIsSentToItsWorkerAgainInANewDispatchOnlyByItsOwner(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))

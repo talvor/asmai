@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -14,8 +15,99 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/session"
 	"github.com/talvor/asmai/internal/store"
 )
+
+func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T) {
+	s, ids := restartStore(t, []restartCase{{name: "working", leave: store.DispatchWorking}})
+	a, err := s.Assignment(ids["working"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := s.SessionStarted(store.SessionStart{Agent: a.Worker, Role: roles.Engineering, Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: a.Workspace.Path, PID: 8, At: time.Now(), Assignment: a.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	redispatch, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Inbox(a.Worker, redispatch.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeDispatch(redispatch.ID, generation, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worker := roles.WorkerOf(roles.Engineering, 1)
+	proc, err := session.Start(session.Spec{Path: "/bin/true", Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &leader{address: worker, session: proc, generation: generation, assignment: a.ID}
+	owner := roles.LeaderOf(roles.Engineering)
+	d := &daemon{store: s, work: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), leaders: map[string]*leader{
+		worker.String(): l, owner.String(): {address: owner, session: &session.Session{}},
+	}}
+	d.agents.Add(1)
+	d.watch(l, proc, generation, false)
+	if got, err := s.Assignment(a.ID); err != nil || got.State != store.AssignmentNeedsReconciliation {
+		t.Fatalf("assignment after worker exit is %+v (%v)", got, err)
+	}
+	if w, err := s.WorkerDispatch(a.ID); err != nil || w.Dispatch.State != store.DispatchUnknown {
+		t.Fatalf("worker dispatch after exit is %+v (%v)", w, err)
+	}
+	messages, err := s.Inbox(a.Owner, 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, message := range messages {
+		if message.Kind == store.MessageReconciliation && message.Assignment == a.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("owner inbox has no reconciliation of assignment %d: %+v", a.ID, messages)
+	}
+}
+
+func TestPendingDecisionDoesNotSilenceWorkerStallNotice(t *testing.T) {
+	s, ids := restartStore(t, []restartCase{{name: "stopped", leave: store.DispatchStopped}})
+	a, err := s.Assignment(ids["stopped"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.DecisionRequested(store.DecisionRequestInput{
+		Job: a.Job, Requester: a.Worker, Recipient: a.Owner, Notify: a.Owner, Assignment: a.ID,
+		Kind: store.RequestChoice, Questions: []store.Question{{ID: "q1", Title: "Which way?", Options: []string{"a", "b"}}}, Blocks: []int64{a.ID},
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	w, err := s.WorkerDispatch(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := roles.LeaderOf(roles.Engineering)
+	d := &daemon{store: s, work: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), leaders: map[string]*leader{
+		owner.String(): {address: owner, session: &session.Session{}},
+	}}
+	d.workerStopped(sessionRef{address: roles.WorkerOf(roles.Engineering, 1), generation: 1}, w.Dispatch.ID, w.Kind, a.ID)
+	d.agents.Wait()
+	messages, err := s.Inbox(a.Owner, 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, message := range messages {
+		if message.Kind == store.MessageStalled && message.Assignment == a.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("pending decision suppressed the stall notice: %+v", messages)
+	}
+}
 
 // restartCase is a worker the previous daemon left, with the assignment it
 // carried in the state the case says.

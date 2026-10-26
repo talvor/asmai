@@ -366,7 +366,7 @@ func (s *Store) Inbox(agent string, only int64, at time.Time) ([]Message, error)
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.recipient=? AND (?=0 OR d.id=?) ORDER BY m.id`, agent, only, only)
+	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id WHERE m.recipient=? AND (?=0 OR d.id=?) AND NOT (d.state=? AND m.fetched_at IS NULL) ORDER BY m.id`, agent, only, only, DispatchStopped)
 	if err != nil {
 		return nil, err
 	}

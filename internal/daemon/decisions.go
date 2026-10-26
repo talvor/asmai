@@ -597,8 +597,7 @@ func (d *daemon) dispatchStopped(ref sessionRef, dispatch int64) {
 // workerStopped is told that the turn ref's session, a worker's, ran for
 // dispatch, which is of kind kind and about assignment, has finished. If the
 // dispatch gave the worker its active assignment and ended with no result and
-// no blocked report, and the worker is not waiting for the answer to a
-// decision it asked for, the assignment is active but nothing is working on
+// no blocked report, the assignment is active but nothing is working on
 // it: its owning leader is told in a message, with what origin holds of the
 // assignment branch. Nothing is retried.
 func (d *daemon) workerStopped(ref sessionRef, dispatch int64, kind string, assignment int64) {
@@ -612,9 +611,6 @@ func (d *daemon) workerStopped(ref sessionRef, dispatch int64, kind string, assi
 	}
 	w, err := d.store.WorkerDispatch(assignment)
 	if err != nil || w.Dispatch.ID != dispatch || w.Report != "" || w.Assignment.State != store.AssignmentActive || w.Assignment.Worker != ref.address.String() {
-		return
-	}
-	if waiting, err := d.store.PendingRequestsOf(ref.address.String()); err != nil || len(waiting) > 0 {
 		return
 	}
 	d.mu.Lock()

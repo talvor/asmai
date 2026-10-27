@@ -65,7 +65,11 @@ func TestAStepTheUsersRecordedDecisionCoversIsAnsweredFromItWithoutAskingTheUser
 		t.Fatalf("the answer is %+v, dispatch %+v, want it to rely on decision record %d and go to the worker", answered, back, seams.ID)
 	}
 	var told bool
-	for _, m := range f.inbox(t, f.assignments[0].Worker) {
+	messages, err := f.s.Inbox(f.assignments[0].Worker, back.ID, back.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range messages {
 		told = told || m.Kind == store.MessageDecisionAnswer && strings.Contains(m.Body, "Test through the handler") && strings.Contains(m.Body, fmt.Sprintf("--record %d", seams.ID))
 	}
 	if !told {

@@ -681,11 +681,13 @@ func TestACancellationThatWasNotCompleteWhenTheFactoryStoppedContinuesAfterTheSt
 	leader := []string{
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-credential" ]; do sleep 0.02; done`, 0, ""),
 		fakeRun(`asmai cancel --assignment 1 --reason 'the user dropped the greeting'`, 0, "cancellation requested"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/cancellation-requested"`, 0, ""),
 		hookStep("Stop", "handoff", ""),
 		`{"expect":"only typed by a test that means to"}`,
 	}
 	worker := func(transcript string) []string {
 		return []string{
+			fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/cancellation-requested" ]; do sleep 0.02; done`, 0, ""),
 			nativeHook("Stop", "assignment", "", transcript),
 			`{"expect":"asmai inbox --dispatch 4\r"}`,
 			nativeHook("UserPromptSubmit", "cancellation", "asmai inbox --dispatch 4", transcript),

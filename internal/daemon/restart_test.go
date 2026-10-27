@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,6 +21,10 @@ import (
 )
 
 func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T) {
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, queuedAnswer := range []bool{false, true} {
 		name := "no queued answer"
 		if queuedAnswer {
@@ -65,7 +70,7 @@ func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T
 				}
 			}
 			worker := roles.WorkerOf(roles.Engineering, 1)
-			proc, err := session.Start(session.Spec{Path: "/bin/true", Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
+			proc, err := session.Start(session.Spec{Path: truePath, Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,6 +105,10 @@ func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T
 }
 
 func TestWorkerExitBeforeFetchingNudgeAllowsReconciliationRedispatch(t *testing.T) {
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, ids := restartStore(t, []restartCase{{name: "stopped", leave: store.DispatchStopped}})
 	a, err := s.Assignment(ids["stopped"])
 	if err != nil {
@@ -117,7 +126,7 @@ func TestWorkerExitBeforeFetchingNudgeAllowsReconciliationRedispatch(t *testing.
 		t.Fatal(err)
 	}
 	worker := roles.WorkerOf(roles.Engineering, 1)
-	proc, err := session.Start(session.Spec{Path: "/bin/true", Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
+	proc, err := session.Start(session.Spec{Path: truePath, Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
 	}

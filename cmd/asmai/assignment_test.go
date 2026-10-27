@@ -193,10 +193,6 @@ var assignmentWorkerNoStop bool
 // while its worker is still in the first assignment turn.
 var assignmentLeaderBeforeStop []string
 
-// assignmentLeaderAfterStop lets a flow consume a notice queued while the
-// leader was still working on the worker's earlier message.
-var assignmentLeaderAfterStop []string
-
 func assignmentFlowWith(t *testing.T, setUpGit func(*testing.T), files map[string]string, worker, leader []string) (fixture writingFixture, testDir string) {
 	t.Helper()
 	return assignmentFlowConfigured(t, setUpGit, files, nil, worker, leader)
@@ -230,7 +226,6 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 	engineering = append(engineering,
 		hookStep("Stop", "report", ""),
 	)
-	engineering = append(engineering, assignmentLeaderAfterStop...)
 	engineering = append(engineering,
 		fakeRun(`touch "$ASMAI_TEST_DIR/leader-done"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,

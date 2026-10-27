@@ -621,7 +621,7 @@ func TestPlanningsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"`--record <id>` on `asmai assign`",
 		"Answer a worker's other requests from the records, or escalate them",
 		"a message of kind `reconciliation`",
-		"nothing is retried",
+		"Nothing is retried",
 		"side-effect-free",
 		"escalate it through Coordination with what was tried",
 	} {
@@ -636,7 +636,8 @@ func TestPlanningsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"disclose every gap",
 		"Name the record each step of a skill relied on",
 		"Take in the job branch's tip before you submit",
-		"commit and push your assignment branch",
+		"attempt to push your assignment branch",
+		"a blocked report needs no recorded push",
 		"AsmAI adds the `AsmAI-Job`, `AsmAI-Agent` and `AsmAI-Dispatch` trailers to every commit",
 		"Put the notes where the repository keeps them, according to its repository instructions or its existing folders, or under `docs/<kind>/`",
 		"Never copy what the repository's tracker workflow already records",
@@ -865,7 +866,7 @@ func TestResearchsInstructionsContainTheRequiredContentOfRule37(t *testing.T) {
 		"`--record <id>` on `asmai assign`",
 		"Answer a worker's other requests from the records, or escalate them",
 		"a message of kind `reconciliation`",
-		"nothing is retried",
+		"Nothing is retried",
 		"side-effect-free",
 		"escalate it through Coordination with what was tried",
 	} {

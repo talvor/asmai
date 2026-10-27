@@ -42,14 +42,13 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 		// An answer applies only to the version it names.
 		fakeRun(`asmai decision answer --request 1 --version 2 --answer hello`, 1, "decision request 1 has no version 2"),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-stopped" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`until asmai inbox --dispatch 5 > "$ASMAI_TEST_DIR/stalled-notice" 2>/dev/null; do sleep 0.02; done; cat "$ASMAI_TEST_DIR/stalled-notice"`, 0, "stalled from daemon"),
 		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "version 1 of decision request 1 answered; the answer goes to worker1@engineering, dispatch 6"),
 		fakeRun(`asmai redispatch --assignment 1 --reason 'try to overtake the answer' > "$ASMAI_TEST_DIR/answer-guard-refusal" 2>&1; command_exit=$?; cat "$ASMAI_TEST_DIR/answer-guard-refusal"; test "$command_exit" -eq 1`, 0, "queued decision.answer dispatch 6"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/answer-guard-checked"`, 0, ""),
 	}
-	assignmentLeaderAfterStop = turn(5, "stalled", fakeRun(`asmai inbox --dispatch 5`, 0, "stalled from daemon"))
 	assignmentWorkerStop = "answer"
 	t.Cleanup(func() {
-		assignmentLeaderAfterStop = nil
 		assignmentWorkerStop = "assignment"
 	})
 	_, testDir := assignmentFlow(t, worker, leader)

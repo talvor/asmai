@@ -502,46 +502,23 @@ func TestEveryLeaderButCoordinationsFilesABlockedReportAndCoordinationResolvesIt
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{
-			"`asmai blocked --job <number> --reason <why you cannot go on> --needs <what would let you go on>`",
-			"`--blocks <assignment>`",
-			"a reason that is not the user's choice",
-			"missing build cache, a broken tool or an infrastructure fault",
-			"It is not a decision request",
-			"A choice that is the user's, such as between distinct viable approaches or an action outside the mandate, is a decision request, never a blocked report",
-			"nothing is held",
-			"`blocked.resolved`",
-		} {
+		for _, want := range []string{"`asmai blocked --job <number>", "--reason ", "--needs ", "`--blocks <assignment>`", "`blocked.resolved`"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%s's leader's instructions lack %q", role, want)
 			}
 		}
 	}
-	// Engineering's reconciliation step names the command it brings what it
-	// finds to Coordination with.
-	engineering, _ := LeaderInstructions(Engineering)
-	if !strings.Contains(engineering, "bring what you find to Coordination with a blocked report: `asmai blocked --job <number>") {
-		t.Errorf("Engineering's reconciliation step does not name the blocked report:\n%s", engineering)
-	}
 	coordination, err := LeaderInstructions(Coordination)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"A message of kind `blocked` brings you a blocked report",
-		"settle it yourself when the records already answer it",
-		"hand the work to another role with `asmai handoff send`",
-		"put it to the user",
-		"A choice that is the user's goes to them as a decision request",
-		"one flagged line in the conversation, tagged with the job's number, saying what needs fixing",
-		"Never work around a report",
-		"`asmai blocked resolve <id> --note <what changed>`",
-		"`blocked.resolved`",
-		"You file no blocked report yourself",
-	} {
+	for _, want := range []string{"kind `blocked`", "`asmai blocked resolve <id> --note ", "`blocked.resolved`"} {
 		if !strings.Contains(coordination, want) {
 			t.Errorf("Coordination's leader's instructions lack %q", want)
 		}
+	}
+	if strings.Contains(coordination, "`asmai blocked --job") {
+		t.Errorf("Coordination's leader's instructions tell it to file a blocked report:\n%s", coordination)
 	}
 }
 

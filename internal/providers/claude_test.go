@@ -66,7 +66,8 @@ func TestASessionsSettingsCarryItsHooksAndAllowAsmai(t *testing.T) {
 	p := settings.Permissions
 	if !slices.Equal(p.Allow, []string{
 		"Bash(asmai:*)", "Bash(gh pr create:*)", "Bash(gh pr edit:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
-		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh run view:*)",
+		"Bash(gh pr checks:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)", "Bash(gh issue create:*)", "Bash(gh issue comment:*)", "Bash(gh issue edit:*)",
+		"Bash(gh issue close:*)", "Bash(gh issue list:*)", "Bash(gh run view:*)",
 		"Bash(gh run list:*)", "Bash(gh run watch:*)", "Bash(git add:*)", "Bash(git commit:*)",
 		"Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git status:*)",
 		"Bash(git rev-parse:*)", "Bash(git merge:*)", "Bash(git var:*)",
@@ -110,7 +111,8 @@ func TestASessionsWriteGuardIsAlwaysOnAndKeepsTheNativePromptsForTheRest(t *test
 		// the prompt.
 		if want := []string{
 			"asmai *", "echo *", "cd *", "gh pr create *", "gh pr edit *", "gh pr view *", "gh pr list *", "gh pr checks *",
-			"gh pr status *", "gh issue view *", "gh run view *", "gh run list *", "gh run watch *",
+			"gh pr status *", "gh issue view *", "gh issue create *", "gh issue comment *", "gh issue edit *", "gh issue close *", "gh issue list *",
+			"gh run view *", "gh run list *", "gh run watch *",
 			"git add *", "git commit *", "git push *", "git fetch *", "git ls-remote *",
 			"git status *", "git rev-parse *", "git merge *", "git var *",
 		}; !slices.Equal(sb.ExcludedCommands, want) {

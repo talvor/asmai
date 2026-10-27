@@ -41,7 +41,7 @@ var unguardedCommands = []string{"asmai"}
 var separatorCommands = []string{"echo", "cd"}
 
 var unguardedGHCommands = []string{
-	"pr create", "pr edit", "pr view", "pr list", "pr checks", "pr status", "issue view", "run view", "run list", "run watch",
+	"pr create", "pr edit", "pr view", "pr list", "pr checks", "pr status", "issue view", "issue create", "issue comment", "issue edit", "issue close", "issue list", "run view", "run list", "run watch",
 }
 
 var unguardedGitSubcommands = []string{

@@ -97,11 +97,32 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return errors.New("only leader@coordination may run asmai decision present: it shows the user a decision in the conversation")
-	case CommandResult, CommandBlocked:
+	case CommandResult:
 		if ref.address.Name != roles.Leader {
 			return nil
 		}
 		return fmt.Errorf("only a worker may run asmai %s: a leader's work goes through its workers", req.Command)
+	case CommandBlocked:
+		if ref.address.Name != roles.Leader {
+			return nil
+		}
+		if ref.address == roles.LeaderOf(roles.Coordination) {
+			return fmt.Errorf("only a worker may run asmai blocked without --job: a leader's work goes through its workers")
+		}
+		return fmt.Errorf("only a worker may run asmai blocked without --job: a leader that cannot go on files a blocked report to Coordination with `asmai blocked --job <number> --reason <text> --needs <text>`")
+	case CommandBlockedReport:
+		switch {
+		case ref.address.Name != roles.Leader:
+			return errors.New("only a role's leader files a blocked report with --job: a worker that cannot go on runs `asmai blocked --reason <text> [--needs <text>]`, with no --job, which goes to its owning leader")
+		case ref.address == roles.LeaderOf(roles.Coordination):
+			return fmt.Errorf("%s files no blocked report: it settles what blocks a job itself, hands the work to another role, or puts a choice that is the user's to them with `asmai decision request`", ref.address)
+		}
+		return nil
+	case CommandBlockedResolve:
+		if ref.address == roles.LeaderOf(roles.Coordination) {
+			return nil
+		}
+		return fmt.Errorf("only %s may run asmai blocked resolve: it resolves a leader's blocked report once its cause is settled", roles.LeaderOf(roles.Coordination))
 	default:
 		if userCommand := commandName(req.Command); userCommand != "" {
 			return fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", userCommand)
@@ -116,7 +137,7 @@ func isAgentCommand(command string) bool {
 	switch command {
 	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
-		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch,
+		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandBlockedReport, CommandBlockedResolve, CommandAccept, CommandReject, CommandCancel, CommandRedispatch,
 		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
 		return true
 	}
@@ -151,6 +172,10 @@ func commandName(command string) string {
 		return "inbox"
 	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch, CommandPush, CommandAuthorize:
 		return command
+	case CommandBlockedReport:
+		return "blocked --job"
+	case CommandBlockedResolve:
+		return "blocked resolve"
 	case CommandGrants:
 		return "grants"
 	case CommandGrantRevoke:

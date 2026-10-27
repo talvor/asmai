@@ -340,6 +340,14 @@ ALTER TABLE findings ADD COLUMN cleared_decision INTEGER REFERENCES decision_rec
 ALTER TABLE jobs ADD COLUMN cancel_reason TEXT NOT NULL DEFAULT '';
 ALTER TABLE jobs ADD COLUMN cancel_witness INTEGER NOT NULL DEFAULT 0;
 `,
+	`
+CREATE TABLE blocked_reports (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number), leader TEXT NOT NULL,
+ reason TEXT NOT NULL, needs TEXT NOT NULL, blocks TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL,
+ note TEXT NOT NULL DEFAULT '', resolved_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, resolved_at TEXT
+);
+ALTER TABLE messages ADD COLUMN blocked INTEGER REFERENCES blocked_reports(id);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.
@@ -524,6 +532,12 @@ const (
 	// KindFindingsOverruled records the user's decision, answering a leader's
 	// dispute of blocking findings, that they stand cleared.
 	KindFindingsOverruled = "findings.overruled"
+	// KindBlockedReportFiled records a leader that cannot go on filing a
+	// blocked report to Coordination, and KindBlockedReportResolved
+	// Coordination resolving it with a note of what changed. A worker's
+	// blocked report is KindBlockedReported.
+	KindBlockedReportFiled    = "blocked_report.filed"
+	KindBlockedReportResolved = "blocked_report.resolved"
 )
 
 // The states an agent can be in.

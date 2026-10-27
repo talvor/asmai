@@ -465,11 +465,13 @@ func waitingOnYou(agents []DashboardAgent, lives map[string]agentLive, findings 
 }
 
 // TrafficKinds are the journal kinds of agent traffic: handoffs, assignments,
-// results, blocked reports, and acceptances and rejections. The Log tab shows
-// them by default and the whole journal on request.
+// results, blocked reports, workers' and leaders', the resolution of a
+// leader's, and acceptances and rejections. The Log tab shows them by default
+// and the whole journal on request.
 var TrafficKinds = []string{
 	store.KindHandoffSent, store.KindAssignmentCreated, store.KindResultSubmitted,
-	store.KindBlockedReported, store.KindResultAccepted, store.KindResultRejected, store.KindResultReturned,
+	store.KindBlockedReported, store.KindBlockedReportFiled, store.KindBlockedReportResolved,
+	store.KindResultAccepted, store.KindResultRejected, store.KindResultReturned,
 }
 
 // The least and most entries a log read returns, and what it returns when the
@@ -535,6 +537,8 @@ type entryFields struct {
 	Outcome    string   `json:"outcome"`
 	Reason     string   `json:"reason"`
 	Reasons    []string `json:"reasons"`
+	ResolvedBy string   `json:"resolved_by"`
+	Note       string   `json:"note"`
 }
 
 // firstLine is the first non-blank line of s.
@@ -580,6 +584,12 @@ func (d *daemon) logEntry(e store.Entry) LogEntry {
 	case store.KindBlockedReported:
 		out.To = other().Owner
 		out.Summary = with(fmt.Sprintf("blocked on assignment %d", f.Assignment), f.Reason)
+	case store.KindBlockedReportFiled:
+		out.To = roles.LeaderOf(roles.Coordination).String()
+		out.Summary = with(fmt.Sprintf("blocked report %d", f.ID), f.Reason)
+	case store.KindBlockedReportResolved:
+		out.From, out.To = f.ResolvedBy, f.Leader
+		out.Summary = with(fmt.Sprintf("resolved blocked report %d", f.ID), f.Note)
 	case store.KindResultAccepted:
 		out.To = other().Worker
 		out.Summary = with(fmt.Sprintf("accepted assignment %d", f.Assignment), strings.Join(f.Reasons, " "))

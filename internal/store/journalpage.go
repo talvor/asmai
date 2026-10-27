@@ -117,7 +117,8 @@ func (s *Store) JournalPage(q JournalQuery) (entries []Entry, older, newer bool,
 
 // MessageBodyOf is the body of the message that a journal entry caused, or
 // of the decision it records: a handoff's outcome, an assignment's outcome, a
-// result's PR section, a blocked report's reason, a message as it was sent,
+// result's PR section, a blocked report's reason, a leader's blocked report's
+// reason or the note that resolved it, a message as it was sent,
 // or the reasons for accepting or rejecting a result. It is empty when the
 // entry carries none.
 func (s *Store) MessageBodyOf(e Entry) (string, error) {
@@ -140,6 +141,10 @@ func (s *Store) MessageBodyOf(e Entry) (string, error) {
 		query, id = `SELECT body FROM messages WHERE assignment = ? AND kind = 'assignment' ORDER BY id LIMIT 1`, data.ID
 	case KindResultSubmitted, KindBlockedReported:
 		query, id = `SELECT body FROM messages WHERE report = ? ORDER BY id LIMIT 1`, data.ID
+	case KindBlockedReportFiled:
+		query, id = `SELECT body FROM messages WHERE blocked = ? AND kind = 'blocked' ORDER BY id LIMIT 1`, data.ID
+	case KindBlockedReportResolved:
+		query, id = `SELECT body FROM messages WHERE blocked = ? AND kind = 'blocked.resolved' ORDER BY id LIMIT 1`, data.ID
 	case KindResultAccepted, KindResultRejected:
 		return strings.Join(data.Reasons, "\n"), nil
 	default:

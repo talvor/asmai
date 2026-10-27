@@ -496,6 +496,32 @@ func TestEveryLeadersInstructionsSayWhatCountsAsDistinctAndWhenToAsk(t *testing.
 	}
 }
 
+func TestEveryLeaderButCoordinationsFilesABlockedReportAndCoordinationResolvesIt(t *testing.T) {
+	for _, role := range []string{Planning, Research, Engineering, Quality} {
+		text, err := LeaderInstructions(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"`asmai blocked --job <number>", "--reason ", "--needs ", "`--blocks <assignment>`", "`blocked.resolved`"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s's leader's instructions lack %q", role, want)
+			}
+		}
+	}
+	coordination, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"kind `blocked`", "`asmai blocked resolve <id> --note ", "`blocked.resolved`"} {
+		if !strings.Contains(coordination, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+	if strings.Contains(coordination, "`asmai blocked --job") {
+		t.Errorf("Coordination's leader's instructions tell it to file a blocked report:\n%s", coordination)
+	}
+}
+
 func TestCoordinationPresentsANativePromptTheDaemonRaisedAndNeverAnswersItForTheUser(t *testing.T) {
 	text, err := LeaderInstructions(Coordination)
 	if err != nil {

@@ -94,6 +94,20 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"", CommandEffect, "asmai effect is an agent command"},
 		{"", CommandResult, "asmai result is an agent command"},
 		{"", CommandBlocked, "asmai blocked is an agent command"},
+		// A leader other than Coordination's files a blocked report to
+		// Coordination, which alone resolves one; a worker's asmai blocked
+		// goes to its owning leader, and Coordination files none.
+		{"engineering", CommandBlockedReport, ""},
+		{"planning", CommandBlockedReport, ""},
+		{"quality", CommandBlockedReport, ""},
+		{"current", CommandBlockedReport, "leader@coordination files no blocked report"},
+		{"worker", CommandBlockedReport, "a worker that cannot go on runs `asmai blocked --reason <text> [--needs <text>]`, with no --job"},
+		{"", CommandBlockedReport, "asmai blocked --job is an agent command"},
+		{"engineering", CommandBlocked, "files a blocked report to Coordination with `asmai blocked --job"},
+		{"current", CommandBlockedResolve, ""},
+		{"engineering", CommandBlockedResolve, "only leader@coordination may run asmai blocked resolve"},
+		{"worker", CommandBlockedResolve, "only leader@coordination may run asmai blocked resolve"},
+		{"", CommandBlockedResolve, "asmai blocked resolve is an agent command"},
 		{"engineering", CommandPush, ""},
 		{"quality", CommandPush, "only leader@engineering, the delivery owner"},
 		{"worker", CommandPush, "only leader@engineering, the delivery owner"},

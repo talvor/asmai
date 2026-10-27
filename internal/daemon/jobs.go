@@ -158,12 +158,16 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 					if err == nil {
 						grants, err = d.store.GrantsOf(j.Number)
 					}
+					var blocked []store.BlockedReport
+					if err == nil {
+						blocked, err = d.store.JobBlockedReports(j.Number)
+					}
 					var setup string
 					if err == nil {
 						setup, err = d.setupSection(j)
 					}
 					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, continued, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, grants, setup)
+						resp.Brief = brief(j, repository, entries, handoffs, branch, continued, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, blocked, grants, setup)
 					}
 				}
 			}
@@ -233,7 +237,7 @@ func (d *daemon) makeJobBranch(j store.Job) {
 	}
 }
 
-func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, continued []store.PullRequest, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, grants []store.Grant, setup string) string {
+func brief(j store.Job, repository store.Repository, entries []store.Entry, handoffs []store.Handoff, branch *store.JobBranch, continued []store.PullRequest, assignments []store.Assignment, findings []store.Finding, pushes []store.Push, prs []store.PullRequest, checks *store.ChecksObservation, delivery *store.Delivery, reruns []store.Rerun, records []store.DecisionRecord, requests []store.DecisionRequest, blocked []store.BlockedReport, grants []store.Grant, setup string) string {
 	var b strings.Builder
 	repositoryName := j.Repository
 	if repositoryName == "" {
@@ -394,6 +398,21 @@ func brief(j store.Job, repository store.Repository, entries []store.Entry, hand
 		}
 	}
 	if pending == 0 {
+		fmt.Fprintln(&b, "- none")
+	}
+	fmt.Fprintln(&b, "Open blocked reports (a leader that cannot go on, for Coordination to settle and resolve; none waits on the user, and none holds any work):")
+	open := 0
+	for _, r := range blocked {
+		if r.State != store.BlockedOpen {
+			continue
+		}
+		open++
+		fmt.Fprintf(&b, "- blocked report %d from %s, %s\n  Reason: %s\n  Needs: %s\n", r.ID, r.Leader, r.At.Format(time.RFC3339), r.Reason, r.Needs)
+		if len(r.Blocks) > 0 {
+			fmt.Fprintf(&b, "  the assignments it names as depending on it: %v; nothing is held\n", r.Blocks)
+		}
+	}
+	if open == 0 {
 		fmt.Fprintln(&b, "- none")
 	}
 	fmt.Fprintln(&b, "Grants (the user's authority; reuse a grant while its scope and conditions hold, and check `asmai authorize` before each consequential action it covers):")

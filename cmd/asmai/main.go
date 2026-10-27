@@ -177,6 +177,16 @@ commands agents run:
                               a Quality worker submits its validation report
   asmai blocked --reason <text> [--needs <text>]
                               a worker reports that it cannot go on
+  asmai blocked --job <number> --reason <text> --needs <text> [--blocks <assignment>]
+                              a leader other than Coordination's that cannot go on, for a reason that is not the
+                              user's choice, such as a missing build cache, a broken tool or an infrastructure
+                              fault, files a blocked report to Coordination's leader, which is started or nudged.
+                              It is not a decision request: it has no version and no answer surface, and never
+                              waits on the user. Repeat --blocks for each assignment of yours that depends on it;
+                              it only names them in the report and the brief, and holds nothing
+  asmai blocked resolve <id> --note <text>
+                              Coordination's leader resolves a leader's blocked report once its cause is settled:
+                              the note, what changed, goes to the leader that filed it, which is started or nudged
   asmai accept --assignment <id> --reason <text> [--ends-job] [--prototype]
                               a leader accepts the result of an assignment it owns, and the daemon
                               fast-forwards the job branch to it; Quality's leader accepts a validation
@@ -312,6 +322,7 @@ var positional = map[string][]string{
 	"push":             {"name the job number, as `asmai jobs` shows it"},
 	"grant revoke":     {"name the grant, as `asmai grants` lists them"},
 	"grant invalidate": {"name the grant, as `asmai grants` lists them"},
+	"blocked resolve":  {"name the blocked report, as `asmai brief <number>` lists it"},
 	"effect":           {"name the kind of effect, one word such as commit or push", "name what the effect is of, such as the commit or the branch pushed"},
 }
 
@@ -358,6 +369,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			name = "job show"
 		}
 	}
+	// A worker's or a leader's blocked report is asmai blocked; Coordination
+	// resolves a leader's with asmai blocked resolve.
+	if name == "blocked" && len(args) > 0 && args[0] == "resolve" {
+		name, args = "blocked resolve", args[1:]
+	}
 	if subcommands, ok := groups[name]; ok {
 		if len(args) == 0 || !slices.Contains(subcommands, args[0]) {
 			want := subcommands[len(subcommands)-1]
@@ -387,7 +403,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var assignCommit, assignSkill string
 	var assignApproved int64
 	var assignNarrow listFlags
-	var assignOutcome, blockedReason, blockedNeeds string
+	var assignOutcome, blockedReason, blockedNeeds, blockedNote string
+	var blockedJob int64
+	var blockedBlocks listFlags
 	var decidedAssignment int64
 	var endsJob, prototype bool
 	var reasons listFlags
@@ -476,8 +494,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&resultArgs.records, "record", "the ID of a decision record of the user's that a human step of a skill you ran relied on; may be repeated")
 		flags.Var(&resultArgs.grants, "grant", "the ID of a grant that a human step of a skill you ran relied on; may be repeated")
 	case "blocked":
-		flags.StringVar(&blockedReason, "reason", "", "why the worker cannot go on")
-		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker")
+		flags.StringVar(&blockedReason, "reason", "", "why the worker, or with --job the leader, cannot go on")
+		flags.StringVar(&blockedNeeds, "needs", "", "what would unblock the worker, or with --job the leader")
+		flags.Int64Var(&blockedJob, "job", 0, "a leader's blocked report to Coordination: the job it cannot go on with")
+		flags.Var(&blockedBlocks, "blocks", "with --job, an assignment you own that depends on the report; nothing is held. May be repeated")
+	case "blocked resolve":
+		flags.StringVar(&blockedNote, "note", "", "what changed, which goes to the leader that filed the report")
 	case "accept", "reject", "cancel", "redispatch":
 		flags.Int64Var(&decidedAssignment, "assignment", 0, "assignment ID")
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
@@ -574,7 +596,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "accept", "reject", "cancel", "redispatch", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -659,7 +681,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "result":
 		return result(o, paths, resultArgs)
 	case "blocked":
+		if blockedJob != 0 || len(blockedBlocks) > 0 {
+			return leaderBlocked(o, paths, blockedJob, blockedReason, blockedNeeds, blockedBlocks)
+		}
 		return blocked(o, paths, blockedReason, blockedNeeds)
+	case "blocked resolve":
+		return blockedResolve(o, paths, arg, blockedNote)
 	case "accept", "reject", "cancel", "redispatch":
 		return decide(o, paths, name, decidedAssignment, reasons, endsJob, prototype)
 	case "push":

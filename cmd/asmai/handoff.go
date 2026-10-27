@@ -123,6 +123,15 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if r := m.ReportData; r != nil {
 			printReport(o.stdout, *r)
 		}
+		if b := m.BlockedData; b != nil {
+			if m.Kind == store.MessageBlockedResolved {
+				fmt.Fprintf(o.stdout, "%s resolved your blocked report %d of job %d. What changed:\n%s\n", m.Sender, b.ID, b.Job, m.Body)
+			}
+			printBlockedReport(o.stdout, *b)
+			if m.Kind == store.ReportBlocked {
+				fmt.Fprintf(o.stdout, "Settle it from the records, hand the work to another role, or put a choice that is the user's to them with `asmai decision request`; once its cause is settled, run `asmai blocked resolve %d --note <what changed>`\n", b.ID)
+			}
+		}
 		if r := m.RequestData; r != nil {
 			if m.Kind == store.MessageDecisionAnswer {
 				fmt.Fprintf(o.stdout, "Answer to version %d of decision request %d, from %s:\n%s\n", r.Version, r.Request, m.Sender, m.Body)

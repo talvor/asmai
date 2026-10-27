@@ -266,6 +266,72 @@ func blocked(o *output, paths statedir.Paths, reason, needs string) int {
 	return report(o, paths, daemon.CommandBlocked, store.ReportInput{Reason: reason, Needs: needs})
 }
 
+// leaderBlocked files a leader's blocked report to Coordination's leader: the
+// job it cannot go on with, why, what it needs, and the assignments of its
+// own that depend on it, which are only named.
+func leaderBlocked(o *output, paths statedir.Paths, job int64, reason, needs string, blocks []string) int {
+	if job <= 0 {
+		return o.fail(errors.New("--blocks goes with a leader's blocked report: give --job, the job you cannot go on with"))
+	}
+	if strings.TrimSpace(reason) == "" {
+		return o.fail(errors.New("a blocked report needs --reason: why you cannot go on"))
+	}
+	if strings.TrimSpace(needs) == "" {
+		return o.fail(errors.New("a blocked report needs --needs: what would let you go on"))
+	}
+	var ids []int64
+	for _, text := range blocks {
+		id, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
+		if err != nil || id <= 0 {
+			return o.fail(fmt.Errorf("--blocks is an assignment ID, not %q", text))
+		}
+		ids = append(ids, id)
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandBlockedReport, Job: job, Report: &store.ReportInput{Reason: reason, Needs: needs}, Blocks: ids})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(resp)
+	}
+	b := resp.BlockedReport
+	fmt.Fprintf(o.stdout, "blocked report %d recorded for job %d; sent to %s as dispatch %d\n", b.ID, b.Job, resp.Dispatch.Agent, resp.Dispatch.ID)
+	if len(b.Blocks) > 0 {
+		fmt.Fprintf(o.stdout, "it names assignments %v as depending on it; nothing is held\n", b.Blocks)
+	}
+	return 0
+}
+
+// blockedResolve is Coordination's leader resolving a leader's blocked report
+// with a note of what changed, which goes to the leader that filed it.
+func blockedResolve(o *output, paths statedir.Paths, id, note string) int {
+	report, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64)
+	if err != nil || report <= 0 {
+		return o.fail(fmt.Errorf("name the blocked report by its ID, as `asmai brief <number>` lists it, not %q", id))
+	}
+	if strings.TrimSpace(note) == "" {
+		return o.fail(errors.New("resolving a blocked report needs --note: what changed"))
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandBlockedResolve, BlockedReport: report, Note: note})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(resp)
+	}
+	fmt.Fprintf(o.stdout, "blocked report %d of job %d resolved; the note sent to %s as dispatch %d\n", resp.BlockedReport.ID, resp.BlockedReport.Job, resp.Dispatch.Agent, resp.Dispatch.ID)
+	return 0
+}
+
+// printBlockedReport writes a leader's blocked report, as its message carries
+// it.
+func printBlockedReport(w io.Writer, b store.BlockedReport) {
+	fmt.Fprintf(w, "blocked report %d | job %d | %s | %s\nReason: %s\nNeeds: %s\n", b.ID, b.Job, b.Leader, b.State, b.Reason, b.Needs)
+	if len(b.Blocks) > 0 {
+		fmt.Fprintf(w, "Assignments of %s that depend on it: %v; nothing is held\n", b.Leader, b.Blocks)
+	}
+}
+
 func report(o *output, paths statedir.Paths, command string, input store.ReportInput) int {
 	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: command, Report: &input})
 	if err != nil {

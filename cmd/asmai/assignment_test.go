@@ -584,6 +584,8 @@ func TestTheAssignmentCommandsAreAgentCommands(t *testing.T) {
 		{"effect", "push", "origin/x"},
 		{"result", "--evidence", "x", "--test", "none", "--check", "none", "--gap", "none", "--pr-section", "x"},
 		{"blocked", "--reason", "x"},
+		{"blocked", "--job", "1", "--reason", "x", "--needs", "y"},
+		{"blocked", "resolve", "1", "--note", "x"},
 		{"accept", "--assignment", "1", "--reason", "x"},
 		{"reject", "--assignment", "1", "--reason", "x"},
 		{"cancel", "--assignment", "1", "--reason", "x"},

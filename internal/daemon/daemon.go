@@ -101,6 +101,13 @@ const (
 	CommandEffect  = "effect"
 	CommandResult  = "result"
 	CommandBlocked = "blocked"
+	// CommandBlockedReport is a leader other than Coordination's that cannot
+	// go on, for a reason that is not the user's choice, filing a blocked
+	// report to Coordination's leader. CommandBlockedResolve is
+	// Coordination's leader resolving it with a note of what changed, which
+	// goes back to the leader that filed it.
+	CommandBlockedReport  = "blocked.report"
+	CommandBlockedResolve = "blocked.resolve"
 	// CommandAccept, CommandReject and CommandCancel are the owning
 	// leader's decisions on an assignment: accepting a result fast-forwards
 	// the job branch to it, or for a validation records its findings and
@@ -207,6 +214,10 @@ type Request struct {
 	Ref  string `json:"ref,omitempty"`
 	// Report is what a result or a blocked report says.
 	Report *store.ReportInput `json:"report,omitempty"`
+	// BlockedReport is the leader's blocked report a blocked.resolve
+	// resolves, and Note what changed.
+	BlockedReport int64  `json:"blocked_report,omitempty"`
+	Note          string `json:"note,omitempty"`
 	// Assignment and Reasons say which assignment a decision is about and
 	// why the owning leader made it.
 	Assignment int64    `json:"assignment,omitempty"`
@@ -351,6 +362,9 @@ type Response struct {
 	JobBranch        *store.JobBranch        `json:"job_branch,omitempty"`
 	Prototype        *store.Prototype        `json:"prototype,omitempty"`
 	Push             *store.Push             `json:"push,omitempty"`
+	// BlockedReport is the leader's blocked report a blocked.report filed or
+	// a blocked.resolve resolved.
+	BlockedReport *store.BlockedReport `json:"blocked_report,omitempty"`
 	// PullRequest is the pull request the delivery owner's effect named,
 	// as the daemon recorded it.
 	PullRequest *store.PullRequest `json:"pull_request,omitempty"`
@@ -810,6 +824,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.handoffCommand(conn, req)
 	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch:
 		d.assignmentCommand(conn, req)
+	case CommandBlockedReport, CommandBlockedResolve:
+		d.blockedCommand(conn, req)
 	case CommandPush:
 		d.pushCommand(conn, req)
 	case CommandAuthorize, CommandGrants, CommandGrantRevoke, CommandGrantInvalidate:

@@ -206,6 +206,10 @@ _Avoid_: Turn, prompt (when meaning the user's attributable words)
 A leader's or worker's request for a choice that is not theirs to make. A worker's goes to its owning leader, never to the user, which answers it from the records or escalates it through Coordination; a leader's goes to the user through Coordination. Every request is versioned, and is pending, answered, replaced by a newer version, or withdrawn when its job is cancelled. An answer applies only to the version it answers, work that depends on the choice waits for it, and silence is never approval.
 _Avoid_: Question (a request holds questions), Escalation (when meaning the request itself rather than its being carried to the user)
 
+**Blocked report**:
+A leader's report to Coordination that it cannot go on with a job for a reason that is not the user's choice, such as a missing build cache, a broken tool or an infrastructure fault, with its reason, what it needs and the leader's own assignments that depend on it. Any leader but Coordination's files one. It is not a decision request: it has no version and no answer surface, it holds nothing, and it never waits on the user. Coordination settles it itself, hands the work to another role, or puts it to the user, and resolves it with a note of what changed, which goes back to the leader that filed it. A worker that cannot go on tells its owning leader instead.
+_Avoid_: Blocker, escalation (when nothing is put to the user)
+
 **Human step**:
 The part of a skill only the user can settle, such as the test seams of tdd and to-spec, the approval of to-tickets' breakdown, code-review's comparison point and spec, or wizard's stages. The user's own recorded decision of the job, or a grant of a decision whose scope covers the job, satisfies it. A worker never asks the user: it sends the step to its owning leader as a decision request, which answers from those records or carries the step to the user, whose answer is recorded for the rest of the job, and the worker's result names the records it relied on. A decision of another job, a delegated decision and a grant of a narrower scope never satisfy one.
 _Avoid_: Approval gate, checkpoint

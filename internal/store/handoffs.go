@@ -66,6 +66,7 @@ type Message struct {
 	Assignment  int64    `json:"assignment,omitempty"`
 	Report      int64    `json:"report,omitempty"`
 	Request     int64    `json:"request,omitempty"`
+	Blocked     int64    `json:"blocked_report,omitempty"`
 	Job         int64    `json:"job"`
 	Sender      string   `json:"sender"`
 	Recipient   string   `json:"recipient"`
@@ -85,6 +86,9 @@ type Message struct {
 	// RequestData is the decision request version a request or an answer
 	// message carries.
 	RequestData *DecisionRequest `json:"request_data,omitempty"`
+	// BlockedData is the leader's blocked report a blocked or a
+	// blocked.resolved message is about.
+	BlockedData *BlockedReport `json:"blocked_report_data,omitempty"`
 }
 
 type Dispatch struct {
@@ -211,11 +215,11 @@ func (s *Store) SendHandoff(h Handoff, at time.Time) (Handoff, Dispatch, error) 
 }
 
 // messageRef is what a message is about: a handoff, an assignment and the
-// report it carries, or a decision request version, which a worker's request
-// or answer names with its assignment. The ID of what a message is not about
-// is zero.
+// report it carries, a decision request version, which a worker's request
+// or answer names with its assignment, or a leader's blocked report. The ID
+// of what a message is not about is zero.
 type messageRef struct {
-	handoff, assignment, report, request int64
+	handoff, assignment, report, request, blocked int64
 }
 
 func createMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kind, body string, at time.Time) (Dispatch, error) {
@@ -225,7 +229,7 @@ func createMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kin
 // createResumingMessage is createMessage for a message whose dispatch resumes
 // the dispatch resumes, in the provider's session nativeSession.
 func createResumingMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipient, kind, body string, at time.Time, resumes int64, nativeSession string) (Dispatch, error) {
-	result, err := tx.Exec(`INSERT INTO messages(handoff,assignment,report,request,job,sender,recipient,kind,body) VALUES(NULLIF(?,0),NULLIF(?,0),NULLIF(?,0),NULLIF(?,0),?,?,?,?,?)`, ref.handoff, ref.assignment, ref.report, ref.request, job, sender, recipient, kind, body)
+	result, err := tx.Exec(`INSERT INTO messages(handoff,assignment,report,request,blocked,job,sender,recipient,kind,body) VALUES(NULLIF(?,0),NULLIF(?,0),NULLIF(?,0),NULLIF(?,0),NULLIF(?,0),?,?,?,?,?)`, ref.handoff, ref.assignment, ref.report, ref.request, ref.blocked, job, sender, recipient, kind, body)
 	if err != nil {
 		return Dispatch{}, err
 	}
@@ -242,7 +246,11 @@ func createResumingMessage(tx *sql.Tx, ref messageRef, job int64, sender, recipi
 		return Dispatch{}, err
 	}
 	d := Dispatch{ID: id, Message: message, Agent: recipient, State: DispatchCreated, Resumes: resumes, NativeSession: nativeSession}
-	if _, err = appendEntry(tx, at, KindMessageCreated, map[string]any{"message": message, "handoff": ref.handoff, "assignment": ref.assignment, "job": job, "sender": sender, "recipient": recipient, "kind": kind, "dispatch": id}); err != nil {
+	entry := map[string]any{"message": message, "handoff": ref.handoff, "assignment": ref.assignment, "job": job, "sender": sender, "recipient": recipient, "kind": kind, "dispatch": id}
+	if ref.blocked != 0 {
+		entry["blocked_report"] = ref.blocked
+	}
+	if _, err = appendEntry(tx, at, KindMessageCreated, entry); err != nil {
 		return Dispatch{}, err
 	}
 	if _, err = appendEntry(tx, at, KindDispatchChanged, d); err != nil {
@@ -366,7 +374,7 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id LEFT JOIN assignments a ON a.id=m.assignment WHERE m.recipient=? AND (?=0 OR d.id=?) AND NOT (d.state=? AND m.fetched_at IS NULL) AND (m.fetched_at IS NOT NULL OR d.id=? OR a.worker IS NULL OR a.worker<>?) ORDER BY m.id`, agent, only, only, DispatchStopped, current, agent)
+	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.blocked,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id LEFT JOIN assignments a ON a.id=m.assignment WHERE m.recipient=? AND (?=0 OR d.id=?) AND NOT (d.state=? AND m.fetched_at IS NULL) AND (m.fetched_at IS NOT NULL OR d.id=? OR a.worker IS NULL OR a.worker<>?) ORDER BY m.id`, agent, only, only, DispatchStopped, current, agent)
 	if err != nil {
 		return nil, err
 	}
@@ -374,11 +382,11 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 	for rows.Next() {
 		var m Message
 		var fetched sql.NullString
-		var handoff, assignment, report, request sql.NullInt64
-		if err = rows.Scan(&m.ID, &handoff, &assignment, &report, &request, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Transcript, &fetched, &m.Resumes); err != nil {
+		var handoff, assignment, report, request, blocked sql.NullInt64
+		if err = rows.Scan(&m.ID, &handoff, &assignment, &report, &request, &blocked, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Transcript, &fetched, &m.Resumes); err != nil {
 			break
 		}
-		m.Handoff, m.Assignment, m.Report, m.Request = handoff.Int64, assignment.Int64, report.Int64, request.Int64
+		m.Handoff, m.Assignment, m.Report, m.Request, m.Blocked = handoff.Int64, assignment.Int64, report.Int64, request.Int64, blocked.Int64
 		m.Fetched = fetched.Valid
 		messages = append(messages, m)
 	}
@@ -432,6 +440,13 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 				return nil, e
 			}
 			m.RequestData = &q
+		}
+		if m.Blocked != 0 {
+			b, e := blockedReport(tx, m.Blocked)
+			if e != nil {
+				return nil, e
+			}
+			m.BlockedData = &b
 		}
 		if m.Fetched {
 			if m.State != DispatchNudged {

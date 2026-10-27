@@ -167,7 +167,7 @@ func TestAFollowUpToAJobWithAnOpenPullRequestContinuesItsBranchAndPullRequestFro
 	if resp.Continues != nil {
 		continued = []store.PullRequest{*resp.Continues}
 	}
-	brief := brief(j, store.Repository{Origin: f.origin, Clone: f.clone, DefaultBranch: "trunk"}, nil, nil, &b, continued, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
+	brief := brief(j, store.Repository{Origin: f.origin, Clone: f.clone, DefaultBranch: "trunk"}, nil, nil, &b, continued, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
 	for _, want := range []string{"Follow-up to job 1", "continues job 1's job branch", "Continues job 1's pull request #7 https://github.com/talvor/asmai-fixture/pull/7, still open"} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("the brief lacks %q:\n%s", want, brief)

@@ -269,6 +269,16 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 	if got := len(journaled(t, "daemon.started")); got != 1 {
 		t.Fatalf("the daemon started %d times before the stop", got)
 	}
+	waitFor(t, "the stalled notice queued for Engineering", func() bool {
+		return slices.ContainsFunc(journaled(t, "message.created"), func(e journalEntry) bool {
+			m := decode[struct {
+				Kind       string `json:"kind"`
+				Dispatch   int64  `json:"dispatch"`
+				Assignment int64  `json:"assignment"`
+			}](t, e)
+			return m.Kind == store.MessageStalled && m.Dispatch == 5 && m.Assignment == 1
+		})
+	})
 
 	// ---- asmai stop stops every agent session and persists the state.
 	stopFactory(t)

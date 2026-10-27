@@ -30,6 +30,7 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 		fakeRun(`asmai decisions`, 1, "an agent cannot run asmai decisions"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/refused"`, 0, ""),
 		hookStep("Stop", "assignment", ""),
+		fakeRun(`touch "$ASMAI_TEST_DIR/worker-stopped"`, 0, ""),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/answer-guard-checked" ]; do sleep 0.02; done`, 0, ""),
 		`{"expect":"asmai inbox --dispatch 6\r"}`,
 		hookStep("UserPromptSubmit", "answer", "asmai inbox --dispatch 6"),
@@ -40,10 +41,17 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/refused" ]; do sleep 0.02; done; asmai brief 1`, 0, "(?s)Pending decisions:\n- request 1, version 1, from worker1@engineering to leader@engineering, answered in conversation: Which greeting\\?\n  the work of assignments \\[1\\] waits for the answer"),
 		// An answer applies only to the version it names.
 		fakeRun(`asmai decision answer --request 1 --version 2 --answer hello`, 1, "decision request 1 has no version 2"),
+		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-stopped" ]; do sleep 0.02; done`, 0, ""),
 		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "version 1 of decision request 1 answered; the answer goes to worker1@engineering, dispatch 6"),
 		fakeRun(`asmai redispatch --assignment 1 --reason 'try to overtake the answer' > "$ASMAI_TEST_DIR/answer-guard-refusal" 2>&1; command_exit=$?; cat "$ASMAI_TEST_DIR/answer-guard-refusal"; test "$command_exit" -eq 1`, 0, "queued decision.answer dispatch 6"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/answer-guard-checked"`, 0, ""),
 	}
+	assignmentLeaderAfterStop = turn(5, "stalled", fakeRun(`asmai inbox --dispatch 5`, 0, "stalled from daemon"))
+	assignmentWorkerStop = "answer"
+	t.Cleanup(func() {
+		assignmentLeaderAfterStop = nil
+		assignmentWorkerStop = "assignment"
+	})
 	_, testDir := assignmentFlow(t, worker, leader)
 	output, err := os.ReadFile(filepath.Join(testDir, "answer-guard-refusal"))
 	if err != nil {

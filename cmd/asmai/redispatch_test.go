@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/talvor/asmai/internal/fakeprovider"
 )
 
 // A worker whose turn ends with no result and no blocked report, because its
@@ -137,4 +139,95 @@ func TestAWorkerThatStopsWithoutAReportAfterPushingTellsItsOwnerWhatOriginHolds(
 
 func TestAWorkerThatStopsWhileOriginIsUnavailableGetsAnUnknownOriginStatus(t *testing.T) {
 	stalledWorkerFlow(t, false, true, "(?s)stalled from daemon.*Its workspace is at commit [0-9a-f]{40}; origin could not be read, so whether it holds the commit is not known:.*asmai redispatch --assignment 1 --reason")
+}
+
+func TestAWorkerCanReportFailedPushAfterAnotherAssignmentAdvancesTheJobTip(t *testing.T) {
+	gitIdentity(t)
+	testDir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	t.Setenv(fakeprovider.ScriptEnv+"_WORKER", filepath.Join(testDir, "worker.jsonl"))
+	t.Setenv(fakeprovider.ScriptEnv+"_ENGINEERING", filepath.Join(testDir, "engineering.jsonl"))
+
+	engineering := concat(agentSession,
+		turn(1, "handoff",
+			fakeRun(`asmai inbox --dispatch 1`, 0, "Add a greeting"),
+			fakeRun(`asmai handoff accept --handoff 1`, 0, "reply dispatch 2"),
+			fakeRun(`asmai assign --job 1 --outcome 'Write a draft' --criterion 'draft exists'`, 0, "assignment 1 of job 1 given to worker1@engineering; dispatch 3"),
+			awaitFile("first-worker-ready"),
+			fakeRun(`cp "$ASMAI_TEST_DIR/second-worker.jsonl" "$ASMAI_TEST_DIR/worker.jsonl"`, 0, ""),
+			fakeRun(`asmai assign --job 1 --outcome 'Add a greeting' --criterion 'greeting.txt says hello'`, 0, "assignment 2 of job 1 given to worker2@engineering; dispatch 4"),
+		),
+		turn(5, "result",
+			fakeRun(`asmai inbox --dispatch 5`, 0, "result 1 \\| assignment 2"),
+			fakeRun(`asmai accept --assignment 2 --reason 'greeting.txt says hello'`, 0, "fast-forwarded"),
+			touchFile("tip-advanced"),
+		),
+		turn(6, "blocked",
+			fakeRun(`asmai inbox --dispatch 6 | tee "$ASMAI_TEST_DIR/advanced-tip-blocked-notice"`, 0, "(?s)blocked from worker1@engineering.*assignment 1.*Reason: push failed.*Needs: restore origin access.*taken in: false"),
+			touchFile("leader-done"),
+		),
+		[]string{idleSession},
+	)
+	firstWorker := concat(agentSession,
+		turn(3, "assignment",
+			fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
+			fakeRun(`printf 'draft\n' > draft.txt && git add -A && git commit -q -m 'Draft'`, 0, ""),
+			fakeRun(`git push "$ASMAI_TEST_DIR/unavailable.git" asmai/job-1/1 > "$ASMAI_TEST_DIR/failed-push" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/failed-push"; test "$status" -ne 0`, 0, "does not appear to be a git repository"),
+			touchFile("first-worker-ready"),
+			awaitFile("tip-advanced"),
+			fakeRun(`asmai result --evidence draft --test none --check none --gap none --pr-section draft > "$ASMAI_TEST_DIR/advanced-tip-result-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/advanced-tip-result-refusal"; test "$status" -eq 1`, 0, "does not contain the job branch's tip"),
+			fakeRun(`asmai blocked --reason 'push failed' --needs 'restore origin access' | tee "$ASMAI_TEST_DIR/advanced-tip-blocked-receipt"`, 0, "blocked recorded for assignment 1"),
+		),
+		[]string{idleSession},
+	)
+	secondWorker := concat(agentSession,
+		turn(4, "assignment",
+			fakeRun(`asmai inbox --dispatch 4`, 0, "assignment 2"),
+			fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Greeting'`, 0, ""),
+			fakeRun(`git push -q origin asmai/job-1/2 && asmai effect push "origin/asmai/job-1/2@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+			fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt'`, 0, "result recorded for assignment 2"),
+		),
+		[]string{idleSession},
+	)
+	writeFiles(t, testDir, map[string][]string{
+		"engineering.jsonl":   engineering,
+		"worker.jsonl":        firstWorker,
+		"second-worker.jsonl": secondWorker,
+	})
+	coordination := []string{
+		hookStep("SessionStart", "", ""),
+		`{"screen":"> "}`,
+		`{"expect":"Please add a greeting\r"}`,
+		hookStep("UserPromptSubmit", "", "Please add a greeting"),
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Add a greeting' --criterion 'Greeting is printed'`, 0, "Opened job 1"),
+		fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'Add a greeting' --decisions none --evidence none --constraints none --permissions none --criterion 'Greeting is printed'`, 0, "dispatch 1"),
+		hookStep("Stop", "", ""),
+		`{"expect":"asmai inbox --dispatch 2\r"}`,
+		hookStep("UserPromptSubmit", "reply", "asmai inbox --dispatch 2"),
+		fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering"),
+		hookStep("Stop", "reply", ""),
+		idleSession,
+	}
+	readyFactory(t, coordination)
+	t.Cleanup(func() {
+		if t.Failed() {
+			log, _, _ := runAsmai(t, "log")
+			t.Logf("the daemon's log:\n%s", log)
+		}
+	})
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Fatal(stderr)
+	}
+	registerWritingFixture(t)
+	terminal := inTerminal(t, 100, 25)
+	waitFor(t, "Coordination prompt", terminal.shows(">"))
+	terminal.ptmx.WriteString("Please add a greeting\r")
+	waitFor(t, "the leader reading the blocked report", touched(testDir, "leader-done"))
+	for _, name := range []string{"failed-push", "advanced-tip-result-refusal", "advanced-tip-blocked-receipt", "advanced-tip-blocked-notice"} {
+		output, err := os.ReadFile(filepath.Join(testDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s:\n%s", name, output)
+	}
 }

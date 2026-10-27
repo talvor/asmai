@@ -352,7 +352,7 @@ func TestAGrantIsReusedThroughAssignmentsHandoffsAndARestartWhileItsConditionsHo
 		{"worker1@engineering", d.ID, func(m Message) []Grant { return m.AssignmentData.Grants }},
 		{"leader@quality", hd.ID, func(m Message) []Grant { return m.HandoffData.Grants }},
 	} {
-		inbox, err := s.Inbox(tt.agent, tt.dispatch, grantsAt)
+		inbox, err := s.Inbox(tt.agent, tt.dispatch, tt.dispatch, grantsAt)
 		if err != nil || len(inbox) != 1 {
 			t.Fatalf("%s's inbox = %+v, %v", tt.agent, inbox, err)
 		}
@@ -441,7 +441,7 @@ func TestRevokingAGrantStopsLaterActionsAndReportsEarlierOnesAsTheyStand(t *test
 	if len(ending.Affected) != 1 || ending.Affected[0].ID != live.ID || len(ending.Dispatches) != 1 || ending.Dispatches[0].Agent != owner {
 		t.Fatalf("affected = %+v, dispatches = %+v", ending.Affected, ending.Dispatches)
 	}
-	inbox, err := c.s.Inbox(owner, ending.Dispatches[0].ID, grantsAt)
+	inbox, err := c.s.Inbox(owner, ending.Dispatches[0].ID, ending.Dispatches[0].ID, grantsAt)
 	if err != nil || len(inbox) != 1 {
 		t.Fatalf("inbox = %+v, %v", inbox, err)
 	}

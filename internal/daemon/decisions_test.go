@@ -162,6 +162,55 @@ func (f twoResults) decide(command string, assignment int64, reasons ...string) 
 	return resp, err
 }
 
+func TestABlockedWorkerCanReportAfterAnotherAssignmentMovesTheJobTip(t *testing.T) {
+	f := newTwoResults(t)
+	id, err := f.s.NextAssignmentID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	number, slot, err := f.s.Allocate(roles.Engineering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := roles.WorkerOf(roles.Engineering, number)
+	dir := filepath.Join(f.d.cfg.Paths.Workspaces, "job-1", "assignment-3")
+	w := store.Workspace{Slot: slot, Path: filepath.Join(dir, "repo"), Tmp: filepath.Join(dir, "tmp"), Branch: "asmai/job-1/3", Base: f.started}
+	if err := repos.AddWorkspace(context.Background(), f.clone, w.Path, w.Branch, w.Base); err != nil {
+		t.Fatal(err)
+	}
+	a, dispatch, err := f.s.AssignmentCreated(store.NewAssignment{ID: id, Job: f.job.Number, Owner: "leader@engineering", Worker: worker.String(), Outcome: "outcome", Criteria: []string{"done"}, Workspace: w}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Path, "blocked.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, w.Path, "add", "blocked.txt")
+	git(t, w.Path, "commit", "-m", "unpublished work")
+	if err := f.s.ChangeDispatch(dispatch.ID, 1, store.DispatchCreated, store.DispatchWorking, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.d.leaders[worker.String()] = &leader{address: worker, session: &session.Session{}, generation: 1, currentDispatch: dispatch.ID, assignment: a.ID}
+	f.d.sessions["blocked-worker"] = sessionRef{address: worker, generation: 1}
+	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "file-1.txt is there"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := f.d.report(Request{Session: "blocked-worker", Command: CommandResult, Report: &store.ReportInput{Evidence: []string{"work"}, PRSection: "Work"}}); err == nil || !strings.Contains(err.Error(), "does not contain the job branch's tip") {
+		t.Fatalf("a result without the moved tip returned %v", err)
+	}
+	r, notice, err := f.d.report(Request{Session: "blocked-worker", Command: CommandBlocked, Report: &store.ReportInput{Reason: "push failed", Needs: "restore origin access"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Assignment != a.ID || r.Kind != store.ReportBlocked || r.TookInTip || r.JobTip != f.commits[0] || notice.Agent != a.Owner {
+		t.Errorf("the blocked report is %+v and its notice is %+v", r, notice)
+	}
+	if got, err := f.s.Assignment(a.ID); err != nil || got.State != store.AssignmentActive {
+		t.Errorf("the blocked assignment is %+v (%v), want active", got, err)
+	}
+}
+
 func TestAResultSubmittedAgainstAnOldTipGoesBackToItsWorkerWithoutBeingRejected(t *testing.T) {
 	f := newTwoResults(t)
 	view := filepath.Join(f.d.cfg.Paths.Views, "job-1")
@@ -285,7 +334,7 @@ func TestOnlyTheOwningLeaderDecidesOnAResult(t *testing.T) {
 	other := roles.WorkerOf(roles.Engineering, 1)
 	f.d.leaders[other.String()] = &leader{address: other, session: &session.Session{}, generation: 1}
 	f.d.sessions["worker"] = sessionRef{address: other, generation: 1}
-	for _, command := range []string{CommandAccept, CommandReject, CommandCancel} {
+	for _, command := range []string{CommandAccept, CommandReject, CommandCancel, CommandRedispatch} {
 		if _, _, err := f.d.decide(Request{Session: "worker", Command: command, Assignment: id, Reasons: []string{"x"}}); err == nil || !strings.Contains(err.Error(), "only leader@engineering") {
 			t.Errorf("%s by a worker returned %v", command, err)
 		}
@@ -316,5 +365,100 @@ func TestOnlyTheOwningLeaderDecidesOnAResult(t *testing.T) {
 	}
 	if _, err := f.decide(CommandAccept, id, "x"); err == nil || !strings.Contains(err.Error(), "active") {
 		t.Errorf("accepting an active assignment returned %v", err)
+	}
+}
+
+func TestOnlyTheOwningLeaderSendsAnActiveAssignmentToItsWorkerAgainAndItIsANewDispatch(t *testing.T) {
+	f := newTwoResults(t)
+	a := f.assignments[0]
+	quality := roles.LeaderOf(roles.Quality)
+	f.d.leaders[quality.String()] = &leader{address: quality, session: &session.Session{}, generation: 1}
+	f.d.sessions["quality"] = sessionRef{address: quality, generation: 1}
+
+	// A result that has been submitted is decided, not sent again.
+	if _, err := f.decide(CommandRedispatch, a.ID, "the push works now"); err == nil || !strings.Contains(err.Error(), "submitted") {
+		t.Fatalf("redispatching a submitted assignment returned %v", err)
+	}
+	rejected, err := f.decide(CommandReject, a.ID, "no test covers the empty case")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.store.Inbox(a.Worker, rejected.Dispatch.ID, rejected.Dispatch.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.d.store.ChangeDispatch(rejected.Dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.d.decide(Request{Session: "quality", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"x"}}); err == nil || !strings.Contains(err.Error(), "is owned by leader@engineering") {
+		t.Errorf("another leader redispatching returned %v, want it refused", err)
+	}
+	if _, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"the push works now"}}); err == nil || !strings.Contains(err.Error(), "wait for it to stop") {
+		t.Fatalf("redispatching working assignment returned %v", err)
+	}
+	if err := f.d.store.ChangeDispatch(rejected.Dispatch.ID, 1, store.DispatchWorking, store.DispatchStopped, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, notify, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"the push works now"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Assignment.State != store.AssignmentActive || resp.Decision != nil || resp.Dispatch == nil || resp.Dispatch.Agent != a.Worker || notify != a.Worker {
+		t.Fatalf("the redispatch answered %+v, %+v and %+v, notifying %q, want the active assignment and a dispatch for %s", resp.Assignment, resp.Decision, resp.Dispatch, notify, a.Worker)
+	}
+	w, err := f.d.store.WorkerDispatch(a.ID)
+	if err != nil || w.Kind != store.MessageRedispatch || w.Dispatch.ID != resp.Dispatch.ID {
+		t.Errorf("the worker's latest dispatch is %+v (%v), want the redispatch %d", w, err, resp.Dispatch.ID)
+	}
+	if _, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"still stuck"}}); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+		t.Fatalf("redispatching over queued work returned %v", err)
+	}
+
+	// An assignment held for reconciliation is active again when its owning
+	// leader, which has looked at it, sends it to its worker again.
+	if _, err := f.d.store.Inbox(a.Worker, resp.Dispatch.ID, resp.Dispatch.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.d.store.ChangeDispatch(resp.Dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.store.AssignmentNeedsReconciliation(a.ID, resp.Dispatch.ID, "its session cannot be resumed", "Reconcile it.", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	held, _, err := f.d.decide(Request{Session: "credential", Command: CommandRedispatch, Assignment: a.ID, Reasons: []string{"I looked: the branch is on origin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Assignment.State != store.AssignmentActive || held.Dispatch.ID == resp.Dispatch.ID {
+		t.Errorf("redispatching an assignment that needed reconciliation answered %+v and %+v, want it active in a new dispatch", held.Assignment, held.Dispatch)
+	}
+}
+
+func TestStalledOriginStatusReportsFailedChecksAsUnknown(t *testing.T) {
+	f := newTwoResults(t)
+	a := f.assignments[0]
+	missing := a
+	missing.Workspace.Branch = "asmai/job-1/absent"
+	if got := f.d.originHolds(context.Background(), missing); !strings.Contains(got, "origin has no branch") {
+		t.Fatalf("confirmed missing branch: %s", got)
+	}
+
+	foreign := a
+	foreign.Workspace.Path = t.TempDir()
+	git(t, foreign.Workspace.Path, "init")
+	git(t, foreign.Workspace.Path, "commit", "--allow-empty", "-m", "foreign")
+	if got := f.d.originHolds(context.Background(), foreign); !strings.Contains(got, "whether it holds the commit is not known") || strings.Contains(got, "the commit is not pushed") {
+		t.Fatalf("failed ancestry check: %s", got)
+	}
+
+	index := git(t, a.Workspace.Path, "rev-parse", "--git-path", "index")
+	if !filepath.IsAbs(index) {
+		index = filepath.Join(a.Workspace.Path, index)
+	}
+	if err := os.WriteFile(index, []byte("invalid index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.d.originHolds(context.Background(), a); !strings.Contains(got, "Whether its workspace has uncommitted changes is not known") || !strings.Contains(got, "the work is pushed") {
+		t.Fatalf("failed uncommitted-change check: %s", got)
 	}
 }

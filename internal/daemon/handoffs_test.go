@@ -150,7 +150,7 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 	if err := s.ObservedAutomated(store.Dispatch{ID: dispatchID, Agent: agent, Generation: 1}, roles.Engineering, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if messages, err := s.Inbox(agent, dispatchID, time.Now()); err != nil || len(messages) != 1 || !messages[0].Fetched {
+	if messages, err := s.Inbox(agent, dispatchID, dispatchID, time.Now()); err != nil || len(messages) != 1 || !messages[0].Fetched {
 		t.Fatalf("fetching the pending handoff returned %+v (%v)", messages, err)
 	}
 	old := l.session
@@ -177,7 +177,7 @@ func TestExitedRecipientRestartsForPendingDispatch(t *testing.T) {
 			if matched, err := d.automatedSubmitted(ref, prompt, "recovery-prompt", "transcript", json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`)); err != nil || !matched {
 				t.Fatalf("acknowledging the recovery nudge matched=%v, err=%v", matched, err)
 			}
-			messages, err := s.Inbox(agent, dispatchID, time.Now())
+			messages, err := s.Inbox(agent, dispatchID, dispatchID, time.Now())
 			if err != nil || len(messages) != 1 || messages[0].State != store.DispatchDelivered {
 				t.Fatalf("re-fetching the handoff returned %+v (%v), want delivered", messages, err)
 			}
@@ -226,7 +226,7 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 	if err := s.ObservedAutomated(incoming, roles.Engineering, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at); err != nil {
 		t.Fatal(err)
 	}
-	messages, err := s.Inbox("leader@engineering", inbound, at)
+	messages, err := s.Inbox("leader@engineering", inbound, inbound, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 	if err := s.ObservedAutomated(reply, roles.Coordination, json.RawMessage(`{"prompt":"asmai inbox --dispatch 2"}`), "transcript", at); err != nil {
 		t.Fatal(err)
 	}
-	messages, err = s.Inbox("leader@coordination", reply.ID, at)
+	messages, err = s.Inbox("leader@coordination", reply.ID, reply.ID, at)
 	if err != nil || len(messages) != 1 || messages[0].State != store.DispatchDelivered {
 		t.Fatalf("fetching the reply returned %+v (%v), want delivered", messages, err)
 	}
@@ -265,7 +265,7 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 	if messages[0].State != store.DispatchWorking {
 		t.Fatalf("the current reply moved to %s, want working", messages[0].State)
 	}
-	messages, err = s.Inbox("leader@coordination", reply.ID, at)
+	messages, err = s.Inbox("leader@coordination", reply.ID, reply.ID, at)
 	if err != nil || len(messages) != 1 || messages[0].State != store.DispatchWorking {
 		t.Fatalf("re-reading the reply returned %+v (%v), want the same working dispatch", messages, err)
 	}
@@ -275,7 +275,7 @@ func TestOnlyTheCurrentFetchedReplyStartsWorking(t *testing.T) {
 	if stopped, err := s.StopDispatchIfWorking(reply.ID, ref.generation, "transcript", at); err != nil || !stopped {
 		t.Fatalf("stopping the working reply returned stopped=%v, err=%v", stopped, err)
 	}
-	messages, err = s.Inbox("leader@coordination", reply.ID, at)
+	messages, err = s.Inbox("leader@coordination", reply.ID, reply.ID, at)
 	if err != nil || len(messages) != 1 || messages[0].State != store.DispatchStopped {
 		t.Fatalf("the correlated Stop left the reply %+v (%v), want stopped", messages, err)
 	}
@@ -318,7 +318,7 @@ func TestAnsweredNudgeDoesNotStarveLaterDispatch(t *testing.T) {
 		if matched, err := d.automatedSubmitted(ref, prompt, promptID, "transcript", json.RawMessage(`{"prompt":"`+prompt+`"}`)); err != nil || !matched {
 			t.Fatalf("acknowledging %q matched=%v, err=%v", prompt, matched, err)
 		}
-		if messages, err := s.Inbox(agent, dispatch, time.Now()); err != nil || len(messages) != 1 || !messages[0].Fetched {
+		if messages, err := s.Inbox(agent, dispatch, dispatch, time.Now()); err != nil || len(messages) != 1 || !messages[0].Fetched {
 			t.Fatalf("fetching dispatch %d returned %+v (%v)", dispatch, messages, err)
 		}
 		if err := d.stopCurrentDispatch(ref, promptID, "transcript"); err != nil {
@@ -464,7 +464,7 @@ func TestANudgeTypedAsTheStopHookRunsEndsAtTheFollowingTurnsStop(t *testing.T) {
 		if matched, err := d.automatedSubmitted(ref, prompt, submitted, "transcript", json.RawMessage(`{"prompt":"`+prompt+`"}`)); err != nil || !matched {
 			t.Fatalf("acknowledging %q matched=%v, err=%v", prompt, matched, err)
 		}
-		if messages, err := s.Inbox(agent, dispatch, time.Now()); err != nil || len(messages) != 1 {
+		if messages, err := s.Inbox(agent, dispatch, dispatch, time.Now()); err != nil || len(messages) != 1 {
 			t.Fatalf("fetching dispatch %d returned %+v (%v)", dispatch, messages, err)
 		}
 		if _, err := d.endCurrentDispatch(ref, stopped, "transcript"); err != nil {

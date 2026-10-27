@@ -524,7 +524,7 @@ func TestJobDetailReportsHandoffCompletionFromAcceptedHandoffs(t *testing.T) {
 	if got := read(); got.HandoffComplete {
 		t.Errorf("a pending handoff completed the stage: %+v", got)
 	}
-	if _, err := st.Inbox(h.Receiver, inbound.ID, at); err != nil {
+	if _, err := st.Inbox(h.Receiver, inbound.ID, inbound.ID, at); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := st.AnswerHandoff(h.ID, h.Receiver, inbound.ID, 0, store.HandoffAccepted, "Accepted", at); err != nil {

@@ -208,7 +208,7 @@ func TestAnEarlyReviewVerdictDoesNotClearAJobFinding(t *testing.T) {
 			t.Errorf("the early review journaled cleared findings %v", data.Cleared)
 		}
 	}
-	messages, err := s.Inbox("leader@coordination", 0, assignmentsAt)
+	messages, err := s.Inbox("leader@coordination", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || !strings.Contains(messages[0].Body, "0 earlier blocking finding(s) cleared") {
 		t.Errorf("the early review summary is %+v (%v)", messages, err)
 	}

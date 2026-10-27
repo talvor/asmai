@@ -85,8 +85,8 @@ type WorkerDispatch struct {
 	Report string
 }
 
-// WorkerDispatch returns assignment's worker's latest dispatch, or
-// sql.ErrNoRows.
+// WorkerDispatch returns assignment's worker's latest work or delivered
+// decision-answer dispatch, or sql.ErrNoRows.
 func (s *Store) WorkerDispatch(assignment int64) (WorkerDispatch, error) {
 	return workerDispatch(s.db, assignment)
 }
@@ -97,7 +97,7 @@ func workerDispatch(q querier, id int64) (WorkerDispatch, error) {
 	err := q.QueryRow(`SELECT d.id, d.message, d.agent, d.generation, d.state, d.transcript, d.resumes, d.native_session, m.kind, m.fetched_at IS NOT NULL,
 			COALESCE((SELECT r.kind FROM reports r WHERE r.dispatch = d.id ORDER BY r.id LIMIT 1), '')
 		FROM messages m JOIN dispatches d ON d.message = m.id JOIN assignments a ON a.id = m.assignment
-		WHERE m.assignment = ? AND m.recipient = a.worker ORDER BY m.id DESC LIMIT 1`, id).
+		WHERE m.assignment = ? AND m.recipient = a.worker AND (m.kind != ? OR m.fetched_at IS NOT NULL) ORDER BY m.id DESC LIMIT 1`, id, MessageDecisionAnswer).
 		Scan(&w.Dispatch.ID, &w.Dispatch.Message, &w.Dispatch.Agent, &w.Dispatch.Generation, &w.Dispatch.State, &w.Dispatch.Transcript,
 			&resumes, &w.Dispatch.NativeSession, &w.Kind, &w.Fetched, &w.Report)
 	if err != nil {

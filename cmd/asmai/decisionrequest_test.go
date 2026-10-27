@@ -30,18 +30,38 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 		fakeRun(`asmai decisions`, 1, "an agent cannot run asmai decisions"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/refused"`, 0, ""),
 		hookStep("Stop", "assignment", ""),
-		`{"expect":"asmai inbox --dispatch 5\r"}`,
-		hookStep("UserPromptSubmit", "answer", "asmai inbox --dispatch 5"),
-		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)Answer to version 1 of decision request 1, from leader@engineering:\nhello"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/worker-stopped"`, 0, ""),
+		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/answer-guard-checked" ]; do sleep 0.02; done`, 0, ""),
+		`{"expect":"asmai inbox --dispatch 6\r"}`,
+		hookStep("UserPromptSubmit", "answer", "asmai inbox --dispatch 6"),
+		fakeRun(`asmai inbox --dispatch 6`, 0, "(?s)Answer to version 1 of decision request 1, from leader@engineering:\nhello"),
 	}
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)Decision request 1, version 1 \\| job 1 \\| from worker1@engineering to leader@engineering.*Question q1: Which greeting\\?.*recommended: hello"),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/refused" ]; do sleep 0.02; done; asmai brief 1`, 0, "(?s)Pending decisions:\n- request 1, version 1, from worker1@engineering to leader@engineering, answered in conversation: Which greeting\\?\n  the work of assignments \\[1\\] waits for the answer"),
 		// An answer applies only to the version it names.
 		fakeRun(`asmai decision answer --request 1 --version 2 --answer hello`, 1, "decision request 1 has no version 2"),
-		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "version 1 of decision request 1 answered; the answer goes to worker1@engineering, dispatch 5"),
+		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-stopped" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`until asmai inbox --dispatch 5 > "$ASMAI_TEST_DIR/stalled-notice" 2>/dev/null; do sleep 0.02; done; cat "$ASMAI_TEST_DIR/stalled-notice"`, 0, "stalled from daemon"),
+		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "version 1 of decision request 1 answered; the answer goes to worker1@engineering, dispatch 6"),
+		fakeRun(`asmai redispatch --assignment 1 --reason 'try to overtake the answer' > "$ASMAI_TEST_DIR/answer-guard-refusal" 2>&1; command_exit=$?; cat "$ASMAI_TEST_DIR/answer-guard-refusal"; test "$command_exit" -eq 1`, 0, "queued decision.answer dispatch 6"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/answer-guard-checked"`, 0, ""),
 	}
-	assignmentFlow(t, worker, leader)
+	assignmentWorkerStop = "answer"
+	t.Cleanup(func() {
+		assignmentWorkerStop = "assignment"
+	})
+	_, testDir := assignmentFlow(t, worker, leader)
+	output, err := os.ReadFile(filepath.Join(testDir, "answer-guard-refusal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("decision answer guard:\n%s", output)
+	if states := answerDispatchStates(t, 6); !strings.HasPrefix(states, "created,unknown,nudged,delivered,working") {
+		t.Errorf("the guarded answer's dispatch states are %s", states)
+	} else {
+		t.Logf("decision answer dispatch 6: %s", states)
+	}
 
 	// The user is not asked what a worker asked its leader, and listing
 	// answers nothing.

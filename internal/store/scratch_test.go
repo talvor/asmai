@@ -158,7 +158,7 @@ func TestAScratchResultLinksItsEvidenceAndNamesNoCommitNoPushAndNoPRSection(t *t
 	if latest, err := s.LatestResult(a.ID); err != nil || latest.Commit != "" || len(latest.Artifacts) != 1 {
 		t.Errorf("the latest result is %+v (%v)", latest, err)
 	}
-	messages, err := s.Inbox(researcher, 0, assignmentsAt)
+	messages, err := s.Inbox(researcher, 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != ReportResult || messages[0].AssignmentData == nil || !messages[0].AssignmentData.Scratch {
 		t.Fatalf("the leader's inbox holds %+v (%v)", messages, err)
 	}
@@ -223,7 +223,7 @@ func TestTheOwningLeadersAcceptanceOfTheOutcomeEndsAJobWithoutARepositoryAndTell
 	if got, _ := s.Job(j.Number); got.State != JobEnded {
 		t.Errorf("the job is %s, want ended", got.State)
 	}
-	messages, err := s.Inbox("leader@coordination", 0, assignmentsAt)
+	messages, err := s.Inbox("leader@coordination", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageDelivery || messages[0].Sender != Daemon || messages[0].Job != j.Number || messages[0].Body != "Job 1 ended: the results are in /ws/job-1" {
 		t.Errorf("Coordination's inbox holds %+v (%v), want the message that says where the results are", messages, err)
 	}

@@ -138,7 +138,7 @@ func TestAChoiceIsPresentedOnceAndAnsweredByTheUsersOwnMessageWithCoordinationsR
 	if dispatch == nil || dispatch.Agent != owner {
 		t.Fatalf("dispatch = %+v", dispatch)
 	}
-	inbox, err := c.s.Inbox(owner, dispatch.ID, assignmentsAt)
+	inbox, err := c.s.Inbox(owner, dispatch.ID, dispatch.ID, assignmentsAt)
 	if err != nil || len(inbox) != 1 {
 		t.Fatalf("owning leader's inbox = %+v (%v)", inbox, err)
 	}

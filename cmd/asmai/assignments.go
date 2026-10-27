@@ -284,17 +284,17 @@ func report(o *output, paths statedir.Paths, command string, input store.ReportI
 		return 0
 	}
 	fmt.Fprintf(o.stdout, "%s recorded for assignment %d at commit %s; sent to %s as dispatch %d\n", r.Kind, r.Assignment, r.Commit, resp.Dispatch.Agent, resp.Dispatch.ID)
-	if !r.TookInTip {
+	if r.Kind == store.ReportResult && !r.TookInTip {
 		fmt.Fprintf(o.stdout, "note: this commit does not have the job branch's tip %s in its history; take the tip in and submit again\n", r.JobTip)
 	}
-	if !slices.ContainsFunc(r.Effects, func(e store.Effect) bool { return e.Kind == "push" }) {
+	if r.Kind == store.ReportResult && !slices.ContainsFunc(r.Effects, func(e store.Effect) bool { return e.Kind == "push" }) {
 		fmt.Fprintln(o.stdout, "note: no push was recorded in this dispatch; push your assignment branch and record it with `asmai effect push <ref>`")
 	}
 	return 0
 }
 
 // decide makes the owning leader's decision on an assignment: to accept or
-// reject its result, or to cancel it.
+// reject its result, to cancel it, or to send it to its worker again.
 func decide(o *output, paths statedir.Paths, command string, assignment int64, reasons []string, endsJob, prototype bool) int {
 	if assignment <= 0 {
 		return o.fail(fmt.Errorf("%s needs --assignment", command))
@@ -355,6 +355,9 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 	case daemon.CommandReject:
 		fmt.Fprintf(o.stdout, "assignment %d: result rejected by %s; it is active again with %s, in dispatch %d\n", a.ID, d.Leader, a.Worker, resp.Dispatch.ID)
 		fmt.Fprintf(o.stdout, "next: %s is nudged, and its next result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
+	case daemon.CommandRedispatch:
+		fmt.Fprintf(o.stdout, "assignment %d: sent to %s again by %s; it is active, in dispatch %d, a new dispatch that never reuses an earlier one\n", a.ID, a.Worker, a.Owner, resp.Dispatch.ID)
+		fmt.Fprintf(o.stdout, "next: %s is started if it is not running and nudged, and its next result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
 	default:
 		if a.Scratch {
 			fmt.Fprintf(o.stdout, "assignment %d: cancellation requested by %s; %s is told to stop, in dispatch %d\n", a.ID, d.Leader, a.Worker, resp.Dispatch.ID)

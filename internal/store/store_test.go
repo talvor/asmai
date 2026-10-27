@@ -538,7 +538,7 @@ func TestDirectInboxDeliveryRecordsTheActiveSessionAndPreservesItsFirstAttempt(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Inbox(start.Agent, dispatch.ID, at.Add(time.Minute)); err != nil {
+	if _, err := s.Inbox(start.Agent, dispatch.ID, dispatch.ID, at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	delivered, err := s.NextDispatch(start.Agent)
@@ -578,7 +578,7 @@ func TestDirectInboxDeliveryRecordsTheActiveSessionAndPreservesItsFirstAttempt(t
 	if _, err := s.SessionStarted(start); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Inbox(start.Agent, dispatch.ID, at.Add(3*time.Minute)); err != nil {
+	if _, err := s.Inbox(start.Agent, dispatch.ID, dispatch.ID, at.Add(3*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	delivered, err = s.NextDispatch(start.Agent)
@@ -661,7 +661,7 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if err := s.ObservedAutomated(inbound, engineering.Role, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Inbox(engineering.Agent, inbound.ID, at); err != nil {
+	if _, err := s.Inbox(engineering.Agent, inbound.ID, inbound.ID, at); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := s.PendingLeaders()
@@ -690,7 +690,7 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if err := s.ObservedAutomated(resumed, engineering.Role, json.RawMessage(`{"prompt":"asmai inbox --dispatch 1"}`), "transcript", at.Add(3*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if messages, err := s.Inbox(engineering.Agent, inbound.ID, at.Add(4*time.Minute)); err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
+	if messages, err := s.Inbox(engineering.Agent, inbound.ID, inbound.ID, at.Add(4*time.Minute)); err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
 		t.Fatalf("re-fetch after the acknowledged recovery nudge returned %+v (%v)", messages, err)
 	}
 	if _, _, err := s.AnswerHandoff(h.ID, engineering.Agent, inbound.ID+1, 2, HandoffAccepted, "accepted", at); err == nil {
@@ -719,14 +719,14 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if err := s.ObservedAutomated(reply, coordination.Role, payload, "transcript", at.Add(3*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	messages, err := s.Inbox(coordination.Agent, reply.ID, at.Add(4*time.Minute))
+	messages, err := s.Inbox(coordination.Agent, reply.ID, reply.ID, at.Add(4*time.Minute))
 	if err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
 		t.Fatalf("fetching the reply returned %+v (%v), want one delivered message", messages, err)
 	}
 	if err := s.WorkFetchedDispatch(reply.ID, coordination.Agent, 1, at.Add(5*time.Minute)); err == nil {
 		t.Fatal("a different session generation advanced the reply to working")
 	}
-	messages, err = s.Inbox(coordination.Agent, reply.ID, at.Add(6*time.Minute))
+	messages, err = s.Inbox(coordination.Agent, reply.ID, reply.ID, at.Add(6*time.Minute))
 	if err != nil || len(messages) != 1 || messages[0].State != DispatchDelivered {
 		t.Fatalf("after the uncorrelated transition, the reply is %+v (%v), want delivered", messages, err)
 	}
@@ -736,7 +736,7 @@ func TestACorrelatedReplyFetchMovesThroughWorkingToStopped(t *testing.T) {
 	if stopped, err := s.StopDispatchIfWorking(reply.ID, 2, "transcript", at.Add(8*time.Minute)); err != nil || !stopped {
 		t.Fatalf("stopping the working reply returned stopped=%v, err=%v", stopped, err)
 	}
-	messages, err = s.Inbox(coordination.Agent, reply.ID, at.Add(9*time.Minute))
+	messages, err = s.Inbox(coordination.Agent, reply.ID, reply.ID, at.Add(9*time.Minute))
 	if err != nil || len(messages) != 1 || messages[0].State != DispatchStopped {
 		t.Fatalf("the correlated Stop left reply %+v (%v), want stopped", messages, err)
 	}

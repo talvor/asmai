@@ -25,8 +25,8 @@ import (
 // take: a fetch from origin is the most of it.
 const gitTimeout = 5 * time.Minute
 
-// assignmentCommand serves assign, effect, result, blocked, accept, reject and
-// cancel.
+// assignmentCommand serves assign, effect, result, blocked, accept, reject,
+// cancel and redispatch.
 func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 	var resp Response
 	var err error
@@ -52,7 +52,7 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 		if err == nil {
 			resp.Effect, resp.PullRequest = &e, pr
 		}
-	case CommandAccept, CommandReject, CommandCancel:
+	case CommandAccept, CommandReject, CommandCancel, CommandRedispatch:
 		conn.SetDeadline(time.Now().Add(gitTimeout + stopWait + time.Minute))
 		resp, notify, err = d.decide(req)
 	case CommandResult, CommandBlocked:
@@ -646,7 +646,7 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 		}
 		input.Artifacts = append([]string{fmt.Sprintf("validated commit %s of job branch %s, in a read-only workspace", commit, branch.Name)}, input.Artifacts...)
 	case !a.Scratch:
-		if tookIn, err = d.checkWritingReport(ctx, a, branch, commit); err != nil {
+		if tookIn, err = d.checkWritingReport(ctx, a, branch, commit, kind); err != nil {
 			return store.Report{}, store.Dispatch{}, err
 		}
 		input.Artifacts = append([]string{fmt.Sprintf("branch %s at %s", a.Workspace.Branch, commit)}, input.Artifacts...)
@@ -676,10 +676,11 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 }
 
 // checkWritingReport checks that a writing assignment's workspace is at a
-// commit that can be reported: everything is committed, the job branch's tip
-// is taken in, and origin's assignment branch holds the commit. It returns
-// whether the commit has the tip in its history.
-func (d *daemon) checkWritingReport(ctx context.Context, a store.Assignment, branch store.JobBranch, commit string) (bool, error) {
+// commit that can be reported: everything is committed, and a result takes in
+// the job branch's tip and has its commit on origin's assignment branch. It
+// returns whether the commit has the tip in its history. A blocked report
+// needs no push: the worker may be blocked because its push failed.
+func (d *daemon) checkWritingReport(ctx context.Context, a store.Assignment, branch store.JobBranch, commit, kind string) (bool, error) {
 	uncommitted, err := repos.Uncommitted(ctx, a.Workspace.Path)
 	if err != nil {
 		return false, err
@@ -691,8 +692,11 @@ func (d *daemon) checkWritingReport(ctx context.Context, a store.Assignment, bra
 	if err != nil {
 		return false, err
 	}
-	if !tookIn {
+	if kind == store.ReportResult && !tookIn {
 		return false, refuse("the assignment branch does not contain the job branch's tip %s; take it in and submit again", branch.Tip)
+	}
+	if kind == store.ReportBlocked {
+		return tookIn, nil
 	}
 	job, err := d.store.Job(a.Job)
 	if err != nil {

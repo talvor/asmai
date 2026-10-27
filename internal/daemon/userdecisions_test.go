@@ -80,7 +80,7 @@ func TestANeedsYouFindingIsGivenToTheUserWordForWordAndTheirAnswerIsRecordedCiti
 	if r.Recipient != store.ToUser || r.Surface != store.SurfaceConversation || dispatch == nil || dispatch.Agent != "leader@coordination" {
 		t.Fatalf("request = %+v, dispatch %+v", r, dispatch)
 	}
-	inbox, err := v.s.Inbox("leader@coordination", dispatch.ID, time.Now())
+	inbox, err := v.s.Inbox("leader@coordination", dispatch.ID, dispatch.ID, time.Now())
 	if err != nil || len(inbox) != 1 || inbox[0].RequestData == nil || !strings.Contains(inbox[0].RequestData.Text(), userIntentFinding) {
 		t.Fatalf("Coordination's inbox = %+v (%v), want the finding word for word", inbox, err)
 	}

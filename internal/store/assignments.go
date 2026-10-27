@@ -58,6 +58,12 @@ const (
 	MessageValidation     = "validation"
 	MessageResumption     = "resumption"
 	MessageReconciliation = "reconciliation"
+	// MessageRedispatch sends an active assignment, or one that needs
+	// reconciliation, to its worker again at its owning leader's command, and
+	// MessageStalled tells the owning leader that its worker's turn ended
+	// with no result and no blocked report.
+	MessageRedispatch = "redispatch"
+	MessageStalled    = "stalled"
 	// MessageRestoration tells a restored leader which job to load the brief
 	// of. It is about a job, not an assignment or a handoff.
 	MessageRestoration = "restoration"
@@ -904,7 +910,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err := tx.QueryRow(`SELECT kind FROM messages m JOIN dispatches d ON d.message = m.id WHERE d.id = ?`, sub.Dispatch).Scan(&given); err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if given != MessageAssignment && given != MessageRejection && given != MessageMovedTip && given != MessageResumption && given != MessageDecisionAnswer {
+	if given != MessageAssignment && given != MessageRejection && given != MessageMovedTip && given != MessageResumption && given != MessageRedispatch && given != MessageDecisionAnswer {
 		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d does not give %s an assignment to report on", sub.Dispatch, sub.Agent)
 	}
 	if a.State != AssignmentActive {
@@ -934,7 +940,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if a.ReadOnly && sub.Commit != a.Commit {
 		return Report{}, Dispatch{}, fmt.Errorf("the workspace is at %s, but assignment %d is fixed at %s: validation never changes the work", sub.Commit, a.ID, a.Commit)
 	}
-	if !a.ReadOnly && !a.Scratch && !sub.TookInTip {
+	if sub.Kind == ReportResult && !a.ReadOnly && !a.Scratch && !sub.TookInTip {
 		return Report{}, Dispatch{}, errors.New("a report's commit contains the job branch's tip")
 	}
 	// The skills a worker ran are those its session was given, as the
@@ -978,8 +984,10 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	if err != nil {
 		return Report{}, Dispatch{}, err
 	}
-	if !a.ReadOnly && !a.Scratch && !slices.ContainsFunc(effects, func(e Effect) bool { return e.Kind == "push" }) {
-		return Report{}, Dispatch{}, errors.New("a result or blocked report records its assignment branch push")
+	// A blocked report needs no push: a worker whose push failed has to be
+	// able to say so.
+	if sub.Kind == ReportResult && !a.ReadOnly && !a.Scratch && !slices.ContainsFunc(effects, func(e Effect) bool { return e.Kind == "push" }) {
+		return Report{}, Dispatch{}, errors.New("a result records its assignment branch push")
 	}
 	// A list that is empty is still given, so that a record never says null.
 	in.Artifacts, in.Evidence, in.Tests, in.Gaps = nonNil(in.Artifacts), nonNil(in.Evidence), nonNil(in.Tests), nonNil(in.Gaps)

@@ -184,7 +184,7 @@ func TestAStepTheUsersDecisionOfTheJobCoversIsSatisfiedWithoutAskingTheUser(t *t
 		t.Errorf("the answer relied on %q, want it to name the record", answered.ReliedOn)
 	}
 	// The worker is told the record to name in its result.
-	inbox, err := st.s.Inbox(st.assignment.Worker, 0, st.tick())
+	inbox, err := st.s.Inbox(st.assignment.Worker, 0, dispatch.ID, st.tick())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestAWorkersResultNamesTheRecordsItsStepsRelied(t *testing.T) {
 	if len(r.RecordsRelied) != 1 || r.RecordsRelied[0] != seams.ID || len(r.GrantsRelied) != 1 || r.GrantsRelied[0] != grant.ID {
 		t.Errorf("the result is %+v, want it to name the record and the grant it relied on", r)
 	}
-	messages, err := st.s.Inbox(owner, 0, assignmentsAt)
+	messages, err := st.s.Inbox(owner, 0, 0, assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
 	}

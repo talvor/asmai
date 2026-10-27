@@ -130,7 +130,7 @@ func answer(r store.DecisionRequest, question, choice, notes string) map[string]
 
 func (f lavishFactory) inbox(t *testing.T, agent string) []store.Message {
 	t.Helper()
-	messages, err := f.s.Inbox(agent, 0, time.Now())
+	messages, err := f.s.Inbox(agent, 0, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -119,7 +119,7 @@ func TestRejectingAResultReturnsTheAssignmentToTheSameWorkerInANewDispatch(t *te
 	if live, err := s.LiveAssignmentOf("worker1@engineering"); err != nil || live.ID != a.ID {
 		t.Errorf("the worker carries %+v (%v), want assignment %d", live, err, a.ID)
 	}
-	messages, err := s.Inbox("worker1@engineering", dispatch.ID, assignmentsAt)
+	messages, err := s.Inbox("worker1@engineering", dispatch.ID, dispatch.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageRejection || messages[0].Body != "the check does not cover an empty file" || messages[0].ReportData == nil || messages[0].AssignmentData == nil {
 		t.Fatalf("the worker's inbox holds %+v (%v)", messages, err)
 	}

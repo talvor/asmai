@@ -162,7 +162,7 @@ func (c cancellableJob) startedForCancellation(t *testing.T, a store.Assignment,
 	if w.Kind != store.MessageCancellation || w.Dispatch.NativeSession != "" {
 		t.Errorf("%s was started for %s dispatch %d resuming %q, want its cancellation in a new session", a.Worker, w.Kind, w.Dispatch.ID, w.Dispatch.NativeSession)
 	}
-	inbox, err := c.s.Inbox(a.Worker, 0, time.Now())
+	inbox, err := c.s.Inbox(a.Worker, 0, w.Dispatch.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func (c cancellableJob) toldEndedWithoutPush(t *testing.T, gone, pushing store.A
 		"leader@coordination": fmt.Sprintf("Assignments [%d] are cancelling: their workers push", pushing.ID),
 		"leader@engineering":  fmt.Sprintf("told the workers of assignments [%d] to push", pushing.ID),
 	} {
-		inbox, err := c.s.Inbox(leader, 0, time.Now())
+		inbox, err := c.s.Inbox(leader, 0, 0, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -323,7 +323,11 @@ func TestCoordinationCancelsAJobAtTheUsersWordAndEveryBranchStaysOnOrigin(t *tes
 
 	// Each worker is told to push its branch and stop, with the reason.
 	for _, a := range c.assignments {
-		inbox, err := c.s.Inbox(a.Worker, 0, time.Now())
+		w, err := c.s.WorkerDispatch(a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inbox, err := c.s.Inbox(a.Worker, 0, w.Dispatch.ID, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,7 +337,7 @@ func TestCoordinationCancelsAJobAtTheUsersWordAndEveryBranchStaysOnOrigin(t *tes
 		}
 	}
 	// Engineering's leader is told its job was cancelled.
-	inbox, err := c.s.Inbox("leader@engineering", 0, time.Now())
+	inbox, err := c.s.Inbox("leader@engineering", 0, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +397,11 @@ func TestAnAssignmentNeedingReconciliationIsCancelledWithItsJob(t *testing.T) {
 	if a, err := c.s.Assignment(held.ID); err != nil || a.State != store.AssignmentCancelling {
 		t.Errorf("assignment %d is %s (%v), want it cancelling", held.ID, a.State, err)
 	}
-	inbox, err := c.s.Inbox(held.Worker, 0, time.Now())
+	w, err := c.s.WorkerDispatch(held.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox, err := c.s.Inbox(held.Worker, 0, w.Dispatch.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +410,7 @@ func TestAnAssignmentNeedingReconciliationIsCancelledWithItsJob(t *testing.T) {
 	}
 	// The held worker is started again, in a new session, for it.
 	c.startedForCancellation(t, held, out)
-	told, err := c.s.Inbox("leader@coordination", 0, time.Now())
+	told, err := c.s.Inbox("leader@coordination", 0, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +465,7 @@ func TestARestartDuringAJobCancelStartsTheWorkersAgainForTheirCancellationAndHol
 		if err := c.s.ChangeDispatch(dispatch, 1, store.DispatchCreated, store.DispatchNudged, "", at); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.s.Inbox(a.Worker, dispatch, at); err != nil {
+		if _, err := c.s.Inbox(a.Worker, dispatch, dispatch, at); err != nil {
 			t.Fatal(err)
 		}
 		if err := c.s.WorkFetchedDispatch(dispatch, a.Worker, 1, at); err != nil {
@@ -530,7 +538,7 @@ func (c cancellableJob) stopsInCancellation(t *testing.T, resp Response, a store
 	if err := c.s.ChangeDispatch(dispatch, generation, store.DispatchCreated, store.DispatchNudged, "", at); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.s.Inbox(a.Worker, dispatch, at); err != nil {
+	if _, err := c.s.Inbox(a.Worker, dispatch, dispatch, at); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.s.WorkFetchedDispatch(dispatch, a.Worker, generation, at); err != nil {
@@ -703,7 +711,7 @@ func TestAJobWithNoPullRequestCancelsCleanly(t *testing.T) {
 	if got := resp.Cancellation; got.Closed != nil || got.Job.State != store.JobCancelled || len(got.Cancelling) != 2 {
 		t.Errorf("the cancellation is %+v, want the job cancelled with nothing closed", got)
 	}
-	inbox, err := c.s.Inbox("leader@coordination", 0, time.Now())
+	inbox, err := c.s.Inbox("leader@coordination", 0, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -845,7 +853,7 @@ func TestARerunAfterTheStoreFailedRecordsThePullRequestTheDaemonClosed(t *testin
 	if got.Job.State != store.JobCancelled || got.Closed == nil || got.Closed.Agent != store.Daemon || got.Closed.Kind != store.EffectPullRequestClosed || got.Closed.Ref != "https://github.com/talvor/asmai-fixture/pull/7" {
 		t.Errorf("the re-run's cancellation is %+v, want the daemon's closing of #7 recorded", got)
 	}
-	inbox, err := c.s.Inbox("leader@coordination", 0, time.Now())
+	inbox, err := c.s.Inbox("leader@coordination", 0, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

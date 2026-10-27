@@ -110,6 +110,9 @@ const (
 	CommandAccept = "accept"
 	CommandReject = "reject"
 	CommandCancel = "cancel"
+	// CommandRedispatch is the owning leader sending an active assignment, or
+	// one that needs reconciliation, to its worker again in a new dispatch.
+	CommandRedispatch = "redispatch"
 	// CommandPush is the delivery owner asking the daemon to push a job's
 	// branch to origin, which it refuses over commits AsmAI did not make.
 	CommandPush = "push"
@@ -805,7 +808,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch:
 		d.assignmentCommand(conn, req)
 	case CommandPush:
 		d.pushCommand(conn, req)

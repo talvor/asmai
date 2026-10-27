@@ -259,11 +259,11 @@ func TestARecordIsPassedInAnAssignmentAndAHandoffAndSurvivesARestart(t *testing.
 	// and are still there after the store is closed and opened again.
 	check := func(s *Store) {
 		t.Helper()
-		worker, err := s.Inbox("worker1@engineering", dispatch.ID, assignmentsAt)
+		worker, err := s.Inbox("worker1@engineering", dispatch.ID, dispatch.ID, assignmentsAt)
 		if err != nil || len(worker) != 1 || worker[0].AssignmentData == nil || len(worker[0].AssignmentData.DecisionRecords) != 1 || !reflect.DeepEqual(worker[0].AssignmentData.DecisionRecords[0], record) {
 			t.Errorf("the worker's inbox holds %+v (%v)", worker, err)
 		}
-		leader, err := s.Inbox("leader@quality", 0, assignmentsAt)
+		leader, err := s.Inbox("leader@quality", 0, 0, assignmentsAt)
 		if err != nil || len(leader) != 1 || leader[0].HandoffData == nil || len(leader[0].HandoffData.DecisionRecords) != 1 || !reflect.DeepEqual(leader[0].HandoffData.DecisionRecords[0], record) {
 			t.Errorf("the receiving leader's inbox holds %+v (%v)", leader, err)
 		}

@@ -4,12 +4,15 @@ package repos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+var ErrNoOriginBranch = errors.New("origin has no branch")
 
 // Fetch brings AsmAI's clone up to date with its origin, so that the origin's
 // branches are read as they are now.
@@ -23,9 +26,12 @@ func Fetch(ctx context.Context, clone string) error {
 // OriginTip returns the commit AsmAI's clone has for branch of its origin, as
 // the last Fetch left it.
 func OriginTip(ctx context.Context, clone, branch string) (string, error) {
-	commit, err := Commit(ctx, clone, "refs/remotes/origin/"+branch)
+	commit, exit, err := gitStatus(ctx, clone, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch+"^{commit}")
 	if err != nil {
-		return "", fmt.Errorf("origin has no branch %s in %s: %w", branch, clone, err)
+		if exit == 1 {
+			return "", fmt.Errorf("%w %s in %s: %v", ErrNoOriginBranch, branch, clone, err)
+		}
+		return "", fmt.Errorf("reading origin's branch %s in %s: %w", branch, clone, err)
 	}
 	return commit, nil
 }

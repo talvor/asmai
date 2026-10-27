@@ -118,7 +118,7 @@ func TestAnAssignmentIsRecordedWithItsWorkspaceAndTheDispatchThatDeliversIt(t *t
 	}
 
 	// The worker's inbox gives the assignment itself.
-	messages, err := s.Inbox("worker1@engineering", 0, assignmentsAt)
+	messages, err := s.Inbox("worker1@engineering", 0, d.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageAssignment || messages[0].AssignmentData == nil || messages[0].AssignmentData.ID != a.ID || messages[0].Handoff != 0 {
 		t.Fatalf("the worker's inbox holds %+v (%v)", messages, err)
 	}
@@ -331,7 +331,7 @@ func TestAResultSubmitsTheAssignmentAndGoesToItsOwningLeader(t *testing.T) {
 	if leaderDispatch.Agent != "leader@engineering" || leaderDispatch.State != DispatchCreated {
 		t.Errorf("the result's dispatch is %+v, want a created one for the owning leader", leaderDispatch)
 	}
-	messages, err := s.Inbox("leader@engineering", 0, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != ReportResult || messages[0].ReportData == nil || messages[0].ReportData.PRSection != "Adds greeting.txt." || messages[0].AssignmentData.State != AssignmentSubmitted {
 		t.Fatalf("the leader's inbox holds %+v (%v)", messages, err)
 	}
@@ -356,22 +356,14 @@ func TestABlockedReportLeavesTheAssignmentActiveAndEndsItsDispatchOnce(t *testin
 	if _, _, err := s.ReportSubmitted(Submission{Agent: "worker1@engineering", Generation: 1, Dispatch: d.ID, Kind: ReportBlocked, Commit: otherCommit}, assignmentsAt); err == nil {
 		t.Error("a blocked report that says nothing was recorded")
 	}
-	if _, _, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt); err == nil || !strings.Contains(err.Error(), "push") {
-		t.Errorf("a blocked report without a recorded push returned %v", err)
-	}
 	withoutTip := submission(d, ReportBlocked)
 	withoutTip.TookInTip = false
-	if _, _, err := s.ReportSubmitted(withoutTip, assignmentsAt); err == nil || !strings.Contains(err.Error(), "tip") {
-		t.Errorf("a blocked report that has not taken in the job tip returned %v", err)
-	}
-	if _, err := s.EffectRecorded("worker1@engineering", 1, d.ID, "push", "origin/asmai/job-1/1", assignmentsAt); err != nil {
-		t.Fatal(err)
-	}
-	r, leaderDispatch, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt)
+	// It needs no recorded push: a worker whose push failed can still say so.
+	r, leaderDispatch, err := s.ReportSubmitted(withoutTip, assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Kind != ReportBlocked || r.Reason != "which format?" || r.Needs != "the user" || leaderDispatch.Agent != "leader@engineering" {
+	if r.Kind != ReportBlocked || r.Reason != "which format?" || r.Needs != "the user" || r.TookInTip || leaderDispatch.Agent != "leader@engineering" {
 		t.Errorf("the blocked report is %+v for %+v", r, leaderDispatch)
 	}
 	if got, _ := s.Assignment(a.ID); got.State != AssignmentActive {
@@ -408,7 +400,7 @@ func TestOpenMigratesAStoreWhoseMessagesAllHaveAHandoff(t *testing.T) {
 	db.Close()
 
 	s := open(t, path)
-	messages, err := s.Inbox("leader@engineering", 0, assignmentsAt)
+	messages, err := s.Inbox("leader@engineering", 0, 0, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Handoff != 1 || messages[0].Body != "outcome" || !messages[0].Fetched || messages[0].HandoffData == nil {
 		t.Fatalf("the migrated inbox holds %+v (%v)", messages, err)
 	}
@@ -421,8 +413,8 @@ func TestOpenMigratesAStoreWhoseMessagesAllHaveAHandoff(t *testing.T) {
 	if _, err := s.JobBranchMade(JobBranch{Job: 1, Repository: "fixture", Name: "asmai/job-1-x", StartedFrom: tipCommit, View: "/v"}, assignmentsAt); err != nil {
 		t.Fatal(err)
 	}
-	newAssignment(t, s, 1)
-	next, err := s.Inbox("worker1@engineering", 0, assignmentsAt)
+	_, nextDispatch := newAssignment(t, s, 1)
+	next, err := s.Inbox("worker1@engineering", 0, nextDispatch.ID, assignmentsAt)
 	if err != nil || len(next) != 1 || next[0].ID != 2 || next[0].Handoff != 0 || next[0].Assignment != 1 {
 		t.Errorf("the first message after the migration is %+v (%v), want message 2 about assignment 1", next, err)
 	}

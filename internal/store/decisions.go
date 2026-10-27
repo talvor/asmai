@@ -317,6 +317,121 @@ func cancelAssignment(tx *sql.Tx, a Assignment, leader string, reasons []string,
 	return d, dispatch, nil
 }
 
+// AssignmentRedispatched sends the assignment id, which leader owns and which
+// is active or needs reconciliation, to its worker again, with the owning
+// leader's reasons, in a new dispatch that is returned: the worker's earlier
+// dispatches are never reused. An assignment that needed reconciliation is
+// active again. It is journaled, but it is no decision on a result.
+func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string, at time.Time) (Dispatch, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer tx.Rollback()
+	a, err := decided(tx, id, leader, reasons)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if a.State != AssignmentActive && a.State != AssignmentNeedsReconciliation {
+		return Dispatch{}, fmt.Errorf("assignment %d is %s, so it is not sent to its worker again: only an active assignment, or one that needs reconciliation, is", a.ID, a.State)
+	}
+	w, err := workerDispatch(tx, a.ID)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	rows, err := tx.Query(`SELECT d.id, d.generation, d.state, m.kind, m.fetched_at IS NULL
+		FROM messages m JOIN dispatches d ON d.message = m.id
+		WHERE m.assignment = ? AND m.recipient = ?
+		AND m.kind IN (?, ?, ?, ?, ?, ?) AND d.state IN (?, ?, ?) ORDER BY d.id`,
+		a.ID, a.Worker, MessageAssignment, MessageRedispatch, MessageRejection, MessageMovedTip, MessageResumption, MessageDecisionAnswer,
+		DispatchCreated, DispatchNudged, DispatchUnknown)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	var unknown []Dispatch
+	for rows.Next() {
+		var d Dispatch
+		var kind string
+		var unfetched bool
+		if err := rows.Scan(&d.ID, &d.Generation, &d.State, &kind, &unfetched); err != nil {
+			rows.Close()
+			return Dispatch{}, err
+		}
+		if d.State == DispatchUnknown && a.State == AssignmentNeedsReconciliation && kind != MessageDecisionAnswer {
+			unknown = append(unknown, d)
+		} else if unfetched {
+			rows.Close()
+			return Dispatch{}, fmt.Errorf("assignment %d has queued %s dispatch %d for %s; wait for the worker to receive it or cancel the assignment", a.ID, kind, d.ID, a.Worker)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if a.State == AssignmentActive && w.Dispatch.State != DispatchStopped {
+		return Dispatch{}, fmt.Errorf("assignment %d's latest worker dispatch %d is %s; wait for it to stop before redispatching", a.ID, w.Dispatch.ID, w.Dispatch.State)
+	}
+	for _, d := range unknown {
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
+			return Dispatch{}, err
+		}
+		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
+			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": DispatchUnknown, "state": DispatchStopped, "assignment": a.ID,
+		}); err != nil {
+			return Dispatch{}, err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentActive, a.ID); err != nil {
+		return Dispatch{}, err
+	}
+	body := fmt.Sprintf("%[1]s sends assignment %[2]d of job %[3]d to you again, in a new dispatch; your earlier dispatch, %[4]d, is not reused.\nReasons from %[1]s:\n%[5]s\n\n"+
+		"Load `asmai brief %[3]d`, look at your workspace and at the effects you have recorded, and continue the assignment from where you stopped. Never repeat an effect you already made. If your assignment has a branch and a push of it failed, push it again and record the push. Submit a result with `asmai result`, or if you cannot go on, `asmai blocked --reason <why> --needs <what would unblock you>`, which needs no push.",
+		leader, a.ID, a.Job, w.Dispatch.ID, strings.Join(reasons, "\n"))
+	dispatch, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, leader, a.Worker, MessageRedispatch, body, at)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	if _, err := appendEntry(tx, at, KindAssignmentRedispatched, map[string]any{
+		"assignment": a.ID, "job": a.Job, "worker": a.Worker, "owner": a.Owner, "from": a.State,
+		"previous": w.Dispatch.ID, "dispatch": dispatch.ID, "reasons": reasons,
+	}); err != nil {
+		return Dispatch{}, err
+	}
+	return dispatch, tx.Commit()
+}
+
+// WorkerStalled tells the owning leader of the active assignment id, with a
+// message with body and a dispatch of its own, which is returned, that its
+// worker's turn for dispatch ended with no result and no blocked report. The
+// assignment is not changed.
+func (s *Store) WorkerStalled(id, dispatch int64, body string, at time.Time) (Dispatch, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Dispatch{}, err
+	}
+	defer tx.Rollback()
+	w, err := workerDispatch(tx, id)
+	if err != nil {
+		return Dispatch{}, fmt.Errorf("assignment %d: %w", id, err)
+	}
+	a := w.Assignment
+	if a.State != AssignmentActive {
+		return Dispatch{}, fmt.Errorf("assignment %d is %s, not active", a.ID, a.State)
+	}
+	if w.Dispatch.ID != dispatch {
+		return Dispatch{}, fmt.Errorf("dispatch %d is no longer the worker's latest dispatch for assignment %d", dispatch, a.ID)
+	}
+	if w.Report != "" {
+		return Dispatch{}, fmt.Errorf("dispatch %d ended in a report", dispatch)
+	}
+	told, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, Daemon, a.Owner, MessageStalled, body, at)
+	if err != nil {
+		return Dispatch{}, err
+	}
+	return told, tx.Commit()
+}
+
 // Cancellation is how a cancelled assignment's worker left its workspace
 // when it stopped.
 type Cancellation struct {

@@ -3,10 +3,12 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,8 +16,204 @@ import (
 	"time"
 
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/session"
 	"github.com/talvor/asmai/internal/store"
 )
+
+func TestWorkerSessionExitWithoutStopHoldsUnreportedWorkForItsOwner(t *testing.T) {
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, queuedAnswer := range []bool{false, true} {
+		name := "no queued answer"
+		if queuedAnswer {
+			name = "queued answer"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, ids := restartStore(t, []restartCase{{name: "working", leave: store.DispatchWorking}})
+			a, err := s.Assignment(ids["working"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation, err := s.SessionStarted(store.SessionStart{Agent: a.Worker, Role: roles.Engineering, Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: a.Workspace.Path, PID: 8, At: time.Now(), Assignment: a.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous, err := s.WorkerDispatch(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ChangeDispatch(previous.Dispatch.ID, previous.Dispatch.Generation, store.DispatchWorking, store.DispatchStopped, "", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			redispatch, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Inbox(a.Worker, redispatch.ID, redispatch.ID, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ChangeDispatch(redispatch.ID, generation, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if queuedAnswer {
+				request, _, err := s.DecisionRequested(store.DecisionRequestInput{
+					Job: a.Job, Requester: a.Worker, Recipient: a.Owner, Notify: a.Owner, Assignment: a.ID,
+					Kind: store.RequestChoice, Questions: []store.Question{{ID: "q1", Title: "Which way?", Options: []string{"a", "b"}}}, Blocks: []int64{a.ID},
+				}, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := s.DecisionAnswered(store.DecisionAnswer{Request: request.Request, Version: 1, Answerer: a.Owner, Text: "a"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			worker := roles.WorkerOf(roles.Engineering, 1)
+			proc, err := session.Start(session.Spec{Path: truePath, Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
+			if err != nil {
+				t.Fatal(err)
+			}
+			l := &leader{address: worker, session: proc, generation: generation, assignment: a.ID}
+			owner := roles.LeaderOf(roles.Engineering)
+			d := &daemon{store: s, work: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), leaders: map[string]*leader{
+				worker.String(): l, owner.String(): {address: owner, session: &session.Session{}},
+			}}
+			d.agents.Add(1)
+			d.watch(l, proc, generation, false)
+			if got, err := s.Assignment(a.ID); err != nil || got.State != store.AssignmentNeedsReconciliation {
+				t.Fatalf("assignment after worker exit is %+v (%v)", got, err)
+			}
+			if w, err := s.WorkerDispatch(a.ID); err != nil || w.Dispatch.ID != redispatch.ID || w.Dispatch.State != store.DispatchUnknown {
+				t.Fatalf("worker dispatch after exit is %+v (%v)", w, err)
+			}
+			messages, err := s.Inbox(a.Owner, 0, 0, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, message := range messages {
+				if message.Kind == store.MessageReconciliation && message.Assignment == a.ID {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("owner inbox has no reconciliation of assignment %d: %+v", a.ID, messages)
+			}
+		})
+	}
+}
+
+func TestWorkerExitBeforeFetchingNudgeAllowsReconciliationRedispatch(t *testing.T) {
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, ids := restartStore(t, []restartCase{{name: "stopped", leave: store.DispatchStopped}})
+	a, err := s.Assignment(ids["stopped"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := s.SessionStarted(store.SessionStart{Agent: a.Worker, Role: roles.Engineering, Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: a.Workspace.Path, PID: 8, At: time.Now(), Assignment: a.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nudge, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeDispatch(nudge.ID, generation, store.DispatchCreated, store.DispatchUnknown, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worker := roles.WorkerOf(roles.Engineering, 1)
+	proc, err := session.Start(session.Spec{Path: truePath, Dir: a.Workspace.Path, Env: os.Environ(), Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &leader{address: worker, session: proc, generation: generation, assignment: a.ID}
+	owner := roles.LeaderOf(roles.Engineering)
+	d := &daemon{store: s, work: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), leaders: map[string]*leader{
+		worker.String(): l, owner.String(): {address: owner, session: &session.Session{}},
+	}}
+	d.agents.Add(1)
+	d.watch(l, proc, generation, false)
+	if got, err := s.Assignment(a.ID); err != nil || got.State != store.AssignmentNeedsReconciliation {
+		t.Fatalf("assignment after exit is %+v (%v)", got, err)
+	}
+	replacement, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"cause fixed"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ID == nudge.ID {
+		t.Fatal("redispatch reused the undeliverable nudge")
+	}
+	if got, err := s.Assignment(a.ID); err != nil || got.State != store.AssignmentActive {
+		t.Fatalf("assignment after redispatch is %+v (%v)", got, err)
+	}
+	if _, err := s.Inbox(a.Worker, nudge.ID, nudge.ID, time.Now()); err == nil {
+		t.Fatal("the undeliverable nudge was still available")
+	}
+	if next, err := s.NextDispatch(a.Worker); err != nil || next.ID != replacement.ID {
+		t.Fatalf("next dispatch is %+v (%v), want replacement %d", next, err, replacement.ID)
+	}
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"again"}, time.Now()); err == nil || !strings.Contains(err.Error(), "wait for the worker to receive it or cancel") {
+		t.Fatalf("redispatch over deliverable queued work returned %v", err)
+	}
+}
+
+func TestDecisionRequestOrQueuedAnswerDoesNotSilenceWorkerStallNotice(t *testing.T) {
+	for _, answered := range []bool{false, true} {
+		name := "pending request"
+		if answered {
+			name = "queued answer"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, ids := restartStore(t, []restartCase{{name: "stopped", leave: store.DispatchStopped}})
+			a, err := s.Assignment(ids["stopped"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, _, err := s.DecisionRequested(store.DecisionRequestInput{
+				Job: a.Job, Requester: a.Worker, Recipient: a.Owner, Notify: a.Owner, Assignment: a.ID,
+				Kind: store.RequestChoice, Questions: []store.Question{{ID: "q1", Title: "Which way?", Options: []string{"a", "b"}}}, Blocks: []int64{a.ID},
+			}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if answered {
+				if _, _, err := s.DecisionAnswered(store.DecisionAnswer{Request: request.Request, Version: 1, Answerer: a.Owner, Text: "a"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w, err := s.WorkerDispatch(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := roles.LeaderOf(roles.Engineering)
+			d := &daemon{store: s, work: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), leaders: map[string]*leader{
+				owner.String(): {address: owner, session: &session.Session{}},
+			}}
+			d.workerStopped(sessionRef{address: roles.WorkerOf(roles.Engineering, 1), generation: 1}, w.Dispatch.ID, w.Kind, a.ID)
+			d.agents.Wait()
+			messages, err := s.Inbox(a.Owner, 0, 0, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, message := range messages {
+				if message.Kind == store.MessageStalled && message.Assignment == a.ID {
+					if !strings.Contains(message.Body, "asmai redispatch --assignment") || strings.Contains(message.Body, "asmai reject") || strings.Contains(message.Body, "asmai cancel") || strings.Contains(message.Body, "assigning the work again") {
+						t.Errorf("stalled notice offers the wrong recovery: %q", message.Body)
+					}
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("decision state suppressed the stall notice: %+v", messages)
+			}
+		})
+	}
+}
 
 // restartCase is a worker the previous daemon left, with the assignment it
 // carried in the state the case says.
@@ -114,7 +312,7 @@ func restartStore(t *testing.T, cases []restartCase) (*store.Store, map[string]i
 			}
 		}
 		if c.cancel {
-			if _, err := s.Inbox(worker.String(), dispatch.ID, at); err != nil {
+			if _, err := s.Inbox(worker.String(), dispatch.ID, dispatch.ID, at); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.WorkFetchedDispatch(dispatch.ID, worker.String(), generation, at); err != nil {
@@ -136,7 +334,7 @@ func restartStore(t *testing.T, cases []restartCase) (*store.Store, map[string]i
 		if c.leave == store.DispatchCreated {
 			continue
 		}
-		if _, err := s.Inbox(worker.String(), dispatch.ID, at); err != nil {
+		if _, err := s.Inbox(worker.String(), dispatch.ID, dispatch.ID, at); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.WorkFetchedDispatch(dispatch.ID, worker.String(), generation, at); err != nil {
@@ -391,7 +589,7 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 
 	d.recoverWork(true)
 
-	messages, err := s.Inbox("leader@coordination", 0, time.Now())
+	messages, err := s.Inbox("leader@coordination", 0, 0, time.Now())
 	if err != nil || len(messages) != 1 {
 		t.Fatalf("Coordination's inbox holds %+v (%v), want one message for both jobs", messages, err)
 	}
@@ -405,7 +603,7 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 		}
 	}
 	// Engineering has open work in the first job alone.
-	messages, err = s.Inbox("leader@engineering", 0, time.Now())
+	messages, err = s.Inbox("leader@engineering", 0, 0, time.Now())
 	var restorations []store.Message
 	for _, m := range messages {
 		if m.Kind == store.MessageRestoration {

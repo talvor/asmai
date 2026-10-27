@@ -116,7 +116,7 @@ func TestAGreenHeadIsDeliveredOnlyOnceQualityValidatedItAndTheDaemonPushedIt(t *
 	if read, err := s.JobDelivery(job); err != nil || read.URL != delivery.URL || read.Head != tipCommit || len(read.Checks) != 1 {
 		t.Errorf("the delivery reads back as %+v (%v)", read, err)
 	}
-	messages, err := s.Inbox("leader@coordination", dispatch.ID, assignmentsAt)
+	messages, err := s.Inbox("leader@coordination", dispatch.ID, dispatch.ID, assignmentsAt)
 	if err != nil || len(messages) != 1 || messages[0].Kind != MessageDelivery || messages[0].Sender != Daemon || messages[0].Job != job || messages[0].Body != "Job 1 is delivered" {
 		t.Errorf("Coordination's leader is told %+v (%v)", messages, err)
 	}

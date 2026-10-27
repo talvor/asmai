@@ -925,8 +925,9 @@ func newCredential() (string, error) {
 // watch waits for l's session s to end and journals how. Coordination's
 // leader is restarted after a session that ended on its own, as Coordination
 // always runs while the factory runs. A worker's session that resumed the
-// provider's session and ended without coming up could not resume it: its
-// assignment needs reconciliation.
+// provider's session and ended without coming up could not resume it; a
+// worker's session that exits with an unreported delivered, working, or unknown
+// work dispatch in its generation needs reconciliation.
 func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bool) {
 	defer d.agents.Done()
 	<-s.Done()
@@ -951,6 +952,20 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 	}
 	if resumed && !l.started {
 		d.cannotResume(l, exit)
+	} else if l.address.Name != roles.Leader && l.assignment != 0 {
+		w, err := d.store.WorkerDispatch(l.assignment)
+		if err != nil {
+			d.log.Error("reading a worker's dispatch after its session exited", "agent", l.address.String(), "assignment", l.assignment, "error", err.Error())
+		} else if w.Assignment.State == store.AssignmentActive && w.Report == "" && w.Dispatch.Generation == generation &&
+			(w.Dispatch.State == store.DispatchDelivered || w.Dispatch.State == store.DispatchWorking || w.Dispatch.State == store.DispatchUnknown) {
+			d.holdForReconciliation(w, fmt.Sprintf("%s's session exited without a Stop hook or a report (%s)", w.Assignment.Worker, exit))
+			if owner, err := roles.ParseAddress(w.Assignment.Owner); err == nil {
+				if err := d.ensureAgent(owner); err != nil {
+					d.log.Error("starting the owning leader to tell it", "agent", w.Assignment.Owner, "error", err.Error())
+				}
+			}
+			go d.nudge(w.Assignment.Owner)
+		}
 	}
 	if l.address != roles.LeaderOf(roles.Coordination) {
 		pending, err := d.store.PendingLeaders()

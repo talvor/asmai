@@ -83,19 +83,18 @@ func TestTheDaemonRefusesAWorkersTemporaryRootItDoesNotOwnOrThatIsASymbolicLink(
 	}
 	os.Remove(root)
 
-	// A root another user owns cannot be made in a test that is not root,
-	// so the owner check is tried only where the test can give it away.
-	if os.Getuid() == 0 {
-		if err := os.Mkdir(root, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chown(root, 1, 1); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := d.assignmentTmp(1); err == nil || !strings.Contains(err.Error(), "not owned") {
-			t.Errorf("a root another user owns returned %v, want it refused", err)
-		}
-		os.Remove(root)
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	previous := tmpRootOwnerUID
+	tmpRootOwnerUID = func(os.FileInfo) (int, bool) { return os.Getuid() + 1, true }
+	_, err := d.assignmentTmp(1)
+	tmpRootOwnerUID = previous
+	if err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Errorf("a root another user owns returned %v, want it refused", err)
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
 	}
 
 	got, err := d.assignmentTmp(1)

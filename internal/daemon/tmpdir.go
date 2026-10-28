@@ -25,6 +25,14 @@ const tmpRootName = "asmai-"
 // workspaces are, would leave too little of.
 var tmpBase = "/tmp"
 
+var tmpRootOwnerUID = func(info os.FileInfo) (int, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return int(st.Uid), true
+}
+
 // tmpRoot returns this daemon's directory of worker temporary directories,
 // /tmp/asmai-<uid>/<hash>, where hash is of the state directory, which keeps
 // two daemons of one machine apart. It makes the directories that are missing,
@@ -43,7 +51,7 @@ func (d *daemon) tmpRoot() (string, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return "", fmt.Errorf("the workers' temporary directory %s is not a directory of its own: it is a symbolic link or a file, so it is not used", root)
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
+	if uid, ok := tmpRootOwnerUID(info); !ok || uid != os.Getuid() {
 		return "", fmt.Errorf("the workers' temporary directory %s is not owned by this user, so it is not used", root)
 	}
 	if info.Mode().Perm() != 0o700 {

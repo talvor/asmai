@@ -176,7 +176,11 @@ func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 // workspace exists.
 func workerFactory(t *testing.T) (d *daemon, a store.Assignment, out string) {
 	t.Helper()
-	paths := stateDir(t)
+	return workerFactoryAt(t, stateDir(t))
+}
+
+func workerFactoryAt(t *testing.T, paths statedir.Paths) (d *daemon, a store.Assignment, out string) {
+	t.Helper()
 	if err := os.MkdirAll(paths.Providers, 0o700); err != nil {
 		t.Fatal(err)
 	}

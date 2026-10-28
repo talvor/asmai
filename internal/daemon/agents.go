@@ -787,7 +787,7 @@ func (d *daemon) startWorker(l *leader, cfg config.Config, install store.Provide
 	if err != nil {
 		return err
 	}
-	if isShortAssignmentTmp(a.Workspace.Tmp) {
+	if a.Workspace.Tmp != filepath.Join(filepath.Dir(a.Workspace.Path), "tmp") && isShortAssignmentTmp(a.Workspace.Tmp) {
 		want, err := d.assignmentTmp(a.ID)
 		if err != nil {
 			return err

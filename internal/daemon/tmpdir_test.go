@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -447,5 +449,32 @@ func TestAnAssignmentRecordedWithAnOldTemporaryDirectoryKeepsIt(t *testing.T) {
 		t.Errorf("TMPDIR is %q, want the recorded %q", got, old)
 	} else {
 		t.Logf("recorded assignment %d kept worker TMPDIR=%s", a.ID, got)
+	}
+}
+
+func TestLegacyAssignmentTmpUnderShortRootKeepsItsPath(t *testing.T) {
+	shortTmpBase(t, t.TempDir())
+	paths := statedir.At(filepath.Join(workerTmpUserRoot(), "legacy-state"))
+	d, a, out := workerFactoryAt(t, paths)
+	folder, _ := providers.TrustFolder(a.Workspace.Path)
+	record := fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, paths.Agents, paths.Workspaces, folder)
+	if err := os.WriteFile(d.cfg.ClaudeRecord, []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(filepath.Dir(a.Workspace.Path), "tmp")
+	if a.Workspace.Tmp != old {
+		t.Fatalf("the recorded Tmp is %s, want %s", a.Workspace.Tmp, old)
+	}
+	d.mu.Lock()
+	err := d.ensureAgent(roles.WorkerOf(roles.Engineering, 1))
+	d.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := waitForFile(t, filepath.Join(out, "tmpdir")); got != old {
+		t.Errorf("worker TMPDIR is %s, want the recorded %s", got, old)
+	}
+	if allowed := guardOf(t, waitForFile(t, filepath.Join(out, "args"))); len(allowed) != 1 || allowed[0] != old {
+		t.Errorf("worker write allowance is %v, want only %s", allowed, old)
 	}
 }

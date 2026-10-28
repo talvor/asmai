@@ -155,6 +155,7 @@ type leaderJSON struct {
 	State      string `json:"state"`
 	Generation int    `json:"generation"`
 	PID        int    `json:"pid"`
+	Model      string `json:"model"`
 }
 
 type agentJSON struct {
@@ -512,7 +513,7 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 	a := attachInTerminal(t, "coordination", 80, 25)
 	waitFor(t, "the attached screen", func() bool {
 		lines := a.lines()
-		return lines[0] == "Coordination is ready" && lines[4] == "         placed" && strings.Contains(lines[24], "leader@coordination · observing · Ctrl-] detaches")
+		return lines[0] == "Coordination is ready" && lines[4] == "         placed" && strings.Contains(lines[24], "leader@coordination · observing · Ctrl-] detaches · ↑/↓ history · opus")
 	})
 	if c := a.cell(0, 0); c.Flags&vt.Bold == 0 || a.cell(13, 0).Flags&vt.Bold != 0 {
 		t.Errorf("the attached screen lost the leader's renditions: %+v", c)
@@ -526,7 +527,7 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		} `json:"screen"`
 	}
 	asmaiJSON(t, &snapshot, "attach", "leader@coordination")
-	if snapshot.Agent.Agent != "leader@coordination" || snapshot.Screen.Columns != 80 || snapshot.Screen.Rows != 24 || snapshot.Screen.Lines[0] != "Coordination is ready" {
+	if snapshot.Agent.Agent != "leader@coordination" || snapshot.Agent.Model != "opus" || snapshot.Screen.Columns != 80 || snapshot.Screen.Rows != 24 || snapshot.Screen.Lines[0] != "Coordination is ready" {
 		t.Errorf("asmai attach --json printed %+v, want the leader's 80 by 24 screen", snapshot)
 	}
 	// Keys typed in the attached terminal never reach the leader: had they,

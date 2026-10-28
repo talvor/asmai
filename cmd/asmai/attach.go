@@ -90,6 +90,7 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 		agent:        resp.Attached.Agent,
 		conversation: req.Command == daemon.CommandConversation,
 		notice:       notice,
+		model:        daemon.Model{Name: resp.Attached.Model, Effort: resp.Attached.Effort},
 		columns:      columns,
 		rows:         rows,
 		dirty:        make(chan struct{}, 1),
@@ -128,7 +129,10 @@ type attachClient struct {
 	// prompts are the native prompts agents wait at that nobody can answer,
 	// which the status line shows.
 	prompts []string
-	term    *vt.Terminal
+	// model is the model the agent runs and its effort, as the daemon
+	// knows them, which the status line shows.
+	model daemon.Model
+	term  *vt.Terminal
 	// back is how many lines into the terminal's history the view is
 	// scrolled back; at 0 it shows the live screen.
 	back          int
@@ -168,6 +172,9 @@ func (c *attachClient) readFrames(r io.Reader) {
 		c.mu.Lock()
 		if f.Prompts != nil {
 			c.prompts = *f.Prompts
+		}
+		if f.Model != nil {
+			c.model = *f.Model
 		}
 		switch {
 		case f.State != nil:
@@ -384,6 +391,14 @@ func (c *attachClient) statusLine() string {
 	for _, p := range c.prompts {
 		text += " · " + strings.Map(printable, p)
 	}
+	// The model comes after the prompts, so that on a narrow terminal it is
+	// cut before what waits on the user.
+	if model := strings.Map(printable, c.model.Name); model != "" {
+		text += " · " + model
+		if effort := strings.Map(printable, c.model.Effort); effort != "" {
+			text += " · " + effort + " effort"
+		}
+	}
 	if title := strings.Map(printable, c.term.Title()); title != "" {
 		text += " · " + title
 	}
@@ -420,6 +435,12 @@ func snapshot(paths statedir.Paths, agent string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return snapshotOf(resp)
+}
+
+// snapshotOf returns the agent and its screen of the daemon's answer to a
+// snapshot, as snapshot does.
+func snapshotOf(resp daemon.Response) (map[string]any, error) {
 	if resp.Screen == nil || resp.Attached == nil {
 		return nil, errors.New("the daemon did not answer with the agent's screen")
 	}

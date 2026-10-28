@@ -115,7 +115,7 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 	a := inTerminal(t, 100, 25)
 	waitFor(t, "the conversation", func() bool {
 		lines := a.lines()
-		return lines[0] == ">" && strings.Contains(lines[24], "leader@coordination · conversation · Ctrl-] leaves · ↑/↓ history · started the factory")
+		return lines[0] == ">" && strings.Contains(lines[24], "leader@coordination · conversation · Ctrl-] leaves · ↑/↓ history · started the factory · opus")
 	})
 	waitFor(t, "this terminal to bracket pasted text, as Coordination's does", a.bracketsPastes)
 	leader := coordination(t)
@@ -218,7 +218,7 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 	// terminal.
 	b := inTerminal(t, 100, 25, "chat")
 	waitFor(t, "the conversation again", func() bool {
-		return strings.HasSuffix(strings.TrimRight(b.lines()[24], " "), "leader@coordination · conversation · Ctrl-] leaves · ↑/↓ history")
+		return strings.HasSuffix(strings.TrimRight(b.lines()[24], " "), "leader@coordination · conversation · Ctrl-] leaves · ↑/↓ history · opus")
 	})
 	second := inTerminal(t, 100, 25, "chat")
 	if code := second.exited(t); code != 1 {

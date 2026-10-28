@@ -234,8 +234,8 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if resp.Attached == nil || resp.Attached.Agent != "leader@coordination" || resp.Attached.Generation != 1 {
-		t.Errorf("attach answered %+v, want generation 1 of leader@coordination", resp.Attached)
+	if resp.Attached == nil || resp.Attached.Agent != "leader@coordination" || resp.Attached.Generation != 1 || resp.Attached.Model != "opus" {
+		t.Errorf("attach answered %+v, want generation 1 of leader@coordination, running opus", resp.Attached)
 	}
 	first := readFrame(t, r)
 	if first.State == nil || first.State.Columns != 50 || first.State.Rows != 10 {

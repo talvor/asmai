@@ -50,9 +50,10 @@ commands you type:
   asmai init [--yes] [--claude-default-model MODEL]
                               the first run: check this platform is certified, choose Claude's
                               default model and write a file staffing every role if there is none;
-                              make the state directory's folders, install the pinned Claude Code
-                              once you confirm (--yes confirms and agrees to open Claude Code),
-                              check it and that it applies
+                              make the state directory's folders,
+                              install the pinned Claude Code and Lavish once you confirm each
+                              (--yes confirms and agrees to open Claude Code), check Claude Code
+                              and that it applies
                               AsmAI's permission rules, and open it in the agents and workspaces
                               folders and each registered repository's clone for you to trust them.
                               A step already done is skipped. asmai setup is its old name
@@ -429,7 +430,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var resultArgs resultFlags
 	switch name {
 	case "init":
-		assumeYes = flags.Bool("yes", false, "confirm the install and agree to open Claude Code without asking")
+		flags.Usage = func() {
+			fmt.Fprint(stderr, initHelp)
+			flags.PrintDefaults()
+		}
+		assumeYes = flags.Bool("yes", false, "confirm each install and agree to open Claude Code without asking")
 		flags.StringVar(&claudeDefaultModel, "claude-default-model", "", "Claude's fallback model in a new config (default opus)")
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
@@ -1319,10 +1324,14 @@ func confirmInstall(w io.Writer, stdin io.Reader, plans []providers.Plan, assume
 		if !strings.HasSuffix(answer, "\n") {
 			fmt.Fprintln(w)
 		}
-		return errors.New("not confirmed; nothing was fetched or installed")
+		return errNotConfirmed
 	}
 	return nil
 }
+
+// errNotConfirmed is why confirmInstall installed nothing: the user did not
+// confirm.
+var errNotConfirmed = errors.New("not confirmed; nothing was fetched or installed")
 
 // fetchOne fetches plan's pinned download, checks it against the pins file
 // and keeps it at its path, unless it is there already.

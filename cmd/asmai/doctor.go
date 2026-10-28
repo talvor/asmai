@@ -62,7 +62,8 @@ type upstreamReport struct {
 // certified, that the configuration file staffs the roles and holds no
 // problem, that the pinned Claude Code is installed, reports the pinned
 // version, uses a Claude subscription sign-in and lets AsmAI's permission
-// rules take effect, and that Claude
+// rules take effect, that the pinned Lavish, when this asmai pins one for the
+// platform, is installed, and that Claude
 // Code trusts the directories agents start in. It returns them with the
 // configuration file's path and the configuration, when it could be read.
 func hostChecks(paths statedir.Paths, home string, registered []store.Repository) (checks []daemon.Check, configFile string, cfg config.Config, err error) {
@@ -109,9 +110,39 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 				return daemon.Check(certify.Version(context.Background(), path, p.ClaudeCode.Version, providers.ClaudeCodeVersion))
 			}, daemon.SignInCheck,
 			func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir, paths.Socket) })...)
+		if plan, err := p.LavishPlan(platform, paths.Providers); err == nil {
+			checks = append(checks, lavishCheck(plan))
+		} else if !errors.Is(err, providers.ErrNoLavishBuild) {
+			return nil, "", cfg, err
+		}
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
 	return checks, configFile, cfg, nil
+}
+
+// lavishCheck checks that the pinned Lavish build of plan is installed at its
+// path, the way the daemon requires before it starts the Lavish server: the
+// file there must be the pinned download. Without it no decision request can
+// be shown to the user, though the factory starts.
+func lavishCheck(plan providers.Plan) daemon.Check {
+	name := "Lavish " + plan.Version
+	fix := "run `asmai providers install`, or `asmai init`, to install the pinned Lavish"
+	present, err := providers.Present(plan)
+	switch {
+	case err != nil:
+		return daemon.Check{Name: name, Problem: fmt.Sprintf("checking the pinned Lavish at %s: %v", plan.Path, err), Fix: fix}
+	case !present && !pathExists(plan.Path):
+		return daemon.Check{Name: name, Problem: fmt.Sprintf("the pinned Lavish %s is not installed at %s, so the Lavish server is not started and no decision request can be shown to you", plan.Version, plan.Path), Fix: fix}
+	case !present:
+		return daemon.Check{Name: name, Problem: fmt.Sprintf("the Lavish at %s is not the pinned build %s (it does not match the pins file's SHA-256 %s, or is not executable), so it is not run", plan.Path, plan.Version, plan.Download.SHA256), Fix: "run `asmai providers install` to put the pinned build back"}
+	}
+	return daemon.Check{Name: name, OK: true}
+}
+
+// pathExists reports whether anything is at path.
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 // registeredRepositories reads the registered repositories from the store

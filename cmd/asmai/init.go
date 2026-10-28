@@ -24,6 +24,7 @@ import (
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/store"
 )
 
 // What a setup step reports.
@@ -35,8 +36,24 @@ const (
 )
 
 // setupStages is how many stages `asmai init` runs: platform, config,
-// folders, Claude Code and trust.
+// folders, Claude Code (with Lavish) and trust.
 const setupStages = 5
+
+// initHelp is what `asmai init --help` says before its flags.
+const initHelp = `usage: asmai init [--yes] [--claude-default-model MODEL]
+
+The first run. It checks that this platform is certified, writes a file staffing every role if
+there is none, makes the state directory's folders, and installs AsmAI's own copies of two
+programs, each only after you confirm and never your own copies:
+  the pinned Claude Code   fetched from its official channel, then checked for its version,
+                           subscription sign-in and AsmAI's permission rules
+  the pinned Lavish        AsmAI's Lavish build, fetched from its release, which shows you the
+                           decision requests agents bring to you
+Then it opens Claude Code in the agents and workspaces folders and each registered repository's
+clone for you to trust them. A step already done is skipped. Declining Lavish skips it: init says
+so, and ` + "`asmai providers install`" + ` installs it later.
+
+`
 
 // trustPrompt starts the line on which setup or repo add asks the user to go
 // on to Claude Code's question about trusting a folder; the folder follows
@@ -53,7 +70,7 @@ type setupStep struct {
 // initFactory is `asmai init`, the first run: it checks that this platform
 // is certified, writes a configuration file staffing every role
 // when there is none, makes the state directory's folders, installs the
-// pinned Claude Code once the user confirms, and opens it in the agents and
+// pinned Claude Code and Lavish once the user confirms each, and opens it in the agents and
 // workspaces folders and in each registered repository's clone, in the
 // user's own terminal, for the user to trust each (ADR 0011). Each of its
 // stages is headed and says what it is about to do; each step is skipped
@@ -234,6 +251,28 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		return fail(fmt.Errorf("%s: %s; fix: %s", check.Name, check.Problem, check.Fix))
 	}
 
+	// Lavish shows the user the decision requests agents bring them, so the
+	// factory starts without it but cannot ask the user anything.
+	current = "Lavish"
+	lavishPlan, note, err := pinnedLavishPlan(paths)
+	if err != nil {
+		return fail(err)
+	}
+	if note != "" {
+		fmt.Fprintf(w, "\n%s\n", note)
+	}
+	if lavishPlan != nil {
+		fmt.Fprintf(w, "\nSetup also installs AsmAI's own copy of the pinned Lavish %s, once you confirm, unless it is installed already. Lavish shows you the decision requests agents bring to you.\n", lavishPlan.Version)
+		state, detail, err := installLavish(w, stdin, paths, *lavishPlan, resp.Providers, running, assumeYes)
+		if err != nil {
+			return fail(err)
+		}
+		report("Lavish", state, detail)
+		if state == stepStopped {
+			fmt.Fprintln(w, "      Without it `asmai start` still starts the factory, but no decision request can be shown to you. Run `asmai providers install` or `asmai init` again to install it.")
+		}
+	}
+
 	stage(5, "Trust", fmt.Sprintf("%s asks whether to trust a folder the first time it starts there, and no agent can answer that question. You answer it once here, for agents/ and workspaces/, whose trust covers every folder below them, and for each registered repository's clone in repositories/, whose trust covers every workspace checked out from it.", plan.Title))
 	record := providers.ClaudeCodeRecord(home, os.Getenv)
 	current = "trust"
@@ -268,6 +307,38 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	}
 	fmt.Fprintln(w, "Init is done: `asmai start` starts the factory, and `asmai repo add` registers a repository for it to work on.")
 	return 0
+}
+
+// installLavish installs the pinned Lavish of plan once the user confirms,
+// unless it is installed already, and has a running daemon record the
+// install as it records Claude Code's; a stopped one finds the pinned copy at
+// its path when it next starts. recordedInstalls is what a running daemon
+// has recorded. It returns the state the step reached and its detail: done,
+// already done, or stopped when the user declined, which is no error.
+func installLavish(w io.Writer, stdin io.Reader, paths statedir.Paths, plan providers.Plan, recordedInstalls []store.ProviderInstall, running, assumeYes bool) (state, detail string, err error) {
+	present, err := providers.Present(plan)
+	if err != nil {
+		return "", "", err
+	}
+	recorded := slices.ContainsFunc(recordedInstalls, func(installed store.ProviderInstall) bool {
+		return installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path
+	})
+	if present && (recorded || !running) {
+		return stepAlreadyDone, fmt.Sprintf("The pinned Lavish %s is at %s", plan.Version, plan.Path), nil
+	}
+	if !present {
+		if err := fetchPinnedAs(w, stdin, plan, assumeYes); errors.Is(err, errNotConfirmed) {
+			return stepStopped, fmt.Sprintf("You declined, so the pinned Lavish %s is not installed", plan.Version), nil
+		} else if err != nil {
+			return "", "", err
+		}
+	}
+	if running {
+		if _, err := recordInstall(paths, plan); err != nil {
+			return "", "", err
+		}
+	}
+	return stepDone, fmt.Sprintf("Installed the pinned Lavish %s at %s", plan.Version, plan.Path), nil
 }
 
 func chooseClaudeDefaultModel(w io.Writer, stdin io.Reader, assumeYes bool, requested string) (string, error) {

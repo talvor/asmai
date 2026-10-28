@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -29,7 +28,11 @@ import (
 // the leader is told. A cancelled job's cancelling assignment is never held:
 // its worker is started again in a new session for its cancellation, or, when
 // its workspace is gone, it ends as cancelled with no push. After an unclean
-// stop, which is reconciled in full later, no worker is resumed.
+// stop, which is reconciled in full later, no worker is resumed, but an
+// active assignment whose worker was typed a decision answer's nudge and
+// never acknowledged it is held against the answer all the same, since every
+// session ended with the previous daemon and the answer is never offered
+// again.
 //
 // Every leader with open work is then told, in a message of its own, to load
 // the brief of each job it has it in, which is how a leader loads its briefs
@@ -37,8 +40,34 @@ import (
 func (d *daemon) recoverWork(clean bool) {
 	if clean {
 		d.recoverWorkers()
+	} else {
+		d.holdUncertainAnswers()
 	}
 	d.restoreBriefs()
+}
+
+// holdUncertainAnswers holds each active assignment whose worker was typed a
+// decision answer's nudge in any session and never acknowledged it against
+// the answer, after an unclean stop, so that its worker is not started to
+// idle past an answer it is never offered, and its owning leader can deliver
+// the answer again or retire it.
+func (d *daemon) holdUncertainAnswers() {
+	workers, err := d.store.WorkersInState(store.AssignmentActive)
+	if err != nil {
+		d.log.Error("reading the workers the previous daemon left", "error", err.Error())
+		return
+	}
+	for _, w := range workers {
+		d.holdAgainstUncertainAnswer(w.Assignment, store.AnyGeneration, restartedOverAnswer(w.Assignment, "did not stop cleanly and was started again"))
+	}
+}
+
+// restartedOverAnswer is why an answer to a's worker is uncertain after the
+// factory stopped, how it stopped, and started again.
+func restartedOverAnswer(a store.Assignment, how string) func(answer int64) string {
+	return func(answer int64) string {
+		return fmt.Sprintf("the factory %s after decision answer dispatch %d was typed to %s and before it acknowledged it, so whether it saw the answer is unknown", how, answer, a.Worker)
+	}
 }
 
 // recoverWorkers continues or holds the assignment of each worker the
@@ -61,11 +90,9 @@ func (d *daemon) recoverWorkers() {
 		}
 		switch {
 		case w.Fetched && w.Dispatch.State != store.DispatchStopped:
-			d.cannotContinue(w, fmt.Sprintf("its dispatch %d was %s when the factory stopped, so what %s did in it is not known",
-				w.Dispatch.ID, w.Dispatch.State, w.Assignment.Worker))
-		case d.holdAgainstUncertainAnswer(w.Assignment, math.MaxInt, func(answer int64) string {
-			return fmt.Sprintf("the factory was stopped and started again after decision answer dispatch %d was typed to %s and before it acknowledged it, so whether it saw the answer is unknown", answer, w.Assignment.Worker)
-		}):
+			d.cannotContinue(w, fmt.Sprintf("its dispatch %d was %s when the factory stopped, so what %s did in it is not known%s",
+				w.Dispatch.ID, w.Dispatch.State, w.Assignment.Worker, d.uncertainAnswerToo(w.Assignment)))
+		case d.holdAgainstUncertainAnswer(w.Assignment, store.AnyGeneration, restartedOverAnswer(w.Assignment, "was stopped and started again")):
 			// Resuming the worker past an answer it may not have seen would
 			// strand the answer, which NextDispatch never offers again.
 		case !w.Fetched:
@@ -261,6 +288,26 @@ func (d *daemon) holdAgainstUncertainAnswer(a store.Assignment, generation int, 
 	}
 	d.holdAnswerForReconciliation(a, answer, why(answer.ID))
 	return true
+}
+
+// uncertainAnswerToo names the uncertain decision answer of a, an active
+// assignment held for other work, with how its owner recovers it before a
+// redispatch, which refuses while the answer is held; it is empty when there
+// is none.
+func (d *daemon) uncertainAnswerToo(a store.Assignment) string {
+	if a.State != store.AssignmentActive {
+		return ""
+	}
+	answer, err := d.store.UncertainAnswer(a.ID, store.AnyGeneration)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ""
+	}
+	if err != nil {
+		d.log.Error("reading a worker's uncertain decision answer", "agent", a.Worker, "assignment", a.ID, "error", err.Error())
+		return ""
+	}
+	return fmt.Sprintf("; decision answer dispatch %[1]d was also typed to %[2]s and never acknowledged, and is kept, never discarded: before you send the assignment again, deliver it again with `asmai answer redeliver --dispatch %[1]d --reason <why>` or retire it with `asmai answer retire --dispatch %[1]d --reason <why>`",
+		answer.ID, a.Worker)
 }
 
 // holdAnswerForReconciliation marks assignment a as needing reconciliation

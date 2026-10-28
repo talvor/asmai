@@ -6,9 +6,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
+
+// AnyGeneration is the generation to give UncertainAnswer for an answer typed
+// in any session of the worker, as after a restart, when every session ended.
+const AnyGeneration = math.MaxInt
 
 // UncertainAnswer returns the earliest decision answer to assignment's worker
 // whose nudge was typed in generation of its session, or in any earlier one,

@@ -131,6 +131,63 @@ func TestAStartAfterACleanStopHoldsAnAssignmentAgainstAnAnswerItsWorkerMayNotHav
 	}
 }
 
+// An unclean stop inside the window holds the assignment against the answer
+// too, before any agent is started: every session ended with the previous
+// daemon, so the worker would otherwise be started and idle, never offered
+// the answer, while redispatch refused over it.
+func TestAStartAfterAnUncleanStopHoldsAnAssignmentAgainstAnAnswerItsWorkerMayNotHaveSeen(t *testing.T) {
+	s, ids := restartStore(t, []restartCase{{name: "stopped", native: true, transcript: true, leave: store.DispatchStopped}})
+	a, answer := typedAnswer(t, s, ids["stopped"], 1)
+
+	recoveringDaemon(s).recoverWork(false)
+
+	if got := assignmentState(t, s, a.ID); got != store.AssignmentNeedsReconciliation {
+		t.Fatalf("the assignment is %s after an unclean stop, want it held for reconciliation", got)
+	}
+	if got := heldAgainst(t, s, a.ID); !slices.Equal(got, []int64{answer.ID}) {
+		t.Errorf("the assignment was held against dispatches %v, want the answer's, %d", got, answer.ID)
+	}
+	told := ownerTold(t, s, a)
+	if len(told) != 1 || !strings.Contains(told[0], "did not stop cleanly") ||
+		!strings.Contains(told[0], fmt.Sprintf("asmai answer redeliver --dispatch %d", answer.ID)) ||
+		!strings.Contains(told[0], fmt.Sprintf("asmai answer retire --dispatch %d", answer.ID)) {
+		t.Fatalf("the owner was told %q, want how to deliver the answer again or retire it", told)
+	}
+	pending, err := s.PendingLeaders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(pending, a.Worker) {
+		t.Errorf("%s, whose assignment is held, has a message waiting among %v", a.Worker, pending)
+	}
+	if _, err := s.AnswerRetired(answer.ID, a.Owner, []string{"carried in the redispatch"}, time.Now()); err != nil {
+		t.Fatalf("retiring the answer after an unclean stop: %v", err)
+	}
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"use hello"}, time.Now()); err != nil {
+		t.Fatalf("redispatch after the answer was retired: %v", err)
+	}
+}
+
+// An assignment whose fetched work dispatch was cut off is held against that
+// dispatch, and its owner is told of the uncertain answer as well, so that a
+// redispatch is not refused over an answer the owner was never told of.
+func TestAnAssignmentHeldForItsCutOffWorkNamesItsUncertainAnswerToo(t *testing.T) {
+	s, ids := restartStore(t, []restartCase{{name: "working", native: true, transcript: true, leave: store.DispatchWorking}})
+	a, answer := typedAnswer(t, s, ids["working"], 1)
+
+	recoveringDaemon(s).recoverWork(true)
+
+	if got := assignmentState(t, s, a.ID); got != store.AssignmentNeedsReconciliation {
+		t.Fatalf("the assignment is %s after the restart, want it held for reconciliation", got)
+	}
+	told := ownerTold(t, s, a)
+	if len(told) != 1 || !strings.Contains(told[0], fmt.Sprintf("decision answer dispatch %d", answer.ID)) ||
+		!strings.Contains(told[0], fmt.Sprintf("asmai answer redeliver --dispatch %d", answer.ID)) ||
+		!strings.Contains(told[0], fmt.Sprintf("asmai answer retire --dispatch %d", answer.ID)) {
+		t.Fatalf("the owner was told %q, want the uncertain answer named with how to recover it", told)
+	}
+}
+
 // The owner may instead retire the answer held across the restart, and then
 // redispatch is not refused.
 func TestAnAnswerHeldAcrossARestartCanBeRetiredAndTheAssignmentRedispatched(t *testing.T) {
@@ -195,13 +252,20 @@ func TestASecondExitAfterTheAnswerIsDeliveredAgainHoldsTheAssignmentAgainstTheNe
 }
 
 // A later session's exit still finds an answer typed in an earlier session
-// and never acknowledged.
+// and never acknowledged: the later session's start carries the unfetched
+// answer into its own generation, so its exit holds the assignment against
+// it. That UncertainAnswer also finds an answer left in an earlier
+// generation, as a restart needs, is the store's
+// TestAnUnacknowledgedDecisionAnswerOfAnEarlierGenerationIsStillUncertain.
 func TestALaterExitHoldsTheAssignmentAgainstAnEarlierSessionsUncertainAnswer(t *testing.T) {
 	s, ids := restartStore(t, []restartCase{{name: "stopped", native: true, transcript: true, leave: store.DispatchStopped}})
 	a, answer := typedAnswer(t, s, ids["stopped"], 1)
 	generation, err := s.SessionStarted(store.SessionStart{Agent: a.Worker, Role: roles.Engineering, Provider: "claude-code", Version: "2.1.292", Model: "opus", Executable: "/p", Args: []string{}, Dir: a.Workspace.Path, PID: 9, At: time.Now(), Assignment: a.ID})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got, err := s.UncertainAnswer(a.ID, store.AnyGeneration); err != nil || got.Generation != generation {
+		t.Fatalf("the answer is %+v (%v) after the later session started, want it carried into generation %d", got, err, generation)
 	}
 	w, err := s.WorkerDispatch(a.ID)
 	if err != nil {

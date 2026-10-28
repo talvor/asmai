@@ -24,6 +24,13 @@ func (r *Renderer) Invalidate() {
 // Render returns what draws t's screen on a real terminal into the window of
 // columns by rows at its top left, leaving the cursor where t's is.
 func (r *Renderer) Render(t *Terminal, columns, rows int) []byte {
+	return r.RenderBack(t, columns, rows, 0)
+}
+
+// RenderBack is Render of t's screen scrolled back by back lines into its
+// history, as ViewCell shows it. Scrolled back, the cursor is hidden.
+func (r *Renderer) RenderBack(t *Terminal, columns, rows, back int) []byte {
+	back = clamp(back, 0, t.History())
 	var b bytes.Buffer
 	// Synchronized output, where the terminal has it, shows the frame whole.
 	b.WriteString("\x1b[?2026h\x1b[?25l")
@@ -36,7 +43,7 @@ func (r *Renderer) Render(t *Terminal, columns, rows int) []byte {
 	cx, cy := -1, -1
 	for y := range rows {
 		for x := 0; x < columns; x++ {
-			c := t.Cell(x, y)
+			c := t.ViewCell(x, y, back)
 			if c.Cont {
 				continue
 			}
@@ -47,7 +54,7 @@ func (r *Renderer) Render(t *Terminal, columns, rows int) []byte {
 				if x+1 >= columns {
 					c = Cell{Attr: c.Attr}
 				} else {
-					changed = changed || t.Cell(x+1, y) != r.drawn[y][x+1]
+					changed = changed || t.ViewCell(x+1, y, back) != r.drawn[y][x+1]
 				}
 			}
 			if !changed {
@@ -68,7 +75,7 @@ func (r *Renderer) Render(t *Terminal, columns, rows int) []byte {
 			r.drawn[y][x] = c
 			cx, cy = x+1, y
 			if c.Wide {
-				r.drawn[y][x+1] = t.Cell(x+1, y)
+				r.drawn[y][x+1] = t.ViewCell(x+1, y, back)
 				cx++
 				x++
 			}
@@ -76,7 +83,7 @@ func (r *Renderer) Render(t *Terminal, columns, rows int) []byte {
 	}
 	b.WriteString("\x1b[0m")
 	x, y, visible := t.Cursor()
-	if x < columns && y < rows {
+	if back == 0 && x < columns && y < rows {
 		fmt.Fprintf(&b, "\x1b[%d;%dH", y+1, x+1)
 		if visible {
 			b.WriteString("\x1b[?25h")

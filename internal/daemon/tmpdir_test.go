@@ -52,8 +52,14 @@ func TestAWorkersTemporaryDirectoryLeavesRoomForATestHomeAndItsSocket(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, _ := d.tmpRoot()
+	root, err := d.tmpRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { os.RemoveAll(root) })
+	if len(filepath.Base(root)) < 16 {
+		t.Errorf("the state-directory hash %q is too short", filepath.Base(root))
+	}
 	// A home made with os.MkdirTemp("", "home"), and the socket in the state
 	// directory beneath it, as the commands' tests make.
 	socket := filepath.Join(tmp, "home1234567890", ".local", "state", "asmai", "daemon.sock")
@@ -107,6 +113,63 @@ func TestTheDaemonRefusesAWorkersTemporaryRootItDoesNotOwnOrThatIsASymbolicLink(
 	}
 	if info, err := os.Stat(root); err != nil || info.Mode().Perm() != 0o700 {
 		t.Errorf("the root is %v (%v), want mode 0700", info, err)
+	}
+}
+
+func TestTheDaemonRefusesAnUnsafeStateDirectoryHash(t *testing.T) {
+	shortTmpBase(t, t.TempDir())
+	d := &daemon{cfg: Config{Paths: stateDir(t)}}
+	hash, err := d.tmpRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.assignmentTmp(1); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Errorf("a hash directory that is a symbolic link returned %v, want it refused", err)
+	}
+	if err := os.Remove(hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hash, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.assignmentTmp(1); err == nil {
+		t.Error("a hash directory that is a file was used, want it refused")
+	}
+	if err := os.Remove(hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(hash, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(hash, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.assignmentTmp(1); err == nil || !strings.Contains(err.Error(), "not private") {
+		t.Errorf("a hash directory with mode 0755 returned %v, want it refused", err)
+	}
+	if err := os.Chmod(hash, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	previous := tmpRootOwnerUID
+	tmpRootOwnerUID = func(info os.FileInfo) (int, bool) {
+		if info.Name() == filepath.Base(hash) {
+			return os.Getuid() + 1, true
+		}
+		return previous(info)
+	}
+	_, err = d.assignmentTmp(1)
+	tmpRootOwnerUID = previous
+	if err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Errorf("a hash directory another user owns returned %v, want it refused", err)
+	}
+	if got, err := d.assignmentTmp(1); err != nil || got != filepath.Join(hash, "1") {
+		t.Errorf("a private, owned hash directory returned %q (%v), want %s", got, err, filepath.Join(hash, "1"))
 	}
 }
 

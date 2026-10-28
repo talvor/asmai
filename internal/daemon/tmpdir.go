@@ -59,9 +59,22 @@ func (d *daemon) tmpRoot() (string, error) {
 		}
 	}
 	sum := sha256.Sum256([]byte(d.cfg.Paths.Dir))
-	own := filepath.Join(root, hex.EncodeToString(sum[:])[:8])
-	if err := os.MkdirAll(own, 0o700); err != nil {
+	own := filepath.Join(root, hex.EncodeToString(sum[:])[:16])
+	if err := os.Mkdir(own, 0o700); err != nil && !os.IsExist(err) {
 		return "", fmt.Errorf("making the workers' temporary directory %s: %w", own, err)
+	}
+	info, err = os.Lstat(own)
+	if err != nil {
+		return "", fmt.Errorf("checking the workers' temporary directory %s: %w", own, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("the workers' temporary directory %s is not a directory of its own: it is a symbolic link or a file, so it is not used", own)
+	}
+	if uid, ok := tmpRootOwnerUID(info); !ok || uid != os.Getuid() {
+		return "", fmt.Errorf("the workers' temporary directory %s is not owned by this user, so it is not used", own)
+	}
+	if info.Mode().Perm() != 0o700 {
+		return "", fmt.Errorf("the workers' temporary directory %s is not private: mode is %04o, want 0700", own, info.Mode().Perm())
 	}
 	return own, nil
 }

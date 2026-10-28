@@ -641,5 +641,5 @@ func TestAWorkersReportSaysEveryListItHasAndEveryCheckWithItsOutcome(t *testing.
 // directory>/<id>.
 func workerTmp(stateDir string, id int) string {
 	sum := sha256.Sum256([]byte(stateDir))
-	return filepath.Join("/tmp", fmt.Sprintf("asmai-%d", os.Getuid()), hex.EncodeToString(sum[:])[:8], strconv.Itoa(id))
+	return filepath.Join("/tmp", fmt.Sprintf("asmai-%d", os.Getuid()), hex.EncodeToString(sum[:])[:16], strconv.Itoa(id))
 }

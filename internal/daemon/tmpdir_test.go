@@ -497,13 +497,18 @@ func TestLegacyAssignmentTmpUnderShortRootKeepsItsPath(t *testing.T) {
 }
 
 func TestDaemonRestartRestoresLegacyTmpUnderShortRoot(t *testing.T) {
-	shortTmpBase(t, t.TempDir())
+	base, err := os.MkdirTemp("/tmp", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	shortTmpBase(t, base)
 	paths := statedir.At(filepath.Join(workerTmpUserRoot(), "legacy-state"))
 	d, a, out := workerFactoryAt(t, paths)
 	trustWorkerFolder(t, d.cfg.ClaudeRecord, paths, a.Workspace.Path)
 	old := filepath.Join(filepath.Dir(a.Workspace.Path), "tmp")
 	runDaemonWith(t, d.cfg)
-	if got := waitForFile(t, filepath.Join(out, "tmpdir")); got != old {
+	if got := waitForFile(t, filepath.Join(out, "tmpdir-"+strconv.Itoa(a.Workspace.Slot))); got != old {
 		t.Errorf("restored worker TMPDIR is %s, want recorded legacy path %s", got, old)
 	} else {
 		t.Logf("daemon restart restored assignment %d with legacy TMPDIR=%s", a.ID, got)

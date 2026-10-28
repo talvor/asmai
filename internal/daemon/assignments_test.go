@@ -252,6 +252,7 @@ func recordingClaude(t *testing.T, s *store.Store, paths statedir.Paths, origin,
 		t.Fatal(err)
 	}
 	script := "#!/bin/sh\n" + answersTheRulesProbe(t) + "pwd -P > \"$ASMAI_TEST_OUT/cwd\"\nprintf '%s' \"$ASMAI_SLOT\" > \"$ASMAI_TEST_OUT/slot\"\nprintf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir\"\nprintf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nprintf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args.tmp\" && mv \"$ASMAI_TEST_OUT/args.tmp\" \"$ASMAI_TEST_OUT/args\"\n[ -n \"$ASMAI_SLOT\" ] && printf '%s\\n' \"$@\" > \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT.tmp\" && mv \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT.tmp\" \"$ASMAI_TEST_OUT/args-$ASMAI_SLOT\"\nexec sleep 60\n"
+	script = strings.Replace(script, "exec sleep 60\n", "[ -n \"$ASMAI_SLOT\" ] && printf '%s' \"$TMPDIR\" > \"$ASMAI_TEST_OUT/tmpdir-$ASMAI_SLOT\"\nexec sleep 60\n", 1)
 	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

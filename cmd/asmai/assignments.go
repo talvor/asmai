@@ -436,6 +436,43 @@ func decide(o *output, paths statedir.Paths, command string, assignment int64, r
 	return 0
 }
 
+// recoverAnswer runs answer redeliver or answer retire: the owning leader
+// recovers the decision answer of dispatch, which its worker's session exited
+// before acknowledging, by delivering it again or retiring it, for reasons.
+func recoverAnswer(o *output, paths statedir.Paths, name string, dispatch int64, reasons []string) int {
+	if dispatch <= 0 {
+		return o.fail(fmt.Errorf("asmai %s needs --dispatch: the decision answer's dispatch, as the reconciliation message names it", name))
+	}
+	if len(reasons) == 0 {
+		return o.fail(fmt.Errorf("asmai %s needs --reason: why the answer is recovered this way", name))
+	}
+	for _, reason := range reasons {
+		if strings.TrimSpace(reason) == "" {
+			return o.fail(fmt.Errorf("asmai %s --reason cannot be blank", name))
+		}
+	}
+	command := daemon.CommandAnswerRedeliver
+	if name == "answer retire" {
+		command = daemon.CommandAnswerRetire
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: command, Dispatch: dispatch, Reasons: reasons})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(resp)
+	}
+	a := resp.Assignment
+	if command == daemon.CommandAnswerRetire {
+		fmt.Fprintf(o.stdout, "decision answer dispatch %d retired by %s, journaled with the answer; it is never delivered to %s\n", dispatch, a.Owner, a.Worker)
+		fmt.Fprintf(o.stdout, "next: assignment %d still needs reconciliation; send it to its worker again with `asmai redispatch --assignment %[1]d --reason <why>`\n", a.ID)
+		return 0
+	}
+	fmt.Fprintf(o.stdout, "decision answer dispatch %d delivered to %s again by %s, in dispatch %d, a new dispatch; assignment %d is active again\n", dispatch, a.Worker, a.Owner, resp.Dispatch.ID, a.ID)
+	fmt.Fprintf(o.stdout, "next: %s is started if it is not running and nudged, and its next result or blocked report comes back to you through `asmai inbox`\n", a.Worker)
+	return 0
+}
+
 // listOf returns the skill list of a's worker: the daemon's, or a's
 // narrowing or its role's default list from a daemon that gives none.
 func listOf(a store.Assignment) []string {

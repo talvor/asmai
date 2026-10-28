@@ -359,6 +359,11 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 		}
 		if d.State == DispatchUnknown && a.State == AssignmentNeedsReconciliation && kind != MessageDecisionAnswer {
 			unknown = append(unknown, d)
+		} else if d.State == DispatchUnknown && a.State == AssignmentNeedsReconciliation && unfetched {
+			// The answer is the user's or the owner's word: it is never
+			// dropped with the unknown work, only by the owner's choice.
+			rows.Close()
+			return Dispatch{}, fmt.Errorf("assignment %[1]d holds decision answer dispatch %[2]d, which %[3]s may not have seen; deliver it again with `asmai answer redeliver --dispatch %[2]d --reason <why>`, or retire it with `asmai answer retire --dispatch %[2]d --reason <why>` and then redispatch", a.ID, d.ID, a.Worker)
 		} else if unfetched {
 			rows.Close()
 			return Dispatch{}, fmt.Errorf("assignment %d has queued %s dispatch %d for %s; wait for the worker to receive it or cancel the assignment", a.ID, kind, d.ID, a.Worker)

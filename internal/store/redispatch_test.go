@@ -256,42 +256,21 @@ func TestRedispatchWaitsForQueuedDecisionAnswer(t *testing.T) {
 	}
 }
 
+// While its worker's session runs, an answer whose nudge is not yet
+// acknowledged may still be: redispatch waits. Once the session exits, the
+// assignment is held against the answer, and its owner recovers it
+// (TestRedispatchOverAHeldUncertainAnswerNamesTheWaysToRecoverIt).
 func TestRedispatchWaitsForUnknownDecisionAnswer(t *testing.T) {
-	for _, reconcile := range []bool{false, true} {
-		name := "active"
-		if reconcile {
-			name = "needs reconciliation"
-		}
-		t.Run(name, func(t *testing.T) {
-			s := open(t, filepath.Join(t.TempDir(), "store.db"))
-			a, _ := stoppedAssignment(t, s)
-			request, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, answer, err := s.DecisionAnswered(DecisionAnswer{Request: request.Request, Version: 1, Answerer: a.Owner, Text: "continue"}, assignmentsAt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := s.ChangeDispatch(answer.ID, 1, DispatchCreated, DispatchUnknown, "", assignmentsAt); err != nil {
-				t.Fatal(err)
-			}
-			if reconcile {
-				if _, err := s.AssignmentNeedsReconciliation(a.ID, 0, "worker exited", "Reconcile it.", assignmentsAt); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "queued "+MessageDecisionAnswer) {
-				t.Fatalf("redispatch over unknown decision answer returned %v", err)
-			}
-			var state string
-			if err := s.db.QueryRow(`SELECT state FROM dispatches WHERE id = ?`, answer.ID).Scan(&state); err != nil || state != DispatchUnknown {
-				t.Fatalf("decision answer changed to %s (%v)", state, err)
-			}
-			if _, err := s.NextDispatch(a.Worker); err != sql.ErrNoRows {
-				t.Fatalf("unknown answer or redispatch became deliverable (%v)", err)
-			}
-		})
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, answer := heldAnswer(t, s)
+	if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"continue"}, assignmentsAt); err == nil || !strings.Contains(err.Error(), "queued "+MessageDecisionAnswer) {
+		t.Fatalf("redispatch over unknown decision answer returned %v", err)
+	}
+	if state := dispatchState(t, s, answer.ID); state != DispatchUnknown {
+		t.Fatalf("decision answer changed to %s", state)
+	}
+	if _, err := s.NextDispatch(a.Worker); err != sql.ErrNoRows {
+		t.Fatalf("unknown answer or redispatch became deliverable (%v)", err)
 	}
 }
 

@@ -120,6 +120,11 @@ const (
 	// CommandRedispatch is the owning leader sending an active assignment, or
 	// one that needs reconciliation, to its worker again in a new dispatch.
 	CommandRedispatch = "redispatch"
+	// CommandAnswerRedeliver and CommandAnswerRetire are the owning leader
+	// recovering a decision answer whose worker's session exited before
+	// acknowledging it: delivering it again in a new dispatch, or retiring it.
+	CommandAnswerRedeliver = "answer.redeliver"
+	CommandAnswerRetire    = "answer.retire"
 	// CommandPush is the delivery owner asking the daemon to push a job's
 	// branch to origin, which it refuses over commits AsmAI did not make.
 	CommandPush = "push"
@@ -822,7 +827,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)
-	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch:
+	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch, CommandAnswerRedeliver, CommandAnswerRetire:
 		d.assignmentCommand(conn, req)
 	case CommandBlockedReport, CommandBlockedResolve:
 		d.blockedCommand(conn, req)

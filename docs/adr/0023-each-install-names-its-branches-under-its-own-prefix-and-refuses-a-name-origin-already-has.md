@@ -11,7 +11,7 @@ Before this decision, a job branch was named `asmai/job-<n>-<slug>` and an assig
 
 ## Considered Options
 
-- **A prefix per install, with an origin check** (chosen): names cannot clash between installs by construction, and the check catches a clash that still happens, loudly and before any branch exists.
+- **A prefix per install, with an origin check** (chosen): separate prefixes keep branch names apart, and the check catches a branch already on origin before a job is recorded.
 - **Check origin and add a suffix to a taken name**: needs no setting, but the name is recorded and quoted in prompts, and two installs would still race for the same names and meet each other's branches in the clone's listings. Not chosen.
 - **Put the prefix in the configuration only**: the user would have to choose it before the first job, and a copied configuration would clash silently. Not chosen; the configuration may override the kept ID, never supply it.
 - **Rename the branches of open jobs**: the names are recorded and already quoted to agents and in pull requests. Not chosen.
@@ -22,5 +22,6 @@ Before this decision, a job branch was named `asmai/job-<n>-<slug>` and an assig
 - A user who changes `branch_prefix` while jobs are open leaves those jobs on their old names, and new jobs use the new prefix.
 - The README's paragraph on job and assignment branches, its configuration reference and the glossary change with the implementation.
 - A job whose prefix and job-number branch namespace already exists on origin is refused before it is recorded. Other branch-creation failures leave the job open for its first assignment or `asmai job link` to retry.
+- The origin check is not a reservation. Two installs sharing a prefix can open the same job number and slug between the check and a branch push. If one pushes before the other's later branch check, the latter may already have recorded its job without a branch; the branch error is logged rather than returned by `job open`.
 
 Decided on 2026-10-28 in [issue #246](https://github.com/talvor/asmai/issues/246).

@@ -214,19 +214,21 @@ func (p Paths) BranchIDOrMake() (string, error) {
 	if err := p.Prepare(); err != nil {
 		return "", err
 	}
-	f, err := os.OpenFile(p.BranchID, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return p.ReadBranchID()
-	}
+	f, err := os.CreateTemp(p.Dir, ".branch-id-*")
 	if err != nil {
 		return "", fmt.Errorf("keeping the branch ID: %w", err)
 	}
+	defer os.Remove(f.Name())
 	_, err = f.WriteString(id + "\n")
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
-		os.Remove(p.BranchID)
+		return "", fmt.Errorf("keeping the branch ID: %w", err)
+	}
+	if err := os.Link(f.Name(), p.BranchID); errors.Is(err, os.ErrExist) {
+		return p.ReadBranchID()
+	} else if err != nil {
 		return "", fmt.Errorf("keeping the branch ID: %w", err)
 	}
 	return id, nil

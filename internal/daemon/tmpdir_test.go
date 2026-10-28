@@ -28,8 +28,18 @@ func shortTmpBase(t *testing.T, dir string) {
 	t.Cleanup(func() { tmpBase = previous })
 }
 
+func trustWorkerFolder(t *testing.T, record string, paths statedir.Paths, workspace string) {
+	t.Helper()
+	folder, _ := providers.TrustFolder(workspace)
+	data := fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, paths.Agents, paths.Workspaces, folder)
+	if err := os.WriteFile(record, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestANewAssignmentsTemporaryDirectoryIsShortAndOutsideTheStateDirectory(t *testing.T) {
 	p := newJobFactory(t, store.MandateResearchOnly, false)
+	trustWorkerFolder(t, p.d.cfg.ClaudeRecord, p.d.cfg.Paths, p.d.cfg.Paths.Workspaces)
 	a, _, err := p.d.assign(Request{Session: "research", Command: CommandAssign, Job: p.job.Number, Outcome: "Find it", Criteria: []string{"cited"}, Skill: "research"})
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +63,7 @@ func TestANewAssignmentsTemporaryDirectoryIsShortAndOutsideTheStateDirectory(t *
 
 func TestNewWorkerUsesItsShortTemporaryDirectoryInEnvironmentAndWriteGuard(t *testing.T) {
 	p := newJobFactory(t, store.MandateResearchOnly, false)
+	trustWorkerFolder(t, p.d.cfg.ClaudeRecord, p.d.cfg.Paths, p.d.cfg.Paths.Workspaces)
 	provider := filepath.Join(p.d.cfg.Paths.Providers, "claude-code", "v", "claude")
 	script, err := os.ReadFile(provider)
 	if err != nil {
@@ -80,7 +91,12 @@ func TestNewWorkerUsesItsShortTemporaryDirectoryInEnvironmentAndWriteGuard(t *te
 }
 
 func TestAWorkersTemporaryDirectoryLeavesRoomForATestHomeAndItsSocket(t *testing.T) {
-	shortTmpBase(t, "/tmp")
+	base, err := os.MkdirTemp("/tmp", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	shortTmpBase(t, base)
 	d := &daemon{cfg: Config{Paths: stateDir(t)}}
 	tmp, err := d.assignmentTmp(123456)
 	if err != nil {
@@ -97,6 +113,10 @@ func TestAWorkersTemporaryDirectoryLeavesRoomForATestHomeAndItsSocket(t *testing
 	// A home made with os.MkdirTemp("", "home"), and the socket in the state
 	// directory beneath it, as the commands' tests make.
 	socket := filepath.Join(tmp, "home1234567890", ".local", "state", "asmai", "daemon.sock")
+	productionSocket := filepath.Join("/tmp", tmpRootName+strconv.Itoa(os.Getuid()), filepath.Base(root), filepath.Base(tmp), "home1234567890", ".local", "state", "asmai", "daemon.sock")
+	if len(productionSocket) >= 103 {
+		t.Errorf("the production socket path %s is %d bytes, want under 103", productionSocket, len(productionSocket))
+	}
 	if len(socket) >= 103 {
 		t.Errorf("the socket path %s is %d bytes, want under the 103 a Unix socket allows", socket, len(socket))
 	}
@@ -108,7 +128,7 @@ func TestAWorkersTemporaryDirectoryLeavesRoomForATestHomeAndItsSocket(t *testing
 		t.Fatalf("a Go test could not listen on %s: %v", socket, err)
 	}
 	listener.Close()
-	t.Logf("a Go test listened on socket=%s (%d bytes)", socket, len(socket))
+	t.Logf("a Go test listened on private socket=%s (%d bytes); production path=%s (%d bytes)", socket, len(socket), productionSocket, len(productionSocket))
 }
 
 func TestTheDaemonRefusesAWorkersTemporaryRootItDoesNotOwnOrThatIsASymbolicLink(t *testing.T) {
@@ -435,6 +455,7 @@ func TestRemovingEndedJobLocalRemovesAssignmentTmp(t *testing.T) {
 
 func TestAnAssignmentRecordedWithAnOldTemporaryDirectoryKeepsIt(t *testing.T) {
 	d, a, out := workerFactory(t)
+	trustWorkerFolder(t, d.cfg.ClaudeRecord, d.cfg.Paths, a.Workspace.Path)
 	old := filepath.Join(filepath.Dir(a.Workspace.Path), "tmp")
 	if a.Workspace.Tmp != old {
 		t.Fatalf("the fixture's Tmp is %s, want the old %s beside its workspace", a.Workspace.Tmp, old)
@@ -456,11 +477,7 @@ func TestLegacyAssignmentTmpUnderShortRootKeepsItsPath(t *testing.T) {
 	shortTmpBase(t, t.TempDir())
 	paths := statedir.At(filepath.Join(workerTmpUserRoot(), "legacy-state"))
 	d, a, out := workerFactoryAt(t, paths)
-	folder, _ := providers.TrustFolder(a.Workspace.Path)
-	record := fmt.Sprintf(`{"projects": {%q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}, %q: {"hasTrustDialogAccepted": true}}}`, paths.Agents, paths.Workspaces, folder)
-	if err := os.WriteFile(d.cfg.ClaudeRecord, []byte(record), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	trustWorkerFolder(t, d.cfg.ClaudeRecord, paths, a.Workspace.Path)
 	old := filepath.Join(filepath.Dir(a.Workspace.Path), "tmp")
 	if a.Workspace.Tmp != old {
 		t.Fatalf("the recorded Tmp is %s, want %s", a.Workspace.Tmp, old)
@@ -476,5 +493,19 @@ func TestLegacyAssignmentTmpUnderShortRootKeepsItsPath(t *testing.T) {
 	}
 	if allowed := guardOf(t, waitForFile(t, filepath.Join(out, "args"))); len(allowed) != 1 || allowed[0] != old {
 		t.Errorf("worker write allowance is %v, want only %s", allowed, old)
+	}
+}
+
+func TestDaemonRestartRestoresLegacyTmpUnderShortRoot(t *testing.T) {
+	shortTmpBase(t, t.TempDir())
+	paths := statedir.At(filepath.Join(workerTmpUserRoot(), "legacy-state"))
+	d, a, out := workerFactoryAt(t, paths)
+	trustWorkerFolder(t, d.cfg.ClaudeRecord, paths, a.Workspace.Path)
+	old := filepath.Join(filepath.Dir(a.Workspace.Path), "tmp")
+	runDaemonWith(t, d.cfg)
+	if got := waitForFile(t, filepath.Join(out, "tmpdir")); got != old {
+		t.Errorf("restored worker TMPDIR is %s, want recorded legacy path %s", got, old)
+	} else {
+		t.Logf("daemon restart restored assignment %d with legacy TMPDIR=%s", a.ID, got)
 	}
 }

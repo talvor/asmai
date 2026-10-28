@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -406,6 +407,19 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 	if w := assignment.Workspace; w.Slot != 1 || w.Branch != branch || w.Base != fixture.main || !strings.HasPrefix(w.Path, filepath.Join(stateDir, "workspaces")) || w.Tmp != workerTmp(stateDir, 1) {
 		t.Errorf("the workspace is %+v", w)
 	}
+	socket := filepath.Join(assignment.Workspace.Tmp, "home1234567890", ".local", "state", "asmai", "daemon.sock")
+	if len(socket) >= 103 {
+		t.Errorf("a test daemon socket path is %d bytes, want under 103: %s", len(socket), socket)
+	}
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("a worker test could not listen on %s: %v", socket, err)
+	}
+	listener.Close()
+	t.Logf("worker test listened on socket=%s (%d bytes)", socket, len(socket))
 
 	// The worker ran in that workspace, with its slot and its own TMPDIR, and
 	// the workspace is a checkout of AsmAI's clone, not of the user's.

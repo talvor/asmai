@@ -305,6 +305,7 @@ func waitForFile(t *testing.T, path string) string {
 
 func TestAWorkerStartsInItsWorkspaceWithItsSlotAndItsOwnTemporaryDirectory(t *testing.T) {
 	d, a, out := workerFactory(t)
+	trustWorkerFolder(t, d.cfg.ClaudeRecord, d.cfg.Paths, a.Workspace.Path)
 	worker := roles.WorkerOf(roles.Engineering, 1)
 	d.mu.Lock()
 	err := d.ensureAgent(worker)

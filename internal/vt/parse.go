@@ -355,7 +355,7 @@ func (t *Terminal) csi(buf []byte, final byte) {
 	case 'P':
 		t.deleteCells(n)
 	case 'S':
-		t.scrollUp(t.s.Top, t.s.Bottom, n)
+		t.scrollOff(n)
 	case 'T':
 		if len(ps) <= 1 {
 			t.scrollDown(t.s.Top, t.s.Bottom, n)

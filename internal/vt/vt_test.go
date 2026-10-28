@@ -4,6 +4,7 @@ package vt
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -228,4 +229,97 @@ func TestBracketedPasteIsKeptAcrossAState(t *testing.T) {
 	if copied.BracketedPaste() {
 		t.Error("after DECRST 2004 the terminal still brackets pasted text")
 	}
+}
+
+// shownBack is what a Renderer draws of term scrolled back by back lines.
+func shownBack(t *testing.T, term *Terminal, back int) *Terminal {
+	t.Helper()
+	columns, rows := term.Size()
+	var r Renderer
+	shown := New(columns, rows)
+	shown.Write(r.RenderBack(term, columns, rows, back))
+	return shown
+}
+
+func TestLinesScrolledOffTheTopOfTheMainScreenAreKeptAsHistory(t *testing.T) {
+	term := screen(t, 5, 3, "1\r\n2\r\n3\r\n4\r\n\x1b[1m5")
+	if got := term.History(); got != 2 {
+		t.Fatalf("the terminal keeps %d lines of history, want 2", got)
+	}
+	checkLines(t, shownBack(t, term, 0), "3", "4", "5")
+	checkLines(t, shownBack(t, term, 1), "2", "3", "4")
+	checkLines(t, shownBack(t, term, 2), "1", "2", "3")
+	// Scrolling stops at the oldest line.
+	checkLines(t, shownBack(t, term, 9), "1", "2", "3")
+	// Scrolled back, the cursor is not shown.
+	if _, _, visible := shownBack(t, term, 1).Cursor(); visible {
+		t.Error("scrolled back, the rendered cursor is shown")
+	}
+	if _, _, visible := shownBack(t, term, 0).Cursor(); !visible {
+		t.Error("on the live screen, the rendered cursor is hidden")
+	}
+
+	// A line scrolled off is counted, so a view can stay where it is.
+	before := term.ScrolledOff()
+	term.Write([]byte("\r\n6\r\n7"))
+	if got := term.ScrolledOff() - before; got != 2 {
+		t.Errorf("two more lines scrolled off count as %d", got)
+	}
+}
+
+func TestHistoryIsBounded(t *testing.T) {
+	term := New(8, 2)
+	for i := range ScrollbackLimit + 50 {
+		term.Write([]byte(fmt.Sprintf("%d\r\n", i)))
+	}
+	if got := term.History(); got != ScrollbackLimit {
+		t.Fatalf("the terminal keeps %d lines of history, want %d", got, ScrollbackLimit)
+	}
+	// The last line written is on the screen, over a blank one.
+	checkLines(t, shownBack(t, term, ScrollbackLimit+10), "49", "50")
+}
+
+func TestOnlyTheMainScreenScrollingFromItsTopAddsHistory(t *testing.T) {
+	// The alternate screen keeps no history.
+	term := screen(t, 5, 2, "\x1b[?1049h1\r\n2\r\n3\r\n4")
+	if got := term.History(); got != 0 {
+		t.Errorf("the alternate screen scrolled %d lines into history, want none", got)
+	}
+	// Nor does a scroll region below the top, or deleted lines.
+	term = screen(t, 5, 3, "\x1b[2;3r\x1b[3;1H\n\n\n\x1b[r\x1b[1;1H\x1b[M")
+	if got := term.History(); got != 0 {
+		t.Errorf("a region below the top and deleted lines scrolled %d lines into history, want none", got)
+	}
+	// SU scrolls the screen into history, and ED 3 erases it.
+	term = screen(t, 5, 2, "a\r\nb\x1b[2S")
+	if got := term.History(); got != 2 {
+		t.Errorf("SU 2 scrolled %d lines into history, want 2", got)
+	}
+	term.Write([]byte("\x1b[3J"))
+	if got := term.History(); got != 0 {
+		t.Errorf("after ED 3 the terminal keeps %d lines of history, want none", got)
+	}
+}
+
+func TestHistoryIsCarriedInTheState(t *testing.T) {
+	term := screen(t, 5, 2, "old\r\nb\r\nc")
+	data, err := json.Marshal(term.State())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s State
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	copied, err := FromState(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied.History() != 1 {
+		t.Fatalf("the terminal made from the state keeps %d lines of history, want 1", copied.History())
+	}
+	checkLines(t, shownBack(t, copied, 1), "old", "b")
+	// A narrower terminal shows a wider line of history clipped.
+	copied.Resize(2, 2)
+	checkLines(t, shownBack(t, copied, 1), "ol", "b")
 }

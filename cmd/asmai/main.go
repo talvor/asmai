@@ -45,6 +45,7 @@ commands you type:
   asmai, asmai chat           talk with Coordination: attach this terminal to Coordination's leader,
                               starting the factory first if it is stopped. What you type reaches
                               Coordination, and each message you submit is journaled word for word.
+                              ↑/↓ scroll its history and are not sent to Coordination.
                               Ctrl-] leaves the conversation, which pauses nothing
   asmai init [--yes] [--claude-default-model MODEL]
                               the first run: check this platform is certified, choose Claude's
@@ -77,7 +78,8 @@ commands you type:
   asmai job <number>          show a job and its witnessed request
   asmai job clean <number>    remove the scratch workspaces of a job with no repository, and the results in them;
                               they are kept until you run this, and it is refused while the job is open
-  asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
+  asmai attach <agent>        show an agent's terminal and observe it; ↑/↓ scroll its history
+                              and Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai dashboard             show the factory live in this terminal: agents, jobs and the log in three
                               tabs, 1, 2 and 3, under a banner of what waits on you; q leaves. It only

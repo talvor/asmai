@@ -176,7 +176,14 @@ type State struct {
 	Tabs   []int  `json:"tabs"`
 	Title  string `json:"title,omitempty"`
 	Parser Parser `json:"parser"`
+	// Scrollback is the history: the lines that scrolled off the top of the
+	// main screen, oldest first, at most ScrollbackLimit of them, each
+	// without its trailing blank cells. A line in it never changes.
+	Scrollback [][]Cell `json:"scrollback,omitempty"`
 }
+
+// ScrollbackLimit is how many lines of history a Terminal keeps.
+const ScrollbackLimit = 1000
 
 // Terminal emulates a terminal of a fixed size, which Resize changes. It is
 // not safe for concurrent use.
@@ -184,6 +191,8 @@ type Terminal struct {
 	s         State
 	tabs      []bool
 	responses []byte
+	// scrolledOff counts the lines scrolled into the history.
+	scrolledOff int
 }
 
 // New returns a terminal of columns by rows, cleared, with the cursor at the
@@ -209,6 +218,9 @@ func FromState(s State) (*Terminal, error) {
 		}
 	}
 	t := &Terminal{s: s.clone()}
+	if over := len(t.s.Scrollback) - ScrollbackLimit; over > 0 {
+		t.s.Scrollback = t.s.Scrollback[over:]
+	}
 	t.s.Cursor.X = clamp(t.s.Cursor.X, 0, s.Columns-1)
 	t.s.Cursor.Y = clamp(t.s.Cursor.Y, 0, s.Rows-1)
 	if t.s.Top < 0 || t.s.Bottom >= s.Rows || t.s.Top >= t.s.Bottom {
@@ -240,6 +252,8 @@ func (s State) clone() State {
 	c.Main = s.Main.clone()
 	c.Alt = s.Alt.clone()
 	c.Tabs = append([]int(nil), s.Tabs...)
+	// The lines of the history never change, so the copy shares them.
+	c.Scrollback = append([][]Cell(nil), s.Scrollback...)
 	c.Parser.Pending = append([]byte(nil), s.Parser.Pending...)
 	c.Parser.UTF8 = append([]byte(nil), s.Parser.UTF8...)
 	return c
@@ -267,6 +281,28 @@ func (t *Terminal) Cell(x, y int) Cell {
 		return Cell{}
 	}
 	return t.screen().Lines[y][x]
+}
+
+// History returns how many lines of history the terminal keeps.
+func (t *Terminal) History() int { return len(t.s.Scrollback) }
+
+// ScrolledOff counts the lines that scrolled into the terminal's history
+// since it was made, including those the history no longer keeps.
+func (t *Terminal) ScrolledOff() int { return t.scrolledOff }
+
+// ViewCell returns the cell at column x and row y of the screen shown
+// scrolled back by back lines into the history, at most History of them:
+// the history's last back lines show above the screen's first rows.
+func (t *Terminal) ViewCell(x, y, back int) Cell {
+	back = clamp(back, 0, len(t.s.Scrollback))
+	if y >= back {
+		return t.Cell(x, y-back)
+	}
+	line := t.s.Scrollback[len(t.s.Scrollback)-back+y]
+	if x < 0 || x >= len(line) || x >= t.s.Columns {
+		return Cell{}
+	}
+	return line[x]
 }
 
 // Cursor returns the cursor's column and row, and whether it is shown.
@@ -323,6 +359,10 @@ func (t *Terminal) Resize(columns, rows int) {
 		return
 	}
 	shift := max(t.s.Cursor.Y-rows+1, 0)
+	if !t.s.AltActive {
+		// The lines that move off the top go into the history.
+		t.keep(t.s.Main.Lines[:shift])
+	}
 	resizeScreen := func(s *Screen, shift int) {
 		lines := s.Lines[shift:]
 		resized := make([][]Cell, rows)

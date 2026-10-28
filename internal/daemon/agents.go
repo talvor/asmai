@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -927,7 +928,8 @@ func newCredential() (string, error) {
 // always runs while the factory runs. A worker's session that resumed the
 // provider's session and ended without coming up could not resume it; a
 // worker's session that exits with an unreported delivered, working, or unknown
-// work dispatch in its generation needs reconciliation.
+// work dispatch in its generation, or with a decision answer typed to it in
+// its generation and never acknowledged, needs reconciliation.
 func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bool) {
 	defer d.agents.Done()
 	<-s.Done()
@@ -956,9 +958,7 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 		w, err := d.store.WorkerDispatch(l.assignment)
 		if err != nil {
 			d.log.Error("reading a worker's dispatch after its session exited", "agent", l.address.String(), "assignment", l.assignment, "error", err.Error())
-		} else if w.Assignment.State == store.AssignmentActive && w.Report == "" && w.Dispatch.Generation == generation &&
-			(w.Dispatch.State == store.DispatchDelivered || w.Dispatch.State == store.DispatchWorking || w.Dispatch.State == store.DispatchUnknown) {
-			d.holdForReconciliation(w, fmt.Sprintf("%s's session exited without a Stop hook or a report (%s)", w.Assignment.Worker, exit))
+		} else if d.reconcileExit(w, generation, exit) {
 			if owner, err := roles.ParseAddress(w.Assignment.Owner); err == nil {
 				if err := d.ensureAgent(owner); err != nil {
 					d.log.Error("starting the owning leader to tell it", "agent", w.Assignment.Owner, "error", err.Error())
@@ -990,6 +990,34 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 	l.quickExits++
 	d.log.Warn("Coordination's leader ended on its own; restarting it", "agent", l.address.String(), "in", wait.String())
 	l.restart = time.AfterFunc(wait, func() { d.ensureCoordination() })
+}
+
+// reconcileExit holds the active assignment of the worker w, whose session of
+// generation ended with exit, for reconciliation when that session left its
+// outcome unknown, and reports whether it did: its work dispatch unreported
+// and delivered, working or unknown in that session, or a decision answer
+// whose nudge that session was typed and never acknowledged. The uncertain
+// answer is the assignment's latest work only to the worker, so the watcher
+// looks for it by the generation it was typed in. d.mu is held.
+func (d *daemon) reconcileExit(w store.WorkerDispatch, generation int, exit string) bool {
+	if w.Assignment.State != store.AssignmentActive {
+		return false
+	}
+	if w.Report == "" && w.Dispatch.Generation == generation &&
+		(w.Dispatch.State == store.DispatchDelivered || w.Dispatch.State == store.DispatchWorking || w.Dispatch.State == store.DispatchUnknown) {
+		d.holdForReconciliation(w, fmt.Sprintf("%s's session exited without a Stop hook or a report (%s)", w.Assignment.Worker, exit))
+		return true
+	}
+	answer, err := d.store.UncertainAnswer(w.Assignment.ID, generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	if err != nil {
+		d.log.Error("reading a worker's uncertain decision answer after its session exited", "agent", w.Assignment.Worker, "assignment", w.Assignment.ID, "error", err.Error())
+		return false
+	}
+	d.holdAnswerForReconciliation(w.Assignment, answer, fmt.Sprintf("%s's session exited after decision answer dispatch %d was typed to it and before it acknowledged it (%s), so whether it saw the answer is unknown", w.Assignment.Worker, answer.ID, exit))
+	return true
 }
 
 func describeExit(err error) string {

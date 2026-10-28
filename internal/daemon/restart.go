@@ -234,6 +234,22 @@ func (d *daemon) holdForReconciliation(w store.WorkerDispatch, why string) {
 	d.log.Warn("assignment needs reconciliation", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "owner", a.Owner, "dispatch", w.Dispatch.ID, "why", why, "told", told.ID)
 }
 
+// holdAnswerForReconciliation marks assignment a as needing reconciliation
+// against answer, a decision answer to its worker whose outcome is unknown,
+// for why, and tells its owning leader how to recover it. The answer stays
+// queued and unknown until the owner delivers it again or retires it.
+func (d *daemon) holdAnswerForReconciliation(a store.Assignment, answer store.Dispatch, why string) {
+	body := fmt.Sprintf("Assignment %[1]d of job %[2]d needs reconciliation: %[3]s.\n"+
+		"It is held, and decision answer dispatch %[4]d is kept, never discarded: nothing is retried until you choose. Look at `asmai brief %[2]d` and the effects %[5]s recorded, then either deliver the answer again in a new dispatch with `asmai answer redeliver --dispatch %[4]d --reason <why>`, which starts %[5]s for it, or retire it with `asmai answer retire --dispatch %[4]d --reason <why>` and send the assignment again with `asmai redispatch --assignment %[1]d --reason <why>`.",
+		a.ID, a.Job, why, answer.ID, a.Worker)
+	told, err := d.store.AssignmentNeedsReconciliation(a.ID, answer.ID, why, body, time.Now())
+	if err != nil {
+		d.log.Error("holding an assignment for reconciliation", "assignment", a.ID, "error", err.Error())
+		return
+	}
+	d.log.Warn("assignment needs reconciliation", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "owner", a.Owner, "answer", answer.ID, "why", why, "told", told.ID)
+}
+
 // cannotResume handles the assignment of l, a worker whose session resumed
 // the provider's session and ended without coming up, with cannotContinue.
 // An assignment held for reconciliation has its owning leader started to

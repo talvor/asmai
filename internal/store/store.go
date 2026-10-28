@@ -448,6 +448,12 @@ const (
 	KindAssignmentNeedsReconciliation = "assignment.needs_reconciliation"
 	KindAssignmentRedispatched        = "assignment.redispatched"
 	KindCancellationRestarted         = "assignment.cancellation_restarted"
+	// KindDecisionAnswerRedelivered records the owning leader delivering a
+	// decision answer whose outcome is unknown to its worker again, in a new
+	// dispatch, and KindDecisionAnswerRetired the owner retiring it, with the
+	// answer it retires: neither is ever silent.
+	KindDecisionAnswerRedelivered = "decision.answer.redelivered"
+	KindDecisionAnswerRetired     = "decision.answer.retired"
 	// KindJobBranchPushed records the daemon pushing a job branch for its
 	// delivery owner, with the effect it records and the outside changes the
 	// pushed commit took in. KindOutsideChange records a push refused because

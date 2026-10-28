@@ -19,7 +19,7 @@ import (
 const permissionRequested = "PermissionRequest"
 
 // promptCheck is how often an attach stream looks for a change in the native
-// prompts agents wait at.
+// prompts agents wait at, and in the attached agent's model and effort.
 const promptCheck = time.Second
 
 // WaitingPrompt is a native permission prompt an agent's session waits at.

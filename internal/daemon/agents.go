@@ -92,6 +92,20 @@ type Leader struct {
 	// Conversation is the user's terminal the conversation is open in,
 	// when it is open with this leader.
 	Conversation string `json:"conversation,omitempty"`
+	// Model is the model an attached agent's session runs, and Effort its
+	// effort level once the provider has reported it: the status line shows
+	// them.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
+// Model is the model an agent's session runs, Name, as the provider reports
+// it at the session's start or else as the session was launched with, and
+// its effort level as the provider last reported it, which is empty until it
+// does: Claude Code reports it as each turn finishes.
+type Model struct {
+	Name   string `json:"name"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // Frame is one line of an attach stream after the daemon's answer: a State
@@ -107,6 +121,9 @@ type Frame struct {
 	// nobody can answer, as the status line shows them: the stream sends
 	// them first and whenever they change.
 	Prompts *[]string `json:"prompts,omitempty"`
+	// Model, when set, is the agent's model and effort as they now are: the
+	// stream sends it whenever either changes after its answer.
+	Model *Model `json:"model,omitempty"`
 }
 
 // ClientMessage is what an attach client sends the daemon after its
@@ -141,6 +158,8 @@ type leader struct {
 	assignment int64
 	// skills names the skills the session was given, in its list's order.
 	skills []string
+	// model is the model and effort the session runs, as Model says.
+	model, effort string
 	// restart is the timer that restarts the leader after its session ended
 	// on its own, and quickExits counts the sessions in a row that ended
 	// soon after they started.
@@ -904,6 +923,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	}
 	l.session, l.generation, l.startedAt = s, generation, at
 	l.skills = skills.NamesOf(launch.skills)
+	l.model, l.effort = launch.model, ""
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
@@ -1082,6 +1102,7 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 		return errors.New("the hook's payload names no hook_event_name")
 	}
 	d.promptObserved(ref, fields.Event, compact.Bytes())
+	d.modelReported(ref, compact.Bytes())
 	if fields.Session != "" {
 		// Every hook of a session carries the provider's own identifier of
 		// it, which resuming the session after a restart needs.
@@ -1126,6 +1147,56 @@ func (d *daemon) observe(credential string, payload json.RawMessage) error {
 		d.boundary(ref, fields.Transcript)
 	}
 	return nil
+}
+
+// modelReported keeps the model and effort level a hook of ref's session
+// reports, if it reports either: Claude Code's SessionStart names the model
+// and its Stop the effort level. A field of another shape is ignored.
+func (d *daemon) modelReported(ref sessionRef, payload json.RawMessage) {
+	var fields struct {
+		Model  json.RawMessage `json:"model"`
+		Effort json.RawMessage `json:"effort"`
+	}
+	if json.Unmarshal(payload, &fields) != nil {
+		return
+	}
+	var model, effort string
+	json.Unmarshal(fields.Model, &model)
+	var level struct {
+		Level string `json:"level"`
+	}
+	if json.Unmarshal(fields.Effort, &level) == nil {
+		effort = level.Level
+	} else {
+		json.Unmarshal(fields.Effort, &effort)
+	}
+	if model == "" && effort == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l := d.leaders[ref.address.String()]
+	if l == nil || l.generation != ref.generation {
+		return
+	}
+	if model != "" {
+		l.model = model
+	}
+	if effort != "" {
+		l.effort = effort
+	}
+}
+
+// modelOf returns the model and effort of generation of agent's session, or
+// none when that is not the session it runs.
+func (d *daemon) modelOf(agent string, generation int) Model {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l := d.leaders[agent]
+	if l == nil || l.generation != generation {
+		return Model{}
+	}
+	return Model{Name: l.model, Effort: l.effort}
 }
 
 // userSubmitted reports whether a prompt submission ref's session reports
@@ -1189,7 +1260,8 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 		reply(conn, Response{Error: err.Error()})
 		return
 	}
-	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: generation, PID: s.PID()}
+	model := d.modelOf(address.String(), generation)
+	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: generation, PID: s.PID(), Model: model.Name, Effort: model.Effort}
 	if req.Snapshot {
 		screen := s.Screen()
 		reply(conn, Response{Attached: attached, Screen: &screen})
@@ -1232,7 +1304,8 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 		d.log.Error("journaling the conversation's start", "error", err.Error())
 	}
 	d.log.Info("the user entered the conversation", "agent", address.String(), "generation", c.generation, "terminal", c.terminal)
-	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: c.generation, PID: c.session.PID(), Conversation: c.terminal}
+	model := d.modelOf(address.String(), c.generation)
+	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: c.generation, PID: c.session.PID(), Conversation: c.terminal, Model: model.Name, Effort: model.Effort}
 	how := d.stream(conn, r, req, c.session, attached, func(keys []byte) { d.typed(c, keys) })
 	d.leave(c, how)
 	if how == LeftByDetaching {
@@ -1365,6 +1438,9 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 	// change.
 	prompts := d.promptLines()
 	pending := &prompts
+	// The model and effort went with the answer, and go on their own
+	// whenever either changes.
+	model := Model{Name: attached.Model, Effort: attached.Effort}
 	check := time.NewTicker(promptCheck)
 	defer check.Stop()
 	events, stop := s.Follow()
@@ -1375,6 +1451,12 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 			if now := d.promptLines(); !slices.Equal(now, prompts) {
 				prompts = now
 				if pending == nil && !send(Frame{Prompts: &prompts}) {
+					return LeftByTerminalClose
+				}
+			}
+			if now := d.modelOf(attached.Agent, attached.Generation); now != model && now != (Model{}) {
+				model = now
+				if !send(Frame{Model: &model}) {
 					return LeftByTerminalClose
 				}
 			}

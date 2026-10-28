@@ -90,6 +90,7 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 		agent:        resp.Attached.Agent,
 		conversation: req.Command == daemon.CommandConversation,
 		notice:       notice,
+		model:        daemon.Model{Name: resp.Attached.Model, Effort: resp.Attached.Effort},
 		columns:      columns,
 		rows:         rows,
 		dirty:        make(chan struct{}, 1),
@@ -127,7 +128,10 @@ type attachClient struct {
 	notice string
 	// prompts are the native prompts agents wait at that nobody can answer,
 	// which the status line shows.
-	prompts       []string
+	prompts []string
+	// model is the model the agent runs and its effort, as the daemon
+	// knows them, which the status line shows.
+	model         daemon.Model
 	term          *vt.Terminal
 	columns, rows int
 	renderer      vt.Renderer
@@ -165,6 +169,9 @@ func (c *attachClient) readFrames(r io.Reader) {
 		c.mu.Lock()
 		if f.Prompts != nil {
 			c.prompts = *f.Prompts
+		}
+		if f.Model != nil {
+			c.model = *f.Model
 		}
 		switch {
 		case f.State != nil:
@@ -316,6 +323,12 @@ func (c *attachClient) statusLine() string {
 		text = fmt.Sprintf(" %s · conversation · Ctrl-] leaves", c.agent)
 		if c.notice != "" {
 			text += " · " + c.notice
+		}
+	}
+	if model := strings.Map(printable, c.model.Name); model != "" {
+		text += " · " + model
+		if effort := strings.Map(printable, c.model.Effort); effort != "" {
+			text += " · " + effort + " effort"
 		}
 	}
 	for _, p := range c.prompts {

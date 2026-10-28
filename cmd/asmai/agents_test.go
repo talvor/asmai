@@ -512,7 +512,7 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 	a := attachInTerminal(t, "coordination", 80, 25)
 	waitFor(t, "the attached screen", func() bool {
 		lines := a.lines()
-		return lines[0] == "Coordination is ready" && lines[4] == "         placed" && strings.Contains(lines[24], "leader@coordination · observing · Ctrl-] detaches")
+		return lines[0] == "Coordination is ready" && lines[4] == "         placed" && strings.Contains(lines[24], "leader@coordination · observing · Ctrl-] detaches · opus")
 	})
 	if c := a.cell(0, 0); c.Flags&vt.Bold == 0 || a.cell(13, 0).Flags&vt.Bold != 0 {
 		t.Errorf("the attached screen lost the leader's renditions: %+v", c)

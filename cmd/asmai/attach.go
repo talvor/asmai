@@ -99,6 +99,9 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 	// The alternate screen keeps the user's own screen to come back to, and
 	// without autowrap the status line's last cell cannot scroll it.
 	out.WriteString("\x1b[?1049h\x1b[?7l\x1b[H\x1b[2J")
+	if c.conversation {
+		out.WriteString(enhanceKeys)
+	}
 	go c.readFrames(r)
 	go c.readKeys(in)
 	go c.followSize(int(out.Fd()))
@@ -106,6 +109,9 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 
 	if c.paste {
 		out.WriteString("\x1b[?2004l")
+	}
+	if c.conversation {
+		out.WriteString(restoreKeys)
 	}
 	out.WriteString("\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l")
 	term.Restore(int(in.Fd()), restore)
@@ -123,6 +129,8 @@ type attachClient struct {
 	conversation bool
 	// sending keeps each line sent to the daemon whole.
 	sending sync.Mutex
+	// keys reads the keys the user types in the conversation.
+	keys keyReader
 
 	mu     sync.Mutex
 	notice string
@@ -220,11 +228,17 @@ const leftConversation = "Left the conversation. Nothing is paused: Coordination
 // Outside the conversation no other key reaches it either, and Ctrl-]
 // detaches. In the conversation every other key is sent on as typed, Esc
 // included, and returns the view to the live screen, and Ctrl-] leaves it.
+// There the keys are first read as a terminal without the kitty keyboard
+// protocol or modifyOtherKeys would send them, and Shift-Enter, Alt-Enter
+// and backslash-Enter start a new line in the agent's prompt.
 func (c *attachClient) readKeys(in io.Reader) {
 	buf := make([]byte, 256)
 	for {
 		n, err := in.Read(buf)
 		keys := buf[:n]
+		if c.conversation {
+			keys = c.keys.read(keys)
+		}
 		detach := bytes.IndexByte(keys, detachKey)
 		if detach >= 0 {
 			keys = keys[:detach]

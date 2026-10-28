@@ -249,3 +249,80 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 		t.Errorf("the journal holds %d departures from the conversation, want 2", len(lefts))
 	}
 }
+
+// multiLineScript is Coordination's leader, played by the fake, taking a
+// message of three lines: the first ended with Shift-Enter, the second with
+// backslash-Enter, and the whole submitted with Enter. Its prompt grows a
+// line with each new line.
+var multiLineScript = []string{
+	`{"hook": "SessionStart", "payload": {"session_id": "fake-session", "hook_event_name": "SessionStart", "source": "startup"}}`,
+	`{"screen": "\u001b[2J\u001b[H> "}`,
+	`{"expect": "first line\u001b\r"}`,
+	`{"screen": "first line\r\n  "}`,
+	`{"expect": "second line\\\u007f\u001b\r"}`,
+	`{"screen": "second line\r\n  "}`,
+	`{"expect": "third line\r"}`,
+	`{"screen": "third line\r\n"}`,
+	`{"hook": "UserPromptSubmit", "payload": {"session_id": "fake-session", "hook_event_name": "UserPromptSubmit", "prompt": "first line\nsecond line\nthird line"}}`,
+	`{"run": "touch \"$ASMAI_TEST_DIR/submitted\""}`,
+	`{"expect": "only typed by a test that means to"}`,
+}
+
+// In the conversation, the user's terminal is asked to tell Shift-Enter from
+// Enter, and is restored when they leave. Shift-Enter and backslash-Enter
+// start new lines in Coordination's prompt, which grows, and Enter submits
+// the whole message, which is journaled word for word with its line breaks.
+func TestAMultiLineMessageIsSubmittedWholeAndJournaledWithItsLineBreaks(t *testing.T) {
+	testDir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	readyFactory(t, multiLineScript)
+
+	a := inTerminal(t, 100, 25, "chat")
+	waitFor(t, "the conversation", func() bool { return a.lines()[0] == ">" })
+	written := func() string {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return string(a.written)
+	}
+	if !strings.Contains(written(), enhanceKeys) {
+		t.Errorf("entering the conversation wrote %q, want the terminal asked to tell Shift-Enter apart with %q", written(), enhanceKeys)
+	}
+
+	a.ptmx.WriteString("first line\x1b[13;2u")
+	waitFor(t, "the prompt's second line", a.shows("first line"))
+	a.ptmx.WriteString("second line\\\r")
+	waitFor(t, "the prompt's third line", a.shows("second line"))
+	if lines := a.lines(); lines[0] != "> first line" || lines[1] != "  second line" {
+		t.Errorf("the prompt shows %q, want its lines one under the other", lines[:3])
+	}
+	if witnessed := journaled(t, "message.witnessed"); len(witnessed) != 0 {
+		t.Errorf("before Enter the journal holds the witnessed messages %+v, want none", witnessed)
+	}
+	if leader := coordination(t); leader.Input != "user" {
+		t.Errorf("with the message's lines unsent, the leader's input is %q, want the user's", leader.Input)
+	}
+
+	a.ptmx.WriteString("third line\r")
+	waitFor(t, "the message submitted", touched(testDir, "submitted"))
+	waitFor(t, "the witnessed message", func() bool { return len(journaled(t, "message.witnessed")) == 1 })
+	var message struct {
+		Text string `json:"text"`
+	}
+	json.Unmarshal(journaled(t, "message.witnessed")[0].Data, &message)
+	if want := "first line\nsecond line\nthird line"; message.Text != want {
+		t.Errorf("the witnessed message is %q, want %q", message.Text, want)
+	}
+	if leader := coordination(t); leader.Input != "automation" {
+		t.Errorf("once the message was submitted, the leader's input is %q, want automation", leader.Input)
+	}
+
+	// Ctrl-], as the kitty keyboard protocol sends it, still leaves, and
+	// the terminal is restored.
+	a.ptmx.WriteString("\x1b[93;5u")
+	if code := a.exited(t); code != 0 {
+		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
+	}
+	if out := written(); !strings.Contains(out, restoreKeys) || strings.LastIndex(out, restoreKeys) > strings.LastIndex(out, "\x1b[?1049l") {
+		t.Errorf("leaving the conversation wrote %q, want the terminal's keys restored with %q before it leaves the alternate screen", out, restoreKeys)
+	}
+}

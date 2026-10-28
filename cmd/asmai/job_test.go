@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,7 +43,10 @@ func TestCoordinationOpensAJobFromTheUsersWitnessedMessage(t *testing.T) {
 		fakeRun(`touch "$ASMAI_TEST_DIR/done"`, 0, ""),
 		`{"expect": "only typed by a test that means to"}`,
 	}
-	readyFactory(t, script)
+	stateDir := readyFactory(t, script)
+	if err := os.Remove(filepath.Join(stateDir, "branch-id")); err != nil {
+		t.Fatal(err)
+	}
 
 	origin := filepath.Join(t.TempDir(), "fixture.git")
 	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
@@ -74,6 +78,15 @@ func TestCoordinationOpensAJobFromTheUsersWitnessedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the fake leader to open and read the job", touched(testDir, "done"))
+	id, err := os.ReadFile(filepath.Join(stateDir, "branch-id"))
+	if err != nil || !regexp.MustCompile(`^[a-z0-9]{6}\n$`).Match(id) {
+		t.Fatalf("first job kept branch ID %q (%v), want six lower-case letters or digits", id, err)
+	}
+	branch := "asmai/" + strings.TrimSpace(string(id)) + "/job-1-fix-the-fixture"
+	if got := gitIn(t, filepath.Join(stateDir, "repositories", "fixture"), "branch", "--list", branch); !strings.Contains(got, branch) {
+		t.Fatalf("job branch in the clone is %q, want %s", got, branch)
+	}
+	t.Logf("first job branch in the running factory: %s", branch)
 
 	var shown struct {
 		Job struct {
@@ -104,8 +117,173 @@ func TestCoordinationOpensAJobFromTheUsersWitnessedMessage(t *testing.T) {
 	if _, stderr, code := runAsmai(t, "start"); code != 0 {
 		t.Fatalf("restart: %s", stderr)
 	}
+	if kept, err := os.ReadFile(filepath.Join(stateDir, "branch-id")); err != nil || string(kept) != string(id) {
+		t.Fatalf("after restart branch ID is %q (%v), want %q", kept, err, id)
+	}
+	t.Logf("after daemon restart the stored branch ID remains %s", strings.TrimSpace(string(id)))
 	t.Setenv("ASMAI_SESSION", string(credential))
 	if _, stderr, code := runAsmai(t, "jobs"); code != 1 || !strings.Contains(stderr, "unknown or superseded") {
 		t.Fatalf("stale credential: code %d, %s", code, stderr)
 	}
+}
+
+func TestRunningFactoryRefusesAJobNumberAlreadyOnOriginBeforeRecordingIt(t *testing.T) {
+	testDir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	script := []string{
+		`{"screen": "> "}`,
+		`{"expect": "Please fix the fixture\r"}`,
+		`{"hook": "UserPromptSubmit", "payload": {"hook_event_name": "UserPromptSubmit", "prompt": "Please fix the fixture"}}`,
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass' > "$ASMAI_TEST_DIR/refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/refusal"; test "$status" -eq 1`, 0, `asmai/team/job-1-fix-the-fixture conflicts with asmai/team/job-1-other-title already on origin; change branch_prefix`),
+		fakeRun(`touch "$ASMAI_TEST_DIR/refused"`, 0, ""),
+		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/continue" ]; do sleep 0.02; done; asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass'`, 0, "Opened job 1"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/done"`, 0, ""),
+		`{"expect": "only typed by a test that means to"}`,
+	}
+	stateDir := readyFactoryConfigured(t, script, "[branches]\nbranch_prefix = \"team\"\n\n"+staffing)
+	origin := filepath.Join(t.TempDir(), "fixture.git")
+	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
+	work := t.TempDir()
+	gitIn(t, work, "clone", "--quiet", origin, "fixture")
+	checkout := filepath.Join(work, "fixture")
+	commitSetUp(t, checkout, "initial")
+	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:main")
+	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:refs/heads/asmai/team/job-1-other-title")
+	if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
+		t.Fatalf("repo add: %s", stderr)
+	}
+	a := inTerminal(t, 100, 25)
+	waitFor(t, "Coordination's prompt", a.shows(">"))
+	a.ptmx.WriteString("Please fix the fixture\r")
+	waitFor(t, "the origin collision refusal", touched(testDir, "refused"))
+	refusal, err := os.ReadFile(filepath.Join(testDir, "refusal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("asmai job open: %s", refusal)
+	if entries := journaled(t, "job.opened"); len(entries) != 0 {
+		t.Fatalf("a refused job was recorded: %+v", entries)
+	}
+	if got := gitIn(t, filepath.Join(stateDir, "repositories", "fixture"), "branch", "--list", "asmai/team/job-1-fix-the-fixture"); got != "" {
+		t.Fatalf("a refused branch was made: %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "views", "job-1")); !os.IsNotExist(err) {
+		t.Fatalf("a refused job left a view: %v", err)
+	}
+	jobs, stderr, code := runAsmai(t, "jobs")
+	if code != 0 || strings.Contains(jobs, "Fix the fixture") {
+		t.Fatalf("asmai jobs after refusal exited %d: %s%s", code, jobs, stderr)
+	}
+	t.Logf("asmai jobs after refusal: %s", strings.TrimSpace(jobs))
+	gitIn(t, checkout, "push", "--quiet", "origin", ":refs/heads/asmai/team/job-1-other-title")
+	if err := os.WriteFile(filepath.Join(testDir, "continue"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "job 1 to open after the collision cleared", touched(testDir, "done"))
+	branch := "asmai/team/job-1-fix-the-fixture"
+	if got := gitIn(t, filepath.Join(stateDir, "repositories", "fixture"), "branch", "--list", branch); !strings.Contains(got, branch) {
+		t.Fatalf("job 1 under the configured prefix has branch %q, want %s", got, branch)
+	}
+	if kept, err := os.ReadFile(filepath.Join(stateDir, "branch-id")); err != nil || string(kept) != "test\n" {
+		t.Fatalf("configured prefix changed stored ID to %q (%v), want test", kept, err)
+	}
+	t.Logf("job 1 opened after clearing the collision: %s (stored ID remains test)", branch)
+}
+
+func TestTwoFreshInstallsOnOneOriginOpenDistinctJobOneBranches(t *testing.T) {
+	origin := filepath.Join(t.TempDir(), "fixture.git")
+	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
+	work := t.TempDir()
+	gitIn(t, work, "clone", "--quiet", origin, "fixture")
+	checkout := filepath.Join(work, "fixture")
+	commitSetUp(t, checkout, "initial")
+	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:main")
+	var branches []string
+	for _, install := range []string{"first install", "second install"} {
+		t.Run(install, func(t *testing.T) {
+			testDir := t.TempDir()
+			t.Setenv("ASMAI_TEST_DIR", testDir)
+			script := []string{
+				`{"screen": "> "}`,
+				`{"expect": "Please fix the fixture\r"}`,
+				`{"hook": "UserPromptSubmit", "payload": {"hook_event_name": "UserPromptSubmit", "prompt": "Please fix the fixture"}}`,
+				fakeRun(`asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass'`, 0, "Opened job 1"),
+				fakeRun(`touch "$ASMAI_TEST_DIR/done"`, 0, ""),
+				`{"expect": "only typed by a test that means to"}`,
+			}
+			stateDir := readyFactory(t, script)
+			if err := os.Remove(filepath.Join(stateDir, "branch-id")); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
+				t.Fatalf("repo add: %s", stderr)
+			}
+			a := inTerminal(t, 100, 25)
+			waitFor(t, "Coordination's prompt", a.shows(">"))
+			a.ptmx.WriteString("Please fix the fixture\r")
+			waitFor(t, "job 1 opening", touched(testDir, "done"))
+			id, err := os.ReadFile(filepath.Join(stateDir, "branch-id"))
+			if err != nil || !regexp.MustCompile(`^[a-z0-9]{6}\n$`).Match(id) {
+				t.Fatalf("install branch ID %q (%v), want six lower-case letters or digits", id, err)
+			}
+			branch := "asmai/" + strings.TrimSpace(string(id)) + "/job-1-fix-the-fixture"
+			clone := filepath.Join(stateDir, "repositories", "fixture")
+			if got := gitIn(t, clone, "branch", "--list", branch); !strings.Contains(got, branch) {
+				t.Fatalf("job 1 branch in the clone is %q, want %s", got, branch)
+			}
+			gitIn(t, clone, "push", "--quiet", "origin", branch)
+			branches = append(branches, branch)
+			t.Logf("job 1 pushed to shared origin: %s", branch)
+		})
+	}
+	if branches[0] == branches[1] {
+		t.Fatalf("two fresh installs made the same job 1 branch: %s", branches[0])
+	}
+	for _, branch := range branches {
+		if got := gitIn(t, checkout, "ls-remote", "--heads", origin, "refs/heads/"+branch); !strings.Contains(got, "refs/heads/"+branch) {
+			t.Errorf("shared origin lacks %s: %s", branch, got)
+		}
+	}
+}
+
+func TestRunningFactoryKeepsAnOpenedJobWhenOriginLookupFails(t *testing.T) {
+	testDir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	script := []string{
+		`{"screen": "> "}`,
+		`{"expect": "Please fix the fixture\r"}`,
+		`{"hook": "UserPromptSubmit", "payload": {"hook_event_name": "UserPromptSubmit", "prompt": "Please fix the fixture"}}`,
+		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/offline" ]; do sleep 0.02; done; asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass'`, 0, "Opened job 1"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/done"`, 0, ""),
+		`{"expect": "only typed by a test that means to"}`,
+	}
+	stateDir := readyFactory(t, script)
+	origin := filepath.Join(t.TempDir(), "fixture.git")
+	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
+	work := t.TempDir()
+	gitIn(t, work, "clone", "--quiet", origin, "fixture")
+	checkout := filepath.Join(work, "fixture")
+	commitSetUp(t, checkout, "initial")
+	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:main")
+	if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
+		t.Fatalf("repo add: %s", stderr)
+	}
+	a := inTerminal(t, 100, 25)
+	waitFor(t, "Coordination's prompt", a.shows(">"))
+	a.ptmx.WriteString("Please fix the fixture\r")
+	waitFor(t, "the witnessed request", func() bool { return len(journaled(t, "message.witnessed")) == 1 })
+	clone := filepath.Join(stateDir, "repositories", "fixture")
+	gitIn(t, clone, "remote", "set-url", "origin", filepath.Join(testDir, "unavailable.git"))
+	if err := os.WriteFile(filepath.Join(testDir, "offline"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "job 1 to be recorded despite the origin outage", touched(testDir, "done"))
+	jobs := jobsListed(t)
+	if len(jobs) != 1 || jobs[0].Number != 1 {
+		t.Fatalf("job open while origin was unavailable recorded %+v, want job 1", jobs)
+	}
+	if made := journaled(t, "job.branch"); len(made) != 0 {
+		t.Fatalf("job open unexpectedly made a branch while origin was unavailable: %+v", made)
+	}
+	t.Logf("asmai jobs while origin lookup failed: job %d %q remains open; branch awaits retry", jobs[0].Number, jobs[0].Reading)
 }

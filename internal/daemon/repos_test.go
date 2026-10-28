@@ -175,6 +175,7 @@ func TestRepositoryRegistrationKeepsItsSetupJobWhenOriginLookupFails(t *testing.
 	if branch, err := s.JobBranch(resp.Job.Number); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("registration recorded branch %+v (%v), want a later retry", branch, err)
 	}
+	t.Logf("running daemon registered %s with setup job %d while origin lookup failed; branch awaits retry", resp.Repository.Name, resp.Job.Number)
 }
 
 func TestARegistrationThatCannotBeCompletedLeavesNothingBehind(t *testing.T) {

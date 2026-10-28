@@ -240,6 +240,94 @@ func TestLegacyAssignmentWorksWhileOriginIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestRunningDaemonKeepsALegacyJobAssignmentLocalDuringOriginOutage(t *testing.T) {
+	p := newJobFactory(t, store.MandateSetup, true)
+	previous, err := p.s.JobBranchDropped(p.job.Number, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldName := "asmai/job-1-setup"
+	git(t, p.clone, "branch", oldName, previous.Tip)
+	if _, err := p.s.JobBranchMade(store.JobBranch{Job: p.job.Number, Repository: "fixture", Name: oldName, StartedFrom: previous.Tip, View: previous.View}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	git(t, p.clone, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "unavailable.git"))
+	credential := runFactoryWithCredential(t, p)
+	_, err = Call(p.d.cfg.Paths.Socket, Request{Command: CommandAssign, Session: credential, Job: p.job.Number, Outcome: "Set up the repository", Criteria: []string{"setup is complete"}})
+	if err != nil && !strings.Contains(err.Error(), "starting worker") {
+		t.Fatalf("assigning the legacy setup job through the running daemon: %v", err)
+	}
+	assignments, err := p.s.AssignmentsForJob(p.job.Number)
+	if err != nil || len(assignments) != 1 {
+		t.Fatalf("legacy setup job recorded assignments %+v (%v), want one", assignments, err)
+	}
+	branch := "asmai/job-1/" + fmt.Sprint(assignments[0].ID)
+	if assignments[0].Workspace.Branch != branch || git(t, assignments[0].Workspace.Path, "rev-parse", "--abbrev-ref", "HEAD") != branch {
+		t.Fatalf("legacy assignment branch is %s, want %s", assignments[0].Workspace.Branch, branch)
+	}
+	t.Logf("running daemon made legacy assignment branch %s while origin was unavailable", branch)
+}
+
+func TestRunningDaemonChecksOriginWhenRetryingAnUnrecordedLocalJobBranch(t *testing.T) {
+	p := newJobFactory(t, store.MandateSetup, true)
+	previous, err := p.s.JobBranchDropped(p.job.Number, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, p.clone, "push", "origin", "refs/heads/"+previous.Name+":refs/heads/"+previous.Name)
+	credential := runFactoryWithCredential(t, p)
+	_, err = Call(p.d.cfg.Paths.Socket, Request{Command: CommandAssign, Session: credential, Job: p.job.Number, Outcome: "Set up the repository", Criteria: []string{"setup is complete"}})
+	if err == nil || !strings.Contains(err.Error(), previous.Name) || !strings.Contains(err.Error(), "branch_prefix") {
+		t.Fatalf("retrying the unrecorded local branch through the running daemon gave %v, want a collision refusal", err)
+	}
+	if assignments, err := p.s.AssignmentsForJob(p.job.Number); err != nil || len(assignments) != 0 {
+		t.Fatalf("retrying the collided branch recorded assignments %+v (%v), want none", assignments, err)
+	}
+	if _, err := p.s.JobBranch(p.job.Number); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("retrying the collided branch recorded a job branch: %v", err)
+	}
+	t.Logf("running daemon refused retry of %s because origin now has the name", previous.Name)
+}
+
+func runFactoryWithCredential(t *testing.T, p planningJob) string {
+	t.Helper()
+	provider := filepath.Join(p.d.cfg.Paths.Providers, "claude-code", "v", "claude")
+	script, err := os.ReadFile(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script = []byte(strings.Replace(string(script), "exec sleep 60", "printf '%s' \"$ASMAI_SESSION\" > \"$ASMAI_TEST_OUT/credential\"\nexec sleep 60", 1))
+	if err := os.WriteFile(provider, script, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	trusted := map[string]map[string]bool{}
+	for _, dir := range []string{p.d.cfg.Paths.Agents, p.d.cfg.Paths.Workspaces, p.clone} {
+		folder, _ := providers.TrustFolder(dir)
+		trusted[folder] = map[string]bool{"hasTrustDialogAccepted": true}
+	}
+	record, err := json.Marshal(map[string]any{"projects": trusted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.d.cfg.ClaudeRecord, record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runDaemonWith(t, p.d.cfg)
+	credentialPath := filepath.Join(p.out, "credential")
+	var credential string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if data, err := os.ReadFile(credentialPath); err == nil && len(data) != 0 {
+			credential = string(data)
+			break
+		}
+	}
+	if credential == "" {
+		log, _ := os.ReadFile(p.d.cfg.Paths.Log)
+		t.Fatalf("the running daemon did not start its coordination leader:\n%s", log)
+	}
+	return strings.TrimSpace(credential)
+}
+
 func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 	paths := stateDir(t)
 	origin := remote(t)

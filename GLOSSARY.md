@@ -110,7 +110,7 @@ A repository's skill setup, which lives in the repository: `docs/agents/issue-tr
 _Avoid_: Onboarding, bootstrap
 
 **Branch prefix**:
-The name an install's branches go under, so that two installs on one origin never make the same branch: the `branch_prefix` in the configuration, else a random ID of about six characters that the daemon makes the first time it needs one and keeps in the state directory. It is never written into the configuration. `asmai doctor` shows it and which of the two it is.
+The name an install's new branches go under. Distinct prefixes keep installs on one origin from using the same branch names. It comes from `branch_prefix` in the configuration, or from a random ID the daemon keeps in the state directory. See the [configuration reference](README.md#branch-prefix) for its rules and how `asmai doctor` reports it.
 _Avoid_: Namespace, install ID
 
 **Job branch**:

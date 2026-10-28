@@ -50,7 +50,7 @@ type Config struct {
 	Limits Limits
 	// Logs are the log settings, with their defaults.
 	Logs Logs
-	// BranchPrefix is [branches] branch_prefix: the name this install's job
+	// BranchPrefix is [branches] branch_prefix: the name this install's new job
 	// and assignment branches go under, or "" when the file sets none and
 	// the install's own ID is used.
 	BranchPrefix string

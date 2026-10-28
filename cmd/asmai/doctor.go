@@ -115,11 +115,10 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	return checks, configFile, cfg, nil
 }
 
-// branchPrefixOf returns the prefix the daemon puts new branches under and
-// where it comes from, without making the install's branch ID: the
-// configuration's branch_prefix, else the ID kept in the state directory. An
-// install the daemon has not yet given an ID has no prefix, and the source
-// says when it gets one.
+// branchPrefixOf returns the prefix selected by cfg and where it comes from,
+// without making the install's branch ID: the configuration's branch_prefix,
+// else the ID kept in the state directory. An install the daemon has not yet
+// given an ID has no prefix, and the source says when it gets one.
 func branchPrefixOf(cfg config.Config, paths statedir.Paths) (prefix, source string) {
 	if cfg.BranchPrefix != "" {
 		return cfg.BranchPrefix, "from branch_prefix in the configuration file"

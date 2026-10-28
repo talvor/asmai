@@ -420,6 +420,7 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 	}
 	listener.Close()
 	t.Logf("worker test listened on socket=%s (%d bytes)", socket, len(socket))
+	t.Logf("running factory branches: job %s; assignment %s", jobBranch.Name, assignment.Workspace.Branch)
 
 	// The worker ran in that workspace, with its slot and its own TMPDIR, and
 	// the workspace is a checkout of AsmAI's clone, not of the user's.

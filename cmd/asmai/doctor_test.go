@@ -271,6 +271,11 @@ func TestDoctorReportsTheBranchPrefixAndItsSource(t *testing.T) {
 	if !strings.Contains(stdout, "Branch prefix  k3x9qz (from the ID kept in the state directory)") {
 		t.Errorf("with an ID kept, asmai doctor printed\n%s\nwant its prefix and source", stdout)
 	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "Branch prefix") {
+			t.Logf("asmai doctor: %s", line)
+		}
+	}
 
 	configFile := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
 	text, err := os.ReadFile(configFile)
@@ -283,6 +288,11 @@ func TestDoctorReportsTheBranchPrefixAndItsSource(t *testing.T) {
 	stdout, _, _ = doctorIn(t)
 	if !strings.Contains(stdout, "Branch prefix  alice (from branch_prefix in the configuration file)") {
 		t.Errorf("with branch_prefix set, asmai doctor printed\n%s\nwant its prefix and source", stdout)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "Branch prefix") {
+			t.Logf("asmai doctor: %s", line)
+		}
 	}
 }
 
@@ -341,6 +351,11 @@ func TestDoctorDoesNotReportAnUnconfirmedConfiguredPrefixAsApplied(t *testing.T)
 	stdout, stderr, _ := doctorIn(t)
 	if !strings.Contains(stdout, "Branch prefix  applied prefix could not be confirmed") || !strings.Contains(stdout, "configured branch_prefix bob (unconfirmed)") || strings.Contains(stdout, "Branch prefix  bob (") {
 		t.Errorf("doctor printed %q, %q; want the file prefix labelled unconfirmed", stdout, stderr)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "Branch prefix") || strings.Contains(line, "configured branch_prefix") {
+			t.Logf("asmai doctor: %s", strings.TrimSpace(line))
+		}
 	}
 	stdout, stderr, _ = doctorIn(t, "--json")
 	var report struct {

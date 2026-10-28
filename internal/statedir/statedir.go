@@ -5,6 +5,7 @@
 package statedir
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -25,6 +26,9 @@ type Paths struct {
 	Socket string
 	// Lock is held by the running daemon, so that each user runs at most one.
 	Lock string
+	// BranchID holds this install's branch ID, the prefix its branches go
+	// under when the configuration sets none.
+	BranchID string
 	// Store is the SQLite store.
 	Store string
 	// Log is the daemon's current log file; its older files are Log.1 to Log.4.
@@ -94,6 +98,7 @@ func At(dir string) Paths {
 		Dir:           dir,
 		Socket:        filepath.Join(dir, "daemon.sock"),
 		Lock:          filepath.Join(dir, "daemon.lock"),
+		BranchID:      filepath.Join(dir, "branch-id"),
 		Store:         filepath.Join(dir, "store.db"),
 		Log:           filepath.Join(dir, "daemon.log"),
 		Providers:     filepath.Join(dir, "providers"),
@@ -167,4 +172,62 @@ func (p Paths) Clones() ([]string, error) {
 		}
 	}
 	return clones, nil
+}
+
+// branchIDLength is the length of a branch ID, drawn from lower-case letters
+// and digits.
+const branchIDLength = 6
+
+// ReadBranchID returns the install's branch ID, or "" when none has been
+// made yet.
+func (p Paths) ReadBranchID() (string, error) {
+	data, err := os.ReadFile(p.BranchID)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading the branch ID: %w", err)
+	}
+	id := strings.TrimSpace(string(data))
+	if id == "" {
+		return "", fmt.Errorf("the branch ID file %s is empty; remove it and a new ID is made at the next job", p.BranchID)
+	}
+	return id, nil
+}
+
+// BranchIDOrMake returns the install's branch ID, making and keeping a
+// random one the first time it is asked for.
+func (p Paths) BranchIDOrMake() (string, error) {
+	id, err := p.ReadBranchID()
+	if err != nil || id != "" {
+		return id, err
+	}
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	raw := make([]byte, branchIDLength)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("making a branch ID: %w", err)
+	}
+	for i, b := range raw {
+		raw[i] = alphabet[int(b)%len(alphabet)]
+	}
+	id = string(raw)
+	if err := p.Prepare(); err != nil {
+		return "", err
+	}
+	f, err := os.OpenFile(p.BranchID, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return p.ReadBranchID()
+	}
+	if err != nil {
+		return "", fmt.Errorf("keeping the branch ID: %w", err)
+	}
+	_, err = f.WriteString(id + "\n")
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(p.BranchID)
+		return "", fmt.Errorf("keeping the branch ID: %w", err)
+	}
+	return id, nil
 }

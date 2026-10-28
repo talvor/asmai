@@ -483,3 +483,25 @@ func TestDurationsAndSizesAreReadAsTheFileWritesThem(t *testing.T) {
 		}
 	}
 }
+
+func TestTheBranchPrefixIsReadAndAnInvalidOneIsAProblemWithItsLine(t *testing.T) {
+	cfg, problems := Parse([]byte("[branches]\nbranch_prefix = \"alice-2\"\n"))
+	if len(problems) != 0 || cfg.BranchPrefix != "alice-2" {
+		t.Errorf("a valid prefix gave %q and %v", cfg.BranchPrefix, problems)
+	}
+	if cfg, problems := Parse(nil); len(problems) != 0 || cfg.BranchPrefix != "" {
+		t.Errorf("a file with no prefix gave %q and %v", cfg.BranchPrefix, problems)
+	}
+	for _, bad := range []string{"", "Alice", "-alice", "al ice", "al/ice", "al_ice", "über", strings.Repeat("a", 21)} {
+		_, problems := Parse([]byte("[branches]\nbranch_prefix = \"" + bad + "\"\n"))
+		if len(problems) != 1 || problems[0].Line != 2 || !strings.Contains(problems[0].Problem, "branch_prefix in [branches]") || problems[0].Fix == "" {
+			t.Errorf("the prefix %q gave %+v, want one problem on line 2 with a fix", bad, problems)
+		}
+	}
+	if _, problems := Parse([]byte(strings.Repeat("a", 20) + " = 1\n")); len(problems) == 0 {
+		t.Error("a stray key was not a problem")
+	}
+	if _, problems := Parse([]byte("[branches]\nbranch_prefix = 3\n")); len(problems) != 1 {
+		t.Errorf("a number as the prefix gave %v", problems)
+	}
+}

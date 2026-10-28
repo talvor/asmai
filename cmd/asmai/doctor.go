@@ -114,6 +114,25 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	return checks, configFile, cfg, nil
 }
 
+// branchPrefixOf returns the prefix the daemon puts new branches under and
+// where it comes from, without making the install's branch ID: the
+// configuration's branch_prefix, else the ID kept in the state directory. An
+// install the daemon has not yet given an ID has no prefix, and the source
+// says when it gets one.
+func branchPrefixOf(cfg config.Config, paths statedir.Paths) (prefix, source string) {
+	if cfg.BranchPrefix != "" {
+		return cfg.BranchPrefix, "from branch_prefix in the configuration file"
+	}
+	id, err := paths.ReadBranchID()
+	switch {
+	case err != nil:
+		return "", err.Error()
+	case id == "":
+		return "", "the daemon makes an ID in the state directory when the next job needs a branch"
+	}
+	return id, "from the ID kept in the state directory"
+}
+
 // registeredRepositories reads the registered repositories from the store
 // without changing it; a factory that has not been initialised has none.
 func registeredRepositories(paths statedir.Paths) ([]store.Repository, error) {
@@ -227,6 +246,7 @@ func doctor(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
+	prefix, prefixSource := branchPrefixOf(cfg, paths)
 	unqualified, skillChecks := unqualifiedSkills(cfg, registered)
 	checks = append(checks, skillChecks...)
 	gaps := providers.ClaudeCodeUnhidden()
@@ -252,6 +272,7 @@ func doctor(o *output, paths statedir.Paths) int {
 			"provider":           map[string]string{"name": providers.ClaudeCode, "pinned": p.ClaudeCode.Version},
 			"config":             configFile,
 			"state_dir":          paths.Dir,
+			"branch_prefix":      map[string]string{"prefix": prefix, "source": prefixSource},
 			"checks":             checks,
 			"hiding_gaps":        gaps,
 			"unqualified_skills": unqualified,
@@ -268,6 +289,11 @@ func doctor(o *output, paths statedir.Paths) int {
 	fmt.Fprintf(w, "Provider pin   Claude Code %s\n", p.ClaudeCode.Version)
 	fmt.Fprintf(w, "Configuration  %s\n", configFile)
 	fmt.Fprintf(w, "State          %s\n", paths.Dir)
+	if prefix == "" {
+		fmt.Fprintf(w, "Branch prefix  none yet; %s\n", prefixSource)
+	} else {
+		fmt.Fprintf(w, "Branch prefix  %s (%s)\n", prefix, prefixSource)
+	}
 	fmt.Fprintln(w, "\nChecks")
 	for _, c := range checks {
 		if c.OK {

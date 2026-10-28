@@ -246,3 +246,41 @@ func TestAnAgentCannotRunDoctor(t *testing.T) {
 		t.Errorf("an agent's asmai doctor exited %d printing %q, want it refused", code, stderr.String())
 	}
 }
+
+// Doctor reports the prefix new branches go under and where it comes from,
+// and makes no ID of its own.
+func TestDoctorReportsTheBranchPrefixAndItsSource(t *testing.T) {
+	stateDir := readyFactory(t, idleLeader)
+	fakeUpstream(t, "v99.0.0", nil)
+	idFile := filepath.Join(stateDir, "branch-id")
+	os.Remove(idFile)
+
+	stdout, _, _ := doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  none yet; ") {
+		t.Errorf("with no ID made, asmai doctor printed\n%s\nwant it to say the prefix is not made yet", stdout)
+	}
+	if _, err := os.Stat(idFile); err == nil {
+		t.Error("asmai doctor made a branch ID")
+	}
+
+	if err := os.WriteFile(idFile, []byte("k3x9qz\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, _ = doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  k3x9qz (from the ID kept in the state directory)") {
+		t.Errorf("with an ID kept, asmai doctor printed\n%s\nwant its prefix and source", stdout)
+	}
+
+	configFile := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
+	text, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, append([]byte("[branches]\nbranch_prefix = \"alice\"\n\n"), text...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, _ = doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  alice (from branch_prefix in the configuration file)") {
+		t.Errorf("with branch_prefix set, asmai doctor printed\n%s\nwant its prefix and source", stdout)
+	}
+}

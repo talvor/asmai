@@ -217,7 +217,7 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 		`{"expect":"asmai inbox --dispatch 1\r"}`,
 		hookStep("UserPromptSubmit", "handoff", "asmai inbox --dispatch 1"),
 		fakeRun(`asmai inbox --dispatch 1`, 0, "(?s)Add a greeting.*Greeting is printed"),
-		fakeRun(`asmai brief 1`, 0, "(?s)Job branch: asmai/job-1-add-a-greeting \\(started from [0-9a-f]{40}, tip [0-9a-f]{40}\\).*Read-only view of the job at the job branch's tip: \\S+/views/job-1"),
+		fakeRun(`asmai brief 1`, 0, "(?s)Job branch: asmai/test/job-1-add-a-greeting \\(started from [0-9a-f]{40}, tip [0-9a-f]{40}\\).*Read-only view of the job at the job branch's tip: \\S+/views/job-1"),
 		fakeRun(`asmai handoff accept --handoff 1`, 0, "reply dispatch 2"),
 		fakeRun(`asmai assign --job 1 --outcome 'Add greeting.txt, with a check that it says hello' --criterion 'greeting.txt says hello' --criterion 'the check passes'`+assignmentSkillFlags, 0, "assignment 1 of job 1 given to worker1@engineering; dispatch 3"),
 	}, assignmentLeaderBeforeStop...)
@@ -315,23 +315,23 @@ func decode[T any](t *testing.T, e journalEntry) T {
 }
 
 func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	worker := []string{
-		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Add greeting.txt.*greeting.txt says hello.*the check passes.*Your skill list for this assignment: implement, tdd.*Assignment branch: asmai/job-1/1, made from the job branch asmai/job-1-add-a-greeting at [0-9a-f]{40}"),
+		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*Add greeting.txt.*greeting.txt says hello.*the check passes.*Your skill list for this assignment: implement, tdd.*Assignment branch: asmai/test/job-1/1, made from the job branch asmai/test/job-1-add-a-greeting at [0-9a-f]{40}"),
 		fakeRun(`asmai assign --job 1 --outcome x --criterion y`, 1, "only leader@engineering"),
 		fakeRun(`pwd -P > "$ASMAI_TEST_DIR/workspace"; printf '%s\n%s\n' "$ASMAI_SLOT" "$TMPDIR" > "$ASMAI_TEST_DIR/worker-env"; git rev-parse --git-common-dir > "$ASMAI_TEST_DIR/common-dir"`, 0, ""),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "(?s)changes that are not committed.*check.sh.*greeting.txt"),
 		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`asmai effect push "origin/other-branch@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "origin does not have the assignment branch"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 3 recorded: push"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 at HEAD' --artifact 'greeting.txt' --test 'check.sh asserts greeting.txt says hello' --check './check.sh -> passed' --gap none --pr-section 'Adds greeting.txt, saying hello. Before: no greeting.txt. After: check.sh passes.'`, 0, "result recorded for assignment 1"),
 	}
 	leader := []string{
-		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)result 1 \\| assignment 1 \\| worker1@engineering \\| commit [0-9a-f]{40}.*Artifacts:.*branch asmai/job-1/1 at.*greeting.txt.*Evidence:.*check.sh exits 0.*Tests added:.*check.sh asserts.*Checks run:.*\\./check.sh -> passed.*Gaps: none.*Effects:.*commit.*push origin/asmai/job-1/1@.*taken in: true.*PR section:.*Adds greeting.txt"),
-		fakeRun(`asmai brief 1`, 0, "1 worker1@engineering \\(owner leader@engineering\\) submitted on branch asmai/job-1/1"),
+		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)result 1 \\| assignment 1 \\| worker1@engineering \\| commit [0-9a-f]{40}.*Artifacts:.*branch asmai/test/job-1/1 at.*greeting.txt.*Evidence:.*check.sh exits 0.*Tests added:.*check.sh asserts.*Checks run:.*\\./check.sh -> passed.*Gaps: none.*Effects:.*commit.*push origin/asmai/test/job-1/1@.*taken in: true.*PR section:.*Adds greeting.txt"),
+		fakeRun(`asmai brief 1`, 0, "1 worker1@engineering \\(owner leader@engineering\\) submitted on branch asmai/test/job-1/1"),
 	}
 	fixture, testDir := assignmentFlow(t, worker, leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
@@ -357,8 +357,8 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 		Tip         string `json:"tip"`
 		View        string `json:"view"`
 	}](t, made[0])
-	if jobBranch.Name != "asmai/job-1-add-a-greeting" || jobBranch.StartedFrom != fixture.main || jobBranch.Tip != fixture.main {
-		t.Errorf("the job branch is %+v, want asmai/job-1-add-a-greeting started from and at %s", jobBranch, fixture.main)
+	if jobBranch.Name != "asmai/test/job-1-add-a-greeting" || jobBranch.StartedFrom != fixture.main || jobBranch.Tip != fixture.main {
+		t.Errorf("the job branch is %+v, want asmai/test/job-1-add-a-greeting started from and at %s", jobBranch, fixture.main)
 	}
 	clone := filepath.Join(stateDir, "repositories", "fixture")
 	if got := gitIn(t, clone, "rev-parse", "refs/heads/"+jobBranch.Name); got != fixture.main {
@@ -526,7 +526,7 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 }
 
 func TestAWorkerThatCannotGoOnReportsItBlockedAndItsAssignmentStaysActive(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`asmai blocked`, 1, "needs --reason"),
@@ -537,8 +537,8 @@ func TestAWorkerThatCannotGoOnReportsItBlockedAndItsAssignmentStaysActive(t *tes
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x`, 1, "already ended in a blocked report"),
 	}
 	leader := []string{
-		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)blocked 1 \\| assignment 1 \\| worker1@engineering.*Reason: The greeting could be a file or a command.*Needs: the user to choose which.*Effects:.*push origin/asmai/job-1/1@"),
-		fakeRun(`asmai brief 1`, 0, "1 worker1@engineering \\(owner leader@engineering\\) active on branch asmai/job-1/1"),
+		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)blocked 1 \\| assignment 1 \\| worker1@engineering.*Reason: The greeting could be a file or a command.*Needs: the user to choose which.*Effects:.*push origin/asmai/test/job-1/1@"),
+		fakeRun(`asmai brief 1`, 0, "1 worker1@engineering \\(owner leader@engineering\\) active on branch asmai/test/job-1/1"),
 	}
 	fixture, _ := assignmentFlow(t, worker, leader)
 	if got := gitIn(t, fixture.origin, "show", "refs/heads/"+branch+":notes.txt"); got != "draft" {
@@ -577,7 +577,7 @@ func TestAWorkerWaitingAtANativePromptIsShownInStatusUntilItIsPastIt(t *testing.
 		`{"hook": "PermissionRequest", "payload": {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "cat > test/index.test.js <<'EOF'\nimport { test } from 'node:test';\nEOF"}}}`,
 		fakeRun(`asmai status`, 0, "(?m)^native prompt +"+regexp.QuoteMeta(waits)+"$"),
 		fakeRun(`asmai status --json`, 0, `"prompts": \[\s*\{\s*"agent": "worker1@engineering",\s*"generation": 1,\s*"about": "Bash `+"`"+`cat [^"]*test/index.test.js [^"]*'EOF'`+"`"+`"`),
-		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Notes so far' && git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
+		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Notes so far' && git push -q origin asmai/test/job-1/1 && asmai effect push "origin/asmai/test/job-1/1@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
 		fakeRun(`asmai blocked --reason 'Writing the test was denied' --needs 'a way to write it'`, 0, "blocked recorded for assignment 1"),
 	}
 	leader := []string{

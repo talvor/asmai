@@ -214,7 +214,7 @@ func TestABlockedWorkerCanReportAfterAnotherAssignmentMovesTheJobTip(t *testing.
 func TestAResultSubmittedAgainstAnOldTipGoesBackToItsWorkerWithoutBeingRejected(t *testing.T) {
 	f := newTwoResults(t)
 	view := filepath.Join(f.d.cfg.Paths.Views, "job-1")
-	branchRef := "refs/heads/" + JobBranchName(f.job)
+	branchRef := "refs/heads/" + jobBranchFor(f.job)
 
 	// The first result is a fast-forward of the tip: the branch moves to its
 	// commit, the leaders' view follows, and the workspace is removed.
@@ -243,7 +243,7 @@ func TestAResultSubmittedAgainstAnOldTipGoesBackToItsWorkerWithoutBeingRejected(
 	if got := git(t, f.origin, "rev-parse", "refs/heads/"+f.assignments[0].Workspace.Branch); got != f.commits[0] {
 		t.Errorf("origin's assignment branch is at %s, want it kept at %s", got, f.commits[0])
 	}
-	if out := git(t, f.origin, "branch", "--list", "asmai/job-1-*"); out != "" {
+	if out := git(t, f.origin, "branch", "--list", "asmai/test/job-1-*"); out != "" {
 		t.Errorf("the job branch was pushed: %s", out)
 	}
 
@@ -327,7 +327,7 @@ func TestAResultSubmittedAgainstAnOldTipGoesBackToItsWorkerWithoutBeingRejected(
 func TestOnlyTheOwningLeaderDecidesOnAResult(t *testing.T) {
 	f := newTwoResults(t)
 	id := f.assignments[0].ID
-	branchRef := "refs/heads/" + JobBranchName(f.job)
+	branchRef := "refs/heads/" + jobBranchFor(f.job)
 
 	// A session that is not Engineering's leader is refused, and so is a
 	// request with no reasons.

@@ -23,14 +23,14 @@ func greetingWorker(branch string) []string {
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai cancel"),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
 		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(resultFlagsForGreeting, 0, "result recorded for assignment 1"),
 	}
 }
 
 func TestCancellationWithoutConfirmedPushStaysIncompleteAndRetainsWorker(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
@@ -76,12 +76,12 @@ func TestAcceptanceCleanupFailureIsReportedAndNotJournaledAsRemoved(t *testing.T
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(bin) })
 	wrapper := filepath.Join(bin, "git")
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2 $3\" = \"branch -D asmai/job-1/1\" ]; then echo injected cleanup failure >&2; exit 1; fi\nexec %q \"$@\"\n", gitPath)
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2 $3\" = \"branch -D asmai/test/job-1/1\" ]; then echo injected cleanup failure >&2; exit 1; fi\nexec %q \"$@\"\n", gitPath)
 	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "result 1"),
 		waitForWorker,
@@ -112,7 +112,7 @@ func workerOf(t *testing.T, name string) agentJSON {
 }
 
 func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsWorkspace(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "result 1"),
 		fakeRun(`asmai accept`, 1, "accept needs --assignment"),
@@ -121,11 +121,11 @@ func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsW
 		fakeRun(`asmai accept --assignment 9 --reason x`, 1, "assignment 9 does not exist"),
 		waitForWorker,
 		fakeRun(`asmai accept --assignment 1 --reason 'greeting.txt says hello: check.sh asserts it and passed at the commit' --reason 'the check passes: ./check.sh -> passed at the commit'`, 0,
-			"(?s)assignment 1 accepted by leader@engineering at commit [0-9a-f]{40}; the assignment has ended.*job branch asmai/job-1-add-a-greeting fast-forwarded to [0-9a-f]{40}.*read-only view of the job refreshed: \\S+/views/job-1"),
+			"(?s)assignment 1 accepted by leader@engineering at commit [0-9a-f]{40}; the assignment has ended.*job branch asmai/test/job-1-add-a-greeting fast-forwarded to [0-9a-f]{40}.*read-only view of the job refreshed: \\S+/views/job-1"),
 		fakeRun(`asmai accept --assignment 1 --reason x`, 1, "assignment 1 is accepted, so it has no result to accept"),
 		fakeRun(`asmai reject --assignment 1 --reason x`, 1, "assignment 1 is accepted, so it has no result to reject"),
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "assignment 1 is accepted, so it cannot be cancelled"),
-		fakeRun(`asmai brief 1`, 0, "(?s)Job branch: asmai/job-1-add-a-greeting \\(started from [0-9a-f]{40}, tip [0-9a-f]{40}\\).*1 worker1@engineering \\(owner leader@engineering\\) accepted on branch asmai/job-1/1"),
+		fakeRun(`asmai brief 1`, 0, "(?s)Job branch: asmai/test/job-1-add-a-greeting \\(started from [0-9a-f]{40}, tip [0-9a-f]{40}\\).*1 worker1@engineering \\(owner leader@engineering\\) accepted on branch asmai/test/job-1/1"),
 	}
 	fixture, _ := assignmentFlow(t, greetingWorker(branch), leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
@@ -134,7 +134,7 @@ func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsW
 	}
 	t.Logf("accept removed worker temporary directory %s", workerTmp(stateDir, 1))
 	clone := filepath.Join(stateDir, "repositories", "fixture")
-	const jobBranch = "asmai/job-1-add-a-greeting"
+	const jobBranch = "asmai/test/job-1-add-a-greeting"
 
 	// The job branch is at the accepted commit, which is the worker's commit
 	// on top of where it was, and nothing else moved it.
@@ -151,7 +151,7 @@ func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsW
 	if got := gitIn(t, fixture.origin, "rev-parse", "refs/heads/main"); got != fixture.main {
 		t.Errorf("main on origin moved to %s", got)
 	}
-	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/job-1-*"); out != "" {
+	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/test/job-1-*"); out != "" {
 		t.Errorf("the job branch was pushed: %s", out)
 	}
 
@@ -224,7 +224,7 @@ func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsW
 }
 
 func TestRejectingAResultReturnsTheAssignmentToTheSameWorkerInANewDispatchAndTheCorrectedResultIsAccepted(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	first := greetingWorker(branch)
 	worker := append(first[:len(first)-1], fakeRun(`printf 'keep' > "$TMPDIR/keep"`, 0, ""), first[len(first)-1])
 	worker = append(worker,
@@ -256,7 +256,7 @@ func TestRejectingAResultReturnsTheAssignmentToTheSameWorkerInANewDispatchAndThe
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
 	t.Logf("rejected assignment resumed with its file in %s", workerTmp(stateDir, 1))
 	clone := filepath.Join(stateDir, "repositories", "fixture")
-	const jobBranch = "asmai/job-1-add-a-greeting"
+	const jobBranch = "asmai/test/job-1-add-a-greeting"
 
 	// The rejection is recorded with its leader, the result it is about and
 	// its reasons, and the work went to the same worker in a new dispatch.
@@ -309,7 +309,7 @@ func TestRejectingAResultReturnsTheAssignmentToTheSameWorkerInANewDispatchAndThe
 }
 
 func TestCancellingAnAssignmentMakesItsWorkerPushItsBranchAndStopBeforeItEnds(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
@@ -328,7 +328,7 @@ func TestCancellingAnAssignmentMakesItsWorkerPushItsBranchAndStopBeforeItEnds(t 
 		fakeRun(`asmai inbox --dispatch 4`, 0, "blocked 1"),
 		fakeRun(`asmai cancel --assignment 1`, 1, "cancel needs --reason"),
 		fakeRun(`asmai cancel --assignment 1 --reason 'the user dropped the greeting'`, 0,
-			"assignment 1: cancellation requested by leader@engineering; worker1@engineering is told to push asmai/job-1/1 and stop, in dispatch 5"),
+			"assignment 1: cancellation requested by leader@engineering; worker1@engineering is told to push asmai/test/job-1/1 and stop, in dispatch 5"),
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "so it cannot be cancelled"),
 		fakeRun(`asmai accept --assignment 1 --reason x`, 1, "so it has no result to accept"),
 	}
@@ -382,7 +382,7 @@ func TestCancellingAnAssignmentMakesItsWorkerPushItsBranchAndStopBeforeItEnds(t 
 	if len(journaled(t, "result.submitted")) != 0 || len(journaled(t, "result.accepted")) != 0 {
 		t.Error("a cancelled assignment submitted or had a result accepted")
 	}
-	if got := gitIn(t, clone, "rev-parse", "refs/heads/asmai/job-1-add-a-greeting"); got != fixture.main {
+	if got := gitIn(t, clone, "rev-parse", "refs/heads/asmai/test/job-1-add-a-greeting"); got != fixture.main {
 		t.Errorf("the job branch is at %s, want it where it was, %s: a cancellation moves nothing", got, fixture.main)
 	}
 }

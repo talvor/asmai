@@ -4,12 +4,15 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -27,14 +30,14 @@ func TestAJobBranchIsNamedForTheJobAndASlugOfItsTitle(t *testing.T) {
 		reading string
 		want    string
 	}{
-		{1, "Add a greeting", "asmai/job-1-add-a-greeting"},
-		{12, "  Fix: the  parser's --flag handling!! ", "asmai/job-12-fix-the-parser-s-flag-handling"},
-		{3, "Ünïcode only: 日本語", "asmai/job-3-n-code-only"},
-		{4, "", "asmai/job-4-job"},
-		{5, "!!!", "asmai/job-5-job"},
-		{6, strings.Repeat("word ", 20), "asmai/job-6-word-word-word-word-word-word-word-word"},
+		{1, "Add a greeting", "asmai/abc123/job-1-add-a-greeting"},
+		{12, "  Fix: the  parser's --flag handling!! ", "asmai/abc123/job-12-fix-the-parser-s-flag-handling"},
+		{3, "Ünïcode only: 日本語", "asmai/abc123/job-3-n-code-only"},
+		{4, "", "asmai/abc123/job-4-job"},
+		{5, "!!!", "asmai/abc123/job-5-job"},
+		{6, strings.Repeat("word ", 20), "asmai/abc123/job-6-word-word-word-word-word-word-word-word"},
 	} {
-		got := JobBranchName(store.Job{Number: tt.number, Reading: tt.reading})
+		got := JobBranchName("abc123", store.Job{Number: tt.number, Reading: tt.reading})
 		if got != tt.want {
 			t.Errorf("job %d titled %q is named %q, want %q", tt.number, tt.reading, got, tt.want)
 		}
@@ -87,7 +90,7 @@ func TestAJobBranchCanBeRecordedAfterItsViewCreationIsRetried(t *testing.T) {
 	if _, err := d.ensureJobBranch(ctx, job, repository); err == nil {
 		t.Fatal("branch creation succeeded despite the blocked view path")
 	}
-	name := JobBranchName(job)
+	name := jobBranchFor(job)
 	startedFrom := git(t, clone, "rev-parse", "refs/heads/"+name)
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
@@ -206,7 +209,7 @@ func workerFactoryAt(t *testing.T, paths statedir.Paths) (d *daemon, a store.Ass
 		t.Fatal(err)
 	}
 	const commit = "1111111111111111111111111111111111111111"
-	if _, err := s.JobBranchMade(store.JobBranch{Job: job.Number, Repository: "fixture", Name: JobBranchName(job), StartedFrom: commit, View: "/view"}, at); err != nil {
+	if _, err := s.JobBranchMade(store.JobBranch{Job: job.Number, Repository: "fixture", Name: jobBranchFor(job), StartedFrom: commit, View: "/view"}, at); err != nil {
 		t.Fatal(err)
 	}
 	workspace := filepath.Join(paths.Workspaces, "job-1", "assignment-1", "repo")
@@ -371,5 +374,105 @@ func TestAWorkerIsStartedOnlyForAnAssignmentItCarries(t *testing.T) {
 		if err := d.ensureAgent(address); err == nil {
 			t.Errorf("%s was started with no assignment to carry", address)
 		}
+	}
+}
+
+// testBranchPrefix is the branch prefix the test daemons run under.
+const testBranchPrefix = "test"
+
+// jobBranchFor names the branch a test daemon makes for j.
+func jobBranchFor(j store.Job) string { return JobBranchName(testBranchPrefix, j) }
+
+func TestAnAssignmentBranchSitsBesideItsJobBranchUnderTheSamePrefix(t *testing.T) {
+	for _, tt := range []struct{ jobBranch, want string }{
+		{"asmai/abc123/job-7-add-a-greeting", "asmai/abc123/job-7/3"},
+		{"asmai/my-team/job-7-add-a-greeting", "asmai/my-team/job-7/3"},
+		// A job made before branches had a prefix keeps its old names.
+		{"asmai/job-7-add-a-greeting", "asmai/job-7/3"},
+	} {
+		if got := AssignmentBranchName(tt.jobBranch, 7, 3); got != tt.want {
+			t.Errorf("an assignment of the job branch %s is named %s, want %s", tt.jobBranch, got, tt.want)
+		}
+	}
+}
+
+func TestTheBranchPrefixIsTheConfiguredOneElseTheKeptIDAcrossRestarts(t *testing.T) {
+	paths := statedir.At(filepath.Join(t.TempDir(), "state"))
+	d := &daemon{cfg: Config{Paths: paths}}
+	first, err := d.branchPrefix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := regexp.MatchString(`^[a-z0-9]{6}$`, first); !ok {
+		t.Errorf("the made ID is %q, want 6 lower-case letters and digits", first)
+	}
+	// A restarted daemon reads the kept ID.
+	if again, err := (&daemon{cfg: Config{Paths: paths}}).branchPrefix(); err != nil || again != first {
+		t.Errorf("after a restart the prefix is %q (%v), want %q", again, err, first)
+	}
+	// The configuration's prefix overrides the ID, which stays as it was.
+	d.applied.BranchPrefix = "mine"
+	if got, err := d.branchPrefix(); err != nil || got != "mine" {
+		t.Errorf("with branch_prefix set the prefix is %q (%v), want mine", got, err)
+	}
+	if kept, err := paths.ReadBranchID(); err != nil || kept != first {
+		t.Errorf("the kept ID is %q (%v), want %q", kept, err, first)
+	}
+}
+
+func TestAJobBranchOriginAlreadyHasIsRefusedNamingItAndNoBranchIsMade(t *testing.T) {
+	paths := stateDir(t)
+	origin := remote(t)
+	clone := filepath.Join(paths.Repositories, "fixture")
+	if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git(t, filepath.Dir(clone), "clone", origin, clone)
+
+	s, err := store.Open(paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	at := time.Now()
+	if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
+		t.Fatal(err)
+	}
+	_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "open a test job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a test job"}`), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Clash", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}, false, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another install on this origin already made the name.
+	name := jobBranchFor(job)
+	git(t, clone, "push", "origin", "refs/remotes/origin/trunk:refs/heads/"+name)
+	git(t, clone, "fetch", "origin")
+
+	d := &daemon{cfg: Config{Paths: paths}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	repository, err := s.Repository("fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.ensureJobBranch(context.Background(), job, repository)
+	if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "branch_prefix") {
+		t.Fatalf("opening a job whose branch origin has gave %v, want an error naming %s and branch_prefix", err, name)
+	}
+	if out := git(t, clone, "branch", "--list", name); out != "" {
+		t.Errorf("a branch was made despite the refusal: %q", out)
+	}
+	if _, err := s.JobBranch(job.Number); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("a job branch was recorded despite the refusal: %v", err)
+	}
+	// Another prefix opens the job.
+	d.applied.BranchPrefix = "other"
+	branch, err := d.ensureJobBranch(context.Background(), job, repository)
+	if err != nil || branch.Name != JobBranchName("other", job) {
+		t.Errorf("under another prefix the branch is %+v (%v), want %s", branch, err, JobBranchName("other", job))
 	}
 }

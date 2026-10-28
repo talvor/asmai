@@ -63,6 +63,10 @@ func Entries(c Config) []Entry {
 	add("logs", "daemon_file_size", quote(FormatSize(c.Logs.DaemonFileSize)))
 	add("logs", "recording_retention", quote(FormatDuration(c.Logs.RecordingRetention)))
 
+	if c.BranchPrefix != "" {
+		add("branches", "branch_prefix", quote(c.BranchPrefix))
+	}
+
 	provider := c.Providers[Claude]
 	if provider.WorkerCap == 0 {
 		provider.WorkerCap = 3

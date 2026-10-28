@@ -36,6 +36,21 @@ func OriginTip(ctx context.Context, clone, branch string) (string, error) {
 	return commit, nil
 }
 
+// OriginHasBranch asks the origin of the repository at clone, over the
+// network, whether it has the branch name.
+func OriginHasBranch(ctx context.Context, clone, name string) (bool, error) {
+	out, err := git(ctx, clone, "ls-remote", "--heads", "origin", "refs/heads/"+name)
+	if err != nil {
+		return false, fmt.Errorf("asking origin for branch %s in %s: %w", name, clone, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasSuffix(strings.TrimSpace(line), "\trefs/heads/"+name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Commit returns the commit rev names in the repository at dir.
 func Commit(ctx context.Context, dir, rev string) (string, error) {
 	return git(ctx, dir, "rev-parse", "--verify", "--quiet", rev+"^{commit}")

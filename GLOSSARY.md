@@ -109,12 +109,16 @@ _Avoid_: Repository rules, project settings
 A repository's skill setup, which lives in the repository: `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md` and `docs/agents/domain.md`, and a block in its `CLAUDE.md` or `AGENTS.md`. Registering a repository without `docs/agents/issue-tracker.md` (that file alone decides) makes the daemon open its setup job, which Coordination runs with its own worker and delivers like a notes-only job. The user's answers are recorded for the repository as they send them, and whether the repository has CI is theirs to declare in the configuration.
 _Avoid_: Onboarding, bootstrap
 
+**Branch prefix**:
+The name an install's branches go under, so that two installs on one origin never make the same branch: the `branch_prefix` in the configuration, else a random ID of about six characters that the daemon makes the first time it needs one and keeps in the state directory. It is never written into the configuration. `asmai doctor` shows it and which of the two it is.
+_Avoid_: Namespace, install ID
+
 **Job branch**:
-The one branch that carries a repository job's accepted work and becomes its pull request.
+The one branch that carries a repository job's accepted work and becomes its pull request. It is named `asmai/<prefix>/job-<n>-<slug>` under the install's branch prefix; a job opened before branches had a prefix keeps its `asmai/job-<n>-<slug>`. The daemon refuses to make one whose name origin already has.
 _Avoid_: Integration branch, feature branch
 
 **Assignment branch**:
-The branch a writing assignment works on in its workspace, made from its job branch and kept on origin.
+The branch a writing assignment works on in its workspace, made from its job branch and kept on origin. It is named `asmai/<prefix>/job-<n>/<id>`, beside its job branch, or `asmai/job-<n>/<id>` for a job that keeps the old names.
 _Avoid_: Worker branch
 
 **Workspace**:

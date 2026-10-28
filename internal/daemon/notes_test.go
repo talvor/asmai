@@ -65,7 +65,7 @@ func TestTheDeliveryOwnerOfAJobIsTheLeaderWhoseNotesTheyAre(t *testing.T) {
 
 func TestTheDaemonPushesANotesJobsBranchForItsOwnLeaderWithNoQualityValidation(t *testing.T) {
 	f := newTwoResultsOf(t, roles.Research)
-	branch := JobBranchName(f.job)
+	branch := jobBranchFor(f.job)
 	push := Request{Session: "credential", Command: CommandPush, Job: f.job.Number}
 	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "file-1.txt holds the notes"); err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestTheDaemonPushesANotesJobsBranchForItsOwnLeaderWithNoQualityValidation(t
 
 func TestAPrototypeAcceptedToStayOnItsBranchMovesNoJobBranchAndItsOriginBranchStays(t *testing.T) {
 	f := newTwoResults(t)
-	branchRef := "refs/heads/" + JobBranchName(f.job)
+	branchRef := "refs/heads/" + jobBranchFor(f.job)
 	prototype := f.assignments[0]
 
 	// Nothing but the prototype's own branch on origin holds it.
@@ -165,7 +165,7 @@ func TestAPrototypeAcceptedToStayOnItsBranchMovesNoJobBranchAndItsOriginBranchSt
 	if got := git(t, f.origin, "rev-parse", "refs/heads/"+prototype.Workspace.Branch); got != f.commits[0] {
 		t.Errorf("origin's assignment branch is at %s, want the prototype kept at %s", got, f.commits[0])
 	}
-	if out := git(t, f.origin, "branch", "--list", "asmai/job-1-*"); out != "" {
+	if out := git(t, f.origin, "branch", "--list", "asmai/test/job-1-*"); out != "" {
 		t.Errorf("the job branch was pushed: %s", out)
 	}
 	listed, err := f.s.AssignmentsForJob(f.job.Number)

@@ -64,3 +64,29 @@ func TestTheClonesAreTheDirectoriesInRepositories(t *testing.T) {
 		t.Errorf("Clones() = %q, %v, want %q", clones, err, want)
 	}
 }
+
+func TestTheBranchIDIsMadeOnceAndKept(t *testing.T) {
+	p := At(filepath.Join(t.TempDir(), "state"))
+	if id, err := p.ReadBranchID(); err != nil || id != "" {
+		t.Fatalf("before any ID is made, reading gave %q (%v)", id, err)
+	}
+	id, err := p.BranchIDOrMake()
+	if err != nil || len(id) != 6 {
+		t.Fatalf("making the ID gave %q (%v), want 6 characters", id, err)
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			t.Errorf("the ID %q has %q, want lower-case letters and digits", id, r)
+		}
+	}
+	if again, err := p.BranchIDOrMake(); err != nil || again != id {
+		t.Errorf("asking again gave %q (%v), want %q", again, err, id)
+	}
+	if read, err := p.ReadBranchID(); err != nil || read != id {
+		t.Errorf("reading gave %q (%v), want %q", read, err, id)
+	}
+	info, err := os.Stat(p.BranchID)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("the ID file is %v (%v), want private", info, err)
+	}
+}

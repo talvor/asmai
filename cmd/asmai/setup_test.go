@@ -111,13 +111,13 @@ func TestARepositoryWithoutItsSetupIsSetUpByCoordinationAndDeliveredAsASetupPull
 		sha    = "[0-9a-f]{40}"
 		report = "job 1: set up, pull request ready for review: " + url
 	)
-	jobBranch := daemon.JobBranchName(store.Job{Number: 1, Reading: setupReading})
+	jobBranch := daemon.JobBranchName("test", store.Job{Number: 1, Reading: setupReading})
 	t.Setenv(fakeprovider.ScriptEnv+"_COORDINATION_WORKER", filepath.Join(testDir, "worker.jsonl"))
 
 	worker := concat(agentSession, turn(2, "assignment",
 		fakeRun(`asmai inbox --dispatch 2`, 0, "assignment 1"),
 		fakeRun(`mkdir -p docs/agents && printf '# Issue tracker\n\nIssues live in GitHub.\n' > docs/agents/issue-tracker.md && printf '# Triage labels\n' > docs/agents/triage-labels.md && printf '# Domain docs\n' > docs/agents/domain.md && git add -A && git commit -q -m 'Set the repository up for the skills'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`git push -q origin asmai/test/job-1/1 && asmai effect push "origin/asmai/test/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'the issue tracker is GitHub' --artifact docs/agents/issue-tracker.md --test none --check none --gap none --skill setup-matt-pocock-skills --pr-section 'Adds the setup files.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{"worker.jsonl": worker})

@@ -116,7 +116,7 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	const (
-		jobBranch = "asmai/job-1-add-a-greeting"
+		jobBranch = "asmai/test/job-1-add-a-greeting"
 		url       = "https://github.com/talvor/asmai-fixture/pull/7"
 		sha       = "[0-9a-f]{40}"
 	)
@@ -186,7 +186,7 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 	worker := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`git push -q origin asmai/test/job-1/1 && asmai effect push "origin/asmai/test/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{
@@ -391,7 +391,7 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 	if got := gitIn(t, fixture.origin, "rev-parse", "refs/heads/"+jobBranch); got != head {
 		t.Errorf("origin's job branch is at %s, want %s", got, head)
 	}
-	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/job-1/1"); out == "" {
+	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/test/job-1/1"); out == "" {
 		t.Error("the worker's assignment branch is gone from origin")
 	}
 

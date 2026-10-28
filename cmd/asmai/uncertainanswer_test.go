@@ -97,10 +97,10 @@ func TestAWorkerThatExitsBeforeAcknowledgingAnAnswerHoldsItsAssignmentAgainstThe
 // finishing are the steps of a worker's next session that commit, push and
 // submit its result once it has what it needs.
 func finishing(prompt string) []string {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	return []string{
 		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 		hookStep("Stop", prompt, ""),

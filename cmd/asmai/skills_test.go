@@ -18,7 +18,7 @@ import (
 func TestAWorkerIsGivenTheListItsAssignmentNarrowedToAsAPerSessionPluginAndTheDispatchRecordsTheBundleAndFingerprints(t *testing.T) {
 	assignmentSkillFlags = " --skill tdd --narrow tdd --narrow diagnosing-bugs"
 	t.Cleanup(func() { assignmentSkillFlags = "" })
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "(?s)Skill to run: tdd\nYour skill list for this assignment: tdd, diagnosing-bugs\n"),
 		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
@@ -131,7 +131,7 @@ func TestAddedAndSwitchedOnRepositorySkillsReachTheirRolesAgentsMarkedUnqualifie
 		roles := fmt.Sprintf("[roles.engineering]\nleader_added_skills = [%q]\nworker_added_skills = [%q, %q]\n", notes, tdd, style)
 		return strings.Replace(config, "[roles.engineering]\n", roles, 1) + "repository_skills = [\"engineering\"]\n"
 	}
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	list := "implement, tdd, diagnosing-bugs, prototype, codebase-design, improve-codebase-architecture, pr, wizard, writing-for-agents, house-style, house-rules"
 	// A skill the worker makes in the workspace's .claude/skills after its
 	// start is not one its session was given, so its list leaves it out and
@@ -246,7 +246,7 @@ func TestAWorkerGivenAnEmptyListHasNoSkillsToName(t *testing.T) {
 	edit := func(config string) string {
 		return strings.Replace(config, "[roles.engineering]\n", "[roles.engineering]\nworker_skills = []\n", 1)
 	}
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3 | grep -q 'skill list' || echo 'no skill list'`, 0, "no skill list"),
 		fakeRun(`printf 'hello\n' > greeting.txt && git add greeting.txt && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),

@@ -23,7 +23,7 @@ func TestTheDaemonPushesTheJobBranchForEngineeringAndRefusesOverOutsideCommitsUn
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	const (
-		jobBranch = "asmai/job-1-add-a-greeting"
+		jobBranch = "asmai/test/job-1-add-a-greeting"
 		sha       = "[0-9a-f]{40}"
 	)
 	t.Setenv(fakeprovider.ScriptEnv+"_WORKER", filepath.Join(testDir, "worker.jsonl"))
@@ -69,14 +69,14 @@ func TestTheDaemonPushesTheJobBranchForEngineeringAndRefusesOverOutsideCommitsUn
 		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt'`, 0, ""),
 		// Only the delivery owner asks for the push.
 		fakeRun(`asmai push 1`, 1, "only leader@engineering, the delivery owner of a code job, leader@planning or leader@research, the delivery owner of a notes job, or leader@coordination, the delivery owner of a repository's setup, may run asmai push"),
-		fakeRun(pushWorker("asmai/job-1/1"), 0, "recorded: push"),
+		fakeRun(pushWorker("asmai/test/job-1/1"), 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(5, "assignment",
 		fakeRun(`asmai inbox --dispatch 5`, 0, "assignment 2"),
 		fakeRun(`git fetch -q origin && git merge --no-edit origin/`+jobBranch, 0, ""),
 		fakeRun(`test -f outside.txt && test -f greeting.txt`, 0, ""),
-		fakeRun(pushWorker("asmai/job-1/2"), 0, "recorded: push"),
+		fakeRun(pushWorker("asmai/test/job-1/2"), 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'outside.txt and greeting.txt are both there' --test none --check none --gap none --pr-section 'Merges the outside commit on the job branch.'`, 0, "result recorded for assignment 2"),
 	), []string{touchFile("w2-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{

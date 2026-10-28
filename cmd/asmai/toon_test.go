@@ -274,7 +274,7 @@ func TestDoctorPrintsTheSameDataInTOON(t *testing.T) {
 // The assignment family: what a leader and its worker run, and see, in both
 // formats around an assignment's result.
 func TestTOONHoldsTheDataJSONHoldsForTheAssignmentCommands(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	both := func(name, command string) string {
 		return fakeRun(command+` --json > "$ASMAI_TEST_DIR/`+name+`.json"; code=$?; `+command+` --toon > "$ASMAI_TEST_DIR/`+name+`.toon"; test $code = $?`, 0, "")
 	}
@@ -282,7 +282,7 @@ func TestTOONHoldsTheDataJSONHoldsForTheAssignmentCommands(t *testing.T) {
 		both("worker-inbox", `asmai inbox --dispatch 3`),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
 		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)" --toon > "$ASMAI_TEST_DIR/effect.toon"`, 0, ""),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)" --toon`, 0, `^effect:`),
 		// A result refused is a TOON error, with its exit code.
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --toon`, 1, `^error: .*--pr-section`),

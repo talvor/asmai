@@ -17,7 +17,7 @@ import (
 // leader what origin holds, and the leader sends the assignment to the worker
 // again in a new dispatch.
 func stalledWorkerFlow(t *testing.T, pushed, originUnavailable bool, told string) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	commit := `printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`
 	if pushed {
 		commit = `printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt' && git push -q origin ` + branch + ` && asmai effect commit "$(git rev-parse HEAD)"`
@@ -37,7 +37,7 @@ func stalledWorkerFlow(t *testing.T, pushed, originUnavailable bool, told string
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 5"),
 		fakeRun(`asmai inbox --dispatch 5 | tee "$ASMAI_TEST_DIR/worker-redispatch"`, 0, "(?s)redispatch from leader@engineering.*leader@engineering sends assignment 1 of job 1 to you again.*Reasons from leader@engineering:\nthe push works now"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	)
@@ -130,11 +130,11 @@ func TestWorkerExitWithoutStopHoldsAssignmentForOwner(t *testing.T) {
 }
 
 func TestAWorkerThatStopsWithoutAReportAndWithoutPushingTellsItsOwnerAndIsRedispatched(t *testing.T) {
-	stalledWorkerFlow(t, false, false, "(?s)stalled from daemon.*worker1@engineering's turn for dispatch 3 of assignment 1 of job 1 ended with no result and no blocked report.*still active and nothing is retried.*Its workspace is at commit [0-9a-f]{40}, and origin has no branch asmai/job-1/1: the work is not pushed.*asmai redispatch --assignment 1 --reason")
+	stalledWorkerFlow(t, false, false, "(?s)stalled from daemon.*worker1@engineering's turn for dispatch 3 of assignment 1 of job 1 ended with no result and no blocked report.*still active and nothing is retried.*Its workspace is at commit [0-9a-f]{40}, and origin has no branch asmai/test/job-1/1: the work is not pushed.*asmai redispatch --assignment 1 --reason")
 }
 
 func TestAWorkerThatStopsWithoutAReportAfterPushingTellsItsOwnerWhatOriginHolds(t *testing.T) {
-	stalledWorkerFlow(t, true, false, "(?s)stalled from daemon.*Its workspace is at commit ([0-9a-f]{40}), and origin's branch asmai/job-1/1 is at [0-9a-f]{40}, which holds it: the work is pushed")
+	stalledWorkerFlow(t, true, false, "(?s)stalled from daemon.*Its workspace is at commit ([0-9a-f]{40}), and origin's branch asmai/test/job-1/1 is at [0-9a-f]{40}, which holds it: the work is pushed")
 }
 
 func TestAWorkerThatStopsWhileOriginIsUnavailableGetsAnUnknownOriginStatus(t *testing.T) {
@@ -172,7 +172,7 @@ func TestAWorkerCanReportFailedPushAfterAnotherAssignmentAdvancesTheJobTip(t *te
 		turn(3, "assignment",
 			fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 			fakeRun(`printf 'draft\n' > draft.txt && git add -A && git commit -q -m 'Draft'`, 0, ""),
-			fakeRun(`git push "$ASMAI_TEST_DIR/unavailable.git" asmai/job-1/1 > "$ASMAI_TEST_DIR/failed-push" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/failed-push"; test "$status" -ne 0`, 0, "does not appear to be a git repository"),
+			fakeRun(`git push "$ASMAI_TEST_DIR/unavailable.git" asmai/test/job-1/1 > "$ASMAI_TEST_DIR/failed-push" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/failed-push"; test "$status" -ne 0`, 0, "does not appear to be a git repository"),
 			touchFile("first-worker-ready"),
 			awaitFile("tip-advanced"),
 			fakeRun(`asmai result --evidence draft --test none --check none --gap none --pr-section draft > "$ASMAI_TEST_DIR/advanced-tip-result-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/advanced-tip-result-refusal"; test "$status" -eq 1`, 0, "does not contain the job branch's tip"),
@@ -184,7 +184,7 @@ func TestAWorkerCanReportFailedPushAfterAnotherAssignmentAdvancesTheJobTip(t *te
 		turn(4, "assignment",
 			fakeRun(`asmai inbox --dispatch 4`, 0, "assignment 2"),
 			fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Greeting'`, 0, ""),
-			fakeRun(`git push -q origin asmai/job-1/2 && asmai effect push "origin/asmai/job-1/2@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+			fakeRun(`git push -q origin asmai/test/job-1/2 && asmai effect push "origin/asmai/test/job-1/2@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 			fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt'`, 0, "result recorded for assignment 2"),
 		),
 		[]string{idleSession},

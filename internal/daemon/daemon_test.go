@@ -26,7 +26,15 @@ func stateDir(t *testing.T) statedir.Paths {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	return statedir.At(filepath.Join(dir, "state"))
+	p := statedir.At(filepath.Join(dir, "state"))
+	// The install's branch ID is the prefix the tests' branches go under.
+	if err := p.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.BranchID, []byte(testBranchPrefix+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // runDaemon runs a daemon in the background until the test ends, and waits

@@ -4,11 +4,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -400,9 +404,22 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 		assignment.State != "active" {
 		t.Errorf("the assignment is %+v", assignment)
 	}
-	if w := assignment.Workspace; w.Slot != 1 || w.Branch != branch || w.Base != fixture.main || !strings.HasPrefix(w.Path, filepath.Join(stateDir, "workspaces")) || filepath.Dir(w.Path) != filepath.Dir(w.Tmp) {
+	if w := assignment.Workspace; w.Slot != 1 || w.Branch != branch || w.Base != fixture.main || !strings.HasPrefix(w.Path, filepath.Join(stateDir, "workspaces")) || w.Tmp != workerTmp(stateDir, 1) {
 		t.Errorf("the workspace is %+v", w)
 	}
+	socket := filepath.Join(assignment.Workspace.Tmp, "home1234567890", ".local", "state", "asmai", "daemon.sock")
+	if len(socket) >= 103 {
+		t.Errorf("a test daemon socket path is %d bytes, want under 103: %s", len(socket), socket)
+	}
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("a worker test could not listen on %s: %v", socket, err)
+	}
+	listener.Close()
+	t.Logf("worker test listened on socket=%s (%d bytes)", socket, len(socket))
 
 	// The worker ran in that workspace, with its slot and its own TMPDIR, and
 	// the workspace is a checkout of AsmAI's clone, not of the user's.
@@ -420,6 +437,7 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 	if got, want := readTest("worker-env"), "1\n"+assignment.Workspace.Tmp; got != want {
 		t.Errorf("the worker's ASMAI_SLOT and TMPDIR were %q, want %q", got, want)
 	}
+	t.Logf("CLI assignment %d: workspace=%s; recorded Tmp=%s; worker environment=%q", assignment.ID, assignment.Workspace.Path, assignment.Workspace.Tmp, readTest("worker-env"))
 	common := readTest("common-dir")
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(readTest("workspace"), common)
@@ -631,4 +649,12 @@ func TestAWorkersReportSaysEveryListItHasAndEveryCheckWithItsOutcome(t *testing.
 			t.Errorf("--check %q was accepted", bad)
 		}
 	}
+}
+
+// workerTmp is the temporary directory the daemon of the state directory
+// gives the worker of assignment id: /tmp/asmai-<uid>/<hash of the state
+// directory>/<id>.
+func workerTmp(stateDir string, id int) string {
+	sum := sha256.Sum256([]byte(stateDir))
+	return filepath.Join("/tmp", fmt.Sprintf("asmai-%d", os.Getuid()), hex.EncodeToString(sum[:])[:16], strconv.Itoa(id))
 }

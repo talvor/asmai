@@ -223,8 +223,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		case "leader@coordination":
 			wantMode = "default"
 		case "worker1@engineering":
-			for _, dir := range []string{"repo", "tmp"} {
-				path := filepath.Join(stateDir, "workspaces", "job-1", "assignment-1", dir)
+			for _, path := range []string{filepath.Join(stateDir, "workspaces", "job-1", "assignment-1", "repo"), workerTmp(stateDir, 1)} {
 				resolved, err := filepath.EvalSymlinks(path)
 				if err != nil {
 					t.Fatal(err)
@@ -276,10 +275,13 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		}
 		wantWritable := []string(nil)
 		if agent == "worker1@engineering" {
-			wantWritable = []string{filepath.Join(stateDir, "workspaces", "job-1", "assignment-1", "tmp")}
+			wantWritable = []string{workerTmp(stateDir, 1)}
 		}
 		if !slices.Equal(sb.Filesystem.AllowWrite, wantWritable) {
 			t.Errorf("%s's write guard lets commands write %q, want %q", agent, sb.Filesystem.AllowWrite, wantWritable)
+		}
+		if agent == "worker1@engineering" {
+			t.Logf("CLI worker write guard allowWrite=%q", sb.Filesystem.AllowWrite)
 		}
 		if agent != "worker1@engineering" && strings.Contains(argValue(args, "--append-system-prompt"), "instruction files") {
 			t.Errorf("%s was given a repository's instruction files", agent)

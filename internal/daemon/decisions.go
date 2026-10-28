@@ -326,8 +326,7 @@ func (d *daemon) acceptScratch(req Request, ref sessionRef, a store.Assignment) 
 	}
 	d.log.Info("result accepted in a scratch workspace", "assignment", a.ID, "job", a.Job, "workspace", a.Workspace.Path, "leader", ref.address.String(), "ends_job", req.EndsJob)
 	d.stopWorker(a)
-	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
-		d.log.Error("removing an accepted assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
+	if err := d.removeAssignmentTmp(a); err != nil {
 		return Response{}, err
 	}
 	a, err = d.store.Assignment(a.ID)
@@ -580,8 +579,7 @@ func (d *daemon) removeWorkspace(ctx context.Context, a store.Assignment, reposi
 		d.log.Error("removing an ended assignment's workspace", "assignment", a.ID, "workspace", a.Workspace.Path, "error", err.Error())
 		return err
 	}
-	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
-		d.log.Error("removing an accepted assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
+	if err := d.removeAssignmentTmp(a); err != nil {
 		return err
 	}
 	// The assignment's directory goes too, once nothing is left in it.
@@ -776,6 +774,7 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	}
 	d.log.Info("assignment cancelled", "assignment", id, "job", a.Job, "worker", a.Worker, "commit", left.Commit, "pushed", left.Pushed)
 	d.stopWorker(a)
+	d.removeAssignmentTmp(a)
 	d.cancelledJobEnded(a.Job)
 }
 
@@ -793,9 +792,7 @@ func (d *daemon) cancelledScratch(a store.Assignment) {
 	}
 	d.log.Info("scratch assignment cancelled", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "workspace", a.Workspace.Path)
 	d.stopWorker(a)
-	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
-		d.log.Error("removing a cancelled assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
-	}
+	d.removeAssignmentTmp(a)
 }
 
 // cancelledValidation ends the cancelling read-only assignment a, whose worker

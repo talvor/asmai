@@ -362,6 +362,12 @@ func TestAFollowUpReplacesAnOpenJobAndItsLiveAssignment(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if err := os.MkdirAll(live.Workspace.Tmp, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(live.Workspace.Tmp, "worker-file"), []byte("work"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(filepath.Join(f.testDir, "pr-state"), []byte("OPEN"), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -374,6 +380,9 @@ func TestAFollowUpReplacesAnOpenJobAndItsLiveAssignment(t *testing.T) {
 			}
 			if got, err := f.s.Assignment(live.ID); err != nil || got.State != store.AssignmentCancelled {
 				t.Errorf("replaced assignment = %+v (%v), want cancelled", got, err)
+			}
+			if _, err := os.Stat(live.Workspace.Tmp); !os.IsNotExist(err) {
+				t.Errorf("replaced assignment's temporary directory remains: %v", err)
 			}
 			if got, err := f.s.Job(f.job.Number); err != nil || got.State != store.JobEnded {
 				t.Errorf("predecessor = %+v (%v), want ended", got, err)

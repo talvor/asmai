@@ -19,7 +19,7 @@ Spec 03 rule 7 has AsmAI take what it needs to know of a provider from the provi
 
 ## Consequences
 
-- An account under the policy cannot run the factory until its administrator adds AsmAI's rules to the managed settings: the command rules are fixed and listed in the README, and the Read and Edit rules are for each workspace's directory and temporary directory under `workspaces/`. AsmAI cannot test those file rules before a worker exists, so the check covers the command rules.
+- An account under the policy cannot run the factory until its administrator adds AsmAI's rules to the managed settings: the command rules are fixed and listed in the README, and the Read and Edit rules are for each workspace and its temporary directory (see [Writing assignments](../../README.md#writing-assignments)). AsmAI cannot test those file rules before a worker exists, so the check covers the command rules.
 - The probe's contract is the pinned Claude Code's: a new pin is qualified for it like any other behaviour AsmAI relies on, and C-cases are not needed beyond what dev tests simulate with the fake provider (`ASMAI_FAKE_PROVIDER_MANAGED_RULES_ONLY`, `ASMAI_FAKE_PROVIDER_MANAGED_ALLOW`).
 - Real managed-policy behaviour was not exercised at the time of writing: the probe was run against Claude Code 2.1.292 without a policy, and the policy's answer is as the client documents it (`managedOnly`, `notInEffect`).
 

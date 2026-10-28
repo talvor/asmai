@@ -129,6 +129,10 @@ func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsW
 	}
 	fixture, _ := assignmentFlow(t, greetingWorker(branch), leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
+	if _, err := os.Stat(workerTmp(stateDir, 1)); !os.IsNotExist(err) {
+		t.Errorf("accept left the assignment temporary directory in place: %v", err)
+	}
+	t.Logf("accept removed worker temporary directory %s", workerTmp(stateDir, 1))
 	clone := filepath.Join(stateDir, "repositories", "fixture")
 	const jobBranch = "asmai/job-1-add-a-greeting"
 
@@ -221,11 +225,14 @@ func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsW
 
 func TestRejectingAResultReturnsTheAssignmentToTheSameWorkerInANewDispatchAndTheCorrectedResultIsAccepted(t *testing.T) {
 	const branch = "asmai/job-1/1"
-	worker := append(greetingWorker(branch),
+	first := greetingWorker(branch)
+	worker := append(first[:len(first)-1], fakeRun(`printf 'keep' > "$TMPDIR/keep"`, 0, ""), first[len(first)-1])
+	worker = append(worker,
 		hookStep("Stop", "assignment", ""),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		hookStep("UserPromptSubmit", "assignment", "asmai inbox --dispatch 5"),
 		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)dispatch 5 \\| job 1 \\| rejection from leader@engineering.*Reasons from leader@engineering:\ncheck.sh passes on an empty greeting.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| active.*result 1 \\| assignment 1"),
+		fakeRun(`test "$(cat "$TMPDIR/keep")" = keep`, 0, ""),
 		fakeRun(`printf '#!/bin/sh\ntest -s greeting.txt && test "$(cat greeting.txt)" = hello\n' > check.sh && ./check.sh`, 0, ""),
 		fakeRun(`git add -A && git commit -q -m 'Check that the greeting is not empty' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 3 recorded: commit"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 4 recorded: push"),
@@ -247,6 +254,7 @@ func TestRejectingAResultReturnsTheAssignmentToTheSameWorkerInANewDispatchAndThe
 	}
 	fixture, _ := assignmentFlow(t, worker, leader)
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
+	t.Logf("rejected assignment resumed with its file in %s", workerTmp(stateDir, 1))
 	clone := filepath.Join(stateDir, "repositories", "fixture")
 	const jobBranch = "asmai/job-1-add-a-greeting"
 
@@ -330,6 +338,11 @@ func TestCancellingAnAssignmentMakesItsWorkerPushItsBranchAndStopBeforeItEnds(t 
 
 	waitFor(t, "the assignment to be cancelled", func() bool { return len(journaled(t, "assignment.cancelled")) == 1 })
 	waitFor(t, "the cancelled worker to stop", func() bool { return workerOf(t, "worker1@engineering").State == "stopped" })
+	waitFor(t, "the cancelled assignment's temporary directory to be removed", func() bool {
+		_, err := os.Stat(workerTmp(stateDir, 1))
+		return os.IsNotExist(err)
+	})
+	t.Logf("cancel removed worker temporary directory %s", workerTmp(stateDir, 1))
 
 	requested := journaled(t, "assignment.cancelling")
 	if len(requested) != 1 {

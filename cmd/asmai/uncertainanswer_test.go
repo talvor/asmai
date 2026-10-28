@@ -10,27 +10,35 @@ import (
 )
 
 // uncertainAnswerFlow runs a worker that asks its owning leader a question
-// and whose session exits once the answer's nudge, dispatch 5, is typed to it
+// and whose session exits once the answer's nudge, dispatch 6, is typed to it
 // and before it acknowledges it, so whether it saw the answer is unknown. The
-// owning leader is told, in dispatch 6, and then runs recover. second is the
+// owning leader is told, in dispatch 7, and then runs recover. second is the
 // script of the worker's next session, if recover starts one; the leader's
 // recover steps install it before they start it.
+//
+// The worker's turn ends with no report, so its owner is told it stalled,
+// in dispatch 5, by a goroutine that reads origin first: the leader waits for
+// that notice before it answers, or it would race the answer and the hold
+// for their dispatches.
 func uncertainAnswerFlow(t *testing.T, recover, second []string) (testDir string) {
 	t.Helper()
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`asmai decision request --title 'Which greeting?' --option hello --option hi --recommend hello`, 0, "decision request 1, version 1, recorded for job 1"),
 		hookStep("Stop", "assignment", ""),
+		fakeRun(`touch "$ASMAI_TEST_DIR/worker-stopped"`, 0, ""),
 		// The nudge is typed, and the session exits before submitting it.
-		`{"expect":"asmai inbox --dispatch 5\r"}`,
+		`{"expect":"asmai inbox --dispatch 6\r"}`,
 	}
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "Decision request 1, version 1"),
-		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "the answer goes to worker1@engineering, dispatch 5"),
+		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-stopped" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`until asmai inbox --dispatch 5 > "$ASMAI_TEST_DIR/stalled-notice" 2>/dev/null; do sleep 0.02; done; cat "$ASMAI_TEST_DIR/stalled-notice"`, 0, "stalled from daemon"),
+		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "the answer goes to worker1@engineering, dispatch 6"),
 		hookStep("Stop", "report", ""),
-		`{"expect":"asmai inbox --dispatch 6\r"}`,
-		hookStep("UserPromptSubmit", "reconcile", "asmai inbox --dispatch 6"),
-		fakeRun(`asmai inbox --dispatch 6 | tee "$ASMAI_TEST_DIR/answer-reconciliation"`, 0, "(?s)reconciliation from daemon.*worker1@engineering's session exited after decision answer dispatch 5 was typed to it and before it acknowledged it.*decision answer dispatch 5 is kept, never discarded.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| needs_reconciliation"),
+		`{"expect":"asmai inbox --dispatch 7\r"}`,
+		hookStep("UserPromptSubmit", "reconcile", "asmai inbox --dispatch 7"),
+		fakeRun(`asmai inbox --dispatch 7 | tee "$ASMAI_TEST_DIR/answer-reconciliation"`, 0, "(?s)reconciliation from daemon.*worker1@engineering's session exited after decision answer dispatch 6 was typed to it and before it acknowledged it.*decision answer dispatch 6 is kept, never discarded.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| needs_reconciliation"),
 	}
 	if second != nil {
 		steps := append([]string{
@@ -48,9 +56,9 @@ func uncertainAnswerFlow(t *testing.T, recover, second []string) (testDir string
 	if second != nil {
 		// The worker's next session ends its turn with a result.
 		leader = append(leader,
-			`{"expect":"asmai inbox --dispatch 8\r"}`,
-			hookStep("UserPromptSubmit", "result", "asmai inbox --dispatch 8"),
-			fakeRun(`asmai inbox --dispatch 8`, 0, "(?s)result from worker1@engineering.*result 1 \\| assignment 1 \\| worker1@engineering"),
+			`{"expect":"asmai inbox --dispatch 9\r"}`,
+			hookStep("UserPromptSubmit", "result", "asmai inbox --dispatch 9"),
+			fakeRun(`asmai inbox --dispatch 9`, 0, "(?s)result from worker1@engineering.*result 1 \\| assignment 1 \\| worker1@engineering"),
 			hookStep("Stop", "result", ""),
 		)
 	}
@@ -78,10 +86,10 @@ func TestAWorkerThatExitsBeforeAcknowledgingAnAnswerHoldsItsAssignmentAgainstThe
 	}
 	if got := decode[struct {
 		Dispatch int64 `json:"dispatch"`
-	}](t, held[0]); got.Dispatch != 5 {
-		t.Errorf("the assignment was held against dispatch %d, want the answer's, 5", got.Dispatch)
+	}](t, held[0]); got.Dispatch != 6 {
+		t.Errorf("the assignment was held against dispatch %d, want the answer's, 6", got.Dispatch)
 	}
-	if got := answerDispatchStates(t, 5); got != "created,unknown" {
+	if got := answerDispatchStates(t, 6); got != "created,unknown" {
 		t.Errorf("the answer's dispatch moved through %s, want it kept unknown", got)
 	}
 }
@@ -101,13 +109,13 @@ func finishing(prompt string) []string {
 
 func TestTheOwnerDeliversAnAnswerItsWorkerExitedBeforeAcknowledgingAgain(t *testing.T) {
 	recover := []string{
-		fakeRun(`asmai redispatch --assignment 1 --reason 'too early' > "$ASMAI_TEST_DIR/held-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/held-refusal"; test "$status" -eq 1`, 0, "(?s)holds decision answer dispatch 5.*asmai answer redeliver --dispatch 5.*asmai answer retire --dispatch 5"),
-		fakeRun(`asmai answer redeliver --dispatch 5 --reason 'the worker exited before reading it' | tee "$ASMAI_TEST_DIR/redeliver-receipt"`, 0, "decision answer dispatch 5 delivered to worker1@engineering again by leader@engineering, in dispatch 7, a new dispatch; assignment 1 is active again"),
+		fakeRun(`asmai redispatch --assignment 1 --reason 'too early' > "$ASMAI_TEST_DIR/held-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/held-refusal"; test "$status" -eq 1`, 0, "(?s)holds decision answer dispatch 6.*asmai answer redeliver --dispatch 6.*asmai answer retire --dispatch 6"),
+		fakeRun(`asmai answer redeliver --dispatch 6 --reason 'the worker exited before reading it' | tee "$ASMAI_TEST_DIR/redeliver-receipt"`, 0, "decision answer dispatch 6 delivered to worker1@engineering again by leader@engineering, in dispatch 8, a new dispatch; assignment 1 is active again"),
 	}
 	second := append([]string{
-		`{"expect":"asmai inbox --dispatch 7\r"}`,
-		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 7"),
-		fakeRun(`asmai inbox --dispatch 7 | tee "$ASMAI_TEST_DIR/worker-answer"`, 0, "(?s)decision.answer from leader@engineering.*Answer to version 1 of decision request 1, from leader@engineering:\nleader@engineering delivers this decision answer to you again.*dispatch 5, which is not reused.*with the answer below.*\n\nhello\n"),
+		`{"expect":"asmai inbox --dispatch 8\r"}`,
+		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 8"),
+		fakeRun(`asmai inbox --dispatch 8 | tee "$ASMAI_TEST_DIR/worker-answer"`, 0, "(?s)decision.answer from leader@engineering.*Answer to version 1 of decision request 1, from leader@engineering:\nleader@engineering delivers this decision answer to you again.*dispatch 6, which is not reused.*with the answer below.*\n\nhello\n"),
 	}, finishing("again")...)
 	testDir := uncertainAnswerFlow(t, recover, second)
 	for _, name := range []string{"held-refusal", "redeliver-receipt", "worker-answer"} {
@@ -117,10 +125,10 @@ func TestTheOwnerDeliversAnAnswerItsWorkerExitedBeforeAcknowledgingAgain(t *test
 		}
 		t.Logf("%s:\n%s", name, output)
 	}
-	if got := answerDispatchStates(t, 5); got != "created,unknown,stopped" {
+	if got := answerDispatchStates(t, 6); got != "created,unknown,stopped" {
 		t.Errorf("the uncertain answer moved through %s, want it stopped once delivered again", got)
 	}
-	if got := answerDispatchStates(t, 7); !strings.HasPrefix(got, "created,unknown,nudged,delivered,working") {
+	if got := answerDispatchStates(t, 8); !strings.HasPrefix(got, "created,unknown,nudged,delivered,working") {
 		t.Errorf("the answer delivered again moved through %s, want it delivered and worked on", got)
 	}
 	if got := len(journaled(t, "decision.answer.redelivered")); got != 1 {
@@ -136,14 +144,14 @@ func TestTheOwnerDeliversAnAnswerItsWorkerExitedBeforeAcknowledgingAgain(t *test
 
 func TestTheOwnerRetiresAnAnswerItsWorkerExitedBeforeAcknowledgingAndRedispatches(t *testing.T) {
 	recover := []string{
-		fakeRun(`asmai answer retire --dispatch 5 --reason 'the answer is carried in the redispatch' | tee "$ASMAI_TEST_DIR/retire-receipt"`, 0, "decision answer dispatch 5 retired by leader@engineering, journaled with the answer"),
-		fakeRun(`asmai answer redeliver --dispatch 5 --reason 'changed my mind' > "$ASMAI_TEST_DIR/retired-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/retired-refusal"; test "$status" -eq 1`, 0, "not an uncertain decision answer"),
-		fakeRun(`asmai redispatch --assignment 1 --reason 'use hello' | tee "$ASMAI_TEST_DIR/redispatch-receipt"`, 0, "assignment 1: sent to worker1@engineering again by leader@engineering; it is active, in dispatch 7"),
+		fakeRun(`asmai answer retire --dispatch 6 --reason 'the answer is carried in the redispatch' | tee "$ASMAI_TEST_DIR/retire-receipt"`, 0, "decision answer dispatch 6 retired by leader@engineering, journaled with the answer"),
+		fakeRun(`asmai answer redeliver --dispatch 6 --reason 'changed my mind' > "$ASMAI_TEST_DIR/retired-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/retired-refusal"; test "$status" -eq 1`, 0, "not an uncertain decision answer"),
+		fakeRun(`asmai redispatch --assignment 1 --reason 'use hello' | tee "$ASMAI_TEST_DIR/redispatch-receipt"`, 0, "assignment 1: sent to worker1@engineering again by leader@engineering; it is active, in dispatch 8"),
 	}
 	second := append([]string{
-		`{"expect":"asmai inbox --dispatch 7\r"}`,
-		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 7"),
-		fakeRun(`asmai inbox --dispatch 7`, 0, "(?s)redispatch from leader@engineering.*Reasons from leader@engineering:\nuse hello"),
+		`{"expect":"asmai inbox --dispatch 8\r"}`,
+		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 8"),
+		fakeRun(`asmai inbox --dispatch 8`, 0, "(?s)redispatch from leader@engineering.*Reasons from leader@engineering:\nuse hello"),
 	}, finishing("again")...)
 	testDir := uncertainAnswerFlow(t, recover, second)
 	for _, name := range []string{"retire-receipt", "retired-refusal", "redispatch-receipt"} {
@@ -153,7 +161,7 @@ func TestTheOwnerRetiresAnAnswerItsWorkerExitedBeforeAcknowledgingAndRedispatche
 		}
 		t.Logf("%s:\n%s", name, output)
 	}
-	if got := answerDispatchStates(t, 5); got != "created,unknown,stopped" {
+	if got := answerDispatchStates(t, 6); got != "created,unknown,stopped" {
 		t.Errorf("the retired answer moved through %s", got)
 	}
 	retired := journaled(t, "decision.answer.retired")
@@ -164,7 +172,7 @@ func TestTheOwnerRetiresAnAnswerItsWorkerExitedBeforeAcknowledgingAndRedispatche
 		Dispatch int64    `json:"dispatch"`
 		Body     string   `json:"body"`
 		Reasons  []string `json:"reasons"`
-	}](t, retired[0]); got.Dispatch != 5 || !strings.Contains(got.Body, "hello") || len(got.Reasons) != 1 {
+	}](t, retired[0]); got.Dispatch != 6 || !strings.Contains(got.Body, "hello") || len(got.Reasons) != 1 {
 		t.Errorf("the retirement journaled %+v, want the answer's dispatch, the answer and the reason", got)
 	}
 	if got := len(journaled(t, "result.submitted")); got != 1 {

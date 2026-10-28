@@ -267,6 +267,13 @@ func assignmentFlowConfigured(t *testing.T, setUpGit func(*testing.T), files map
 		if t.Failed() {
 			log, _, _ := runAsmai(t, "log")
 			t.Logf("the daemon's log:\n%s", log)
+			// What the scripts left in the test's directory shows how far
+			// each got.
+			entries, _ := os.ReadDir(testDir)
+			for _, e := range entries {
+				output, _ := os.ReadFile(filepath.Join(testDir, e.Name()))
+				t.Logf("the test directory's %s:\n%s", e.Name(), output)
+			}
 		}
 	})
 	if _, stderr, code := runAsmai(t, "start"); code != 0 {

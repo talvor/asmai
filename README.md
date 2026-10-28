@@ -473,7 +473,7 @@ Coordination's leader is told in a message of kind `setup`, and runs the job wit
 - **Leaders.** Coordination always runs, and so does each leader whose role has open work: a handoff open to it, an assignment it owns that has not ended, or a message waiting for it. Each gets a new generation, and one message of kind `restoration`, which names each job it has open work in, for it to load `asmai brief <job>` and fetch `asmai inbox`. Coordination has open work in every open job. A leader is never resumed in its native session: the brief holds the job.
 - **Evidence from before the restart.** What the sessions before it reported is in the journal, tied to the generation and the dispatch it came from, and never changes a dispatch of the new generation: a dispatch moves only on evidence of its own generation, a result and every effect stay tied to the dispatch they came from, and a call with the credential of a session from before the restart is refused.
 
-After an unclean stop, which is reconciled in full in a later milestone, the leaders are restored in the same way and no worker is run again.
+After an unclean stop, which is reconciled in full in a later milestone, the leaders are restored in the same way and no worker is run again. An active assignment whose worker has an uncertain answer is still held for it, so its owner delivers the answer again with `asmai answer redeliver` or retires it with `asmai answer retire`.
 
 ## Pinned providers
 

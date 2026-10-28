@@ -47,7 +47,7 @@ func TestAJobBranchIsNamedForTheJobAndASlugOfItsTitle(t *testing.T) {
 	}
 }
 
-func TestAJobBranchCanBeRecordedAfterItsViewCreationIsRetried(t *testing.T) {
+func TestAJobBranchRetryChecksOriginBeforeReusingTheLocalBranch(t *testing.T) {
 	paths := stateDir(t)
 	origin := remote(t)
 	clone := filepath.Join(paths.Repositories, "fixture")
@@ -96,6 +96,20 @@ func TestAJobBranchCanBeRecordedAfterItsViewCreationIsRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.cfg.Paths.Views = paths.Views
+	git(t, clone, "push", "origin", "refs/heads/"+name+":refs/heads/"+name)
+	if _, err := d.ensureJobBranch(ctx, job, repository); err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "branch_prefix") {
+		t.Fatalf("retrying while origin has %s gave %v, want a branch_prefix refusal", name, err)
+	}
+	if _, err := s.JobBranch(job.Number); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("a job branch was recorded despite the refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(paths.Views, "job-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a view was made despite the refusal: %v", err)
+	}
+	if got := git(t, clone, "rev-parse", "refs/heads/"+name); got != startedFrom {
+		t.Errorf("the local branch moved to %s, want %s", got, startedFrom)
+	}
+	git(t, clone, "push", "origin", ":refs/heads/"+name)
 	branch, err := d.ensureJobBranch(ctx, job, repository)
 	if err != nil {
 		t.Fatalf("retrying the job branch failed: %v", err)

@@ -428,18 +428,15 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		if err != nil {
 			return store.JobBranch{}, err
 		}
+		taken, err := repos.OriginHasBranch(ctx, repository.Clone, name)
+		if err != nil {
+			return store.JobBranch{}, err
+		}
+		if taken {
+			return store.JobBranch{}, refuse("job %d cannot open: the branch %s already exists on origin, so another install uses this branch prefix; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", j.Number, name)
+		}
 		startedFrom, err = repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
 		if err != nil {
-			// Another install on this origin, or a copied state directory,
-			// may already hold the name; the name is recorded and quoted in
-			// prompts, so it is refused and not changed.
-			taken, err := repos.OriginHasBranch(ctx, repository.Clone, name)
-			if err != nil {
-				return store.JobBranch{}, err
-			}
-			if taken {
-				return store.JobBranch{}, refuse("job %d cannot open: the branch %s already exists on origin, so another install uses this branch prefix; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", j.Number, name)
-			}
 			startedFrom = tip
 			if err := repos.CreateBranch(ctx, repository.Clone, name, startedFrom); err != nil {
 				return store.JobBranch{}, err

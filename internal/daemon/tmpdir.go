@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 )
 
@@ -101,7 +100,7 @@ func (d *daemon) sweepTmp() {
 		return
 	}
 	for _, e := range entries {
-		if live[e.Name()] || strings.HasPrefix(e.Name(), ".") {
+		if live[e.Name()] {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(root, e.Name())); err != nil {

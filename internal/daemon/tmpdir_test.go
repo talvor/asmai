@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
@@ -109,20 +110,49 @@ func TestTheDaemonRefusesAWorkersTemporaryRootItDoesNotOwnOrThatIsASymbolicLink(
 	}
 }
 
-func TestStartingTheDaemonRemovesTheTemporaryDirectoryOfAnAssignmentThatIsNotLiveAndKeepsOneThatIs(t *testing.T) {
-	p := newJobFactory(t, store.MandateResearchOnly, false)
-	live, _, err := p.d.assign(Request{Session: "research", Command: CommandAssign, Job: p.job.Number, Outcome: "Find it", Criteria: []string{"cited"}, Skill: "research"})
+func recordLiveTmpAssignment(t *testing.T, p planningJob) store.Assignment {
+	t.Helper()
+	id, err := p.s.NextAssignmentID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(live.Workspace.Tmp, 0o700); err != nil {
+	number, slot, err := p.s.Allocate(roles.Research)
+	if err != nil {
 		t.Fatal(err)
 	}
+	tmp, err := p.d.assignmentTmp(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(p.d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", p.job.Number), fmt.Sprintf("assignment-%d", id), "scratch")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	live, _, err := p.s.AssignmentCreated(store.NewAssignment{
+		ID: id, Job: p.job.Number, Owner: roles.LeaderOf(roles.Research).String(), Worker: roles.WorkerOf(roles.Research, number).String(),
+		Outcome: "Find it", Criteria: []string{"cited"}, Workspace: store.Workspace{Slot: slot, Path: workspace, Tmp: tmp},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return live
+}
+
+func TestSweepRemovesTemporaryDirectoriesWithoutLiveAssignments(t *testing.T) {
+	p := newJobFactory(t, store.MandateResearchOnly, false)
+	live := recordLiveTmpAssignment(t, p)
 	stale, err := p.d.assignmentTmp(live.ID + 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(stale, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hidden := filepath.Join(filepath.Dir(stale), ".orphan")
+	if err := os.MkdirAll(hidden, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	other := filepath.Join(filepath.Dir(stale), "..", "other-daemon", "7")
@@ -135,6 +165,9 @@ func TestStartingTheDaemonRemovesTheTemporaryDirectoryOfAnAssignmentThatIsNotLiv
 	if _, err := os.Stat(stale); err == nil {
 		t.Errorf("the temporary directory %s of an assignment that is not live is still there", stale)
 	}
+	if _, err := os.Stat(hidden); err == nil {
+		t.Errorf("the hidden temporary directory %s with no live assignment is still there", hidden)
+	}
 	if _, err := os.Stat(live.Workspace.Tmp); err != nil {
 		t.Errorf("the live assignment's temporary directory was removed: %v", err)
 	}
@@ -144,18 +177,21 @@ func TestStartingTheDaemonRemovesTheTemporaryDirectoryOfAnAssignmentThatIsNotLiv
 }
 
 func TestStartingTheDaemonRunsTheSweep(t *testing.T) {
-	p := stateDir(t)
-	d := &daemon{cfg: Config{Paths: p}}
-	stale, err := d.assignmentTmp(41)
+	p := newJobFactory(t, store.MandateResearchOnly, false)
+	live := recordLiveTmpAssignment(t, p)
+	stale, err := p.d.assignmentTmp(live.ID + 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(stale, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runDaemon(t, p)
+	runDaemonWith(t, p.d.cfg)
 	if _, err := os.Stat(stale); err == nil {
 		t.Errorf("starting the daemon left %s, an assignment's directory with no assignment", stale)
+	}
+	if _, err := os.Stat(live.Workspace.Tmp); err != nil {
+		t.Errorf("starting the daemon removed the live assignment's temporary directory: %v", err)
 	}
 }
 

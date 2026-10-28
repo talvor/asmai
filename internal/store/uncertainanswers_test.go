@@ -39,8 +39,20 @@ func TestAnUnacknowledgedDecisionAnswerIsTheUncertainAnswerOfItsGeneration(t *te
 	if err != nil || got.ID != answer.ID || got.State != DispatchUnknown || got.Agent != a.Worker {
 		t.Fatalf("uncertain answer of generation 1 is %+v (%v), want dispatch %d", got, err, answer.ID)
 	}
-	if got, err := s.UncertainAnswer(a.ID, 2); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("a later generation's uncertain answer is %+v (%v), want none", got, err)
+	if got, err := s.UncertainAnswer(a.ID, 0); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("the uncertain answer before generation 1 is %+v (%v), want none", got, err)
+	}
+}
+
+// An answer typed in a session that ended across a clean stop and start, or
+// in any earlier session, is never offered again either: a later session's
+// exit, or a restart, still finds it.
+func TestAnUnacknowledgedDecisionAnswerOfAnEarlierGenerationIsStillUncertain(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, answer := heldAnswer(t, s)
+	got, err := s.UncertainAnswer(a.ID, 2)
+	if err != nil || got.ID != answer.ID || got.Generation != 1 {
+		t.Fatalf("the uncertain answer through generation 2 is %+v (%v), want dispatch %d of generation 1", got, err, answer.ID)
 	}
 }
 

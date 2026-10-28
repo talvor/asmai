@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -996,9 +995,10 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 // generation ended with exit, for reconciliation when that session left its
 // outcome unknown, and reports whether it did: its work dispatch unreported
 // and delivered, working or unknown in that session, or a decision answer
-// whose nudge that session was typed and never acknowledged. The uncertain
-// answer is the assignment's latest work only to the worker, so the watcher
-// looks for it by the generation it was typed in. d.mu is held.
+// whose nudge that session, or an earlier one, was typed and never
+// acknowledged. The uncertain answer is the assignment's latest work only to
+// the worker, so the watcher looks for it by the generations it may have been
+// typed in. d.mu is held.
 func (d *daemon) reconcileExit(w store.WorkerDispatch, generation int, exit string) bool {
 	if w.Assignment.State != store.AssignmentActive {
 		return false
@@ -1008,16 +1008,9 @@ func (d *daemon) reconcileExit(w store.WorkerDispatch, generation int, exit stri
 		d.holdForReconciliation(w, fmt.Sprintf("%s's session exited without a Stop hook or a report (%s)", w.Assignment.Worker, exit))
 		return true
 	}
-	answer, err := d.store.UncertainAnswer(w.Assignment.ID, generation)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false
-	}
-	if err != nil {
-		d.log.Error("reading a worker's uncertain decision answer after its session exited", "agent", w.Assignment.Worker, "assignment", w.Assignment.ID, "error", err.Error())
-		return false
-	}
-	d.holdAnswerForReconciliation(w.Assignment, answer, fmt.Sprintf("%s's session exited after decision answer dispatch %d was typed to it and before it acknowledged it (%s), so whether it saw the answer is unknown", w.Assignment.Worker, answer.ID, exit))
-	return true
+	return d.holdAgainstUncertainAnswer(w.Assignment, generation, func(answer int64) string {
+		return fmt.Sprintf("%s's session exited after decision answer dispatch %d was typed to it and before it acknowledged it (%s), so whether it saw the answer is unknown", w.Assignment.Worker, answer, exit)
+	})
 }
 
 func describeExit(err error) string {

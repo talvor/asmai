@@ -506,7 +506,7 @@ func (d *daemon) redispatch(req Request) (Response, error) {
 // of an assignment held against a decision answer its worker's session may
 // not have seen delivers the answer again in a new dispatch, which starts the
 // worker if it is not running and is returned, to nudge, or retires it, which
-// leaves the assignment held for the leader to redispatch or cancel.
+// leaves the assignment held for the leader to redispatch.
 func (d *daemon) recoverAnswer(req Request) (Response, string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -57,6 +57,17 @@ _Avoid_: Attempt, run
 The owning leader's determination of what actually happened when a dispatch's outcome is unknown, recorded with what is known, what is not, and the chosen way forward. An assignment waiting for one is said to need reconciliation, and is held as it is until it is recorded, except that a job cancel cancels it with the rest of its job, with no push when its workspace is gone.
 _Avoid_: Retry (reconciliation decides whether anything is retried)
 
+**Uncertain answer**:
+A decision answer whose nudge was typed to a worker's session and never acknowledged before that session ended or the factory stopped, so nobody can tell whether the worker saw it. Its assignment needs reconciliation for the answer's own dispatch, and the answer is kept until the owning leader redelivers or retires it.
+_Avoid_: Lost answer (it is never discarded)
+
+**Redeliver**:
+The owning leader sending an uncertain answer to its worker again, unchanged, in a new dispatch. The uncertain dispatch is stopped, never reused, and the assignment is active again.
+
+**Retire**:
+The owning leader ending an uncertain answer without delivering it, journaled with the answer and the reasons. The assignment still needs reconciliation until the owner redispatches it.
+_Avoid_: Discard, drop (a retirement is the owner's recorded choice)
+
 **Store**:
 The factory's durable record, kept by the daemon alone: the current state of its jobs and agents, and the journal of everything that happened. Backups, restores and migrations act on the whole store.
 _Avoid_: Database, state (when meaning the durable record)

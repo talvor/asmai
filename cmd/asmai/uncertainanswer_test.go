@@ -30,7 +30,7 @@ func uncertainAnswerFlow(t *testing.T, recover, second []string) (testDir string
 		hookStep("Stop", "report", ""),
 		`{"expect":"asmai inbox --dispatch 6\r"}`,
 		hookStep("UserPromptSubmit", "reconcile", "asmai inbox --dispatch 6"),
-		fakeRun(`asmai inbox --dispatch 6 | tee "$ASMAI_TEST_DIR/answer-reconciliation"`, 0, "(?s)reconciliation from daemon.*worker1@engineering's session exited after decision answer dispatch 5 was typed to it and before it acknowledged it.*decision answer dispatch 5 is kept, never discarded"),
+		fakeRun(`asmai inbox --dispatch 6 | tee "$ASMAI_TEST_DIR/answer-reconciliation"`, 0, "(?s)reconciliation from daemon.*worker1@engineering's session exited after decision answer dispatch 5 was typed to it and before it acknowledged it.*decision answer dispatch 5 is kept, never discarded.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| needs_reconciliation"),
 	}
 	if second != nil {
 		steps := append([]string{
@@ -62,6 +62,11 @@ func uncertainAnswerFlow(t *testing.T, recover, second []string) (testDir string
 		t.Fatal(err)
 	}
 	t.Logf("the owning leader was told:\n%s", output)
+	// The owner's own fetch shows the assignment held: asmai brief is an
+	// agent command, which the test, as the user, cannot run.
+	if !strings.Contains(string(output), "assignment 1 | job 1 | leader@engineering -> worker1@engineering | needs_reconciliation") {
+		t.Errorf("the owning leader's reconciliation does not show assignment 1 needing reconciliation:\n%s", output)
+	}
 	return testDir
 }
 
@@ -78,13 +83,6 @@ func TestAWorkerThatExitsBeforeAcknowledgingAnAnswerHoldsItsAssignmentAgainstThe
 	}
 	if got := answerDispatchStates(t, 5); got != "created,unknown" {
 		t.Errorf("the answer's dispatch moved through %s, want it kept unknown", got)
-	}
-	brief, stderr, code := runAsmai(t, "brief", "1")
-	if code != 0 {
-		t.Fatal(stderr)
-	}
-	if !strings.Contains(brief, "worker1@engineering (owner leader@engineering) needs_reconciliation") {
-		t.Errorf("the brief does not show assignment 1 needing reconciliation:\n%s", brief)
 	}
 }
 
@@ -109,7 +107,7 @@ func TestTheOwnerDeliversAnAnswerItsWorkerExitedBeforeAcknowledgingAgain(t *test
 	second := append([]string{
 		`{"expect":"asmai inbox --dispatch 7\r"}`,
 		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 7"),
-		fakeRun(`asmai inbox --dispatch 7 | tee "$ASMAI_TEST_DIR/worker-answer"`, 0, "(?s)decision.answer from leader@engineering.*leader@engineering delivers this decision answer to you again.*dispatch 5, which is not reused.*Answer to version 1 of decision request 1, from leader@engineering:\nhello"),
+		fakeRun(`asmai inbox --dispatch 7 | tee "$ASMAI_TEST_DIR/worker-answer"`, 0, "(?s)decision.answer from leader@engineering.*Answer to version 1 of decision request 1, from leader@engineering:\nleader@engineering delivers this decision answer to you again.*dispatch 5, which is not reused.*with the answer below.*\n\nhello\n"),
 	}, finishing("again")...)
 	testDir := uncertainAnswerFlow(t, recover, second)
 	for _, name := range []string{"held-refusal", "redeliver-receipt", "worker-answer"} {

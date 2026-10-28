@@ -465,7 +465,7 @@ func recoverAnswer(o *output, paths statedir.Paths, name string, dispatch int64,
 	a := resp.Assignment
 	if command == daemon.CommandAnswerRetire {
 		fmt.Fprintf(o.stdout, "decision answer dispatch %d retired by %s, journaled with the answer; it is never delivered to %s\n", dispatch, a.Owner, a.Worker)
-		fmt.Fprintf(o.stdout, "next: assignment %d still needs reconciliation; send it to its worker again with `asmai redispatch --assignment %[1]d --reason <why>`, or cancel it\n", a.ID)
+		fmt.Fprintf(o.stdout, "next: assignment %d still needs reconciliation; send it to its worker again with `asmai redispatch --assignment %[1]d --reason <why>`\n", a.ID)
 		return 0
 	}
 	fmt.Fprintf(o.stdout, "decision answer dispatch %d delivered to %s again by %s, in dispatch %d, a new dispatch; assignment %d is active again\n", dispatch, a.Worker, a.Owner, resp.Dispatch.ID, a.ID)

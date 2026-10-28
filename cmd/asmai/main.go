@@ -209,7 +209,7 @@ commands agents run:
                               acknowledging, to the worker again in a new dispatch; the assignment is active again
   asmai answer retire --dispatch <id> --reason <text>
                               a leader retires such an answer instead, journaled with the answer; the assignment
-                              stays held for it to redispatch or cancel
+                              stays held for it to redispatch
   asmai push <number>         the delivery owner, Engineering's leader for a code job and Coordination's for a
                               repository's setup, asks the daemon to
                               push the job branch: it fetches the branch from origin, refuses and records an

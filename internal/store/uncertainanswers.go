@@ -10,12 +10,14 @@ import (
 	"time"
 )
 
-// UncertainAnswer returns the decision answer to assignment's worker whose
-// nudge was typed in generation of its session and never acknowledged: its
-// dispatch is unknown and its message unfetched, so nobody can tell whether
-// the worker saw it. NextDispatch never offers it again, so a worker whose
-// session exits in that window leaves it for its owning leader to recover.
-// It returns sql.ErrNoRows when there is none.
+// UncertainAnswer returns the earliest decision answer to assignment's worker
+// whose nudge was typed in generation of its session, or in any earlier one,
+// and never acknowledged: its dispatch is unknown and its message unfetched,
+// so nobody can tell whether the worker saw it. NextDispatch never offers it
+// again, so a worker whose session exits in that window, or a factory that
+// stops and starts in it, leaves it for its owning leader to recover, and a
+// later exit or restart still finds it. It returns sql.ErrNoRows when there
+// is none.
 func (s *Store) UncertainAnswer(assignment int64, generation int) (Dispatch, error) {
 	return uncertainAnswer(s.db, assignment, generation)
 }
@@ -25,7 +27,7 @@ func uncertainAnswer(q querier, assignment int64, generation int) (Dispatch, err
 	err := q.QueryRow(`SELECT d.id, d.message, d.agent, d.generation, d.state, d.transcript
 		FROM messages m JOIN dispatches d ON d.message = m.id JOIN assignments a ON a.id = m.assignment
 		WHERE m.assignment = ? AND m.recipient = a.worker AND m.kind = ? AND m.fetched_at IS NULL
-		AND d.state = ? AND d.generation = ? ORDER BY d.id LIMIT 1`,
+		AND d.state = ? AND d.generation <= ? ORDER BY d.id LIMIT 1`,
 		assignment, MessageDecisionAnswer, DispatchUnknown, generation).
 		Scan(&d.ID, &d.Message, &d.Agent, &d.Generation, &d.State, &d.Transcript)
 	return d, err
@@ -124,7 +126,7 @@ func (s *Store) AnswerRedelivered(dispatch int64, leader string, reasons []strin
 // assignment needs reconciliation and which leader owns, with leader's
 // reasons: the dispatch is stopped and never delivered, and the retirement is
 // journaled with the answer it retires. The assignment stays held, for its
-// owner to send it to its worker again or cancel it, and is returned.
+// owner to send it to its worker again, and is returned.
 func (s *Store) AnswerRetired(dispatch int64, leader string, reasons []string, at time.Time) (Assignment, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

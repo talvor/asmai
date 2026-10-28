@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -44,6 +45,9 @@ func (d *daemon) recoverWork(clean bool) {
 // previous daemon left carrying one that is active, or that is being
 // cancelled, in assignment order. A cancelled job's assignment whose
 // workspace is gone ends as cancelled first, whatever its worker's dispatch.
+// An active assignment whose worker was typed a decision answer's nudge in
+// any session and never acknowledged it is held against the answer, never
+// resumed past it, since every session ended with the previous daemon.
 func (d *daemon) recoverWorkers() {
 	workers, err := d.store.WorkersInState(store.AssignmentActive, store.AssignmentCancelling)
 	if err != nil {
@@ -56,17 +60,22 @@ func (d *daemon) recoverWorkers() {
 			continue
 		}
 		switch {
+		case w.Fetched && w.Dispatch.State != store.DispatchStopped:
+			d.cannotContinue(w, fmt.Sprintf("its dispatch %d was %s when the factory stopped, so what %s did in it is not known",
+				w.Dispatch.ID, w.Dispatch.State, w.Assignment.Worker))
+		case d.holdAgainstUncertainAnswer(w.Assignment, math.MaxInt, func(answer int64) string {
+			return fmt.Sprintf("the factory was stopped and started again after decision answer dispatch %d was typed to %s and before it acknowledged it, so whether it saw the answer is unknown", answer, w.Assignment.Worker)
+		}):
+			// Resuming the worker past an answer it may not have seen would
+			// strand the answer, which NextDispatch never offers again.
 		case !w.Fetched:
 			// The worker never fetched what it was given, so nothing of it
 			// was begun: it is started for it as for any message waiting.
 		case w.Dispatch.State == store.DispatchStopped && w.Report == store.ReportBlocked && w.Assignment.State == store.AssignmentActive:
 			// It reported that it cannot go on, which waits for its owning
 			// leader's decision, not for the worker.
-		case w.Dispatch.State == store.DispatchStopped:
-			d.resumeWorker(w)
 		default:
-			d.cannotContinue(w, fmt.Sprintf("its dispatch %d was %s when the factory stopped, so what %s did in it is not known",
-				w.Dispatch.ID, w.Dispatch.State, w.Assignment.Worker))
+			d.resumeWorker(w)
 		}
 	}
 }
@@ -232,6 +241,26 @@ func (d *daemon) holdForReconciliation(w store.WorkerDispatch, why string) {
 		return
 	}
 	d.log.Warn("assignment needs reconciliation", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "owner", a.Owner, "dispatch", w.Dispatch.ID, "why", why, "told", told.ID)
+}
+
+// holdAgainstUncertainAnswer holds a, an active assignment, for
+// reconciliation against the decision answer to its worker whose nudge was
+// typed in generation of its session, or in any earlier one, and never
+// acknowledged, for why it is uncertain, and reports whether it did.
+func (d *daemon) holdAgainstUncertainAnswer(a store.Assignment, generation int, why func(answer int64) string) bool {
+	if a.State != store.AssignmentActive {
+		return false
+	}
+	answer, err := d.store.UncertainAnswer(a.ID, generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	if err != nil {
+		d.log.Error("reading a worker's uncertain decision answer", "agent", a.Worker, "assignment", a.ID, "error", err.Error())
+		return false
+	}
+	d.holdAnswerForReconciliation(a, answer, why(answer.ID))
+	return true
 }
 
 // holdAnswerForReconciliation marks assignment a as needing reconciliation

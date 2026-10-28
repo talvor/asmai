@@ -423,6 +423,7 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 	if got, want := readTest("worker-env"), "1\n"+assignment.Workspace.Tmp; got != want {
 		t.Errorf("the worker's ASMAI_SLOT and TMPDIR were %q, want %q", got, want)
 	}
+	t.Logf("CLI assignment %d: workspace=%s; recorded Tmp=%s; worker environment=%q", assignment.ID, assignment.Workspace.Path, assignment.Workspace.Tmp, readTest("worker-env"))
 	common := readTest("common-dir")
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(readTest("workspace"), common)

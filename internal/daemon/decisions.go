@@ -776,6 +776,9 @@ func (d *daemon) cancelled(ref sessionRef, id int64) {
 	}
 	d.log.Info("assignment cancelled", "assignment", id, "job", a.Job, "worker", a.Worker, "commit", left.Commit, "pushed", left.Pushed)
 	d.stopWorker(a)
+	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
+		d.log.Error("removing a cancelled assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
+	}
 	d.cancelledJobEnded(a.Job)
 }
 

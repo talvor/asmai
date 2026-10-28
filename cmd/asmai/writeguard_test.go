@@ -280,6 +280,9 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		if !slices.Equal(sb.Filesystem.AllowWrite, wantWritable) {
 			t.Errorf("%s's write guard lets commands write %q, want %q", agent, sb.Filesystem.AllowWrite, wantWritable)
 		}
+		if agent == "worker1@engineering" {
+			t.Logf("CLI worker write guard allowWrite=%q", sb.Filesystem.AllowWrite)
+		}
 		if agent != "worker1@engineering" && strings.Contains(argValue(args, "--append-system-prompt"), "instruction files") {
 			t.Errorf("%s was given a repository's instruction files", agent)
 		}

@@ -523,6 +523,9 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("reading the registered repositories: %w", err)
 	}
 	d.applied = withRegisteredRepositories(d.applied, registered)
+	if err := d.sweepTmp(); err != nil {
+		return fmt.Errorf("sweeping the workers' temporary directories: %w", err)
+	}
 	previous, err := st.Started(d.status.Version, d.status.PID, d.status.StartedAt)
 	if err != nil {
 		return fmt.Errorf("journaling the start: %w", err)
@@ -536,7 +539,6 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	// Every start is a recovery: what the previous daemon left is continued
 	// or held for reconciliation before any leader is restored.
-	d.sweepTmp()
 	d.recoverWork(previous.State != store.StateRunning)
 
 	served := make(chan struct{})

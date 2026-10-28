@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -223,7 +224,9 @@ func TestSweepRemovesTemporaryDirectoriesWithoutLiveAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p.d.sweepTmp()
+	if err := p.d.sweepTmp(); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := os.Stat(stale); err == nil {
 		t.Errorf("the temporary directory %s of an assignment that is not live is still there", stale)
@@ -242,6 +245,10 @@ func TestSweepRemovesTemporaryDirectoriesWithoutLiveAssignments(t *testing.T) {
 func TestStartingTheDaemonRunsTheSweep(t *testing.T) {
 	p := newJobFactory(t, store.MandateResearchOnly, false)
 	live := recordLiveTmpAssignment(t, p)
+	kept := filepath.Join(live.Workspace.Tmp, "kept")
+	if err := os.WriteFile(kept, []byte("live"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	stale, err := p.d.assignmentTmp(live.ID + 100)
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +262,34 @@ func TestStartingTheDaemonRunsTheSweep(t *testing.T) {
 	}
 	if _, err := os.Stat(live.Workspace.Tmp); err != nil {
 		t.Errorf("starting the daemon removed the live assignment's temporary directory: %v", err)
+	}
+	if data, err := os.ReadFile(kept); err != nil || string(data) != "live" {
+		t.Errorf("starting the daemon lost the live assignment's temporary file: %q (%v)", data, err)
+	}
+}
+
+func TestStartingTheDaemonRefusesUnsafeTemporaryRootsOfRecordedAssignments(t *testing.T) {
+	for _, part := range []string{"root", "hash"} {
+		t.Run(part, func(t *testing.T) {
+			shortTmpBase(t, t.TempDir())
+			p := newJobFactory(t, store.MandateResearchOnly, false)
+			live := recordLiveTmpAssignment(t, p)
+			unsafe := filepath.Dir(live.Workspace.Tmp)
+			if part == "root" {
+				unsafe = filepath.Dir(unsafe)
+			}
+			if err := os.Rename(unsafe, unsafe+"-saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), unsafe); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := Run(ctx, p.d.cfg); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+				t.Errorf("starting with an unsafe %s for recorded assignment %d returned %v, want refusal", part, live.ID, err)
+			}
+		})
 	}
 }
 

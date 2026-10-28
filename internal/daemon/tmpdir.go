@@ -92,16 +92,14 @@ func (d *daemon) assignmentTmp(id int64) (string, error) {
 // sweepTmp removes the directory of each assignment in the daemon's own
 // directory of worker temporary directories that has no live assignment,
 // which a daemon that stopped before it removed one leaves.
-func (d *daemon) sweepTmp() {
+func (d *daemon) sweepTmp() error {
 	root, err := d.tmpRoot()
 	if err != nil {
-		d.log.Error("sweeping the workers' temporary directories", "error", err.Error())
-		return
+		return err
 	}
 	ids, err := d.store.LiveAssignmentIDs()
 	if err != nil {
-		d.log.Error("reading the live assignments to sweep the workers' temporary directories", "error", err.Error())
-		return
+		return fmt.Errorf("reading the live assignments: %w", err)
 	}
 	live := map[string]bool{}
 	for _, id := range ids {
@@ -109,8 +107,7 @@ func (d *daemon) sweepTmp() {
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		d.log.Error("reading the workers' temporary directories", "error", err.Error())
-		return
+		return fmt.Errorf("reading the workers' temporary directories: %w", err)
 	}
 	for _, e := range entries {
 		if live[e.Name()] {
@@ -120,4 +117,5 @@ func (d *daemon) sweepTmp() {
 			d.log.Error("removing a temporary directory no assignment holds", "directory", e.Name(), "error", err.Error())
 		}
 	}
+	return nil
 }

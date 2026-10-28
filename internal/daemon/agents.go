@@ -99,10 +99,11 @@ type Leader struct {
 	Effort string `json:"effort,omitempty"`
 }
 
-// Model is the model an agent's session runs, Name, as the provider reports
-// it at the session's start or else as the session was launched with, and
-// its effort level as the provider last reported it, which is empty until it
-// does: Claude Code reports it as each turn finishes.
+// Model is the model an agent's session runs and its effort level. Name is
+// the model the provider reported at the session's start, or until then the
+// one the session was launched with. Effort is the level the provider last
+// reported, and is empty until it reports one: Claude Code reports it as
+// each turn finishes.
 type Model struct {
 	Name   string `json:"name"`
 	Effort string `json:"effort,omitempty"`
@@ -1176,7 +1177,7 @@ func (d *daemon) modelReported(ref sessionRef, payload json.RawMessage) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	l := d.leaders[ref.address.String()]
-	if l == nil || l.generation != ref.generation {
+	if l == nil || l.session == nil || l.generation != ref.generation {
 		return
 	}
 	if model != "" {
@@ -1454,6 +1455,8 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 					return LeftByTerminalClose
 				}
 			}
+			// No model at all means the attached session was replaced, which
+			// ends this stream: the client keeps the one it shows.
 			if now := d.modelOf(attached.Agent, attached.Generation); now != model && now != (Model{}) {
 				model = now
 				if !send(Frame{Model: &model}) {

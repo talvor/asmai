@@ -325,14 +325,16 @@ func (c *attachClient) statusLine() string {
 			text += " · " + c.notice
 		}
 	}
+	for _, p := range c.prompts {
+		text += " · " + strings.Map(printable, p)
+	}
+	// The model comes after the prompts, so that on a narrow terminal it is
+	// cut before what waits on the user.
 	if model := strings.Map(printable, c.model.Name); model != "" {
 		text += " · " + model
 		if effort := strings.Map(printable, c.model.Effort); effort != "" {
 			text += " · " + effort + " effort"
 		}
-	}
-	for _, p := range c.prompts {
-		text += " · " + strings.Map(printable, p)
 	}
 	if title := strings.Map(printable, c.term.Title()); title != "" {
 		text += " · " + title
@@ -370,6 +372,12 @@ func snapshot(paths statedir.Paths, agent string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return snapshotOf(resp)
+}
+
+// snapshotOf returns the agent and its screen of the daemon's answer to a
+// snapshot, as snapshot does.
+func snapshotOf(resp daemon.Response) (map[string]any, error) {
 	if resp.Screen == nil || resp.Attached == nil {
 		return nil, errors.New("the daemon did not answer with the agent's screen")
 	}

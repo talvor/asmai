@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/talvor/asmai/internal/daemon"
 	"github.com/talvor/asmai/internal/vt"
@@ -88,11 +89,81 @@ func TestTheStatusLineShowsTheAgentsModelAndEffortOnceKnown(t *testing.T) {
 // A model and effort that do not fit cut the status line short at the
 // terminal's width rather than wrapping it.
 func TestTheModelTruncatesTheStatusLineOnANarrowTerminal(t *testing.T) {
-	c := &attachClient{agent: "worker1@engineering", model: daemon.Model{Name: "claude-opus-5-5", Effort: "high"}, columns: 40, rows: 6, term: vt.New(40, 5)}
-	got := statusText(c.statusLine())
-	want := " worker1@engineering · observing · Ctrl-"
-	if got != want {
-		t.Errorf("on a 40-column terminal the status line is %q, want it cut to %q", got, want)
+	want := " worker1@engineering · observing · Ctrl-] detaches · claude-op"
+	columns := utf8.RuneCountInString(want)
+	c := &attachClient{agent: "worker1@engineering", model: daemon.Model{Name: "claude-opus-5-5", Effort: "high"}, columns: columns, rows: 6, term: vt.New(columns, 5)}
+	line := c.statusLine()
+	if got := statusText(line); got != want {
+		t.Errorf("on a %d-column terminal the status line is %q, want it cut inside the model to %q", columns, got, want)
+	}
+	if strings.Contains(line, "\n") || strings.Contains(line, "high effort") {
+		t.Errorf("on a %d-column terminal the status line %q wraps or shows the effort", columns, line)
+	}
+}
+
+// What waits on the user stays visible: a native prompt nobody can answer
+// comes before the model and effort, so on a terminal it fitted before the
+// model was shown it still shows in full, and the model is what is cut.
+func TestANativePromptShowsInFullBesideTheModel(t *testing.T) {
+	prompt := "worker1@engineering waits at a native prompt nobody can answer"
+	before := " leader@coordination · observing · Ctrl-] detaches · " + prompt
+	columns := utf8.RuneCountInString(before + " · cl")
+	c := &attachClient{agent: "leader@coordination", prompts: []string{prompt}, model: daemon.Model{Name: "claude-opus-5-5", Effort: "medium"}, columns: columns, rows: 6, term: vt.New(columns, 5)}
+	if got, want := statusText(c.statusLine()), before+" · cl"; got != want {
+		t.Errorf("on a %d-column terminal the status line is %q, want the prompt in full and then the model cut: %q", columns, got, want)
+	}
+}
+
+// asmai attach --json and --toon print the agent's model and effort with
+// the rest of the agent once the daemon knows them, and leave out each it
+// does not.
+func TestTheAttachSnapshotCarriesTheModelAndEffortOnlyWhenKnown(t *testing.T) {
+	screen := vt.New(20, 2).State()
+	for _, tt := range []struct {
+		model, effort string
+		want, absent  []string
+	}{
+		{model: "claude-opus-5-5", effort: "medium", want: []string{"claude-opus-5-5", "medium"}},
+		{model: "opus", want: []string{"opus"}, absent: []string{"effort"}},
+		{absent: []string{"model", "effort"}},
+	} {
+		resp := daemon.Response{Attached: &daemon.Leader{Agent: "leader@coordination", State: "running", Generation: 1, PID: 7, Model: tt.model, Effort: tt.effort}, Screen: &screen}
+		data, err := snapshotOf(resp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, toon := range []bool{false, true} {
+			var stdout, stderr strings.Builder
+			if code := (&output{stdout: &stdout, stderr: &stderr, json: !toon, toon: toon}).printData(data); code != 0 {
+				t.Fatalf("printing the snapshot failed: %s", stderr.String())
+			}
+			if !toon {
+				var printed struct {
+					Agent struct {
+						Agent  string  `json:"agent"`
+						Model  *string `json:"model"`
+						Effort *string `json:"effort"`
+					} `json:"agent"`
+				}
+				if err := json.Unmarshal([]byte(stdout.String()), &printed); err != nil {
+					t.Fatal(err)
+				}
+				if a := printed.Agent; a.Agent != "leader@coordination" || (a.Model == nil) != (tt.model == "") || a.Model != nil && *a.Model != tt.model || (a.Effort == nil) != (tt.effort == "") || a.Effort != nil && *a.Effort != tt.effort {
+					t.Errorf("asmai attach --json printed %s, want the agent with model %q and effort %q", stdout.String(), tt.model, tt.effort)
+				}
+				continue
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(stdout.String(), w) {
+					t.Errorf("asmai attach --toon printed %s, want %q in it", stdout.String(), w)
+				}
+			}
+			for _, key := range tt.absent {
+				if strings.Contains(stdout.String(), key) {
+					t.Errorf("asmai attach --toon printed %s, want no %s", stdout.String(), key)
+				}
+			}
+		}
 	}
 }
 

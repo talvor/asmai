@@ -172,7 +172,7 @@ C51 runs the pinned Claude Code non-interactively with the command line the code
 
 C52 starts the factory and runs `asmai dashboard` of the commit under test in a terminal of its own, 140 columns by 40 rows, as a user's terminal runs it ([ADR 0015](adr/0015-the-dashboard-is-built-on-bubble-tea-and-lip-gloss-and-hands-the-terminal-to-attach.md)). It reads the terminal back as text and attributes through AsmAI's own terminal emulation, and types the keys a user would. It requires the Agents tab on the alternate screen with Coordination's leader first and selected, then does the round trip twice:
 
-- Enter runs `asmai attach leader@coordination` as a child process of the dashboard, which `ps` shows, and attach draws the leader's session with its status line, `leader@coordination · observing · Ctrl-] detaches`, and the leader's input prompt.
+- Enter runs `asmai attach leader@coordination` as a child process of the dashboard, which `ps` shows, and attach draws the leader's session with its status line, `leader@coordination · observing · Ctrl-] detaches · ↑/↓ history`, and the leader's input prompt.
 - The first time, the case resizes the terminal to 120 by 36 while attach has it, and requires attach to follow: its status line is on the new last row.
 - It types `zqobserve`, which attach must not send on, and then Ctrl-].
 - The dashboard must be back, on the alternate screen, on the Agents tab, at the terminal's new size (the header and footer bars reach the last column of the 120-column terminal), with attach's observing status line gone and the attach child gone.

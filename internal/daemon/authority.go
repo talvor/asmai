@@ -65,6 +65,11 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return fmt.Errorf("only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai %s", req.Command)
+	case CommandAnswerRedeliver, CommandAnswerRetire:
+		if ownsWorkers(ref.address) {
+			return nil
+		}
+		return fmt.Errorf("only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai %s", commandName(req.Command))
 	case CommandPush:
 		if isDeliveryOwner(ref.address) {
 			return nil
@@ -138,7 +143,7 @@ func isAgentCommand(command string) bool {
 	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
 		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandBlockedReport, CommandBlockedResolve, CommandAccept, CommandReject, CommandCancel, CommandRedispatch,
-		CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
+		CommandAnswerRedeliver, CommandAnswerRetire, CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
 		return true
 	}
 	return false
@@ -172,6 +177,10 @@ func commandName(command string) string {
 		return "inbox"
 	case CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandAccept, CommandReject, CommandCancel, CommandRedispatch, CommandPush, CommandAuthorize:
 		return command
+	case CommandAnswerRedeliver:
+		return "answer redeliver"
+	case CommandAnswerRetire:
+		return "answer retire"
 	case CommandBlockedReport:
 		return "blocked --job"
 	case CommandBlockedResolve:

@@ -45,6 +45,7 @@ commands you type:
   asmai, asmai chat           talk with Coordination: attach this terminal to Coordination's leader,
                               starting the factory first if it is stopped. What you type reaches
                               Coordination, and each message you submit is journaled word for word.
+                              ↑/↓ scroll its history and are not sent to Coordination.
                               Ctrl-] leaves the conversation, which pauses nothing
   asmai init [--yes] [--claude-default-model MODEL]
                               the first run: check this platform is certified, choose Claude's
@@ -77,7 +78,8 @@ commands you type:
   asmai job <number>          show a job and its witnessed request
   asmai job clean <number>    remove the scratch workspaces of a job with no repository, and the results in them;
                               they are kept until you run this, and it is refused while the job is open
-  asmai attach <agent>        show an agent's terminal and observe it; Ctrl-] detaches.
+  asmai attach <agent>        show an agent's terminal and observe it; ↑/↓ scroll its history
+                              and Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai dashboard             show the factory live in this terminal: agents, jobs and the log in three
                               tabs, 1, 2 and 3, under a banner of what waits on you; q leaves. It only
@@ -204,6 +206,12 @@ commands agents run:
   asmai redispatch --assignment <id> --reason <text>
                               a leader sends an active assignment it owns, or one that needs reconciliation,
                               to its worker again, in a new dispatch
+  asmai answer redeliver --dispatch <id> --reason <text>
+                              a leader delivers a decision answer, which its worker's session exited before
+                              acknowledging, to the worker again in a new dispatch; the assignment is active again
+  asmai answer retire --dispatch <id> --reason <text>
+                              a leader retires such an answer instead, journaled with the answer; the assignment
+                              stays held for it to redispatch
   asmai push <number>         the delivery owner, Engineering's leader for a code job and Coordination's for a
                               repository's setup, asks the daemon to
                               push the job branch: it fetches the branch from origin, refuses and records an
@@ -302,6 +310,7 @@ var groups = map[string][]string{
 	"repo":      {"add", "list", "show", "remove"},
 	"handoff":   {"send", "accept", "clarify", "decline"},
 	"decision":  {"record", "request", "answer", "present"},
+	"answer":    {"redeliver", "retire"},
 	"grant":     {"revoke", "invalidate"},
 	"config":    {"check", "show", "edit", "apply", "example"},
 	"role":      {"list", "set"},
@@ -505,6 +514,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&reasons, "reason", "a reason for the decision; may be repeated")
 		flags.BoolVar(&endsJob, "ends-job", false, "with accept, the owning leader accepts the outcome of a job with no repository against its mandate, which ends the job")
 		flags.BoolVar(&prototype, "prototype", false, "with accept, the owning leader accepts a result as a prototype that stays on its own assignment branch: the job branch does not move")
+	case "answer redeliver", "answer retire":
+		flags.Int64Var(&dispatchID, "dispatch", 0, "the decision answer's dispatch, as the reconciliation message names it")
+		flags.Var(&reasons, "reason", "a reason for recovering the answer this way; may be repeated")
 	case "decision record":
 		flags.Int64Var(&decision.job, "job", 0, "job number")
 		flags.StringVar(&decision.choice, "choice", "", "what the decision chose")
@@ -596,7 +608,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "answer redeliver", "answer retire", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -689,6 +701,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return blockedResolve(o, paths, arg, blockedNote)
 	case "accept", "reject", "cancel", "redispatch":
 		return decide(o, paths, name, decidedAssignment, reasons, endsJob, prototype)
+	case "answer redeliver", "answer retire":
+		return recoverAnswer(o, paths, name, dispatchID, reasons)
 	case "push":
 		return push(o, paths, arg)
 	case "decision record":

@@ -131,8 +131,11 @@ type attachClient struct {
 	prompts []string
 	// model is the model the agent runs and its effort, as the daemon
 	// knows them, which the status line shows.
-	model         daemon.Model
-	term          *vt.Terminal
+	model daemon.Model
+	term  *vt.Terminal
+	// back is how many lines into the terminal's history the view is
+	// scrolled back; at 0 it shows the live screen.
+	back          int
 	columns, rows int
 	renderer      vt.Renderer
 	dirty         chan struct{}
@@ -182,12 +185,19 @@ func (c *attachClient) readFrames(r io.Reader) {
 				return
 			}
 			c.term = t
+			c.back = min(c.back, t.History())
 			c.renderer.Invalidate()
 		case f.Output != nil && c.term != nil:
+			before := c.term.ScrolledOff()
 			c.term.Write(f.Output)
 			// The daemon's terminal answers the agent's queries; this one
 			// only draws.
 			c.term.TakeResponses()
+			// Scrolled back, the view stays on the lines it shows as more
+			// scroll into the history under it.
+			if c.back > 0 {
+				c.back = min(c.back+c.term.ScrolledOff()-before, c.term.History())
+			}
 		}
 		c.mu.Unlock()
 		if f.Ended != "" {
@@ -205,10 +215,12 @@ func (c *attachClient) readFrames(r io.Reader) {
 // leftConversation is what the conversation says once the user has left it.
 const leftConversation = "Left the conversation. Nothing is paused: Coordination is back under automation."
 
-// readKeys reads the user's keys until Ctrl-]. Outside the conversation none
-// reaches the agent, and Ctrl-] detaches. In the conversation every other
-// key is sent on as typed, Esc included, and Ctrl-] leaves it.
-func (c *attachClient) readKeys(in *os.File) {
+// readKeys reads the user's keys until Ctrl-]. The up and down arrows
+// scroll the view through the terminal's history and never reach the agent.
+// Outside the conversation no other key reaches it either, and Ctrl-]
+// detaches. In the conversation every other key is sent on as typed, Esc
+// included, and returns the view to the live screen, and Ctrl-] leaves it.
+func (c *attachClient) readKeys(in io.Reader) {
 	buf := make([]byte, 256)
 	for {
 		n, err := in.Read(buf)
@@ -217,11 +229,16 @@ func (c *attachClient) readKeys(in *os.File) {
 		if detach >= 0 {
 			keys = keys[:detach]
 		}
-		if c.conversation && len(keys) > 0 {
+		if len(keys) > 0 {
 			c.mu.Lock()
-			c.notice = ""
+			keys = c.scroll(keys)
+			if c.conversation {
+				c.notice = ""
+			}
 			c.mu.Unlock()
 			c.markDirty()
+		}
+		if c.conversation && len(keys) > 0 {
 			c.send(daemon.ClientMessage{Keys: keys})
 		}
 		if detach >= 0 {
@@ -233,6 +250,38 @@ func (c *attachClient) readKeys(in *os.File) {
 			return
 		}
 	}
+}
+
+// scrollKeys are the up and down arrows, in the cursor key mode the user's
+// terminal is in and in the application mode, and how many lines back each
+// scrolls the view.
+var scrollKeys = map[string]int{"\x1b[A": 1, "\x1bOA": 1, "\x1b[B": -1, "\x1bOB": -1}
+
+// scroll scrolls the view by the arrows among keys, in their order, no
+// further back than the oldest line of the history nor forward of the live
+// screen, and returns the other keys. In the conversation, each other key
+// returns the view to the live screen, as the agent is sent it.
+func (c *attachClient) scroll(keys []byte) []byte {
+	history := 0
+	if c.term != nil {
+		history = c.term.History()
+	}
+	var rest []byte
+	for len(keys) > 0 {
+		if len(keys) >= 3 {
+			if lines, ok := scrollKeys[string(keys[:3])]; ok {
+				c.back = min(max(c.back+lines, 0), history)
+				keys = keys[3:]
+				continue
+			}
+		}
+		rest = append(rest, keys[0])
+		keys = keys[1:]
+		if c.conversation {
+			c.back = 0
+		}
+	}
+	return rest
 }
 
 // leave detaches: from the conversation, once the daemon says the user has
@@ -289,21 +338,7 @@ func (c *attachClient) draw() string {
 			return why
 		case <-c.dirty:
 		}
-		c.mu.Lock()
-		var frame []byte
-		if c.term != nil {
-			frame = c.renderer.Render(c.term, c.columns, max(c.rows-1, 0))
-			frame = append(frame, c.statusLine()...)
-			if c.conversation && c.term.BracketedPaste() != c.paste {
-				c.paste = !c.paste
-				if c.paste {
-					frame = append(frame, "\x1b[?2004h"...)
-				} else {
-					frame = append(frame, "\x1b[?2004l"...)
-				}
-			}
-		}
-		c.mu.Unlock()
+		frame := c.frame()
 		if _, err := c.out.Write(frame); err != nil {
 			return fmt.Sprintf("Detached from %s: %v.", c.agent, err)
 		}
@@ -315,12 +350,40 @@ func (c *attachClient) draw() string {
 	}
 }
 
-// statusLine draws the status line on the terminal's last row, and puts the
-// cursor back where the agent's is.
+// frame returns what draws the agent's terminal, scrolled back as the user
+// scrolled it, and the status line under it, or nothing before the first
+// State.
+func (c *attachClient) frame() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.term == nil {
+		return nil
+	}
+	frame := c.renderer.RenderBack(c.term, c.columns, max(c.rows-1, 0), c.back)
+	frame = append(frame, c.statusLine()...)
+	if c.conversation && c.term.BracketedPaste() != c.paste {
+		c.paste = !c.paste
+		if c.paste {
+			frame = append(frame, "\x1b[?2004h"...)
+		} else {
+			frame = append(frame, "\x1b[?2004l"...)
+		}
+	}
+	return frame
+}
+
+// statusLine draws the status line on the terminal's last row, with the keys
+// and how far back the view is scrolled, and puts the cursor back where the
+// agent's is.
 func (c *attachClient) statusLine() string {
-	text := fmt.Sprintf(" %s · observing · Ctrl-] detaches", c.agent)
+	text := fmt.Sprintf(" %s · observing · Ctrl-] detaches · ↑/↓ history", c.agent)
 	if c.conversation {
-		text = fmt.Sprintf(" %s · conversation · Ctrl-] leaves", c.agent)
+		text = fmt.Sprintf(" %s · conversation · Ctrl-] leaves · ↑/↓ history", c.agent)
+	}
+	if c.back > 0 {
+		text += fmt.Sprintf(" · %d of %d lines back", c.back, c.term.History())
+	}
+	if c.conversation {
 		if c.notice != "" {
 			text += " · " + c.notice
 		}

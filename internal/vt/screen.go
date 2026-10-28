@@ -121,7 +121,7 @@ func (t *Terminal) index() {
 	c.PendingWrap = false
 	switch {
 	case c.Y == t.s.Bottom:
-		t.scrollUp(t.s.Top, t.s.Bottom, 1)
+		t.scrollOff(1)
 	case c.Y < t.s.Rows-1:
 		c.Y++
 	}
@@ -147,6 +147,34 @@ func (t *Terminal) scrollUp(top, bottom, n int) {
 	copy(lines[top:bottom+1], lines[top+n:bottom+1])
 	for y := bottom - n + 1; y <= bottom; y++ {
 		lines[y] = t.blankLine()
+	}
+}
+
+// scrollOff scrolls the region up by n as a line feed at its bottom or SU
+// does: on the main screen, with the region at the top, the lines that
+// scroll off it go into the history.
+func (t *Terminal) scrollOff(n int) {
+	if !t.s.AltActive && t.s.Top == 0 {
+		t.keep(t.s.Main.Lines[:min(n, t.s.Bottom+1)])
+	}
+	t.scrollUp(t.s.Top, t.s.Bottom, n)
+}
+
+// keep adds lines to the end of the history, without their trailing blank
+// cells, and drops the oldest beyond ScrollbackLimit.
+func (t *Terminal) keep(lines [][]Cell) {
+	for _, line := range lines {
+		end := len(line)
+		for end > 0 && line[end-1] == (Cell{}) {
+			end--
+		}
+		t.s.Scrollback = append(t.s.Scrollback, append([]Cell(nil), line[:end]...))
+		t.scrolledOff++
+	}
+	if over := len(t.s.Scrollback) - ScrollbackLimit; over > 0 {
+		// The next append that grows the history copies only the lines
+		// kept, which lets the dropped ones go.
+		t.s.Scrollback = t.s.Scrollback[over:]
 	}
 }
 
@@ -258,8 +286,7 @@ func (t *Terminal) eraseLine(mode int) {
 }
 
 // eraseDisplay is ED: 0 erases from the cursor to the end of the screen, 1
-// from its start to the cursor, and 2 the whole screen. There is no
-// scrollback, so 3 erases nothing.
+// from its start to the cursor, 2 the whole screen, and 3 the history.
 func (t *Terminal) eraseDisplay(mode int) {
 	c := t.s.Cursor
 	switch mode {
@@ -277,6 +304,8 @@ func (t *Terminal) eraseDisplay(mode int) {
 		for y := 0; y < t.s.Rows; y++ {
 			t.eraseCells(0, y, t.s.Columns)
 		}
+	case 3:
+		t.s.Scrollback = nil
 	}
 }
 

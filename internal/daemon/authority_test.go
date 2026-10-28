@@ -55,6 +55,17 @@ func TestAgentAuthorityUsesSessionRoleKindAndGeneration(t *testing.T) {
 		{"current", CommandRedispatch, ""},
 		{"worker", CommandRedispatch, "only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality"},
 		{"", CommandRedispatch, "asmai redispatch is an agent command"},
+		// The owning leader recovers a decision answer its worker's session
+		// exited before acknowledging; the assignment's owner is checked
+		// where it is recovered.
+		{"engineering", CommandAnswerRedeliver, ""},
+		{"engineering", CommandAnswerRetire, ""},
+		{"planning", CommandAnswerRetire, ""},
+		{"current", CommandAnswerRedeliver, ""},
+		{"worker", CommandAnswerRedeliver, "only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai answer redeliver"},
+		{"worker", CommandAnswerRetire, "only leader@engineering, leader@planning, leader@research, leader@coordination or leader@quality may run asmai answer retire"},
+		{"", CommandAnswerRedeliver, "asmai answer redeliver is an agent command"},
+		{"", CommandAnswerRetire, "asmai answer retire is an agent command"},
 		{"engineering", CommandAccept, ""},
 		{"quality", CommandAccept, ""},
 		{"quality", CommandReject, ""},

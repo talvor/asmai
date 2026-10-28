@@ -73,6 +73,7 @@ func factoryHome(t *testing.T) (stateDir string) {
 	t.Setenv("ASMAI_E2E_SENTINEL", envSentinel)
 	t.Cleanup(func() {
 		exec.Command(filepath.Join(asmaiBin, "asmai"), "stop").Run()
+		os.RemoveAll(filepath.Dir(workerTmp(filepath.Join(home, ".local", "state", "asmai"), 0)))
 		os.RemoveAll(home)
 	})
 	return filepath.Join(home, ".local", "state", "asmai")

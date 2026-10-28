@@ -720,6 +720,25 @@ func (s *Store) LiveAssignmentOf(worker string) (Assignment, error) {
 	return withRecords(s.db, a)
 }
 
+// LiveAssignmentIDs returns the IDs of the assignments that have not ended,
+// which still hold their workspace's slot, oldest first.
+func (s *Store) LiveAssignmentIDs() ([]int64, error) {
+	rows, err := s.db.Query(`SELECT id FROM assignments WHERE NOT ` + endedAssignment + ` ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // AssignmentsForJob returns the assignments of job, oldest first.
 func (s *Store) AssignmentsForJob(job int64) ([]Assignment, error) {
 	rows, err := s.db.Query(`SELECT a.id FROM assignments a WHERE a.job = ? ORDER BY a.id`, job)

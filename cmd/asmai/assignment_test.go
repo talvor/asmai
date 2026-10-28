@@ -4,11 +4,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -400,7 +403,7 @@ func TestAWritingAssignmentIsDoneInAWorkspaceOfAsmAIsCloneAndSubmittedAsAResult(
 		assignment.State != "active" {
 		t.Errorf("the assignment is %+v", assignment)
 	}
-	if w := assignment.Workspace; w.Slot != 1 || w.Branch != branch || w.Base != fixture.main || !strings.HasPrefix(w.Path, filepath.Join(stateDir, "workspaces")) || filepath.Dir(w.Path) != filepath.Dir(w.Tmp) {
+	if w := assignment.Workspace; w.Slot != 1 || w.Branch != branch || w.Base != fixture.main || !strings.HasPrefix(w.Path, filepath.Join(stateDir, "workspaces")) || w.Tmp != workerTmp(stateDir, 1) {
 		t.Errorf("the workspace is %+v", w)
 	}
 
@@ -631,4 +634,12 @@ func TestAWorkersReportSaysEveryListItHasAndEveryCheckWithItsOutcome(t *testing.
 			t.Errorf("--check %q was accepted", bad)
 		}
 	}
+}
+
+// workerTmp is the temporary directory the daemon of the state directory
+// gives the worker of assignment id: /tmp/asmai-<uid>/<hash of the state
+// directory>/<id>.
+func workerTmp(stateDir string, id int) string {
+	sum := sha256.Sum256([]byte(stateDir))
+	return filepath.Join("/tmp", fmt.Sprintf("asmai-%d", os.Getuid()), hex.EncodeToString(sum[:])[:8], strconv.Itoa(id))
 }

@@ -536,6 +536,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	// Every start is a recovery: what the previous daemon left is continued
 	// or held for reconciliation before any leader is restored.
+	d.sweepTmp()
 	d.recoverWork(previous.State != store.StateRunning)
 
 	served := make(chan struct{})

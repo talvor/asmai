@@ -269,10 +269,14 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 	}
 	worker := roles.WorkerOf(role, number)
 	dir := filepath.Join(d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", j.Number), fmt.Sprintf("assignment-%d", id))
+	tmp, err := d.assignmentTmp(id)
+	if err != nil {
+		return store.Assignment{}, store.Dispatch{}, err
+	}
 	workspace := store.Workspace{
 		Slot: slot,
 		Path: filepath.Join(dir, "repo"),
-		Tmp:  filepath.Join(dir, "tmp"),
+		Tmp:  tmp,
 		Base: base,
 	}
 	undo := func() {
@@ -341,7 +345,11 @@ func (d *daemon) assignScratch(ref sessionRef, req Request, j store.Job, role st
 	}
 	worker := roles.WorkerOf(role, number)
 	dir := filepath.Join(d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", j.Number), fmt.Sprintf("assignment-%d", id))
-	workspace := store.Workspace{Slot: slot, Path: filepath.Join(dir, scratchName), Tmp: filepath.Join(dir, "tmp")}
+	tmp, err := d.assignmentTmp(id)
+	if err != nil {
+		return store.Assignment{}, store.Dispatch{}, err
+	}
+	workspace := store.Workspace{Slot: slot, Path: filepath.Join(dir, scratchName), Tmp: tmp}
 	if err := os.MkdirAll(workspace.Path, 0o700); err != nil {
 		return store.Assignment{}, store.Dispatch{}, fmt.Errorf("making the scratch workspace: %w", err)
 	}

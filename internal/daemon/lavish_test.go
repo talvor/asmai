@@ -25,7 +25,16 @@ import (
 
 func TestMain(m *testing.M) {
 	fakelavish.RunIfFake()
-	os.Exit(m.Run())
+	// The workers' temporary directories are made in a directory of the
+	// tests' own, not the user's /tmp.
+	base, err := os.MkdirTemp("", "asmai-tmp")
+	if err != nil {
+		panic(err)
+	}
+	tmpBase = base
+	code := m.Run()
+	os.RemoveAll(base)
+	os.Exit(code)
 }
 
 // pinnedLavish pins a Lavish build for this platform whose executable is the

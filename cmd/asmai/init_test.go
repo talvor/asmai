@@ -978,6 +978,21 @@ func TestInitYesAsksNeitherToInstallNorToOpenClaudeCode(t *testing.T) {
 	}
 }
 
+// repo add is refused while the factory is stopped (job 2, decision 1), so the
+// closing text lists start first and says the factory must be running.
+func TestInitClosingTextSaysTheFactoryMustBeStartedBeforeRepoAdd(t *testing.T) {
+	stateDir, _ := setupFactory(t, nil)
+	trustFactory(t, stateDir)
+	stdout, stderr, code := runIn(t, "", "init", "--yes")
+	if code != 0 {
+		t.Fatalf("init --yes exited %d printing %q", code, stdout+stderr)
+	}
+	want := "Init is done: run `asmai start` to start the factory, then, with the factory running, `asmai repo add` registers a repository for it to work on. `asmai repo add` is refused until the factory is started."
+	if !strings.Contains(stdout, want) {
+		t.Errorf("init closed with %q, want it to say %q", stdout, want)
+	}
+}
+
 func TestInitYesAcceptsClaudeDefaultModelFlagWithoutPrompts(t *testing.T) {
 	stateDir, _ := setupFactory(t, nil)
 	stdout, stderr, code := runIn(t, "", "init", "--yes", "--claude-default-model", "sonnet")

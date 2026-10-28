@@ -94,7 +94,9 @@ commands you type:
   asmai lavish                list the review links waiting for you in the factory's Lavish server and the
                               SSH command that forwards its port, as it listens on this host only
   asmai repo add <path-or-url> [--name <name>]
-                              register a repository: record its location, origin and default
+                              The factory must be running, so run asmai start, before asmai repo add;
+                              it is refused while the factory is stopped.
+                              Register a repository: record its location, origin and default
                               branch in the store and the configuration file, and make AsmAI's
                               own clone of it, fetched from origin, then open the pinned Claude
                               Code in the clone for you to trust it, as setup does. Your own

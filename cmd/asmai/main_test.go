@@ -164,6 +164,15 @@ func TestThereIsNoQualifyCommand(t *testing.T) {
 	}
 }
 
+// repo add is refused while the factory is stopped (job 2, decision 1), so the
+// usage tells the user to start the factory before it.
+func TestUsageSaysTheFactoryMustBeStartedBeforeRepoAdd(t *testing.T) {
+	want := "The factory must be running, so run asmai start, before asmai repo add"
+	if !strings.Contains(strings.Join(strings.Fields(usage), " "), want) {
+		t.Errorf("the usage does not say %q:\n%s", want, usage)
+	}
+}
+
 func TestAFailedCheckDoesNotSayARunningLeaderIsNotStarted(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	o := &output{stdout: &stdout, stderr: &stderr}

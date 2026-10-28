@@ -251,6 +251,10 @@ type conversation struct {
 	// of a paste's bracket that the next keys may finish.
 	pasting bool
 	carry   []byte
+	// esc is set when the last keys ended in Esc, at escAt, which a
+	// carriage return starting the next keys may make Alt-Enter.
+	esc   bool
+	escAt time.Time
 }
 
 // sessionRef is the session an agent session's credential belongs to.
@@ -1347,7 +1351,7 @@ func (d *daemon) typed(c *conversation, keys []byte) {
 		return
 	}
 	l.userInput = true
-	if n := c.enters(keys); n > 0 {
+	if n := c.enters(keys, time.Now()); n > 0 {
 		l.submits += n
 		l.submitTerminal = c.terminal
 	}
@@ -1363,11 +1367,27 @@ const (
 	pasteEnd   = "\x1b[201~"
 )
 
-// enters counts the Enter keys in keys, the next the user typed in c, that
-// can submit a message: a carriage return that is neither pasted text nor
-// part of Alt-Enter (ESC CR, which a terminal sends in one write), which
-// starts a new line instead.
-func (c *conversation) enters(keys []byte) int {
+// altEnterWait is how long after an Esc ending the user's keys a carriage
+// return starting the next is taken as the rest of Alt-Enter, which a slow
+// terminal may send in two writes, rather than as Enter.
+const altEnterWait = 100 * time.Millisecond
+
+// enters counts the Enter keys in keys, the next the user typed in c at
+// the time at, that can submit a message: a carriage return that is neither
+// pasted text nor part of Alt-Enter (ESC CR), which starts a new line
+// instead.
+func (c *conversation) enters(keys []byte, at time.Time) int {
+	esc := c.esc && at.Sub(c.escAt) < altEnterWait
+	c.esc = false
+	if len(keys) == 0 {
+		return 0
+	}
+	if esc && len(c.carry) == 0 && keys[0] == '\r' && !c.pasting {
+		keys = keys[1:]
+	}
+	if len(keys) > 0 && keys[len(keys)-1] == 0x1b {
+		c.esc, c.escAt = true, at
+	}
 	b := append(c.carry, keys...)
 	c.carry = nil
 	n := 0

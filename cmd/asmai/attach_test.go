@@ -319,6 +319,11 @@ func TestInTheConversationTheArrowsScrollAndAreNotSent(t *testing.T) {
 	checkShown(t, c, "two ups", "3", "4", "5")
 	typeKeys(t, c, w, "\x1b[B\x1b[A\x1b[B")
 	checkShown(t, c, "down, up and down", "4", "5", "6")
+	// The keypad's arrows, as the kitty keyboard protocol sends them.
+	typeKeys(t, c, w, "\x1b[57419u\x1b[57420u\x1b[57419u")
+	checkShown(t, c, "the keypad's up, down and up", "3", "4", "5")
+	typeKeys(t, c, w, "\x1b[57420u")
+	checkShown(t, c, "the keypad's down", "4", "5", "6")
 	select {
 	case m := <-sent:
 		t.Fatalf("the arrows were sent to the agent as %+v", m)

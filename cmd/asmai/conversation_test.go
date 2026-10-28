@@ -308,7 +308,9 @@ func TestAMultiLineMessageIsSubmittedWholeAndJournaledWithItsLineBreaks(t *testi
 	var message struct {
 		Text string `json:"text"`
 	}
-	json.Unmarshal(journaled(t, "message.witnessed")[0].Data, &message)
+	if err := json.Unmarshal(journaled(t, "message.witnessed")[0].Data, &message); err != nil {
+		t.Fatal(err)
+	}
 	if want := "first line\nsecond line\nthird line"; message.Text != want {
 		t.Errorf("the witnessed message is %q, want %q", message.Text, want)
 	}

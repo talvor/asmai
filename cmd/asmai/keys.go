@@ -5,6 +5,7 @@ package main
 import (
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -50,13 +51,40 @@ type keyReader struct {
 // anything longer passes as it is.
 const maxSequence = 64
 
+// escapeWait is how long the start of an escape sequence, a lone Esc
+// included, is held for the keys that may finish it, before it is sent as
+// it is.
+const escapeWait = 100 * time.Millisecond
+
+// holding reports whether the start of an escape sequence is held for the
+// next keys.
+func (k *keyReader) holding() bool {
+	return len(k.carry) > 0
+}
+
+// flush returns what is held, as it is, once no key followed it in time.
+func (k *keyReader) flush() []byte {
+	held := k.carry
+	k.carry = nil
+	if held != nil {
+		k.backslash = false
+	}
+	return held
+}
+
 // read returns the legacy keys of keys, the next the user's terminal sent.
 func (k *keyReader) read(keys []byte) []byte {
 	b := append(k.carry, keys...)
 	k.carry = nil
 	var out []byte
 	for i := 0; i < len(b); {
-		if b[i] != 0x1b || i+1 >= len(b) || b[i+1] != '[' {
+		if b[i] == 0x1b && i+1 == len(b) {
+			// A lone Esc, which the next keys may make part of a sequence
+			// or of Alt-Enter.
+			k.carry = []byte{0x1b}
+			return out
+		}
+		if b[i] != 0x1b || b[i+1] != '[' {
 			c := b[i]
 			i++
 			if k.pasting {
@@ -165,6 +193,9 @@ func legacyKey(seq []byte) (string, bool) {
 		return "", false
 	}
 	m := (mods - 1) &^ (modCapsLock | modNumLock)
+	if key, ok := keypadKeys[code]; ok {
+		return keypadKey(key, m)
+	}
 	if m&(modSuper|modHyper|modMeta) != 0 {
 		return "", false
 	}
@@ -211,6 +242,45 @@ func legacyKey(seq []byte) (string, bool) {
 		key = "\x1b" + key
 	}
 	return key, true
+}
+
+// keypadKeys are the legacy keys of the keypad's keys, by their codes in the
+// kitty keyboard protocol, which reports them all in CSI u: a key's text, or
+// the final byte, and the number before it if any, of its control sequence.
+var keypadKeys = map[int]string{
+	57399: "0", 57400: "1", 57401: "2", 57402: "3", 57403: "4",
+	57404: "5", 57405: "6", 57406: "7", 57407: "8", 57408: "9",
+	57409: ".", 57410: "/", 57411: "*", 57412: "-", 57413: "+",
+	57414: "\r", 57415: "=", 57416: ",",
+	57417: "D", 57418: "C", 57419: "A", 57420: "B",
+	57421: "5~", 57422: "6~", 57423: "H", 57424: "F",
+	57425: "2~", 57426: "3~", 57427: "E",
+}
+
+// keypadKey returns the legacy bytes of the keypad's key, one of
+// keypadKeys, with the modifiers m. Its text is sent as typed, a modifier
+// aside, except that Shift- and Alt-Enter start a new line as Enter's do;
+// its other keys are the control sequences of the keys they stand for, with
+// the modifiers in them as xterm sends them.
+func keypadKey(key string, m int) (string, bool) {
+	switch {
+	case key == "\r":
+		if m&(modShift|modAlt) != 0 {
+			return newline, true
+		}
+		return key, true
+	case len(key) == 1 && (key[0] < 'A' || key[0] > 'Z'):
+		return key, true
+	}
+	final := key[len(key)-1:]
+	param := strings.TrimSuffix(key, final)
+	if mods := m & (modShift | modAlt | modCtrl); mods != 0 {
+		if param == "" {
+			param = "1"
+		}
+		return "\x1b[" + param + ";" + strconv.Itoa(mods+1) + final, true
+	}
+	return "\x1b[" + param + final, true
 }
 
 // number reads a parameter's first field, which is empty for def.

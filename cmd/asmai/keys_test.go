@@ -45,7 +45,20 @@ func TestShiftEnterAndItsFallbacksStartANewLine(t *testing.T) {
 		{"Ctrl-Backspace, kitty keyboard protocol", []string{"\x1b[127;5u"}, "\x08"},
 		{"backspace, kitty keyboard protocol", []string{"\x1b[127u"}, "\x7f"},
 		{"arrows and other sequences pass", []string{"\x1b[A\x1b[1;5D\x1b[3~\x1bOB"}, "\x1b[A\x1b[1;5D\x1b[3~\x1bOB"},
-		{"a key with no legacy bytes passes", []string{"\x1b[97;9u\x1b[57399u"}, "\x1b[97;9u\x1b[57399u"},
+		{"a key with no legacy bytes passes", []string{"\x1b[97;9u"}, "\x1b[97;9u"},
+		{"keypad Enter submits", []string{"hello\x1b[57414u"}, "hello\r"},
+		{"keypad Enter with Num Lock submits", []string{"hello\x1b[57414;129u"}, "hello\r"},
+		{"Shift-keypad-Enter", []string{"one\x1b[57414;2utwo\x1b[57414u"}, "one\x1b\rtwo\r"},
+		{"Alt-keypad-Enter", []string{"one\x1b[57414;3utwo\r"}, "one\x1b\rtwo\r"},
+		{"keypad arrows", []string{"\x1b[57419u\x1b[57420u\x1b[57417u\x1b[57418u"}, "\x1b[A\x1b[B\x1b[D\x1b[C"},
+		{"keypad arrows with modifiers", []string{"\x1b[57419;5u\x1b[57420;3u"}, "\x1b[1;5A\x1b[1;3B"},
+		{"keypad navigation keys", []string{"\x1b[57421u\x1b[57422u\x1b[57423u\x1b[57424u\x1b[57425u\x1b[57426u\x1b[57427u"}, "\x1b[5~\x1b[6~\x1b[H\x1b[F\x1b[2~\x1b[3~\x1b[E"},
+		{"keypad Delete with Shift", []string{"\x1b[57426;2u"}, "\x1b[3;2~"},
+		{"keypad digits and operators", []string{"\x1b[57399;129u\x1b[57408;129u\x1b[57409;129u\x1b[57410u\x1b[57411u\x1b[57412u\x1b[57413u\x1b[57415u\x1b[57416u"}, "09./*-+=,"},
+		{"keypad keys with Ctrl or Super", []string{"\x1b[57401;5u\x1b[57413;9u\x1b[57414;5u"}, "2+\r"},
+		{"Esc split from Shift-Enter", []string{"one\x1b", "[13;2utwo\r"}, "one\x1b\rtwo\r"},
+		{"Esc split from Enter is Alt-Enter", []string{"one\x1b", "\rtwo\r"}, "one\x1b\rtwo\r"},
+		{"Esc split from text", []string{"\x1b", "b"}, "\x1bb"},
 		{"pasted text passes as it is", []string{"\x1b[200~a\\\rb\x1b[13;2u\x1b[201~\r"}, "\x1b[200~a\\\rb\x1b[13;2u\x1b[201~\r"},
 		{"a paste split across reads", []string{"\x1b[20", "0~a\\", "\r\x1b[2", "01~\\", "\r"}, "\x1b[200~a\\\r\x1b[201~\\\x7f\x1b\r"},
 		{"text and UTF-8 pass", []string{"héllo 世界"}, "héllo 世界"},
@@ -55,9 +68,32 @@ func TestShiftEnterAndItsFallbacksStartANewLine(t *testing.T) {
 		for _, keys := range tc.keys {
 			got.Write(k.read([]byte(keys)))
 		}
+		got.Write(k.flush())
 		if got.String() != tc.want {
 			t.Errorf("%s: %q reads as %q, want %q", tc.name, tc.keys, got.String(), tc.want)
 		}
+	}
+}
+
+// A lone Esc is held, since the next keys may make it part of a key such as
+// Shift-Enter or Alt-Enter, until the next keys come or the wait for them
+// ends.
+func TestALoneEscIsHeldForTheNextKeys(t *testing.T) {
+	var k keyReader
+	if got := k.read([]byte("one\x1b")); string(got) != "one" || !k.holding() {
+		t.Fatalf("one, then Esc, reads as %q and holds a key: %v; want one and the Esc held", got, k.holding())
+	}
+	if got := k.flush(); string(got) != "\x1b" || k.holding() {
+		t.Errorf("once the wait ends, the held Esc reads as %q and a key is still held: %v; want Esc and nothing held", got, k.holding())
+	}
+	if got := k.flush(); got != nil {
+		t.Errorf("with nothing held, the wait's end reads as %q, want nothing", got)
+	}
+	if got := k.read([]byte("\x1b[13;2")); string(got) != "" || !k.holding() {
+		t.Fatalf("an unfinished sequence reads as %q and holds a key: %v; want nothing and the sequence held", got, k.holding())
+	}
+	if got := k.flush(); string(got) != "\x1b[13;2" {
+		t.Errorf("once the wait ends, the unfinished sequence reads as %q, want it as it is", got)
 	}
 }
 
@@ -86,6 +122,9 @@ func TestInTheConversationShiftEnterIsSentAsANewLineAndCtrlBracketLeaves(t *test
 		{"first line\x1b[13;2u", "first line\x1b\r"},
 		{"second\x1b[27;2;13~", "second\x1b\r"},
 		{"third\r", "third\r"},
+		{"keypad\x1b[57414u", "keypad\r"},
+		// A lone Esc is sent once no key follows it.
+		{"\x1b", "\x1b"},
 	} {
 		typeKeys(t, c, w, tc.keys)
 		select {

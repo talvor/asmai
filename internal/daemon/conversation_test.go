@@ -2,26 +2,35 @@
 
 package daemon
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestOnlyAnEnterThatCanSubmitIsCounted(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		keys []string
-		want int
+		// apart is the time between the keys' messages.
+		apart time.Duration
+		want  int
 	}{
-		{"a message", []string{"hello\r"}, 1},
-		{"two messages", []string{"one\r", "two\r"}, 2},
-		{"text never submitted", []string{"draft", "\x1b"}, 0},
-		{"Esc, then Enter", []string{"\x1b", "\r"}, 1},
-		{"Alt-Enter starts a new line", []string{"one\x1b\rtwo\r"}, 1},
-		{"pasted lines", []string{"\x1b[200~one\rtwo\r\x1b[201~\r"}, 1},
-		{"a paste split across reads", []string{"\x1b[2", "00~one\r", "two\x1b[20", "1~", "\r"}, 1},
+		{"a message", []string{"hello\r"}, 0, 1},
+		{"two messages", []string{"one\r", "two\r"}, time.Second, 2},
+		{"text never submitted", []string{"draft", "\x1b"}, 0, 0},
+		{"Esc, then Enter", []string{"\x1b", "\r"}, time.Second, 1},
+		{"Alt-Enter starts a new line", []string{"one\x1b\rtwo\r"}, 0, 1},
+		{"Alt-Enter split across messages", []string{"one\x1b", "\rtwo\r"}, time.Millisecond, 1},
+		{"Esc, then text, then Enter", []string{"\x1b", "a", "\r"}, time.Millisecond, 1},
+		{"pasted lines", []string{"\x1b[200~one\rtwo\r\x1b[201~\r"}, 0, 1},
+		{"a paste split across reads", []string{"\x1b[2", "00~one\r", "two\x1b[20", "1~", "\r"}, time.Millisecond, 1},
 	} {
 		c := &conversation{}
 		got := 0
+		at := time.Unix(0, 0)
 		for _, keys := range tc.keys {
-			got += c.enters([]byte(keys))
+			got += c.enters([]byte(keys), at)
+			at = at.Add(tc.apart)
 		}
 		if got != tc.want {
 			t.Errorf("%s: %q counts %d Enter keys, want %d", tc.name, tc.keys, got, tc.want)

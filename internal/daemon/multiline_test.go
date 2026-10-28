@@ -66,7 +66,9 @@ func TestAMultiLineMessageIsOneWitnessedMessageWithItsLineBreaks(t *testing.T) {
 	for _, e := range entries {
 		if e.Kind == store.KindMessageWitnessed {
 			var w store.Witnessed
-			json.Unmarshal(e.Data, &w)
+			if err := json.Unmarshal(e.Data, &w); err != nil {
+				t.Fatal(err)
+			}
 			witnessed = append(witnessed, w)
 		}
 	}

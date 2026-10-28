@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -49,6 +50,21 @@ func OriginHasBranch(ctx context.Context, clone, name string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func OriginJobBranchConflict(ctx context.Context, clone, prefix string, number int64) (string, error) {
+	base := "refs/heads/asmai/" + prefix + "/job-" + strconv.FormatInt(number, 10)
+	out, err := git(ctx, clone, "ls-remote", "--heads", "origin", base+"-*", base+"/*")
+	if err != nil {
+		return "", fmt.Errorf("asking origin for job %d branches in %s: %w", number, clone, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		_, ref, ok := strings.Cut(line, "\t")
+		if ok && (strings.HasPrefix(ref, base+"-") || strings.HasPrefix(ref, base+"/")) {
+			return strings.TrimPrefix(ref, "refs/heads/"), nil
+		}
+	}
+	return "", nil
 }
 
 // Commit returns the commit rev names in the repository at dir.

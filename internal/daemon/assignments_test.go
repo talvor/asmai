@@ -122,6 +122,74 @@ func TestAJobBranchRetryChecksOriginBeforeReusingTheLocalBranch(t *testing.T) {
 	}
 }
 
+func TestJobOpenRefusesAnOriginBranchInItsJobNumberNamespace(t *testing.T) {
+	for _, branchAtOrigin := range []struct {
+		name   string
+		branch string
+	}{
+		{"same job branch", "asmai/test/job-1-clash"},
+		{"another slug", "asmai/test/job-1-other-title"},
+		{"assignment branch", "asmai/test/job-1/1"},
+	} {
+		t.Run(branchAtOrigin.name, func(t *testing.T) {
+			paths := stateDir(t)
+			origin := remote(t)
+			clone := filepath.Join(paths.Repositories, "fixture")
+			if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			git(t, filepath.Dir(clone), "clone", origin, clone)
+			git(t, clone, "push", "origin", "refs/remotes/origin/trunk:refs/heads/"+branchAtOrigin.branch)
+			s, err := store.Open(paths.Store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { s.Close() })
+			at := time.Now()
+			if err := s.RepositoryAdded(store.Repository{Name: "fixture", Origin: origin, DefaultBranch: "trunk", Clone: clone, AddedAt: at}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ConversationEntered("leader@coordination", roles.Coordination, 1, "/dev/pts/test", at); err != nil {
+				t.Fatal(err)
+			}
+			_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: "open a test job"}, "UserPromptSubmit", json.RawMessage(`{"prompt":"open a test job"}`), at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := roles.LeaderOf(roles.Coordination)
+			d := &daemon{
+				cfg: Config{Paths: paths}, work: context.Background(), store: s,
+				leaders:  map[string]*leader{owner.String(): {address: owner, session: &session.Session{}, generation: 1}},
+				sessions: map[string]sessionRef{"credential": {address: owner, generation: 1}},
+				log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			req := Request{Command: CommandJobOpen, Session: "credential", Repository: "fixture", Witness: witness, Reading: "Clash", Mandate: store.MandateTestedPR, Criteria: []string{"complete"}}
+			resp := callWith(t, d.jobCommand, req)
+			proposed := JobBranchName(testBranchPrefix, store.Job{Number: 1, Reading: req.Reading})
+			if resp.Job != nil || !strings.Contains(resp.Error, proposed) || !strings.Contains(resp.Error, branchAtOrigin.branch) || !strings.Contains(resp.Error, "branch_prefix") {
+				t.Fatalf("job open answered %+v, want a refusal naming both branches and branch_prefix", resp)
+			}
+			if jobs, err := s.Jobs(); err != nil || len(jobs) != 0 {
+				t.Fatalf("job open recorded %+v (%v), want no jobs", jobs, err)
+			}
+			if branches := git(t, clone, "branch", "--list", proposed); branches != "" {
+				t.Errorf("job open left a local branch: %s", branches)
+			}
+			if _, err := os.Stat(filepath.Join(paths.Views, "job-1")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("job open left a view: %v", err)
+			}
+			git(t, clone, "push", "origin", ":refs/heads/"+branchAtOrigin.branch)
+			resp = callWith(t, d.jobCommand, req)
+			if resp.Error != "" || resp.Job == nil || resp.Job.Number != 1 {
+				t.Fatalf("job open after removing the conflict answered %+v", resp)
+			}
+			if branch, err := s.JobBranch(resp.Job.Number); err != nil || branch.Name != proposed {
+				t.Errorf("job open recorded branch %+v (%v), want %s", branch, err, proposed)
+			}
+		})
+	}
+}
+
 func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 	paths := stateDir(t)
 	origin := remote(t)

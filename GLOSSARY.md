@@ -114,7 +114,7 @@ The name an install's branches go under, so that two installs on one origin neve
 _Avoid_: Namespace, install ID
 
 **Job branch**:
-The one branch that carries a repository job's accepted work and becomes its pull request. It is named `asmai/<prefix>/job-<n>-<slug>` under the install's branch prefix; a job opened before branches had a prefix keeps its `asmai/job-<n>-<slug>`. The daemon refuses to make one whose name origin already has.
+The one branch that carries a repository job's accepted work and becomes its pull request. It is named `asmai/<prefix>/job-<n>-<slug>` under the install's branch prefix; a job opened before branches had a prefix keeps its `asmai/job-<n>-<slug>`. The daemon refuses to open a new job when origin already has a branch under that prefix and job number, including an assignment branch or a job branch with another slug.
 _Avoid_: Integration branch, feature branch
 
 **Assignment branch**:

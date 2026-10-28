@@ -75,6 +75,14 @@ type Job struct {
 	CancelWitness int64  `json:"cancel_witness,omitempty"`
 }
 
+func (s *Store) NextJobNumber() (int64, error) {
+	var last sql.NullInt64
+	if err := s.db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'jobs'`).Scan(&last); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	return last.Int64 + 1, nil
+}
+
 // JobOpened verifies a witnessed message and a registered repository in the
 // same transaction that numbers and journals the job. A nudge or observation
 // can never stand in for the user's words.

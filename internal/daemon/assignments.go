@@ -296,6 +296,13 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		}
 	} else {
 		workspace.Branch = AssignmentBranchName(branch.Name, j.Number, id)
+		taken, err := repos.OriginHasBranch(ctx, repository.Clone, workspace.Branch)
+		if err != nil {
+			return store.Assignment{}, store.Dispatch{}, err
+		}
+		if taken {
+			return store.Assignment{}, store.Dispatch{}, refuse("assignment %d cannot start: the branch %s already exists on origin; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", id, workspace.Branch)
+		}
 		if err := repos.AddWorkspace(ctx, repository.Clone, workspace.Path, workspace.Branch, workspace.Base); err != nil {
 			return store.Assignment{}, store.Dispatch{}, err
 		}
@@ -428,12 +435,8 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		if err != nil {
 			return store.JobBranch{}, err
 		}
-		taken, err := repos.OriginHasBranch(ctx, repository.Clone, name)
-		if err != nil {
+		if err := checkJobBranchOrigin(ctx, repository.Clone, prefix, j); err != nil {
 			return store.JobBranch{}, err
-		}
-		if taken {
-			return store.JobBranch{}, refuse("job %d cannot open: the branch %s already exists on origin, so another install uses this branch prefix; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", j.Number, name)
 		}
 		startedFrom, err = repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
 		if err != nil {
@@ -477,6 +480,15 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 	}
 	d.log.Info("job branch made", "job", j.Number, "branch", name, "started_from", startedFrom, "view", view)
 	return branch, nil
+}
+
+func checkJobBranchOrigin(ctx context.Context, clone, prefix string, j store.Job) error {
+	if existing, err := repos.OriginJobBranchConflict(ctx, clone, prefix, j.Number); err != nil {
+		return err
+	} else if existing != "" {
+		return refuse("job %d cannot open: the branch %s conflicts with %s already on origin; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", j.Number, JobBranchName(prefix, j), existing)
+	}
+	return nil
 }
 
 // JobBranchName names job's branch asmai/<prefix>/job-<n>-<slug>, with the

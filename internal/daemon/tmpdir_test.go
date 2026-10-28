@@ -363,6 +363,74 @@ func TestStartingTheDaemonRefusesUnsafeTemporaryRootsOfRecordedAssignments(t *te
 	}
 }
 
+func TestStartingARecordedWorkerRechecksItsTemporaryRoot(t *testing.T) {
+	for _, part := range []string{"root", "hash"} {
+		t.Run(part, func(t *testing.T) {
+			shortTmpBase(t, t.TempDir())
+			p := newJobFactory(t, store.MandateResearchOnly, false)
+			a := recordLiveTmpAssignment(t, p)
+			unsafe := filepath.Dir(a.Workspace.Tmp)
+			if part == "root" {
+				unsafe = filepath.Dir(unsafe)
+			}
+			if err := os.Rename(unsafe, unsafe+"-saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), unsafe); err != nil {
+				t.Fatal(err)
+			}
+			l := &leader{address: roles.WorkerOf(roles.Research, 1)}
+			if err := p.d.startWorker(l, p.d.applied, store.ProviderInstall{}, a, ""); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+				t.Errorf("starting a recorded worker with an unsafe %s returned %v, want refusal", part, err)
+			}
+		})
+	}
+}
+
+func TestMissingWorkspaceCancellationRemovesAssignmentTmp(t *testing.T) {
+	shortTmpBase(t, t.TempDir())
+	p := newJobFactory(t, store.MandateResearchOnly, false)
+	a := recordLiveTmpAssignment(t, p)
+	file := filepath.Join(a.Workspace.Tmp, "worker-file")
+	if err := os.WriteFile(file, []byte("work"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.s.JobCancelled(store.JobCancel{Job: p.job.Number, Witness: p.job.Witness}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(a.Workspace.Path); err != nil {
+		t.Fatal(err)
+	}
+	a, err := p.s.Assignment(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.d.cancelledWithoutWorkspace(a) {
+		t.Fatal("the missing workspace did not end the cancelled assignment")
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Errorf("the cancelled assignment's temporary file remains: %v", err)
+	}
+}
+
+func TestRemovingEndedJobLocalRemovesAssignmentTmp(t *testing.T) {
+	f := newDeliveredFirstJob(t)
+	for _, a := range f.assignments {
+		if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(a.Workspace.Tmp, "worker-file"), []byte("work"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.d.removeJobLocal(f.job.Number)
+	for _, a := range f.assignments {
+		if _, err := os.Stat(a.Workspace.Tmp); !os.IsNotExist(err) {
+			t.Errorf("ended job left assignment %d's temporary directory: %v", a.ID, err)
+		}
+	}
+}
+
 func TestAnAssignmentRecordedWithAnOldTemporaryDirectoryKeepsIt(t *testing.T) {
 	d, a, out := workerFactory(t)
 	old := filepath.Join(filepath.Dir(a.Workspace.Path), "tmp")

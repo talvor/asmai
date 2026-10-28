@@ -461,6 +461,7 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 	}
 	for _, a := range replaced {
 		d.stopWorker(a)
+		d.removeAssignmentTmp(a)
 	}
 	d.log.Info("job branch made", "job", j.Number, "branch", name, "started_from", startedFrom, "view", view)
 	return branch, nil

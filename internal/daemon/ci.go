@@ -340,6 +340,19 @@ func (d *daemon) removeJobLocal(job int64) {
 			return
 		}
 	}
+	var removed []string
+	var failed error
+	assignments, err := d.store.AssignmentsForJob(job)
+	if err != nil {
+		d.log.Error("reading the assignments of a job that ended", "job", job, "error", err.Error())
+		return
+	}
+	for _, a := range assignments {
+		failed = errors.Join(failed, d.removeAssignmentTmp(a))
+	}
+	if failed != nil {
+		return
+	}
 	// A job with no repository has no clone, view or branches to remove, and
 	// its scratch workspaces are kept until the user cleans them.
 	if j.Repository == "" {
@@ -352,13 +365,6 @@ func (d *daemon) removeJobLocal(job int64) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(d.work), gitTimeout)
 	defer cancel()
-	var removed []string
-	var failed error
-	assignments, err := d.store.AssignmentsForJob(job)
-	if err != nil {
-		d.log.Error("reading the assignments of a job that ended", "job", job, "error", err.Error())
-		return
-	}
 	for _, a := range assignments {
 		if _, err := os.Lstat(a.Workspace.Path); err == nil {
 			if err := repos.RemoveView(ctx, repository.Clone, a.Workspace.Path); err != nil {

@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
+
+	"github.com/talvor/asmai/internal/store"
 )
 
 // tmpRootName is the prefix of the directory under the system temporary
@@ -32,6 +35,14 @@ var tmpRootOwnerUID = func(info os.FileInfo) (int, bool) {
 	return int(st.Uid), true
 }
 
+func workerTmpUserRoot() string {
+	return filepath.Join(tmpBase, tmpRootName+strconv.Itoa(os.Getuid()))
+}
+
+func isShortAssignmentTmp(path string) bool {
+	return strings.HasPrefix(path, workerTmpUserRoot()+string(os.PathSeparator))
+}
+
 // tmpRoot returns this daemon's directory of worker temporary directories,
 // /tmp/asmai-<uid>/<hash>, where hash is of the state directory, which keeps
 // two daemons of one machine apart. It makes the directories that are missing,
@@ -39,7 +50,7 @@ var tmpRootOwnerUID = func(info os.FileInfo) (int, bool) {
 // or it is a symbolic link, since another user could then read or plant what a
 // worker writes.
 func (d *daemon) tmpRoot() (string, error) {
-	root := filepath.Join(tmpBase, tmpRootName+strconv.Itoa(os.Getuid()))
+	root := workerTmpUserRoot()
 	if err := os.Mkdir(root, 0o700); err != nil && !os.IsExist(err) {
 		return "", fmt.Errorf("making the workers' temporary directory %s: %w", root, err)
 	}
@@ -87,6 +98,14 @@ func (d *daemon) assignmentTmp(id int64) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, strconv.FormatInt(id, 10)), nil
+}
+
+func (d *daemon) removeAssignmentTmp(a store.Assignment) error {
+	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
+		d.log.Error("removing an assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
+		return err
+	}
+	return nil
 }
 
 // sweepTmp removes the directory of each assignment in the daemon's own

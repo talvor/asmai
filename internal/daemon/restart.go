@@ -233,6 +233,7 @@ func (d *daemon) cancelledWithoutWorkspace(a store.Assignment) bool {
 		d.log.Error("ending a cancelled job's assignment whose workspace is gone", "assignment", a.ID, "error", err.Error())
 		return false
 	}
+	d.removeAssignmentTmp(a)
 	d.log.Warn("a cancelled job's assignment ended as cancelled with no push: its workspace is gone", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "workspace", a.Workspace.Path, "branch", a.Workspace.Branch)
 	return true
 }

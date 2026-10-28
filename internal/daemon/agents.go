@@ -787,6 +787,15 @@ func (d *daemon) startWorker(l *leader, cfg config.Config, install store.Provide
 	if err != nil {
 		return err
 	}
+	if isShortAssignmentTmp(a.Workspace.Tmp) {
+		want, err := d.assignmentTmp(a.ID)
+		if err != nil {
+			return err
+		}
+		if a.Workspace.Tmp != want {
+			return fmt.Errorf("the temporary directory of assignment %d is %s, want %s", a.ID, a.Workspace.Tmp, want)
+		}
+	}
 	if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
 		return fmt.Errorf("creating the workspace's temporary directory: %w", err)
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,6 +134,31 @@ func branchPrefixOf(cfg config.Config, paths statedir.Paths) (prefix, source str
 	return id, "from the ID kept in the state directory"
 }
 
+func effectiveBranchPrefix(cfg config.Config, configFile string, paths statedir.Paths) (prefix, source string, pending bool) {
+	data, err := os.ReadFile(configFile)
+	if err == nil {
+		resp, callErr := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
+		if callErr == nil && resp.ConfigApply != nil {
+			for _, change := range resp.ConfigApply.Changes {
+				if change.Setting == "branches.branch_prefix" {
+					applied := ""
+					if change.Before != "" {
+						applied, err = strconv.Unquote(change.Before)
+						if err != nil {
+							break
+						}
+					}
+					pending = applied != cfg.BranchPrefix
+					cfg.BranchPrefix = applied
+					break
+				}
+			}
+		}
+	}
+	prefix, source = branchPrefixOf(cfg, paths)
+	return prefix, source, pending
+}
+
 // registeredRepositories reads the registered repositories from the store
 // without changing it; a factory that has not been initialised has none.
 func registeredRepositories(paths statedir.Paths) ([]store.Repository, error) {
@@ -246,7 +272,7 @@ func doctor(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
-	prefix, prefixSource := branchPrefixOf(cfg, paths)
+	prefix, prefixSource, prefixPending := effectiveBranchPrefix(cfg, configFile, paths)
 	unqualified, skillChecks := unqualifiedSkills(cfg, registered)
 	checks = append(checks, skillChecks...)
 	gaps := providers.ClaudeCodeUnhidden()
@@ -272,7 +298,7 @@ func doctor(o *output, paths statedir.Paths) int {
 			"provider":           map[string]string{"name": providers.ClaudeCode, "pinned": p.ClaudeCode.Version},
 			"config":             configFile,
 			"state_dir":          paths.Dir,
-			"branch_prefix":      map[string]string{"prefix": prefix, "source": prefixSource},
+			"branch_prefix":      map[string]any{"prefix": prefix, "source": prefixSource, "pending_apply": prefixPending},
 			"checks":             checks,
 			"hiding_gaps":        gaps,
 			"unqualified_skills": unqualified,
@@ -293,6 +319,9 @@ func doctor(o *output, paths statedir.Paths) int {
 		fmt.Fprintf(w, "Branch prefix  none yet; %s\n", prefixSource)
 	} else {
 		fmt.Fprintf(w, "Branch prefix  %s (%s)\n", prefix, prefixSource)
+	}
+	if prefixPending {
+		fmt.Fprintln(w, "               pending apply: the configuration file's branch_prefix differs; run `asmai config apply`")
 	}
 	fmt.Fprintln(w, "\nChecks")
 	for _, c := range checks {

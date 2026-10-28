@@ -252,6 +252,7 @@ func TestAnAgentCannotRunDoctor(t *testing.T) {
 func TestDoctorReportsTheBranchPrefixAndItsSource(t *testing.T) {
 	stateDir := readyFactory(t, idleLeader)
 	fakeUpstream(t, "v99.0.0", nil)
+	stopFactory(t)
 	idFile := filepath.Join(stateDir, "branch-id")
 	os.Remove(idFile)
 
@@ -283,4 +284,46 @@ func TestDoctorReportsTheBranchPrefixAndItsSource(t *testing.T) {
 	if !strings.Contains(stdout, "Branch prefix  alice (from branch_prefix in the configuration file)") {
 		t.Errorf("with branch_prefix set, asmai doctor printed\n%s\nwant its prefix and source", stdout)
 	}
+}
+
+func TestDoctorReportsTheRunningDaemonsAppliedBranchPrefix(t *testing.T) {
+	readyFactory(t, idleLeader)
+	fakeUpstream(t, "v99.0.0", nil)
+	original := readConfig(t)
+	configured := "[branches]\nbranch_prefix = \"alice\"\n\n" + original
+	check := func(prefix, source string, pending bool) {
+		t.Helper()
+		stdout, stderr, code := doctorIn(t)
+		if code != 0 || !strings.Contains(stdout, "Branch prefix  "+prefix+" ("+source+")") || strings.Contains(stdout, "pending apply:") != pending {
+			t.Errorf("doctor exited %d printing %q, %q; want prefix %s from %s, pending %v", code, stdout, stderr, prefix, source, pending)
+		}
+		stdout, stderr, code = doctorIn(t, "--json")
+		var report struct {
+			BranchPrefix struct {
+				Prefix       string `json:"prefix"`
+				Source       string `json:"source"`
+				PendingApply bool   `json:"pending_apply"`
+			} `json:"branch_prefix"`
+		}
+		if code != 0 || json.Unmarshal([]byte(stdout), &report) != nil || report.BranchPrefix.Prefix != prefix || report.BranchPrefix.Source != source || report.BranchPrefix.PendingApply != pending {
+			t.Errorf("doctor --json exited %d printing %q, %q; want prefix %s from %s, pending %v", code, stdout, stderr, prefix, source, pending)
+		}
+	}
+	stateSource := "from the ID kept in the state directory"
+	configSource := "from branch_prefix in the configuration file"
+	check("test", stateSource, false)
+	writeConfig(t, configured)
+	check("test", stateSource, true)
+	if stdout, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 || !strings.Contains(stdout, "Applied") {
+		t.Fatalf("config apply exited %d printing %q, %q", code, stdout, stderr)
+	}
+	check("alice", configSource, false)
+	writeConfig(t, strings.Replace(configured, "alice", "bob", 1))
+	check("alice", configSource, true)
+	writeConfig(t, original)
+	check("alice", configSource, true)
+	if stdout, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 || !strings.Contains(stdout, "Applied") {
+		t.Fatalf("config apply exited %d printing %q, %q", code, stdout, stderr)
+	}
+	check("test", stateSource, false)
 }

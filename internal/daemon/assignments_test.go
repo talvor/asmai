@@ -190,6 +190,56 @@ func TestJobOpenRefusesAnOriginBranchInItsJobNumberNamespace(t *testing.T) {
 	}
 }
 
+func TestJobOpenRecordsTheJobWhenOriginLookupFails(t *testing.T) {
+	p := newPlanningJob(t, store.MandatePlanningOnly)
+	missing := filepath.Join(t.TempDir(), "unavailable.git")
+	git(t, p.clone, "remote", "set-url", "origin", missing)
+	req := Request{Command: CommandJobOpen, Session: "coordination", Repository: "fixture", Witness: p.job.Witness, Reading: "Continue planning", Mandate: store.MandatePlanningOnly, Criteria: []string{"a plan"}}
+	resp := callWith(t, p.d.jobCommand, req)
+	if resp.Error != "" || resp.Job == nil || resp.Job.Number != p.job.Number+1 {
+		t.Fatalf("job open during an origin outage answered %+v", resp)
+	}
+	if branch, err := p.s.JobBranch(resp.Job.Number); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("job open recorded branch %+v (%v), want its first assignment to retry", branch, err)
+	}
+	git(t, p.clone, "remote", "set-url", "origin", p.origin)
+	repository, err := p.s.Repository("fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := p.d.ensureJobBranch(context.Background(), *resp.Job, repository)
+	if err != nil || branch.Name != jobBranchFor(*resp.Job) {
+		t.Errorf("the job's branch retry returned %+v (%v)", branch, err)
+	}
+}
+
+func TestLegacyAssignmentWorksWhileOriginIsUnavailable(t *testing.T) {
+	p := newPlanningJob(t, store.MandatePlanningOnly)
+	previous, err := p.s.JobBranchDropped(p.job.Number, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldName := fmt.Sprintf("asmai/job-%d-plan-a-greeting", p.job.Number)
+	git(t, p.clone, "branch", oldName, previous.Tip)
+	if _, err := p.s.JobBranchMade(store.JobBranch{Job: p.job.Number, Repository: "fixture", Name: oldName, StartedFrom: previous.Tip, View: previous.View}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	git(t, p.clone, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "unavailable.git"))
+	_, _, err = p.d.assign(Request{Session: "planning", Command: CommandAssign, Job: p.job.Number, Outcome: "Review the plan", Criteria: []string{"a plan"}, Skill: "grilling"})
+	if err != nil && !strings.Contains(err.Error(), "starting worker") {
+		t.Fatalf("assigning legacy job while origin is unavailable: %v", err)
+	}
+	assignments, err := p.s.AssignmentsForJob(p.job.Number)
+	if err != nil || len(assignments) != 1 {
+		t.Fatalf("legacy job recorded assignments %+v (%v), want one", assignments, err)
+	}
+	a := assignments[0]
+	want := fmt.Sprintf("asmai/job-%d/%d", p.job.Number, a.ID)
+	if a.Workspace.Branch != want || git(t, a.Workspace.Path, "rev-parse", "--abbrev-ref", "HEAD") != want {
+		t.Errorf("legacy assignment uses branch %s, want %s", a.Workspace.Branch, want)
+	}
+}
+
 func TestAssignReturnsAnErrorWhenTheWorkerCannotStart(t *testing.T) {
 	paths := stateDir(t)
 	origin := remote(t)

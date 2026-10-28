@@ -197,7 +197,9 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 			var prefix string
 			prefix, err = d.branchPrefix()
 			if err == nil {
-				err = checkJobBranchOrigin(ctx, clone, prefix, store.Job{Number: number, Reading: opening.Reading})
+				if checkErr := checkJobBranchOrigin(ctx, clone, prefix, store.Job{Number: number, Reading: opening.Reading}); errors.As(checkErr, new(*userError)) {
+					err = checkErr
+				}
 			}
 		}
 		if err == nil {

@@ -179,7 +179,7 @@ func (d *daemon) openJob(req Request) (store.Job, error) {
 			}
 			ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 			defer cancel()
-			if err := checkJobBranchOrigin(ctx, repository.Clone, prefix, store.Job{Number: number, Reading: req.Reading}); err != nil {
+			if err := checkJobBranchOrigin(ctx, repository.Clone, prefix, store.Job{Number: number, Reading: req.Reading}); errors.As(err, new(*userError)) {
 				return store.Job{}, err
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {

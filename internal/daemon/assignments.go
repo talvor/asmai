@@ -296,12 +296,14 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 		}
 	} else {
 		workspace.Branch = AssignmentBranchName(branch.Name, j.Number, id)
-		taken, err := repos.OriginHasBranch(ctx, repository.Clone, workspace.Branch)
-		if err != nil {
-			return store.Assignment{}, store.Dispatch{}, err
-		}
-		if taken {
-			return store.Assignment{}, store.Dispatch{}, refuse("assignment %d cannot start: the branch %s already exists on origin; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", id, workspace.Branch)
+		if path.Dir(branch.Name) != "asmai" {
+			taken, err := repos.OriginHasBranch(ctx, repository.Clone, workspace.Branch)
+			if err != nil {
+				return store.Assignment{}, store.Dispatch{}, err
+			}
+			if taken {
+				return store.Assignment{}, store.Dispatch{}, refuse("assignment %d cannot start: the branch %s already exists on origin; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", id, workspace.Branch)
+			}
 		}
 		if err := repos.AddWorkspace(ctx, repository.Clone, workspace.Path, workspace.Branch, workspace.Base); err != nil {
 			return store.Assignment{}, store.Dispatch{}, err

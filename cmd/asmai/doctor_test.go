@@ -327,3 +327,30 @@ func TestDoctorReportsTheRunningDaemonsAppliedBranchPrefix(t *testing.T) {
 	}
 	check("test", stateSource, false)
 }
+
+func TestDoctorDoesNotReportAnUnconfirmedConfiguredPrefixAsApplied(t *testing.T) {
+	readyFactory(t, idleLeader)
+	fakeUpstream(t, "v99.0.0", nil)
+	original := readConfig(t)
+	configured := "[branches]\nbranch_prefix = \"alice\"\n\n" + original
+	writeConfig(t, configured)
+	if stdout, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 || !strings.Contains(stdout, "Applied") {
+		t.Fatalf("config apply exited %d printing %q, %q", code, stdout, stderr)
+	}
+	writeConfig(t, strings.Replace(configured, "alice", "bob", 1)+"\n[repositories.ghost]\norigin = \"https://example.test/ghost.git\"\ndefault_branch = \"main\"\n")
+	stdout, stderr, _ := doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  applied prefix could not be confirmed") || !strings.Contains(stdout, "configured branch_prefix bob (unconfirmed)") || strings.Contains(stdout, "Branch prefix  bob (") {
+		t.Errorf("doctor printed %q, %q; want the file prefix labelled unconfirmed", stdout, stderr)
+	}
+	stdout, stderr, _ = doctorIn(t, "--json")
+	var report struct {
+		BranchPrefix struct {
+			Prefix                string `json:"prefix"`
+			Source                string `json:"source"`
+			ConfiguredUnconfirmed string `json:"configured_unconfirmed"`
+		} `json:"branch_prefix"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil || report.BranchPrefix.Prefix != "" || report.BranchPrefix.Source != "applied prefix could not be confirmed" || report.BranchPrefix.ConfiguredUnconfirmed != "bob" {
+		t.Errorf("doctor --json printed %q, %q (%v); want an unconfirmed configured prefix", stdout, stderr, err)
+	}
+}

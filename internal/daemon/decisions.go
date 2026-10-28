@@ -502,6 +502,40 @@ func (d *daemon) redispatch(req Request) (Response, error) {
 	return Response{Assignment: &a, Dispatch: &dispatch}, nil
 }
 
+// recoverAnswer serves answer redeliver and answer retire: the owning leader
+// of an assignment held against a decision answer its worker's session may
+// not have seen delivers the answer again in a new dispatch, which starts the
+// worker if it is not running and is returned, to nudge, or retires it, which
+// leaves the assignment held for the leader to redispatch or cancel.
+func (d *daemon) recoverAnswer(req Request) (Response, string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ref, _, err := d.caller(req)
+	if err != nil {
+		return Response{}, "", err
+	}
+	leader := ref.address.String()
+	if req.Command == CommandAnswerRetire {
+		a, err := d.store.AnswerRetired(req.Dispatch, leader, req.Reasons, time.Now())
+		if err != nil {
+			return Response{}, "", refuse("%v", err)
+		}
+		d.log.Info("decision answer retired", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "leader", leader, "dispatch", req.Dispatch)
+		return Response{Assignment: &a}, "", nil
+	}
+	a, dispatch, err := d.store.AnswerRedelivered(req.Dispatch, leader, req.Reasons, time.Now())
+	if err != nil {
+		return Response{}, "", refuse("%v", err)
+	}
+	d.log.Info("decision answer delivered again", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "leader", leader, "previous", req.Dispatch, "dispatch", dispatch.ID)
+	if worker, err := roles.ParseAddress(a.Worker); err == nil {
+		if err := d.ensureAgent(worker); err != nil {
+			d.log.Error("starting the assignment's worker", "agent", a.Worker, "dispatch", dispatch.ID, "error", err.Error())
+		}
+	}
+	return Response{Assignment: &a, Dispatch: &dispatch}, dispatch.Agent, nil
+}
+
 // stopWorker stops the session of the worker that carried a, which has ended,
 // and returns once it is cleared, so that the worker's number can be given
 // out again.

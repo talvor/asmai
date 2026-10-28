@@ -55,6 +55,8 @@ func (d *daemon) assignmentCommand(conn *net.UnixConn, req Request) {
 	case CommandAccept, CommandReject, CommandCancel, CommandRedispatch:
 		conn.SetDeadline(time.Now().Add(gitTimeout + stopWait + time.Minute))
 		resp, notify, err = d.decide(req)
+	case CommandAnswerRedeliver, CommandAnswerRetire:
+		resp, notify, err = d.recoverAnswer(req)
 	case CommandResult, CommandBlocked:
 		conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
 		var r store.Report

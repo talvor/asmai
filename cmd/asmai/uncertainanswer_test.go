@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,14 +79,97 @@ func TestAWorkerThatExitsBeforeAcknowledgingAnAnswerHoldsItsAssignmentAgainstThe
 	if got := answerDispatchStates(t, 5); got != "created,unknown" {
 		t.Errorf("the answer's dispatch moved through %s, want it kept unknown", got)
 	}
-	var shown struct {
-		Assignments []struct {
-			ID    int64  `json:"id"`
-			State string `json:"state"`
-		} `json:"assignments"`
+	brief, stderr, code := runAsmai(t, "brief", "1")
+	if code != 0 {
+		t.Fatal(stderr)
 	}
-	asmaiJSON(t, &shown, "brief", "1")
-	if len(shown.Assignments) != 1 || shown.Assignments[0].State != "needs_reconciliation" {
-		t.Errorf("the brief shows %+v, want assignment 1 needing reconciliation", shown.Assignments)
+	if !strings.Contains(brief, "worker1@engineering (owner leader@engineering) needs_reconciliation") {
+		t.Errorf("the brief does not show assignment 1 needing reconciliation:\n%s", brief)
+	}
+}
+
+// finishing are the steps of a worker's next session that commit, push and
+// submit its result once it has what it needs.
+func finishing(prompt string) []string {
+	const branch = "asmai/job-1/1"
+	return []string{
+		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
+		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
+		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
+		hookStep("Stop", prompt, ""),
+	}
+}
+
+func TestTheOwnerDeliversAnAnswerItsWorkerExitedBeforeAcknowledgingAgain(t *testing.T) {
+	recover := []string{
+		fakeRun(`asmai redispatch --assignment 1 --reason 'too early' > "$ASMAI_TEST_DIR/held-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/held-refusal"; test "$status" -eq 1`, 0, "(?s)holds decision answer dispatch 5.*asmai answer redeliver --dispatch 5.*asmai answer retire --dispatch 5"),
+		fakeRun(`asmai answer redeliver --dispatch 5 --reason 'the worker exited before reading it' | tee "$ASMAI_TEST_DIR/redeliver-receipt"`, 0, "decision answer dispatch 5 delivered to worker1@engineering again by leader@engineering, in dispatch 7, a new dispatch; assignment 1 is active again"),
+	}
+	second := append([]string{
+		`{"expect":"asmai inbox --dispatch 7\r"}`,
+		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 7"),
+		fakeRun(`asmai inbox --dispatch 7 | tee "$ASMAI_TEST_DIR/worker-answer"`, 0, "(?s)decision.answer from leader@engineering.*leader@engineering delivers this decision answer to you again.*dispatch 5, which is not reused.*Answer to version 1 of decision request 1, from leader@engineering:\nhello"),
+	}, finishing("again")...)
+	testDir := uncertainAnswerFlow(t, recover, second)
+	for _, name := range []string{"held-refusal", "redeliver-receipt", "worker-answer"} {
+		output, err := os.ReadFile(filepath.Join(testDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s:\n%s", name, output)
+	}
+	if got := answerDispatchStates(t, 5); got != "created,unknown,stopped" {
+		t.Errorf("the uncertain answer moved through %s, want it stopped once delivered again", got)
+	}
+	if got := answerDispatchStates(t, 7); !strings.HasPrefix(got, "created,unknown,nudged,delivered,working") {
+		t.Errorf("the answer delivered again moved through %s, want it delivered and worked on", got)
+	}
+	if got := len(journaled(t, "decision.answer.redelivered")); got != 1 {
+		t.Errorf("answers delivered again: %d, want 1", got)
+	}
+	if got := workerOf(t, "worker1@engineering"); got.Generation != 2 {
+		t.Errorf("the worker is %+v, want a second session started for the answer", got)
+	}
+	if got := len(journaled(t, "result.submitted")); got != 1 {
+		t.Errorf("results submitted: %d, want the one the answer led to", got)
+	}
+}
+
+func TestTheOwnerRetiresAnAnswerItsWorkerExitedBeforeAcknowledgingAndRedispatches(t *testing.T) {
+	recover := []string{
+		fakeRun(`asmai answer retire --dispatch 5 --reason 'the answer is carried in the redispatch' | tee "$ASMAI_TEST_DIR/retire-receipt"`, 0, "decision answer dispatch 5 retired by leader@engineering, journaled with the answer"),
+		fakeRun(`asmai answer redeliver --dispatch 5 --reason 'changed my mind' > "$ASMAI_TEST_DIR/retired-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/retired-refusal"; test "$status" -eq 1`, 0, "not an uncertain decision answer"),
+		fakeRun(`asmai redispatch --assignment 1 --reason 'use hello' | tee "$ASMAI_TEST_DIR/redispatch-receipt"`, 0, "assignment 1: sent to worker1@engineering again by leader@engineering; it is active, in dispatch 7"),
+	}
+	second := append([]string{
+		`{"expect":"asmai inbox --dispatch 7\r"}`,
+		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 7"),
+		fakeRun(`asmai inbox --dispatch 7`, 0, "(?s)redispatch from leader@engineering.*Reasons from leader@engineering:\nuse hello"),
+	}, finishing("again")...)
+	testDir := uncertainAnswerFlow(t, recover, second)
+	for _, name := range []string{"retire-receipt", "retired-refusal", "redispatch-receipt"} {
+		output, err := os.ReadFile(filepath.Join(testDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s:\n%s", name, output)
+	}
+	if got := answerDispatchStates(t, 5); got != "created,unknown,stopped" {
+		t.Errorf("the retired answer moved through %s", got)
+	}
+	retired := journaled(t, "decision.answer.retired")
+	if len(retired) != 1 {
+		t.Fatalf("answers retired: %d, want 1", len(retired))
+	}
+	if got := decode[struct {
+		Dispatch int64    `json:"dispatch"`
+		Body     string   `json:"body"`
+		Reasons  []string `json:"reasons"`
+	}](t, retired[0]); got.Dispatch != 5 || !strings.Contains(got.Body, "hello") || len(got.Reasons) != 1 {
+		t.Errorf("the retirement journaled %+v, want the answer's dispatch, the answer and the reason", got)
+	}
+	if got := len(journaled(t, "result.submitted")); got != 1 {
+		t.Errorf("results submitted: %d, want the one the redispatch led to", got)
 	}
 }

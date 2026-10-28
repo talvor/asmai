@@ -315,7 +315,7 @@ type HandoffWork struct {
 var assignmentChanges = []string{
 	KindResultSubmitted, KindBlockedReported, KindResultAccepted, KindResultRejected, KindResultReturned,
 	KindCancellationRequested, KindAssignmentCancelled, KindAssignmentResumed, KindAssignmentNeedsReconciliation,
-	KindCancellationRestarted, KindAssignmentRedispatched,
+	KindCancellationRestarted, KindAssignmentRedispatched, KindDecisionAnswerRedelivered, KindDecisionAnswerRetired,
 }
 
 func jobChangeTimes(tx *sql.Tx, job int64) (map[int64]string, map[int64]string, error) {

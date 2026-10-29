@@ -64,7 +64,7 @@ func TestStartAndSetupRefuseUnderAManagedPolicyWhereAsmaiCannotRunUnprompted(t *
 				t.Errorf("asmai start started %v under the policy, want no agent", running)
 			}
 
-			stdout, stderr, code := runAsmai(t, "init")
+			stdout, stderr, code := runIn(t, "", "init")
 			if code != 1 {
 				t.Errorf("asmai init exited %d under the policy, want 1; it printed %q", code, stdout+stderr)
 			}

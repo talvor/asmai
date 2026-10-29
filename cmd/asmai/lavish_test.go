@@ -433,7 +433,29 @@ func TestDoctorReportsAMissingPinnedLavishAndItsFix(t *testing.T) {
 		t.Fatalf("init exited 0 without a terminal: %s%s", stdout, stderr)
 	}
 	stdout, stderr, _ = doctorIn(t)
-	if out := stdout + stderr; strings.Contains(out, "Lavish 0.1.89+deno2.9.6 is not installed") || !strings.Contains(out, "Lavish 0.1.89+deno2.9.6") {
+	if out := stdout + stderr; !strings.Contains(out, "ok      Lavish 0.1.89+deno2.9.6") {
 		t.Errorf("doctor with Lavish installed printed\n%s\nwant its Lavish check to pass", out)
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+		mode os.FileMode
+	}{
+		{name: "changed bytes", data: []byte("#!/bin/sh\necho changed\n"), mode: 0o755},
+		{name: "not executable", data: standInLavish, mode: 0o644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(path, tc.data, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			stdout, stderr, code := doctorIn(t)
+			out := stdout + stderr
+			if code != 1 || !strings.Contains(out, "is not the pinned build") || strings.Contains(out, "is not installed at "+path) || !strings.Contains(out, "run `asmai providers install`") {
+				t.Errorf("doctor with Lavish %s exited %d printing\n%s\nwant a mismatch and repair guidance", tc.name, code, out)
+			}
+		})
 	}
 }

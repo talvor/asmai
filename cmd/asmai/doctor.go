@@ -115,13 +115,15 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	if lavish, _, err := pinnedLavishPlan(paths); err != nil {
 		checks = append(checks, daemon.Check{Name: "Lavish", Problem: err.Error(), Fix: "run an asmai built with its pins file"})
 	} else if lavish != nil {
-		present, err := providers.Present(*lavish)
+		state, err := lavish.Standing(lavish.Version)
 		name := "Lavish " + lavish.Version
 		switch {
 		case err != nil:
 			checks = append(checks, daemon.Check{Name: name, Problem: err.Error(), Fix: "run `asmai providers install`"})
-		case !present:
+		case state == providers.StateMissing:
 			checks = append(checks, daemon.Check{Name: name, Problem: fmt.Sprintf("the pinned Lavish %s is not installed at %s, so the factory cannot show you decision requests", lavish.Version, lavish.Path), Fix: "run `asmai providers install`"})
+		case state == providers.StateMismatch:
+			checks = append(checks, daemon.Check{Name: name, Problem: fmt.Sprintf("the Lavish at %s is not the pinned build %s or is not executable, so the factory cannot show you decision requests", lavish.Path, lavish.Version), Fix: "run `asmai providers install`"})
 		default:
 			checks = append(checks, daemon.Check{Name: name, OK: true})
 		}

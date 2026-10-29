@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -294,7 +295,16 @@ func (d *daemon) assign(req Request) (store.Assignment, store.Dispatch, error) {
 			}
 		}
 	} else {
-		workspace.Branch = fmt.Sprintf("asmai/job-%d/%d", j.Number, id)
+		workspace.Branch = AssignmentBranchName(branch.Name, j.Number, id)
+		if path.Dir(branch.Name) != "asmai" {
+			taken, err := repos.OriginHasBranch(ctx, repository.Clone, workspace.Branch)
+			if err != nil {
+				return store.Assignment{}, store.Dispatch{}, err
+			}
+			if taken {
+				return store.Assignment{}, store.Dispatch{}, refuse("assignment %d cannot start: the branch %s already exists on origin; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", id, workspace.Branch)
+			}
+		}
 		if err := repos.AddWorkspace(ctx, repository.Clone, workspace.Path, workspace.Branch, workspace.Base); err != nil {
 			return store.Assignment{}, store.Dispatch{}, err
 		}
@@ -396,7 +406,11 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 	case !errors.Is(err, sql.ErrNoRows):
 		return store.JobBranch{}, err
 	}
-	name := JobBranchName(j)
+	prefix, err := d.branchPrefix()
+	if err != nil {
+		return store.JobBranch{}, err
+	}
+	name := JobBranchName(prefix, j)
 	var continues int64
 	var startedFrom string
 	// A follow-up to a job whose pull request is still open continues its
@@ -421,6 +435,9 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 		}
 		tip, err := repos.OriginTip(ctx, repository.Clone, repository.DefaultBranch)
 		if err != nil {
+			return store.JobBranch{}, err
+		}
+		if err := checkJobBranchOrigin(ctx, repository.Clone, prefix, j); err != nil {
 			return store.JobBranch{}, err
 		}
 		startedFrom, err = repos.Commit(ctx, repository.Clone, "refs/heads/"+name)
@@ -467,10 +484,40 @@ func (d *daemon) ensureJobBranch(ctx context.Context, j store.Job, repository st
 	return branch, nil
 }
 
-// JobBranchName names job's branch asmai/job-<n>-<slug>, with the slug taken
-// from the job's title, which is Coordination's reading of the user's words.
-func JobBranchName(j store.Job) string {
-	return fmt.Sprintf("asmai/job-%d-%s", j.Number, slug(j.Reading))
+func checkJobBranchOrigin(ctx context.Context, clone, prefix string, j store.Job) error {
+	if existing, err := repos.OriginJobBranchConflict(ctx, clone, prefix, j.Number); err != nil {
+		return err
+	} else if existing != "" {
+		return refuse("job %d cannot open: the branch %s conflicts with %s already on origin; change branch_prefix under [branches] in the configuration file, run `asmai config apply`, and try again", j.Number, JobBranchName(prefix, j), existing)
+	}
+	return nil
+}
+
+// JobBranchName names job's branch asmai/<prefix>/job-<n>-<slug>, with the
+// slug taken from the job's title, which is Coordination's reading of the
+// user's words.
+func JobBranchName(prefix string, j store.Job) string {
+	return fmt.Sprintf("asmai/%s/job-%d-%s", prefix, j.Number, slug(j.Reading))
+}
+
+// AssignmentBranchName names the branch of assignment id of job, which sits
+// beside its job branch jobBranch: asmai/<prefix>/job-<n>/<id>, or
+// asmai/job-<n>/<id> for a job branch made before branches had a prefix.
+func AssignmentBranchName(jobBranch string, job, id int64) string {
+	return fmt.Sprintf("%s/job-%d/%d", path.Dir(jobBranch), job, id)
+}
+
+// branchPrefix returns the prefix this install's new branches go under: the
+// configuration's branch_prefix, else the install's branch ID, made and kept
+// in the state directory the first time it is needed.
+func (d *daemon) branchPrefix() (string, error) {
+	d.configMu.Lock()
+	prefix := d.applied.BranchPrefix
+	d.configMu.Unlock()
+	if prefix != "" {
+		return prefix, nil
+	}
+	return d.cfg.Paths.BranchIDOrMake()
 }
 
 // maxSlug is the most a branch name's slug takes of a job's title.

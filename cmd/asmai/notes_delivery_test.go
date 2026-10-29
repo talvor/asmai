@@ -34,7 +34,7 @@ func deliverNotes(t *testing.T, noCI bool) {
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	const (
-		jobBranch = "asmai/job-1-research-the-greeting"
+		jobBranch = "asmai/test/job-1-research-the-greeting"
 		url       = "https://github.com/talvor/asmai-fixture/pull/7"
 		sha       = "[0-9a-f]{40}"
 		report    = "job 1: notes ready for review: " + url
@@ -66,7 +66,7 @@ func deliverNotes(t *testing.T, noCI bool) {
 	worker := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`mkdir -p docs/research && printf '# The greeting\nIt is spelled hello (https://example.test/spec#greeting).\n' > docs/research/greeting.md && git add -A && git commit -q -m 'Add the greeting research notes'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`git push -q origin asmai/test/job-1/1 && asmai effect push "origin/asmai/test/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'https://example.test/spec#greeting' --artifact docs/research/greeting.md --test none --check none --gap none --skill research --pr-section 'Adds the research notes on the greeting.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{"research.jsonl": research, "worker.jsonl": worker})
@@ -247,7 +247,7 @@ func deliverNotes(t *testing.T, noCI bool) {
 	if got := gitIn(t, fixture.origin, "show", "refs/heads/"+jobBranch+":docs/research/greeting.md"); !strings.Contains(got, "hello") {
 		t.Errorf("the job branch's notes are %q", got)
 	}
-	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/job-1/1"); out == "" {
+	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/test/job-1/1"); out == "" {
 		t.Error("the worker's assignment branch is gone from origin")
 	}
 	if _, err := os.Lstat(filepath.Join(stateDir, "views", "job-1")); err == nil {
@@ -265,7 +265,7 @@ func TestAPrototypeStaysOnItsAssignmentBranchWithAVerdictNotePointingToItInTheNo
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	const (
-		jobBranch = "asmai/job-1-prototype-the-greeting"
+		jobBranch = "asmai/test/job-1-prototype-the-greeting"
 		url       = "https://github.com/talvor/asmai-fixture/pull/7"
 		sha       = "[0-9a-f]{40}"
 		report    = "job 1: notes ready for review: " + url
@@ -282,17 +282,17 @@ func TestAPrototypeStaysOnItsAssignmentBranchWithAVerdictNotePointingToItInTheNo
 		turn(4, "prototype",
 			fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)result [0-9]+ \\| assignment 1.*prototype/greeting.sh"),
 			awaitFile("w1-done"),
-			fakeRun(`asmai accept --assignment 1 --prototype --reason 'the prototype answers the question'`, 0, "(?s)assignment 1 accepted by leader@research as a prototype that stays on its own branch asmai/job-1/1 at commit "+sha+" on origin; the assignment has ended\njob branch "+jobBranch+" did not move: it is at "+sha+", and the prototype is not in the job's pull request.*verdict is a note on the job branch, written by a new assignment that names branch asmai/job-1/1"),
-			fakeRun(`asmai brief 1`, 0, "- 1 worker1@research \\(owner leader@research\\) accepted as a prototype that stays on its own branch asmai/job-1/1 at "+sha+" on origin, not on the job branch: Prototype how the greeting is formed"),
+			fakeRun(`asmai accept --assignment 1 --prototype --reason 'the prototype answers the question'`, 0, "(?s)assignment 1 accepted by leader@research as a prototype that stays on its own branch asmai/test/job-1/1 at commit "+sha+" on origin; the assignment has ended\njob branch "+jobBranch+" did not move: it is at "+sha+", and the prototype is not in the job's pull request.*verdict is a note on the job branch, written by a new assignment that names branch asmai/test/job-1/1"),
+			fakeRun(`asmai brief 1`, 0, "- 1 worker1@research \\(owner leader@research\\) accepted as a prototype that stays on its own branch asmai/test/job-1/1 at "+sha+" on origin, not on the job branch: Prototype how the greeting is formed"),
 			fakeRun(`cp "$ASMAI_TEST_DIR/worker-2.jsonl" "$ASMAI_TEST_DIR/worker.jsonl"`, 0, ""),
-			fakeRun(`asmai assign --job 1 --outcome 'Write the verdict note on the prototype on branch asmai/job-1/1' --criterion 'the note points to branch asmai/job-1/1'`, 0, "dispatch 5"),
+			fakeRun(`asmai assign --job 1 --outcome 'Write the verdict note on the prototype on branch asmai/test/job-1/1' --criterion 'the note points to branch asmai/test/job-1/1'`, 0, "dispatch 5"),
 		),
 		turn(6, "verdict",
 			fakeRun(`asmai inbox --dispatch 6`, 0, "(?s)result [0-9]+ \\| assignment 2.*verdict.md"),
 			awaitFile("w2-done"),
-			fakeRun(`asmai accept --assignment 2 --reason 'the note points to branch asmai/job-1/1'`, 0, "fast-forwarded"),
+			fakeRun(`asmai accept --assignment 2 --reason 'the note points to branch asmai/test/job-1/1'`, 0, "fast-forwarded"),
 			fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
-			fakeRun(`printf 'Notes only: this pull request changes no code.\n\n- docs/research/greeting-verdict.md: the verdict on the prototype, which stays on branch asmai/job-1/1.\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
+			fakeRun(`printf 'Notes only: this pull request changes no code.\n\n- docs/research/greeting-verdict.md: the verdict on the prototype, which stays on branch asmai/test/job-1/1.\n' > "$ASMAI_TEST_DIR/body.md"`, 0, ""),
 			fakeRun(`gh pr create --draft --base main --head `+jobBranch+` --title 'Prototype the greeting' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
 			fakeRun(`asmai effect pull-request `+url, 0, "pull request #7 of job 1 recorded"),
 			touchFile("leader-done"),
@@ -302,14 +302,14 @@ func TestAPrototypeStaysOnItsAssignmentBranchWithAVerdictNotePointingToItInTheNo
 	worker1 := concat(agentSession, turn(3, "prototype",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`mkdir -p prototype && printf 'echo hello\n' > prototype/greeting.sh && git add -A && git commit -q -m 'Prototype the greeting'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`git push -q origin asmai/test/job-1/1 && asmai effect push "origin/asmai/test/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'prototype/greeting.sh prints hello' --artifact prototype/greeting.sh --test none --check none --gap none --pr-section 'A prototype that stays on its own branch.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(5, "verdict",
 		fakeRun(`asmai inbox --dispatch 5`, 0, "assignment 2"),
-		fakeRun(`mkdir -p docs/research && printf '# The greeting prototype\nVerdict: the greeting is formed as hello. The prototype is on branch asmai/job-1/1 on origin.\n' > docs/research/greeting-verdict.md && git add -A && git commit -q -m 'Add the greeting prototype verdict'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/2 && asmai effect push "origin/asmai/job-1/2@$(git rev-parse HEAD)"`, 0, "recorded: push"),
-		fakeRun(`asmai result --evidence 'the verdict names branch asmai/job-1/1' --artifact docs/research/greeting-verdict.md --test none --check none --gap none --pr-section 'Adds the verdict on the prototype.'`, 0, "result recorded for assignment 2"),
+		fakeRun(`mkdir -p docs/research && printf '# The greeting prototype\nVerdict: the greeting is formed as hello. The prototype is on branch asmai/test/job-1/1 on origin.\n' > docs/research/greeting-verdict.md && git add -A && git commit -q -m 'Add the greeting prototype verdict'`, 0, ""),
+		fakeRun(`git push -q origin asmai/test/job-1/2 && asmai effect push "origin/asmai/test/job-1/2@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`asmai result --evidence 'the verdict names branch asmai/test/job-1/1' --artifact docs/research/greeting-verdict.md --test none --check none --gap none --pr-section 'Adds the verdict on the prototype.'`, 0, "result recorded for assignment 2"),
 	), []string{touchFile("w2-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{"research.jsonl": research, "worker.jsonl": worker1, "worker-2.jsonl": worker2})
 
@@ -360,7 +360,7 @@ func TestAPrototypeStaysOnItsAssignmentBranchWithAVerdictNotePointingToItInTheNo
 	waitFor(t, "the daemon removing what was local to the job", func() bool { return len(journaled(t, "job.local.removed")) == 1 })
 
 	// The prototype is on its own branch on origin, and only there.
-	if out := gitIn(t, fixture.origin, "ls-tree", "-r", "--name-only", "refs/heads/asmai/job-1/1"); !strings.Contains(out, "prototype/greeting.sh") {
+	if out := gitIn(t, fixture.origin, "ls-tree", "-r", "--name-only", "refs/heads/asmai/test/job-1/1"); !strings.Contains(out, "prototype/greeting.sh") {
 		t.Errorf("the prototype's branch on origin holds %q, want the prototype", out)
 	}
 	if out := gitIn(t, fixture.origin, "ls-tree", "-r", "--name-only", "refs/heads/"+jobBranch); strings.Contains(out, "prototype/") || !strings.Contains(out, "docs/research/greeting-verdict.md") {
@@ -368,8 +368,8 @@ func TestAPrototypeStaysOnItsAssignmentBranchWithAVerdictNotePointingToItInTheNo
 	}
 
 	// The verdict note points to the prototype's branch.
-	if note := gitIn(t, fixture.origin, "show", "refs/heads/"+jobBranch+":docs/research/greeting-verdict.md"); !strings.Contains(note, "asmai/job-1/1") {
-		t.Errorf("the verdict note is %q, want it to point to branch asmai/job-1/1", note)
+	if note := gitIn(t, fixture.origin, "show", "refs/heads/"+jobBranch+":docs/research/greeting-verdict.md"); !strings.Contains(note, "asmai/test/job-1/1") {
+		t.Errorf("the verdict note is %q, want it to point to branch asmai/test/job-1/1", note)
 	}
 
 	// The prototype's acceptance moved no job branch: the job branch moved

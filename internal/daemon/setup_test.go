@@ -52,7 +52,7 @@ func TestARepositoryRegisteredWithoutItsIssueTrackerFileOpensASetupJobAtOnce(t *
 
 	// Its job branch is made as the job opens, so that its brief points to
 	// the code from the start.
-	branch := JobBranchName(*j)
+	branch := jobBranchFor(*j)
 	if got := git(t, resp.Repository.Clone, "rev-parse", "--verify", "refs/heads/"+branch); got != git(t, origin, "rev-parse", "trunk") {
 		t.Errorf("the setup job's branch %s is at %s, want origin's trunk", branch, got)
 	}
@@ -124,7 +124,7 @@ func TestCoordinationsLeaderGivesASetupJobsWorkToItsOwnWorkerWhoRunsTheSetupSkil
 	if a.Owner != "leader@coordination" || a.Worker != "worker1@coordination" || a.ReadOnly || a.Scratch || a.Skill != "setup-matt-pocock-skills" || dispatch.Agent != "worker1@coordination" {
 		t.Errorf("the assignment is %+v, dispatch %+v, want a writing assignment of leader@coordination for worker1@coordination", a, dispatch)
 	}
-	if want := "asmai/job-1/" + string(rune('0'+a.ID)); a.Workspace.Branch != want || git(t, a.Workspace.Path, "rev-parse", "--abbrev-ref", "HEAD") != want {
+	if want := "asmai/test/job-1/" + string(rune('0'+a.ID)); a.Workspace.Branch != want || git(t, a.Workspace.Path, "rev-parse", "--abbrev-ref", "HEAD") != want {
 		t.Errorf("the worker works on %q, want %q", a.Workspace.Branch, want)
 	}
 	args := waitForFile(t, filepath.Join(p.out, "args"))
@@ -453,7 +453,7 @@ func TestASetupJobsSingleChoiceIsAnsweredInLavishToo(t *testing.T) {
 
 func TestCoordinationsLeaderPushesASetupJobsBranchAsItsDeliveryOwnerWithNoQualityValidation(t *testing.T) {
 	f := newTwoResultsOf(t, roles.Coordination)
-	branch := JobBranchName(f.job)
+	branch := jobBranchFor(f.job)
 	push := Request{Session: "credential", Command: CommandPush, Job: f.job.Number}
 	if err := f.d.authorize(push); err != nil {
 		t.Fatalf("Coordination's leader may not push: %v", err)

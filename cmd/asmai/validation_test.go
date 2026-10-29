@@ -69,7 +69,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	const (
-		jobBranch = "asmai/job-1-add-a-greeting"
+		jobBranch = "asmai/test/job-1-add-a-greeting"
 		sha       = "[0-9a-f]{40}"
 	)
 	// Each worker session plays whatever its script file holds when it
@@ -211,21 +211,21 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 		fakeRun(`printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh`, 0, ""),
 		fakeRun(`git add -A && git commit -q -m 'Add greeting.txt and its check' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
 		fakeRun(`git merge --no-edit `+jobBranch, 0, "up to date"),
-		fakeRun(pushWorker("asmai/job-1/1"), 0, "effect 2 recorded: push"),
+		fakeRun(pushWorker("asmai/test/job-1/1"), 0, "effect 2 recorded: push"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 at HEAD' --test 'check.sh asserts greeting.txt says hello' --check './check.sh -> passed' --gap none --pr-section 'Adds greeting.txt, saying hello.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(5, "assignment",
 		fakeRun(`asmai inbox --dispatch 5`, 0, "assignment 2"),
 		fakeRun(`git fetch -q origin && git merge --no-edit origin/main`, 0, "Merge made"),
 		fakeRun(`./check.sh && test -f base-moved.txt`, 0, ""),
-		fakeRun(pushWorker("asmai/job-1/2"), 0, "effect [0-9]+ recorded: push"),
+		fakeRun(pushWorker("asmai/test/job-1/2"), 0, "effect [0-9]+ recorded: push"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 after the merge' --test none --check './check.sh -> passed' --gap none --pr-section 'Merges origin/main, which moved, into the job branch.'`, 0, "result recorded for assignment 2"),
 	), []string{touchFile("w2-done"), idleSession})
 	worker3 := concat(agentSession, turn(12, "assignment",
 		fakeRun(`asmai inbox --dispatch 12`, 0, "(?s)assignment 4.*Fix blocking finding 1"),
 		fakeRun(`printf 'hello, world\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = "hello, world"\n' > check.sh && ./check.sh`, 0, ""),
 		fakeRun(`git add -A && git commit -q -m 'Greet the world' && git merge --no-edit `+jobBranch, 0, "up to date"),
-		fakeRun(pushWorker("asmai/job-1/4"), 0, "effect [0-9]+ recorded: push"),
+		fakeRun(pushWorker("asmai/test/job-1/4"), 0, "effect [0-9]+ recorded: push"),
 		fakeRun(`asmai result --evidence './check.sh exits 0 at HEAD' --test 'check.sh asserts the world is greeted' --check './check.sh -> passed' --gap none --pr-section 'greeting.txt greets the world.'`, 0, "result recorded for assignment 4"),
 	), []string{touchFile("w3-done"), idleSession})
 
@@ -298,7 +298,7 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	if got := gitIn(t, clone, "show", jobTip+":base-moved.txt"); got != "moved" {
 		t.Errorf("base-moved.txt on the job branch is %q, want the merged base", got)
 	}
-	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/job-1-*"); out != "" {
+	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/test/job-1-*"); out != "" {
 		t.Errorf("the job branch was pushed: %s", out)
 	}
 
@@ -412,10 +412,10 @@ func TestQualityValidatesTheFinishedJobBranchAtItsExactHeadAndABlockingFindingSe
 	if got := len(journaled(t, "workspace.read-only.removed")); got != 2 {
 		t.Errorf("%d read-only workspaces were journaled as removed, want 2", got)
 	}
-	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/job-1/3", "asmai/job-1/5", "asmai/quality*"); out != "" {
+	if out := gitIn(t, fixture.origin, "branch", "--list", "asmai/test/job-1/3", "asmai/test/job-1/5", "asmai/quality*"); out != "" {
 		t.Errorf("origin has a branch of Quality's: %s", out)
 	}
-	if out := gitIn(t, clone, "branch", "--list", "asmai/job-1/3", "asmai/job-1/5"); out != "" {
+	if out := gitIn(t, clone, "branch", "--list", "asmai/test/job-1/3", "asmai/test/job-1/5"); out != "" {
 		t.Errorf("AsmAI's clone has a branch of Quality's: %s", out)
 	}
 	if out := gitIn(t, clone, "worktree", "list"); strings.Contains(out, "assignment-3") || strings.Contains(out, "assignment-5") {

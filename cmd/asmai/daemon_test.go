@@ -76,7 +76,15 @@ func factoryHome(t *testing.T) (stateDir string) {
 		os.RemoveAll(filepath.Dir(workerTmp(filepath.Join(home, ".local", "state", "asmai"), 0)))
 		os.RemoveAll(home)
 	})
-	return filepath.Join(home, ".local", "state", "asmai")
+	// The install's branch ID is the prefix the tests' branches go under.
+	stateDir = filepath.Join(home, ".local", "state", "asmai")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "branch-id"), []byte("test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return stateDir
 }
 
 // runAsmai runs the built asmai and returns what it printed and its exit code.

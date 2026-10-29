@@ -303,7 +303,7 @@ func TestPlanningsLeaderGivesAWritingAssignmentToAPlanningWorkerWhoRunsTheSkillI
 	if a.Owner != "leader@planning" || a.Worker != "worker1@planning" || a.ReadOnly || a.Skill != "grilling" || dispatch.Agent != "worker1@planning" {
 		t.Errorf("the assignment is %+v, dispatch %+v, want a writing assignment of leader@planning for worker1@planning running grilling", a, dispatch)
 	}
-	if want := fmt.Sprintf("asmai/job-%d/%d", p.job.Number, a.ID); a.Workspace.Branch != want {
+	if want := fmt.Sprintf("asmai/test/job-%d/%d", p.job.Number, a.ID); a.Workspace.Branch != want {
 		t.Errorf("the assignment's branch is %q, want %q", a.Workspace.Branch, want)
 	}
 	if got := git(t, a.Workspace.Path, "rev-parse", "--abbrev-ref", "HEAD"); got != a.Workspace.Branch {
@@ -730,7 +730,7 @@ func TestPlanningsLeaderAcceptsItsWorkersResultMovingTheJobBranchAndNoOtherLeade
 	if resp.Assignment.State != store.AssignmentAccepted || resp.JobBranch.Tip != f.commits[0] {
 		t.Errorf("the acceptance answered %+v and %+v, want the assignment accepted and the job branch at %s", resp.Assignment, resp.JobBranch, f.commits[0])
 	}
-	if got := git(t, f.clone, "rev-parse", "refs/heads/"+JobBranchName(f.job)); got != f.commits[0] {
+	if got := git(t, f.clone, "rev-parse", "refs/heads/"+jobBranchFor(f.job)); got != f.commits[0] {
 		t.Errorf("the job branch is at %s, want the accepted commit %s", got, f.commits[0])
 	}
 }

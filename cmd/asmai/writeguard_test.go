@@ -78,7 +78,7 @@ func argValue(args []string, flag string) string {
 }
 
 func TestAWorkerCommitsAsTheUserWithAsmAITrailersInsideTheWriteGuardFollowingTheRepositoryInstructionsButNotItsProviderConfiguration(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	trailers := "AsmAI-Job: 1\nAsmAI-Agent: worker1@engineering\nAsmAI-Dispatch: 3\n"
 	// A path outside the workspace and outside every temporary directory,
 	// which a hook may write beneath and which hold HOME, and so the clone,
@@ -107,7 +107,7 @@ func TestAWorkerCommitsAsTheUserWithAsmAITrailersInsideTheWriteGuardFollowingThe
 AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 		fakeRun(`git log -1 --format=%B | grep -c 'AsmAI-Job: 99' || true`, 0, "^0\n$"),
 		fakeRun(`asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 1 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		// A merge commit carries them too, even when the repository's own
 		// commit-msg hook rewrites the message.
 		fakeRun(`hooks="$(git rev-parse --git-common-dir)/hooks" && mkdir -p "$hooks" && printf '#!/bin/sh\nsed -i.bak "/^AsmAI-/d" "$1"\n' > "$hooks/commit-msg" && chmod +x "$hooks/commit-msg"`, 0, ""),
@@ -293,7 +293,7 @@ AsmAI-Job: 99' && git log -1 --format=%B | grep -c '^AsmAI-'`, 0, "^3\n$"),
 // instruction-file content, and its commit_trailers switch takes effect for
 // that repository's commits.
 func TestARepositorysNotesReachItsWorkersAndItsTrailersSwitchTakesEffect(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		// The trailer hooks are in place, and name no trailers.

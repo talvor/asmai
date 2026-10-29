@@ -30,7 +30,7 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	const (
-		jobBranch = "asmai/job-1-add-a-greeting"
+		jobBranch = "asmai/test/job-1-add-a-greeting"
 		url       = "https://github.com/talvor/asmai-fixture/pull/7"
 		runURL    = "https://github.com/talvor/asmai-fixture/actions/runs/41/job/1"
 		sha       = "[0-9a-f]{40}"
@@ -122,7 +122,7 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 		turn(18, "validation2", concat(
 			[]string{
 				fakeRun(`asmai inbox --dispatch 18`, 0, "(?s)validation from leader@quality.*0 blocking"),
-				fakeRun(`asmai brief 1`, 0, "(?s)- 3 worker1@engineering \\(owner leader@engineering\\) accepted on branch asmai/job-1/3: Fix the failing check CI / test \\[decisions passed on: 2\\]\n"),
+				fakeRun(`asmai brief 1`, 0, "(?s)- 3 worker1@engineering \\(owner leader@engineering\\) accepted on branch asmai/test/job-1/3: Fix the failing check CI / test \\[decisions passed on: 2\\]\n"),
 				fakeRun(`asmai push 1`, 0, "the daemon pushed "+jobBranch),
 			},
 			updateBody("A fix of CI / test is validated at the new head; CI has not reported on it yet."),
@@ -164,13 +164,13 @@ func TestRedCIIsReRunOnceOnAJudgedDecisionThenAFixsNewerPushReplacesTheWait(t *t
 	worker1 := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`git push -q origin asmai/test/job-1/1 && asmai effect push "origin/asmai/test/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'greeting.txt says hello' --test none --check none --gap none --pr-section 'Adds greeting.txt.'`, 0, "result recorded for assignment 1"),
 	), []string{touchFile("w1-done"), idleSession})
 	worker2 := concat(agentSession, turn(12, "fix",
 		fakeRun(`asmai inbox --dispatch 12`, 0, "(?s)assignment 3.*Fix the failing check CI / test.*Decision records passed to you with this assignment:\n  decision 2 \\| job 1 \\| delegated .*Reopen when: CI / test fails on a second head"),
 		fakeRun(`printf 'hello\n' > greeting.txt && printf 'ok\n' > ci-fixed.txt && git add -A && git commit -q -m 'Fix CI / test'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/3 && asmai effect push "origin/asmai/job-1/3@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`git push -q origin asmai/test/job-1/3 && asmai effect push "origin/asmai/test/job-1/3@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		fakeRun(`asmai result --evidence 'CI / test passes' --test none --check 'grep hello greeting.txt -> passed' --gap none --pr-section 'Fixes CI / test.'`, 0, "result recorded for assignment 3"),
 	), []string{touchFile("w2-done"), idleSession})
 	writeFiles(t, testDir, map[string][]string{

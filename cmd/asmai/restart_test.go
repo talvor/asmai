@@ -261,7 +261,7 @@ func stoppedWorker(transcript string) []string {
 const restoration = "(?s)restoration from daemon.*Load `asmai brief 1`"
 
 func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelated(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	// The first run: the worker commits a draft and ends its turn without a
 	// result, and the Engineering leader, still in its turn, has a second
 	// handoff waiting unfetched in its inbox when the factory is stopped.
@@ -379,7 +379,7 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		// nothing about it.
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`test "$(cat greeting.txt)" = draft && printf 'hello\n' > greeting.txt && printf '#!/bin/sh\ntest "$(cat greeting.txt)" = hello\n' > check.sh && chmod +x check.sh && ./check.sh && git add -A && git commit -q -m 'Finish the greeting' && asmai effect commit "$(git rev-parse HEAD)"`, 0, "effect 2 recorded: commit"),
-		fakeRun(`git merge --no-edit asmai/job-1-add-a-greeting`, 0, "up to date"),
+		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 3 recorded: push"),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/engineering-accepted" ]; do sleep 0.02; done`, 0, ""),
 		fakeRun(resultFlagsForGreeting, 0, "result recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 10"),
@@ -555,7 +555,7 @@ func TestAnAssignmentWhoseNativeSessionCannotBeResumedNeedsReconciliationAndItsO
 		`{"expect":"asmai inbox --dispatch 8\r"}`,
 		hookStep("UserPromptSubmit", "reconcile", "asmai inbox --dispatch 8"),
 		fakeRun(`asmai inbox --dispatch 8`, 0, "(?s)reconciliation from daemon.*Assignment 1 of job 1 needs reconciliation: the native session of worker1@engineering cannot be resumed.*assignment 1 \\| job 1 \\| leader@engineering -> worker1@engineering \\| needs_reconciliation"),
-		fakeRun(`asmai brief 1`, 0, "(?s)Assignments:\n- 1 worker1@engineering \\(owner leader@engineering\\) needs_reconciliation on branch asmai/job-1/1"),
+		fakeRun(`asmai brief 1`, 0, "(?s)Assignments:\n- 1 worker1@engineering \\(owner leader@engineering\\) needs_reconciliation on branch asmai/test/job-1/1"),
 		fakeRun(`asmai accept --assignment 1 --reason x`, 1, "is needs_reconciliation, so it has no result to accept"),
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "is needs_reconciliation, so it cannot be cancelled"),
 		hookStep("Stop", "reconcile", ""),
@@ -685,7 +685,7 @@ func TestAWorkerWhoseTurnWasCutOffByTheStopNeedsReconciliationAndIsNotRunAgain(t
 // that resumes the one that stopped, and the assignment ends once it has
 // pushed and stopped.
 func TestACancellationThatWasNotCompleteWhenTheFactoryStoppedContinuesAfterTheStart(t *testing.T) {
-	const branch = "asmai/job-1/1"
+	const branch = "asmai/test/job-1/1"
 	// Engineering's leader cancels the assignment once its worker has
 	// fetched it, so the worker is cancelled in the dispatch after it.
 	leader := []string{

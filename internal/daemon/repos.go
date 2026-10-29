@@ -190,8 +190,22 @@ func (d *daemon) repoAdd(ctx context.Context, source, name, branch string, optio
 		err = d.store.RepositoryAdded(r)
 	} else {
 		var j store.Job
-		if j, dispatch, err = d.store.RepositoryAddedWithSetup(r, setupOpening(r, source)); err == nil {
-			setup = &j
+		opening := setupOpening(r, source)
+		var number int64
+		number, err = d.store.NextJobNumber()
+		if err == nil {
+			var prefix string
+			prefix, err = d.branchPrefix()
+			if err == nil {
+				if checkErr := checkJobBranchOrigin(ctx, clone, prefix, store.Job{Number: number, Reading: opening.Reading}); errors.As(checkErr, new(*userError)) {
+					err = checkErr
+				}
+			}
+		}
+		if err == nil {
+			if j, dispatch, err = d.store.RepositoryAddedWithSetup(r, opening); err == nil {
+				setup = &j
+			}
 		}
 	}
 	if err != nil {

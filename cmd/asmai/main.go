@@ -57,7 +57,7 @@ commands you type:
                               AsmAI's permission rules, and open it in the agents and workspaces
                               folders and each registered repository's clone for you to trust them.
                               A step already done is skipped. asmai setup is its old name
-  asmai doctor                run the same checks as init and start without changing anything, and
+  asmai doctor                check the host and pinned Lavish installation without changing anything;
                               report what skill hiding cannot cover, the added and repository skills
                               (unqualified), and whether upstream has a newer skill release
   asmai start [--foreground]  start the factory: run its checks, its daemon and Coordination's leader;
@@ -430,7 +430,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var resultArgs resultFlags
 	switch name {
 	case "init":
-		assumeYes = flags.Bool("yes", false, "confirm the install and agree to open Claude Code without asking")
+		assumeYes = flags.Bool("yes", false, "confirm installing the pinned Claude Code and Lavish, and agree to open Claude Code without asking")
 		flags.StringVar(&claudeDefaultModel, "claude-default-model", "", "Claude's fallback model in a new config (default opus)")
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")

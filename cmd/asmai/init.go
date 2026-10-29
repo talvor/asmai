@@ -54,11 +54,11 @@ type setupStep struct {
 // initFactory is `asmai init`, the first run: it checks that this platform
 // is certified, writes a configuration file staffing every role
 // when there is none, makes the state directory's folders, installs the
-// pinned Claude Code and Lavish, each once the user confirms, and opens it in the agents and
-// workspaces folders and in each registered repository's clone, in the
-// user's own terminal, for the user to trust each (ADR 0011). Each of its
-// stages is headed and says what it is about to do; each step is skipped
-// when it is already done, and reports one line, done, already done, or
+// pinned Claude Code and Lavish, each once the user confirms, and opens
+// Claude Code in the agents and workspaces folders and in each registered
+// repository's clone, in the user's own terminal, for the user to trust
+// each (ADR 0011). Each stage says what it is about to do; each step is
+// skipped when it is already done, and reports one line, done, already done, or
 // failed before the error. Before opening Claude Code in a
 // folder, setup says how to answer its question and waits for the user to
 // agree, on a terminal: it opens none without one. An existing

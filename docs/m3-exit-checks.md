@@ -17,11 +17,11 @@ Cells marked **unrecorded** have not been run yet. Nothing in them is a result.
 
 | | Result |
 |---|---|
-| `asmai-vm`, `make test` | **unrecorded** |
-| Mac, `make test` | **unrecorded** |
+| `asmai-vm`, `make test` | **Failed** (exit 2) at `9732f87` on Ubuntu 24.04 x86_64. One test failed in `cmd/asmai`: `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` (`answerwake_test.go:57`, "timed out waiting for the worker's turn"). Every other package passed. It also failed when rerun alone (4 of 4). Ticketed as [#256](https://github.com/talvor/asmai/issues/256): not a simple regression, as it passed at the #231 and #248 merges and failed at several commits between |
+| Mac, `make test` | Passed in full at `9732f87` (darwin/arm64), exit 0, all 25 packages ok (`cmd/asmai` 559.6s, `qualification` 561.3s) |
 | Hosted CI, this pull request | **pipeline-recorded after merge** (`test (ubuntu-latest)` and `test (macos-latest)`) |
 
-A macOS failure is recorded as a ticket for the next milestone: **unrecorded**.
+A macOS failure is recorded as a ticket for the next milestone: there was none, since `make test` passed on the Mac. The one failure, on `asmai-vm`, is ticketed as #256 above.
 
 ## The demo path
 
@@ -97,10 +97,13 @@ Tickets filed from this demo series, all in [talvor/asmai](https://github.com/ta
 - [#245](https://github.com/talvor/asmai/issues/245): a long `TMPDIR` makes Go tests fail. Closed, fixed by #247.
 - [#246](https://github.com/talvor/asmai/issues/246): two installs on one origin make the same branch names. Closed, fixed by #249.
 
-Observed in this run and not yet ticketed:
+Filed after the run:
 
-- The stall notice fires for workers that are legitimately waiting on a decision.
-- A research worker has no web access by default (`WebFetch` is denied in `dontAsk` mode). The network host had to be allowed by config and by the user, and auto mode alone did not change that.
+- [#254](https://github.com/talvor/asmai/issues/254): the stall notice fires for a worker waiting on its own decision request.
+- [#255](https://github.com/talvor/asmai/issues/255): Research workers cannot read the web by default (`WebFetch` is denied in `dontAsk` mode). The network host had to be allowed by config and by the user, and auto mode alone did not change that.
+- [#256](https://github.com/talvor/asmai/issues/256): `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` fails on `asmai-vm` (see Development tests).
+
+Observed in this run and not yet ticketed:
 - The user's request to write job 4's result into `/Users/phillip/Documents` has no recorded outcome.
 
 ## Demo script

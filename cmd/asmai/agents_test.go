@@ -217,8 +217,10 @@ type attachedTerminal struct {
 	name string
 	mu   sync.Mutex
 	term *vt.Terminal
-	done chan error
-	read chan struct{} // closed once everything asmai wrote has reached term
+	// written is everything asmai wrote to the terminal.
+	written []byte
+	done    chan error
+	read    chan struct{} // closed once everything asmai wrote has reached term
 }
 
 func attachInTerminal(t *testing.T, agent string, columns, rows int) *attachedTerminal {
@@ -256,6 +258,7 @@ func inTerminal(t *testing.T, columns, rows int, args ...string) *attachedTermin
 			n, err := ptmx.Read(buf)
 			a.mu.Lock()
 			a.term.Write(buf[:n])
+			a.written = append(a.written, buf[:n]...)
 			a.mu.Unlock()
 			if err != nil {
 				return

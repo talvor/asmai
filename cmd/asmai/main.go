@@ -46,6 +46,7 @@ commands you type:
                               starting the factory first if it is stopped. What you type reaches
                               Coordination, and each message you submit is journaled word for word.
                               ↑/↓ scroll its history and are not sent to Coordination.
+                              Shift-Enter, Alt-Enter or \ then Enter starts a new line.
                               Ctrl-] leaves the conversation, which pauses nothing
   asmai init [--yes] [--claude-default-model MODEL]
                               the first run: check this platform is certified, choose Claude's

@@ -99,6 +99,9 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 	// The alternate screen keeps the user's own screen to come back to, and
 	// without autowrap the status line's last cell cannot scroll it.
 	out.WriteString("\x1b[?1049h\x1b[?7l\x1b[H\x1b[2J")
+	if c.conversation {
+		out.WriteString(enhanceKeys)
+	}
 	go c.readFrames(r)
 	go c.readKeys(in)
 	go c.followSize(int(out.Fd()))
@@ -106,6 +109,9 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 
 	if c.paste {
 		out.WriteString("\x1b[?2004l")
+	}
+	if c.conversation {
+		out.WriteString(restoreKeys)
 	}
 	out.WriteString("\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l")
 	term.Restore(int(in.Fd()), restore)
@@ -123,6 +129,8 @@ type attachClient struct {
 	conversation bool
 	// sending keeps each line sent to the daemon whole.
 	sending sync.Mutex
+	// keys reads the keys the user types in the conversation.
+	keys keyReader
 
 	mu     sync.Mutex
 	notice string
@@ -220,36 +228,80 @@ const leftConversation = "Left the conversation. Nothing is paused: Coordination
 // Outside the conversation no other key reaches it either, and Ctrl-]
 // detaches. In the conversation every other key is sent on as typed, Esc
 // included, and returns the view to the live screen, and Ctrl-] leaves it.
+// There the keys are first read as a terminal without the kitty keyboard
+// protocol or modifyOtherKeys would send them, and Shift-Enter, Alt-Enter
+// and backslash-Enter start a new line in the agent's prompt. The start of
+// an escape sequence, a lone Esc included, waits briefly for the keys that
+// may finish it.
 func (c *attachClient) readKeys(in io.Reader) {
-	buf := make([]byte, 256)
-	for {
-		n, err := in.Read(buf)
-		keys := buf[:n]
-		detach := bytes.IndexByte(keys, detachKey)
-		if detach >= 0 {
-			keys = keys[:detach]
-		}
-		if len(keys) > 0 {
-			c.mu.Lock()
-			keys = c.scroll(keys)
-			if c.conversation {
-				c.notice = ""
+	type read struct {
+		keys []byte
+		err  error
+	}
+	reads := make(chan read)
+	go func() {
+		for {
+			buf := make([]byte, 256)
+			n, err := in.Read(buf)
+			reads <- read{buf[:n], err}
+			if err != nil {
+				return
 			}
-			c.mu.Unlock()
-			c.markDirty()
 		}
-		if c.conversation && len(keys) > 0 {
-			c.send(daemon.ClientMessage{Keys: keys})
+	}()
+	for {
+		var wait <-chan time.Time
+		if c.keys.holding() {
+			wait = time.After(escapeWait)
 		}
-		if detach >= 0 {
-			c.leave()
-			return
-		}
-		if err != nil {
-			c.finish(fmt.Sprintf("Detached from %s: the terminal closed.", c.agent))
-			return
+		select {
+		case r := <-reads:
+			keys := r.keys
+			if c.conversation {
+				keys = c.keys.read(keys)
+				if r.err != nil {
+					keys = append(keys, c.keys.flush()...)
+				}
+			}
+			if c.typed(keys) {
+				return
+			}
+			if r.err != nil {
+				c.finish(fmt.Sprintf("Detached from %s: the terminal closed.", c.agent))
+				return
+			}
+		case <-wait:
+			if c.typed(c.keys.flush()) {
+				return
+			}
 		}
 	}
+}
+
+// typed acts on keys, the next the user typed as readKeys reads them, and
+// reports whether Ctrl-] among them detached or left the conversation.
+func (c *attachClient) typed(keys []byte) bool {
+	detach := bytes.IndexByte(keys, detachKey)
+	if detach >= 0 {
+		keys = keys[:detach]
+	}
+	if len(keys) > 0 {
+		c.mu.Lock()
+		keys = c.scroll(keys)
+		if c.conversation {
+			c.notice = ""
+		}
+		c.mu.Unlock()
+		c.markDirty()
+	}
+	if c.conversation && len(keys) > 0 {
+		c.send(daemon.ClientMessage{Keys: keys})
+	}
+	if detach >= 0 {
+		c.leave()
+		return true
+	}
+	return false
 }
 
 // scrollKeys are the up and down arrows, in the cursor key mode the user's

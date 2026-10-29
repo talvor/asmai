@@ -1374,8 +1374,10 @@ const (
 
 // enters counts the Enter keys in keys, the next the user typed in c, that
 // can submit a message: a carriage return that is neither pasted text nor
-// part of Alt-Enter (ESC CR, which a terminal sends in one write), which
-// starts a new line instead.
+// part of Alt-Enter (ESC CR), which starts a new line instead. The client
+// sends Alt-Enter in one message, so an Esc ending one message is the Esc
+// key, and a carriage return starting the next is Enter, as the agent takes
+// them.
 func (c *conversation) enters(keys []byte) int {
 	b := append(c.carry, keys...)
 	c.carry = nil

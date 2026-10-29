@@ -7,14 +7,20 @@ import "testing"
 func TestOnlyAnEnterThatCanSubmitIsCounted(t *testing.T) {
 	for _, tc := range []struct {
 		name string
+		// keys are the messages the user's terminal sent, in order.
 		keys []string
 		want int
 	}{
 		{"a message", []string{"hello\r"}, 1},
 		{"two messages", []string{"one\r", "two\r"}, 2},
 		{"text never submitted", []string{"draft", "\x1b"}, 0},
+		{"Alt-Enter starts a new line", []string{"\x1b\r"}, 0},
+		{"Alt-Enter inside a message", []string{"one\x1b\rtwo\r"}, 1},
+		// The client sends Alt-Enter as one message, so an Esc ending one
+		// message is the Esc key, and the Enter after it submits.
 		{"Esc, then Enter", []string{"\x1b", "\r"}, 1},
-		{"Alt-Enter starts a new line", []string{"one\x1b\rtwo\r"}, 1},
+		{"text and Esc, then Enter", []string{"one\x1b", "\rtwo\r"}, 2},
+		{"Esc, then text, then Enter", []string{"\x1b", "a", "\r"}, 1},
 		{"pasted lines", []string{"\x1b[200~one\rtwo\r\x1b[201~\r"}, 1},
 		{"a paste split across reads", []string{"\x1b[2", "00~one\r", "two\x1b[20", "1~", "\r"}, 1},
 	} {

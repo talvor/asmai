@@ -114,11 +114,11 @@ The name an install's new branches go under. Distinct prefixes keep installs on 
 _Avoid_: Namespace, install ID
 
 **Job branch**:
-The one branch that carries a repository job's accepted work and becomes its pull request. It is named `asmai/<prefix>/job-<n>-<slug>` under the install's branch prefix; a job opened before branches had a prefix keeps its `asmai/job-<n>-<slug>`. The daemon refuses to open a new job when origin already has a branch under that prefix and job number, including an assignment branch or a job branch with another slug.
+The one branch that carries a repository job's accepted work and becomes its pull request. New branches use `asmai/<prefix>/job-<n>-<slug>`; jobs with a recorded old-format branch keep `asmai/job-<n>-<slug>`. See [branch naming and origin checks](README.md#branch-prefix).
 _Avoid_: Integration branch, feature branch
 
 **Assignment branch**:
-The branch a writing assignment works on in its workspace, made from its job branch and kept on origin. It is named `asmai/<prefix>/job-<n>/<id>`, beside its job branch, or `asmai/job-<n>/<id>` for a job that keeps the old names.
+The branch a writing assignment works on in its workspace, made from its job branch and kept on origin. Its name sits beside its job branch: `asmai/<prefix>/job-<n>/<id>` for a prefixed job branch, or `asmai/job-<n>/<id>` for a recorded old-format branch.
 _Avoid_: Worker branch
 
 **Workspace**:

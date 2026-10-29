@@ -136,7 +136,9 @@ func TestRunningFactoryRefusesAJobNumberAlreadyOnOriginBeforeRecordingIt(t *test
 		`{"hook": "UserPromptSubmit", "payload": {"hook_event_name": "UserPromptSubmit", "prompt": "Please fix the fixture"}}`,
 		fakeRun(`asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass' > "$ASMAI_TEST_DIR/refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/refusal"; test "$status" -eq 1`, 0, `asmai/team/job-1-fix-the-fixture conflicts with asmai/team/job-1-other-title already on origin; change branch_prefix`),
 		fakeRun(`touch "$ASMAI_TEST_DIR/refused"`, 0, ""),
-		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/continue" ]; do sleep 0.02; done; asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass'`, 0, "Opened job 1"),
+		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/continue" ]; do sleep 0.02; done; asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass' > "$ASMAI_TEST_DIR/parent-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/parent-refusal"; test "$status" -eq 1`, 0, `asmai/team/job-1-fix-the-fixture conflicts with asmai/team/job-1 already on origin; change branch_prefix`),
+		fakeRun(`touch "$ASMAI_TEST_DIR/parent-refused"`, 0, ""),
+		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/continue-parent" ]; do sleep 0.02; done; asmai job open --message latest --repository fixture --reading 'Fix the fixture' --mandate tested-pr --criterion 'Tests pass'`, 0, "Opened job 1"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/done"`, 0, ""),
 		`{"expect": "only typed by a test that means to"}`,
 	}
@@ -176,7 +178,21 @@ func TestRunningFactoryRefusesAJobNumberAlreadyOnOriginBeforeRecordingIt(t *test
 	}
 	t.Logf("asmai jobs after refusal: %s", strings.TrimSpace(jobs))
 	gitIn(t, checkout, "push", "--quiet", "origin", ":refs/heads/asmai/team/job-1-other-title")
+	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:refs/heads/asmai/team/job-1")
 	if err := os.WriteFile(filepath.Join(testDir, "continue"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the origin parent collision refusal", touched(testDir, "parent-refused"))
+	parentRefusal, err := os.ReadFile(filepath.Join(testDir, "parent-refusal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("asmai job open with a parent ref on origin: %s", parentRefusal)
+	if entries := journaled(t, "job.opened"); len(entries) != 0 {
+		t.Fatalf("a parent-ref collision recorded a job: %+v", entries)
+	}
+	gitIn(t, checkout, "push", "--quiet", "origin", ":refs/heads/asmai/team/job-1")
+	if err := os.WriteFile(filepath.Join(testDir, "continue-parent"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "job 1 to open after the collision cleared", touched(testDir, "done"))

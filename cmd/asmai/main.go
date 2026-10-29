@@ -52,8 +52,8 @@ commands you type:
                               the first run: check this platform is certified, choose Claude's
                               default model and write a file staffing every role if there is none;
                               make the state directory's folders, install the pinned Claude Code
-                              once you confirm (--yes confirms and agrees to open Claude Code),
-                              check it and that it applies
+                              and the pinned Lavish, each once you confirm (--yes confirms and
+                              agrees to open Claude Code), check Claude Code and that it applies
                               AsmAI's permission rules, and open it in the agents and workspaces
                               folders and each registered repository's clone for you to trust them.
                               A step already done is skipped. asmai setup is its old name

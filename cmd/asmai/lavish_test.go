@@ -352,3 +352,88 @@ func TestAnAgentCannotRunAsmaiLavish(t *testing.T) {
 		t.Errorf("an agent running asmai lavish exited %d printing %q, want it refused", code, stderr.String())
 	}
 }
+
+func TestInitInstallsThePinnedLavishBuildAfterAskingOnceForEachDownload(t *testing.T) {
+	stateDir := factoryHome(t)
+	fetches := standInReleases(t, standInLavish, standInLavish)
+	path := filepath.Join(stateDir, "providers", "lavish", "0.1.89+deno2.9.6", "lavish")
+
+	// Claude Code's checks and trust come after the installs, and stop this run.
+	stdout, stderr, code := runIn(t, "y\ny\n", "init")
+
+	out := stdout + stderr
+	if code == 0 {
+		t.Fatalf("init without a terminal to trust folders in exited 0, printing\n%s", out)
+	}
+	for _, want := range []string{"pinned Lavish 0.1.89+deno2.9.6", "Install it? [y/N]", "Claude Code: done. Installed the pinned Claude Code 2.1.292", "Lavish: done. Installed the pinned Lavish 0.1.89+deno2.9.6 at " + path} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init printed\n%s\nwant it to show %q", out, want)
+		}
+	}
+	if strings.Count(out, "Install it? [y/N]") != 2 {
+		t.Errorf("init printed\n%s\nwant one question for each download", out)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, standInLavish) || !providers.Executable(path) {
+		t.Errorf("%s holds %q (%v), want the executable pinned Lavish build", path, got, err)
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("the release served %d Lavish downloads, want 1", n)
+	}
+
+	// Run again, Lavish is already done and nothing is fetched.
+	stdout, stderr, _ = runIn(t, "", "init")
+	if out := stdout + stderr; !strings.Contains(out, "Lavish: already done.") || strings.Contains(out, "Install it?") {
+		t.Errorf("a second init printed\n%s\nwant Lavish already done and no question", out)
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("the release served %d Lavish downloads after a second init, want 1", n)
+	}
+}
+
+func TestInitYesInstallsThePinnedLavishBuildWithoutAsking(t *testing.T) {
+	stateDir := factoryHome(t)
+	standInReleases(t, standInLavish, standInLavish)
+
+	stdout, stderr, _ := runIn(t, "", "init", "--yes")
+
+	if out := stdout + stderr; !strings.Contains(out, "Lavish: done.") || strings.Contains(out, "[y/N]") {
+		t.Errorf("init --yes printed\n%s\nwant Lavish installed without a question", out)
+	}
+	if path := filepath.Join(stateDir, "providers", "lavish", "0.1.89+deno2.9.6", "lavish"); !providers.Executable(path) {
+		t.Errorf("%s is not an executable after init --yes", path)
+	}
+}
+
+func TestInitStopsWhenTheUserDeclinesLavishAndInstallsNothingElse(t *testing.T) {
+	stateDir := factoryHome(t)
+	standInReleases(t, standInLavish, standInLavish)
+
+	stdout, stderr, code := runIn(t, "y\nn\n", "init")
+
+	if out := stdout + stderr; code != 1 || !strings.Contains(out, "not confirmed; nothing was fetched or installed") {
+		t.Errorf("init with Lavish declined exited %d printing\n%s", code, out)
+	}
+	if path := filepath.Join(stateDir, "providers", "lavish"); providers.Executable(filepath.Join(path, "0.1.89+deno2.9.6", "lavish")) {
+		t.Errorf("%s holds a Lavish build the user declined", path)
+	}
+}
+
+func TestDoctorReportsAMissingPinnedLavishAndItsFix(t *testing.T) {
+	stateDir := factoryHome(t)
+	standInReleases(t, standInLavish, standInLavish)
+
+	stdout, stderr, code := doctorIn(t)
+	out := stdout + stderr
+	path := filepath.Join(stateDir, "providers", "lavish", "0.1.89+deno2.9.6", "lavish")
+	if code != 1 || !strings.Contains(out, "Lavish 0.1.89+deno2.9.6") || !strings.Contains(out, "is not installed at "+path) || !strings.Contains(out, "run `asmai providers install`") {
+		t.Fatalf("doctor with no Lavish installed exited %d printing\n%s\nwant it to fail naming Lavish and the fix", code, out)
+	}
+
+	if stdout, stderr, code := runIn(t, "y\ny\n", "init"); code == 0 {
+		t.Fatalf("init exited 0 without a terminal: %s%s", stdout, stderr)
+	}
+	stdout, stderr, _ = doctorIn(t)
+	if out := stdout + stderr; strings.Contains(out, "Lavish 0.1.89+deno2.9.6 is not installed") || !strings.Contains(out, "Lavish 0.1.89+deno2.9.6") {
+		t.Errorf("doctor with Lavish installed printed\n%s\nwant its Lavish check to pass", out)
+	}
+}

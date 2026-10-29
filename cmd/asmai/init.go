@@ -24,6 +24,7 @@ import (
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/statedir"
+	"github.com/talvor/asmai/internal/store"
 )
 
 // What a setup step reports.
@@ -35,7 +36,7 @@ const (
 )
 
 // setupStages is how many stages `asmai init` runs: platform, config,
-// folders, Claude Code and trust.
+// folders, Claude Code (with Lavish) and trust.
 const setupStages = 5
 
 // trustPrompt starts the line on which setup or repo add asks the user to go
@@ -53,7 +54,7 @@ type setupStep struct {
 // initFactory is `asmai init`, the first run: it checks that this platform
 // is certified, writes a configuration file staffing every role
 // when there is none, makes the state directory's folders, installs the
-// pinned Claude Code once the user confirms, and opens it in the agents and
+// pinned Claude Code and Lavish, each once the user confirms, and opens it in the agents and
 // workspaces folders and in each registered repository's clone, in the
 // user's own terminal, for the user to trust each (ADR 0011). Each of its
 // stages is headed and says what it is about to do; each step is skipped
@@ -99,7 +100,7 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		}
 		return o.fail(err)
 	}
-	fmt.Fprintf(w, "asmai init readies this account to run the factory, in %d stages: platform, config, folders, Claude Code and trust. A stage already done is skipped.\n", setupStages)
+	fmt.Fprintf(w, "asmai init readies this account to run the factory, in %d stages: platform, config, folders, Claude Code with Lavish, and trust. A stage already done is skipped.\n", setupStages)
 
 	current = "platform"
 	pinList, err := providers.ParsePins(pins)
@@ -177,7 +178,15 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 		return fail(err)
 	}
 	current = plan.Title
-	stage(4, plan.Title, fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already, then checks its version, subscription sign-in and permission rules.", plan.Title, plan.Version))
+	lavish, lavishNote, err := pinnedLavishPlan(paths)
+	if err != nil {
+		return fail(err)
+	}
+	about := fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s, once you confirm, unless it is installed already, then checks its version, subscription sign-in and permission rules.", plan.Title, plan.Version)
+	if lavish != nil {
+		about = fmt.Sprintf("Setup installs AsmAI's own copy of the pinned %s %s and of the pinned Lavish %s, each once you confirm, unless it is installed already, then checks %s's version, subscription sign-in and permission rules. Lavish is how decision requests reach you.", plan.Title, plan.Version, lavish.Version, plan.Title)
+	}
+	stage(4, plan.Title, about)
 	// A running daemon records the install now, and a pin it records is
 	// installed, as `asmai providers install` takes it; a stopped one finds
 	// the pinned copy at its path when it next starts.
@@ -209,6 +218,15 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 			}
 			report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
 		}
+	}
+
+	if lavish != nil {
+		current = lavish.Title
+		if err := installPinnedLavish(w, stdin, paths, *lavish, running, assumeYes, report); err != nil {
+			return fail(err)
+		}
+	} else if lavishNote != "" {
+		fmt.Fprintln(w, lavishNote)
 	}
 
 	// The pinned Claude Code is there now: check that it reports the pinned
@@ -268,6 +286,44 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	}
 	fmt.Fprintln(w, "Init is done: `asmai start` starts the factory, and `asmai repo add` registers a repository for it to work on.")
 	return 0
+}
+
+// installPinnedLavish installs the pinned Lavish of plan, as `asmai providers
+// install` does and with a confirmation of its own, unless the pinned build is
+// at its path already, and reports the step. A running daemon records the
+// install now; a stopped one finds the pinned build at its path when it next
+// starts.
+func installPinnedLavish(w io.Writer, stdin io.Reader, paths statedir.Paths, plan providers.Plan, running, assumeYes bool, report func(step, state, detail string)) error {
+	present, err := providers.Present(plan)
+	if err != nil {
+		return err
+	}
+	recorded := false
+	if present && running {
+		resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandProviders})
+		if err != nil {
+			return err
+		}
+		recorded = slices.ContainsFunc(resp.Providers, func(installed store.ProviderInstall) bool {
+			return installed.Name == plan.Name && installed.Version == plan.Version && installed.Path == plan.Path
+		})
+	}
+	if present && (recorded || !running) {
+		report(plan.Title, stepAlreadyDone, fmt.Sprintf("The pinned %s %s is at %s", plan.Title, plan.Version, plan.Path))
+		return nil
+	}
+	if !present {
+		if err := fetchPinnedAs(w, stdin, plan, assumeYes); err != nil {
+			return err
+		}
+	}
+	if running {
+		if _, err := recordInstall(paths, plan); err != nil {
+			return err
+		}
+	}
+	report(plan.Title, stepDone, fmt.Sprintf("Installed the pinned %s %s at %s", plan.Title, plan.Version, plan.Path))
+	return nil
 }
 
 func chooseClaudeDefaultModel(w io.Writer, stdin io.Reader, assumeYes bool, requested string) (string, error) {

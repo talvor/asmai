@@ -63,7 +63,7 @@ type upstreamReport struct {
 // certified, that the configuration file staffs the roles and holds no
 // problem, that the pinned Claude Code is installed, reports the pinned
 // version, uses a Claude subscription sign-in and lets AsmAI's permission
-// rules take effect, and that Claude
+// rules take effect, that the pinned Lavish is installed, and that Claude
 // Code trusts the directories agents start in. It returns them with the
 // configuration file's path and the configuration, when it could be read.
 func hostChecks(paths statedir.Paths, home string, registered []store.Repository) (checks []daemon.Check, configFile string, cfg config.Config, err error) {
@@ -110,6 +110,21 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 				return daemon.Check(certify.Version(context.Background(), path, p.ClaudeCode.Version, providers.ClaudeCodeVersion))
 			}, daemon.SignInCheck,
 			func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir, paths.Socket) })...)
+	}
+	// A Lavish pinned but not yet published for this platform leaves nothing to install.
+	if lavish, _, err := pinnedLavishPlan(paths); err != nil {
+		checks = append(checks, daemon.Check{Name: "Lavish", Problem: err.Error(), Fix: "run an asmai built with its pins file"})
+	} else if lavish != nil {
+		present, err := providers.Present(*lavish)
+		name := "Lavish " + lavish.Version
+		switch {
+		case err != nil:
+			checks = append(checks, daemon.Check{Name: name, Problem: err.Error(), Fix: "run `asmai providers install`"})
+		case !present:
+			checks = append(checks, daemon.Check{Name: name, Problem: fmt.Sprintf("the pinned Lavish %s is not installed at %s, so the factory cannot show you decision requests", lavish.Version, lavish.Path), Fix: "run `asmai providers install`"})
+		default:
+			checks = append(checks, daemon.Check{Name: name, OK: true})
+		}
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
 	return checks, configFile, cfg, nil

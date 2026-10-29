@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,6 +145,37 @@ func TestARepositoryCanUseAnExplicitBranchWithoutOriginHEAD(t *testing.T) {
 	if got, want := git(t, resp.Repository.Clone, "rev-parse", "refs/remotes/origin/trunk"), git(t, origin, "rev-parse", "refs/heads/trunk"); got != want {
 		t.Errorf("the clone fetched %s, want %s", got, want)
 	}
+}
+
+func TestRepositoryRegistrationKeepsItsSetupJobWhenOriginLookupFails(t *testing.T) {
+	p, _ := repoDaemon(t)
+	origin := remoteWithoutSetup(t)
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	wrapper := "#!/bin/sh\nif [ \"$1\" = ls-remote ] && [ \"$2\" = --heads ] && [ \"$3\" = origin ]; then exit 69; fi\nexec '" + strings.ReplaceAll(gitPath, "'", "'\\''") + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	resp, err := addRepo(t, p, origin, "fixture")
+	if err != nil || resp.Repository == nil || resp.Job == nil || resp.Job.Number != 1 {
+		t.Fatalf("registration during an origin lookup failure answered %+v (%v)", resp, err)
+	}
+	s, err := store.OpenReadOnly(p.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if jobs, err := s.Jobs(); err != nil || len(jobs) != 1 || jobs[0].Number != resp.Job.Number {
+		t.Errorf("registration recorded jobs %+v (%v), want its setup job", jobs, err)
+	}
+	if branch, err := s.JobBranch(resp.Job.Number); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("registration recorded branch %+v (%v), want a later retry", branch, err)
+	}
+	t.Logf("running daemon registered %s with setup job %d while origin lookup failed; branch awaits retry", resp.Repository.Name, resp.Job.Number)
 }
 
 func TestARegistrationThatCannotBeCompletedLeavesNothingBehind(t *testing.T) {

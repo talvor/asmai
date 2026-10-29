@@ -225,6 +225,44 @@ func cloned(t *testing.T) (clone, remote, first string) {
 	return clone, remote, run(t, clone, "rev-parse", "HEAD")
 }
 
+func TestOriginJobBranchConflictFindsAncestorRefs(t *testing.T) {
+	for _, tc := range []struct {
+		name, branch, prefix string
+	}{
+		{"legacy branch at prefix", "asmai/job-1-old", "job-1-old"},
+		{"assignment parent", "asmai/test/job-1", "test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clone, _, first := cloned(t)
+			run(t, clone, "push", "origin", first+":refs/heads/"+tc.branch)
+			got, err := OriginJobBranchConflict(context.Background(), clone, tc.prefix, 1)
+			if err != nil || got != tc.branch {
+				t.Errorf("OriginJobBranchConflict = %q, %v; want %q", got, err, tc.branch)
+			}
+		})
+	}
+}
+
+func TestOriginHasBranchFindsParentAndChildRefs(t *testing.T) {
+	for _, tc := range []struct {
+		name, branch string
+		want         bool
+	}{
+		{"assignment parent", "asmai/test/job-1", true},
+		{"assignment child", "asmai/test/job-1/1/nested", true},
+		{"another job", "asmai/test/job-2", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clone, _, first := cloned(t)
+			run(t, clone, "push", "origin", first+":refs/heads/"+tc.branch)
+			got, err := OriginHasBranch(context.Background(), clone, "asmai/test/job-1/1")
+			if err != nil || got != tc.want {
+				t.Errorf("OriginHasBranch = %t, %v; want %t", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestAWorkspaceIsACheckoutOfTheCloneOnItsOwnBranchAtACommitAndPushesToOrigin(t *testing.T) {
 	ctx := context.Background()
 	clone, remote, first := cloned(t)

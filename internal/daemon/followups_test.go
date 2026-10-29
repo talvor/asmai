@@ -52,7 +52,7 @@ func newFirstJobWithPullRequest(t *testing.T, delivered, keepSecond bool) delive
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ASMAI_TEST_DIR", testDir)
-	branch := JobBranchName(f.job)
+	branch := jobBranchFor(f.job)
 	if err := os.WriteFile(filepath.Join(testDir, "pr-branch"), []byte(branch), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestAFollowUpToAJobWithAnOpenPullRequestContinuesItsBranchAndPullRequestFro
 	if got := git(t, f.clone, "rev-parse", "refs/heads/"+f.branch); got != originTip {
 		t.Errorf("the clone's branch is at %s, want origin's copy %s", got, originTip)
 	}
-	if out := git(t, f.clone, "branch", "--list", JobBranchName(j)); out != "" {
+	if out := git(t, f.clone, "branch", "--list", jobBranchFor(j)); out != "" {
 		t.Errorf("the branch the daemon made as the follow-up opened is still there: %s", out)
 	}
 	if got := git(t, filepath.Join(f.d.cfg.Paths.Views, fmt.Sprintf("job-%d", j.Number)), "rev-parse", "HEAD"); got != originTip {
@@ -185,7 +185,7 @@ func TestAFollowUpToAJobWithAnOpenPullRequestContinuesItsBranchAndPullRequestFro
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b2.Continues != 0 || b2.Name != JobBranchName(second) || !strings.Contains(resp2.Starts, "open job 2 holds the job branch") {
+	if b2.Continues != 0 || b2.Name != jobBranchFor(second) || !strings.Contains(resp2.Starts, "open job 2 holds the job branch") {
 		t.Errorf("the second follow-up's branch is %+v and it says %q, want a new branch and the reason", b2, resp2.Starts)
 	}
 	if _, err := f.s.JobBranchMade(store.JobBranch{Job: 99, Repository: "fixture", Name: f.branch, StartedFrom: originTip, View: "v"}, time.Now()); err == nil {
@@ -294,7 +294,7 @@ func TestAFollowUpKeepsItsOwnBranchUntilLiveWorkIsCommittedAndPushed(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if branch.Name != JobBranchName(j) || branch.Continues != 0 || resp.Continues != nil || !strings.Contains(resp.Starts, want) {
+		if branch.Name != jobBranchFor(j) || branch.Continues != 0 || resp.Continues != nil || !strings.Contains(resp.Starts, want) {
 			t.Errorf("unsafe handover: branch = %+v, response = %+v, want %q", branch, resp, want)
 		}
 		if predecessor, err := f.s.Job(f.job.Number); err != nil || predecessor.State != store.JobOpen {
@@ -455,7 +455,7 @@ func TestAFollowUpStartsAfreshOnceThePullRequestIsMergedOrClosedOrMissing(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			if b.Continues != 0 || b.Name != JobBranchName(j) || resp.Continues != nil || !strings.Contains(resp.Starts, state) {
+			if b.Continues != 0 || b.Name != jobBranchFor(j) || resp.Continues != nil || !strings.Contains(resp.Starts, state) {
 				t.Errorf("the follow-up's branch is %+v and the link answered %+v and %q, want a new branch, with %s as the reason", b, resp.Continues, resp.Starts, state)
 			}
 			if b.StartedFrom == f.commits[0] {

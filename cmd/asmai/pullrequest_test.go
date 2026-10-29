@@ -107,7 +107,7 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
 	const (
-		jobBranch = "asmai/job-1-add-a-greeting"
+		jobBranch = "asmai/test/job-1-add-a-greeting"
 		url       = "https://github.com/talvor/asmai-fixture/pull/7"
 		sha       = "[0-9a-f]{40}"
 	)
@@ -150,8 +150,8 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 			fakeRun(`gh pr edit 7 --repo talvor/asmai-fixture --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "^"+url+"\n$"),
 			fakeRun(`asmai effect pull-request `+url, 0, "(?s)effect [0-9]+ recorded: pull-request "+url+" "),
 			// A pull request from another branch is not the job's.
-			fakeRun(`gh pr create --repo talvor/asmai-fixture --base main --head asmai/job-1/1 --title 'Not the job branch' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull/8"),
-			fakeRun(`asmai effect pull-request https://github.com/talvor/asmai-fixture/pull/8`, 1, "nothing is recorded: pull request #8 is from asmai/job-1/1, not the job branch "+jobBranch),
+			fakeRun(`gh pr create --repo talvor/asmai-fixture --base main --head asmai/test/job-1/1 --title 'Not the job branch' --body-file "$ASMAI_TEST_DIR/body.md"`, 0, "pull/8"),
+			fakeRun(`asmai effect pull-request https://github.com/talvor/asmai-fixture/pull/8`, 1, "nothing is recorded: pull request #8 is from asmai/test/job-1/1, not the job branch "+jobBranch),
 			// Nor is one in another repository, or from a fork, or one
 			// that is not open.
 			fakeRun(`printf '{"number":9,"url":"https://github.com/other/asmai-fixture/pull/9","isDraft":true,"headRefName":"`+jobBranch+`","headRefOid":"abc","state":"OPEN"}' > "$ASMAI_TEST_DIR/gh/pr-9.json"`, 0, ""),
@@ -178,7 +178,7 @@ func deliverPullRequest(t *testing.T, refuseDraft bool) {
 	worker := concat(agentSession, turn(3, "assignment",
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		fakeRun(`printf 'hello\n' > greeting.txt && git add -A && git commit -q -m 'Add greeting.txt'`, 0, ""),
-		fakeRun(`git push -q origin asmai/job-1/1 && asmai effect push "origin/asmai/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
+		fakeRun(`git push -q origin asmai/test/job-1/1 && asmai effect push "origin/asmai/test/job-1/1@$(git rev-parse HEAD)"`, 0, "recorded: push"),
 		// A worker's pull-request effect is an effect like any other: the
 		// daemon looks nothing up for it.
 		fakeRun(`asmai effect pull-request https://github.com/talvor/asmai-fixture/pull/1`, 0, "(?s)recorded: pull-request [^\n]*\n$"),

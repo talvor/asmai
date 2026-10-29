@@ -35,7 +35,7 @@ func (f *twoResults) leaderWorks(t *testing.T) int64 {
 func TestTheDaemonPushesTheJobBranchForItsDeliveryOwnerAndRefusesOverOutsideCommitsUntilAWorkerMergesThem(t *testing.T) {
 	f := newTwoResults(t)
 	ctx := context.Background()
-	branch := JobBranchName(f.job)
+	branch := jobBranchFor(f.job)
 	push := Request{Session: "credential", Command: CommandPush, Job: f.job.Number}
 	if _, err := f.decide(CommandAccept, f.assignments[0].ID, "file-1.txt is there"); err != nil {
 		t.Fatal(err)

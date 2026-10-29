@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +36,61 @@ func OriginTip(ctx context.Context, clone, branch string) (string, error) {
 		return "", fmt.Errorf("reading origin's branch %s in %s: %w", branch, clone, err)
 	}
 	return commit, nil
+}
+
+// OriginHasBranch asks the origin of the repository at clone, over the
+// network, whether it has the branch name.
+func OriginHasBranch(ctx context.Context, clone, name string) (bool, error) {
+	exact := []string{name}
+	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+		exact = append(exact, parent)
+	}
+	conflict, err := originBranchConflict(ctx, clone, exact, []string{name + "/"})
+	if err != nil {
+		return false, fmt.Errorf("asking origin for branch %s in %s: %w", name, clone, err)
+	}
+	return conflict != "", nil
+}
+
+func OriginJobBranchConflict(ctx context.Context, clone, prefix string, number int64) (string, error) {
+	base := "asmai/" + prefix + "/job-" + strconv.FormatInt(number, 10)
+	conflict, err := originBranchConflict(ctx, clone, []string{"asmai", "asmai/" + prefix, base}, []string{base + "-", base + "/"})
+	if err != nil {
+		return "", fmt.Errorf("asking origin for job %d branches in %s: %w", number, clone, err)
+	}
+	return conflict, nil
+}
+
+func originBranchConflict(ctx context.Context, clone string, exact, prefixes []string) (string, error) {
+	args := []string{"ls-remote", "--heads", "origin"}
+	for _, name := range exact {
+		args = append(args, "refs/heads/"+name)
+	}
+	for _, prefix := range prefixes {
+		args = append(args, "refs/heads/"+prefix+"*")
+	}
+	out, err := git(ctx, clone, args...)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		_, ref, ok := strings.Cut(line, "\t")
+		if !ok || !strings.HasPrefix(ref, "refs/heads/") {
+			continue
+		}
+		branch := strings.TrimPrefix(ref, "refs/heads/")
+		for _, name := range exact {
+			if branch == name {
+				return branch, nil
+			}
+		}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(branch, prefix) {
+				return branch, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // Commit returns the commit rev names in the repository at dir.

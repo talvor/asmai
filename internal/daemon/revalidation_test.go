@@ -268,7 +268,7 @@ func TestAnOutsideCommitMergedInIsReviewedLikeAFixNotChecked(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.validate(t, store.ValidationInput{})
-	branch := JobBranchName(f.job)
+	branch := jobBranchFor(f.job)
 	other := filepath.Join(t.TempDir(), "other")
 	git(t, filepath.Dir(other), "clone", f.origin, other)
 	git(t, other, "checkout", "-b", branch)

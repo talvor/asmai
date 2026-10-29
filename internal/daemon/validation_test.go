@@ -105,7 +105,7 @@ func TestValidationIsHandedToQualityOnlyOnceTheJobBranchHasTakenInTheLatestBase(
 	if err != nil || head != resp.JobBranch.Tip || head == f.commits[0] {
 		t.Fatalf("after the merge, the head to validate is %q (%v), want the new tip %s", head, err, resp.JobBranch.Tip)
 	}
-	if ok, err := repos.Contains(context.Background(), f.clone, "refs/heads/"+JobBranchName(f.job), moved); err != nil || !ok {
+	if ok, err := repos.Contains(context.Background(), f.clone, "refs/heads/"+jobBranchFor(f.job), moved); err != nil || !ok {
 		t.Errorf("the job branch has the moved base in its history: %v (%v)", ok, err)
 	}
 
@@ -184,7 +184,7 @@ func TestAValidationIsAssignedReadOnlyAtTheExactHeadInACleanWorkspaceWithNoBranc
 	if common := git(t, a.Workspace.Path, "rev-parse", "--git-common-dir"); !strings.Contains(common, "fixture") {
 		t.Errorf("the workspace belongs to %s, want AsmAI's clone", common)
 	}
-	if out := git(t, v.clone, "branch", "--list", "asmai/job-1/*"); strings.Contains(out, "asmai/job-1/"+string(rune('0'+a.ID))) {
+	if out := git(t, v.clone, "branch", "--list", "asmai/test/job-1/*"); strings.Contains(out, "asmai/test/job-1/"+string(rune('0'+a.ID))) {
 		t.Errorf("the clone has a branch for the validation: %s", out)
 	}
 
@@ -282,7 +282,7 @@ func TestAValidationReportIsAtItsCommitAndAcceptingItDeliversItWithoutMovingTheJ
 	if resp.Assignment.State != store.AssignmentAccepted || resp.Dispatch == nil || resp.Dispatch.Agent != "leader@engineering" || notify != "leader@engineering" || resp.JobBranch != nil {
 		t.Errorf("the acceptance answered %+v, %+v and told %q", resp.Assignment, resp.Dispatch, notify)
 	}
-	if got := git(t, v.clone, "rev-parse", "refs/heads/"+JobBranchName(v.job)); got != v.tip {
+	if got := git(t, v.clone, "rev-parse", "refs/heads/"+jobBranchFor(v.job)); got != v.tip {
 		t.Errorf("the job branch is at %s, want it unmoved at %s", got, v.tip)
 	}
 	if _, err := os.Stat(a.Workspace.Path); !os.IsNotExist(err) {

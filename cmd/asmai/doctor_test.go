@@ -246,3 +246,126 @@ func TestAnAgentCannotRunDoctor(t *testing.T) {
 		t.Errorf("an agent's asmai doctor exited %d printing %q, want it refused", code, stderr.String())
 	}
 }
+
+// Doctor reports the prefix new branches go under and where it comes from,
+// and makes no ID of its own.
+func TestDoctorReportsTheBranchPrefixAndItsSource(t *testing.T) {
+	stateDir := readyFactory(t, idleLeader)
+	fakeUpstream(t, "v99.0.0", nil)
+	stopFactory(t)
+	idFile := filepath.Join(stateDir, "branch-id")
+	os.Remove(idFile)
+
+	stdout, _, _ := doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  none yet; ") {
+		t.Errorf("with no ID made, asmai doctor printed\n%s\nwant it to say the prefix is not made yet", stdout)
+	}
+	if _, err := os.Stat(idFile); err == nil {
+		t.Error("asmai doctor made a branch ID")
+	}
+
+	if err := os.WriteFile(idFile, []byte("k3x9qz\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, _ = doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  k3x9qz (from the ID kept in the state directory)") {
+		t.Errorf("with an ID kept, asmai doctor printed\n%s\nwant its prefix and source", stdout)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "Branch prefix") {
+			t.Logf("asmai doctor: %s", line)
+		}
+	}
+
+	configFile := filepath.Join(os.Getenv("HOME"), ".config", "asmai", "config.toml")
+	text, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, append([]byte("[branches]\nbranch_prefix = \"alice\"\n\n"), text...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, _ = doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  alice (from branch_prefix in the configuration file)") {
+		t.Errorf("with branch_prefix set, asmai doctor printed\n%s\nwant its prefix and source", stdout)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "Branch prefix") {
+			t.Logf("asmai doctor: %s", line)
+		}
+	}
+}
+
+func TestDoctorReportsTheRunningDaemonsAppliedBranchPrefix(t *testing.T) {
+	readyFactory(t, idleLeader)
+	fakeUpstream(t, "v99.0.0", nil)
+	original := readConfig(t)
+	configured := "[branches]\nbranch_prefix = \"alice\"\n\n" + original
+	check := func(prefix, source string, pending bool) {
+		t.Helper()
+		stdout, stderr, code := doctorIn(t)
+		if code != 0 || !strings.Contains(stdout, "Branch prefix  "+prefix+" ("+source+")") || strings.Contains(stdout, "pending apply:") != pending {
+			t.Errorf("doctor exited %d printing %q, %q; want prefix %s from %s, pending %v", code, stdout, stderr, prefix, source, pending)
+		}
+		stdout, stderr, code = doctorIn(t, "--json")
+		var report struct {
+			BranchPrefix struct {
+				Prefix       string `json:"prefix"`
+				Source       string `json:"source"`
+				PendingApply bool   `json:"pending_apply"`
+			} `json:"branch_prefix"`
+		}
+		if code != 0 || json.Unmarshal([]byte(stdout), &report) != nil || report.BranchPrefix.Prefix != prefix || report.BranchPrefix.Source != source || report.BranchPrefix.PendingApply != pending {
+			t.Errorf("doctor --json exited %d printing %q, %q; want prefix %s from %s, pending %v", code, stdout, stderr, prefix, source, pending)
+		}
+	}
+	stateSource := "from the ID kept in the state directory"
+	configSource := "from branch_prefix in the configuration file"
+	check("test", stateSource, false)
+	writeConfig(t, configured)
+	check("test", stateSource, true)
+	if stdout, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 || !strings.Contains(stdout, "Applied") {
+		t.Fatalf("config apply exited %d printing %q, %q", code, stdout, stderr)
+	}
+	check("alice", configSource, false)
+	writeConfig(t, strings.Replace(configured, "alice", "bob", 1))
+	check("alice", configSource, true)
+	writeConfig(t, original)
+	check("alice", configSource, true)
+	if stdout, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 || !strings.Contains(stdout, "Applied") {
+		t.Fatalf("config apply exited %d printing %q, %q", code, stdout, stderr)
+	}
+	check("test", stateSource, false)
+}
+
+func TestDoctorDoesNotReportAnUnconfirmedConfiguredPrefixAsApplied(t *testing.T) {
+	readyFactory(t, idleLeader)
+	fakeUpstream(t, "v99.0.0", nil)
+	original := readConfig(t)
+	configured := "[branches]\nbranch_prefix = \"alice\"\n\n" + original
+	writeConfig(t, configured)
+	if stdout, stderr, code := runIn(t, "y\n", "config", "apply"); code != 0 || !strings.Contains(stdout, "Applied") {
+		t.Fatalf("config apply exited %d printing %q, %q", code, stdout, stderr)
+	}
+	writeConfig(t, strings.Replace(configured, "alice", "bob", 1)+"\n[repositories.ghost]\norigin = \"https://example.test/ghost.git\"\ndefault_branch = \"main\"\n")
+	stdout, stderr, _ := doctorIn(t)
+	if !strings.Contains(stdout, "Branch prefix  applied prefix could not be confirmed") || !strings.Contains(stdout, "configured branch_prefix bob (unconfirmed)") || strings.Contains(stdout, "Branch prefix  bob (") {
+		t.Errorf("doctor printed %q, %q; want the file prefix labelled unconfirmed", stdout, stderr)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "Branch prefix") || strings.Contains(line, "configured branch_prefix") {
+			t.Logf("asmai doctor: %s", strings.TrimSpace(line))
+		}
+	}
+	stdout, stderr, _ = doctorIn(t, "--json")
+	var report struct {
+		BranchPrefix struct {
+			Prefix                string `json:"prefix"`
+			Source                string `json:"source"`
+			ConfiguredUnconfirmed string `json:"configured_unconfirmed"`
+		} `json:"branch_prefix"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil || report.BranchPrefix.Prefix != "" || report.BranchPrefix.Source != "applied prefix could not be confirmed" || report.BranchPrefix.ConfiguredUnconfirmed != "bob" {
+		t.Errorf("doctor --json printed %q, %q (%v); want an unconfirmed configured prefix", stdout, stderr, err)
+	}
+}

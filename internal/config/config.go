@@ -50,6 +50,10 @@ type Config struct {
 	Limits Limits
 	// Logs are the log settings, with their defaults.
 	Logs Logs
+	// BranchPrefix is [branches] branch_prefix: the name this install's new job
+	// and assignment branches go under, or "" when the file sets none and
+	// the install's own ID is used.
+	BranchPrefix string
 	// Providers holds each provider's settings, by name; only Claude, which
 	// is always there.
 	Providers map[string]Provider
@@ -441,7 +445,7 @@ func CheckRepositoryName(name string) error {
 }
 
 // tablesRead is what the file's tables are, as problems name them.
-const tablesRead = "[limits], [logs], [providers.claude], [roles.<role>], [repositories.<name>] and [[repositories.<name>.writable]]"
+const tablesRead = "[limits], [logs], [branches], [providers.claude], [roles.<role>], [repositories.<name>] and [[repositories.<name>.writable]]"
 
 // checkTable checks a table header of path on line.
 func checkTable(path []string, line int) (Problem, bool) {
@@ -450,7 +454,7 @@ func checkTable(path []string, line int) (Problem, bool) {
 		Problem: fmt.Sprintf("%s is not a table this asmai reads; it reads only %s", header, tablesRead),
 		Fix:     fmt.Sprintf("remove %s and its fields", header)}
 	switch path[0] {
-	case "limits", "logs":
+	case "limits", "logs", "branches":
 		if len(path) > 1 {
 			return notRead, false
 		}
@@ -538,7 +542,7 @@ func (st *state) keyValue(p *unstable.Parser, path []string, value *unstable.Nod
 // reads.
 func tableAndField(path []string) (table []string, name string) {
 	switch {
-	case len(path) == 2 && (path[0] == "limits" || path[0] == "logs"):
+	case len(path) == 2 && (path[0] == "limits" || path[0] == "logs" || path[0] == "branches"):
 		return path[:1], path[1]
 	case len(path) == 3 && (path[0] == "providers" || path[0] == "roles" || path[0] == "repositories"):
 		return path[:2], path[2]
@@ -556,6 +560,8 @@ func (st *state) setField(table []string, name string, value *unstable.Node, lin
 		settings = limitSettings(&st.cfg.Limits)
 	case "logs":
 		settings = logSettings(&st.cfg.Logs)
+	case "branches":
+		settings = branchSettings(&st.cfg.BranchPrefix)
 	case "providers":
 		provider := st.cfg.Providers[table[1]]
 		settings, commit = providerSettings(&provider), func() { st.cfg.Providers[table[1]] = provider }
@@ -837,6 +843,36 @@ func logSettings(l *Logs) []setting {
 		{name: "daemon_files", kind: kindInteger, min: 1, example: "5", set: func(v value) { l.DaemonFiles = int(v.number) }},
 		{name: "daemon_file_size", kind: kindSize, example: `"20MB"`, set: func(v value) { l.DaemonFileSize = v.number }},
 		{name: "recording_retention", kind: kindDuration, example: `"14d"`, set: func(v value) { l.RecordingRetention = time.Duration(v.number) }},
+	}
+}
+
+// MaxBranchPrefix is the most characters a custom branch prefix has.
+const MaxBranchPrefix = 20
+
+// CheckBranchPrefix returns why prefix is no branch prefix, with the fix, or
+// "" when it is one: 1 to MaxBranchPrefix lower-case letters, digits and
+// hyphens, starting with a letter or digit.
+func CheckBranchPrefix(prefix string) (problem, fix string) {
+	fix = `write branch_prefix as 1 to 20 lower-case letters, digits and hyphens, starting with a letter or digit, such as branch_prefix = "alice"`
+	if prefix == "" || len(prefix) > MaxBranchPrefix {
+		return fmt.Sprintf("is %q, which is %d characters; a prefix has 1 to %d", prefix, len(prefix), MaxBranchPrefix), fix
+	}
+	for i, r := range prefix {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '-' && i > 0:
+		default:
+			return fmt.Sprintf("is %q, which has %q where a prefix takes only lower-case letters, digits and hyphens, and starts with a letter or digit", prefix, r), fix
+		}
+	}
+	return "", ""
+}
+
+func branchSettings(prefix *string) []setting {
+	return []setting{
+		{name: "branch_prefix", kind: kindString, example: `"alice"`,
+			check: func(text string, _ []string) (string, string) { return CheckBranchPrefix(text) },
+			set:   func(v value) { *prefix = v.text }},
 	}
 }
 

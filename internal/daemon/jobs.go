@@ -23,26 +23,10 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 	switch req.Command {
 	case CommandJobOpen:
 		var j store.Job
-		// Keep the generation fixed until the job is committed. A session
-		// ending while this request is in flight cannot turn a stale call
-		// into a new job after its replacement starts.
-		d.mu.Lock()
-		ref, ok := d.sessions[req.Session]
-		if !ok || ref.address.String() != "leader@coordination" || d.leaders[ref.address.String()] == nil || d.leaders[ref.address.String()].session == nil || d.leaders[ref.address.String()].generation != ref.generation || d.stopping {
-			err = refuse("unknown or superseded agent session credential")
-		} else {
-			j, err = d.store.JobOpened(store.Job{Repository: req.Repository, Witness: req.Witness, Reading: req.Reading, Mandate: req.Mandate, Criteria: req.Criteria}, req.LatestWitness, time.Now())
-		}
-		d.mu.Unlock()
+		conn.SetDeadline(time.Now().Add(2*gitTimeout + time.Minute))
+		j, err = d.openJob(req)
 		if err == nil {
 			resp.Job = &j
-			// Making the branch may fetch from origin, which takes longer
-			// than a request is usually given.
-			conn.SetDeadline(time.Now().Add(gitTimeout + time.Minute))
-			// A job with no repository has no job branch to make.
-			if j.Repository != "" {
-				d.makeJobBranch(j)
-			}
 		}
 	case CommandJobLink:
 		var j store.Job
@@ -177,6 +161,43 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 		resp.Error = err.Error()
 	}
 	reply(conn, resp)
+}
+
+func (d *daemon) openJob(req Request) (store.Job, error) {
+	d.repoMu.Lock()
+	defer d.repoMu.Unlock()
+	if req.Repository != "" {
+		repository, err := d.store.Repository(req.Repository)
+		if err == nil {
+			number, err := d.store.NextJobNumber()
+			if err != nil {
+				return store.Job{}, err
+			}
+			prefix, err := d.branchPrefix()
+			if err != nil {
+				return store.Job{}, err
+			}
+			ctx, cancel := context.WithTimeout(d.work, gitTimeout)
+			defer cancel()
+			if err := checkJobBranchOrigin(ctx, repository.Clone, prefix, store.Job{Number: number, Reading: req.Reading}); errors.As(err, new(*userError)) {
+				return store.Job{}, err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return store.Job{}, err
+		}
+	}
+	d.mu.Lock()
+	ref, ok := d.sessions[req.Session]
+	if !ok || ref.address.String() != "leader@coordination" || d.leaders[ref.address.String()] == nil || d.leaders[ref.address.String()].session == nil || d.leaders[ref.address.String()].generation != ref.generation || d.stopping {
+		d.mu.Unlock()
+		return store.Job{}, refuse("unknown or superseded agent session credential")
+	}
+	j, err := d.store.JobOpened(store.Job{Repository: req.Repository, Witness: req.Witness, Reading: req.Reading, Mandate: req.Mandate, Criteria: req.Criteria}, req.LatestWitness, time.Now())
+	d.mu.Unlock()
+	if err == nil && j.Repository != "" {
+		d.makeJobBranch(j)
+	}
+	return j, err
 }
 
 // cleanScratch removes the scratch workspaces of job, which has no repository

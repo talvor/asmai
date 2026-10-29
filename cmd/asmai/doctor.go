@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +113,59 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
 	return checks, configFile, cfg, nil
+}
+
+// branchPrefixOf returns the prefix selected by cfg and where it comes from,
+// without making the install's branch ID: the configuration's branch_prefix,
+// else the ID kept in the state directory. An install the daemon has not yet
+// given an ID has no prefix, and the source says when it gets one.
+func branchPrefixOf(cfg config.Config, paths statedir.Paths) (prefix, source string) {
+	if cfg.BranchPrefix != "" {
+		return cfg.BranchPrefix, "from branch_prefix in the configuration file"
+	}
+	id, err := paths.ReadBranchID()
+	switch {
+	case err != nil:
+		return "", err.Error()
+	case id == "":
+		return "", "the daemon makes an ID in the state directory when the next job needs a branch"
+	}
+	return id, "from the ID kept in the state directory"
+}
+
+func effectiveBranchPrefix(cfg config.Config, configFile string, paths statedir.Paths) (prefix, source string, pending, known bool) {
+	data, err := os.ReadFile(configFile)
+	if err == nil {
+		resp, callErr := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
+		if errors.Is(callErr, daemon.ErrNotRunning) {
+			prefix, source = branchPrefixOf(cfg, paths)
+			return prefix, source, false, true
+		}
+		if callErr != nil || resp.ConfigApply == nil {
+			return "", "applied prefix could not be confirmed", false, false
+		}
+		for _, change := range resp.ConfigApply.Changes {
+			if change.Setting == "branches.branch_prefix" {
+				applied := ""
+				if change.Before != "" {
+					applied, err = strconv.Unquote(change.Before)
+					if err != nil {
+						return "", "applied prefix could not be confirmed", false, false
+					}
+				}
+				pending = applied != cfg.BranchPrefix
+				cfg.BranchPrefix = applied
+				break
+			}
+		}
+		prefix, source = branchPrefixOf(cfg, paths)
+		return prefix, source, pending, true
+	}
+	if _, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStatus}); !errors.Is(err, daemon.ErrNotRunning) {
+		return "", "applied prefix could not be confirmed", false, false
+	}
+	prefix, source = branchPrefixOf(cfg, paths)
+	return prefix, source, false, true
 }
 
 // registeredRepositories reads the registered repositories from the store
@@ -227,6 +281,7 @@ func doctor(o *output, paths statedir.Paths) int {
 	if err != nil {
 		return o.fail(err)
 	}
+	prefix, prefixSource, prefixPending, prefixKnown := effectiveBranchPrefix(cfg, configFile, paths)
 	unqualified, skillChecks := unqualifiedSkills(cfg, registered)
 	checks = append(checks, skillChecks...)
 	gaps := providers.ClaudeCodeUnhidden()
@@ -246,12 +301,17 @@ func doctor(o *output, paths statedir.Paths) int {
 		if unqualified == nil {
 			unqualified = []unqualifiedSkill{}
 		}
+		branchPrefix := map[string]any{"prefix": prefix, "source": prefixSource, "pending_apply": prefixPending}
+		if !prefixKnown {
+			branchPrefix["configured_unconfirmed"] = cfg.BranchPrefix
+		}
 		code := o.printData(map[string]any{
 			"ok":                 failures == 0,
 			"platform":           runtime.GOOS + "/" + runtime.GOARCH,
 			"provider":           map[string]string{"name": providers.ClaudeCode, "pinned": p.ClaudeCode.Version},
 			"config":             configFile,
 			"state_dir":          paths.Dir,
+			"branch_prefix":      branchPrefix,
 			"checks":             checks,
 			"hiding_gaps":        gaps,
 			"unqualified_skills": unqualified,
@@ -268,6 +328,19 @@ func doctor(o *output, paths statedir.Paths) int {
 	fmt.Fprintf(w, "Provider pin   Claude Code %s\n", p.ClaudeCode.Version)
 	fmt.Fprintf(w, "Configuration  %s\n", configFile)
 	fmt.Fprintf(w, "State          %s\n", paths.Dir)
+	if !prefixKnown {
+		fmt.Fprintln(w, "Branch prefix  applied prefix could not be confirmed")
+		if cfg.BranchPrefix != "" {
+			fmt.Fprintf(w, "               configured branch_prefix %s (unconfirmed)\n", cfg.BranchPrefix)
+		}
+	} else if prefix == "" {
+		fmt.Fprintf(w, "Branch prefix  none yet; %s\n", prefixSource)
+	} else {
+		fmt.Fprintf(w, "Branch prefix  %s (%s)\n", prefix, prefixSource)
+	}
+	if prefixPending {
+		fmt.Fprintln(w, "               pending apply: the configuration file's branch_prefix differs; run `asmai config apply`")
+	}
 	fmt.Fprintln(w, "\nChecks")
 	for _, c := range checks {
 		if c.OK {

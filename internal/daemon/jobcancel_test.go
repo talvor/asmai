@@ -71,7 +71,7 @@ func newCancellableJob(t *testing.T, f twoResults, withPullRequest bool) cancell
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ASMAI_TEST_DIR", testDir)
-	branch := JobBranchName(f.job)
+	branch := jobBranchFor(f.job)
 	for name, text := range map[string]string{"pr-branch": branch, "pr-state": "OPEN"} {
 		if err := os.WriteFile(filepath.Join(testDir, name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
@@ -296,7 +296,7 @@ func TestAJobCancelEndsAnAssignmentWhoseWorkspaceIsGoneAsCancelledWithNoPush(t *
 
 func TestCoordinationCancelsAJobAtTheUsersWordAndEveryBranchStaysOnOrigin(t *testing.T) {
 	c := newCancellableJob(t, newTwoResults(t), true)
-	branch := JobBranchName(c.job)
+	branch := jobBranchFor(c.job)
 	resp, err := c.cancel("coordination", c.job.Number)
 	if err != nil {
 		t.Fatal(err)

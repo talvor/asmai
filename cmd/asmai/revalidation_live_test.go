@@ -250,7 +250,7 @@ func TestEarlyAssignmentReviewAndCleanMovedBaseMergeThroughTheRunningFactory(t *
 		gitIn(t, dir, "fetch", "origin")
 		gitIn(t, dir, "merge", "--no-edit", "origin/main")
 	}, "clean merge check passes")
-	if tip := gitIn(t, filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai", "repositories", "fixture"), "rev-parse", "asmai/job-1-add-a-greeting"); tip != firstSHA {
+	if tip := gitIn(t, filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai", "repositories", "fixture"), "rev-parse", "asmai/test/job-1-add-a-greeting"); tip != firstSHA {
 		t.Fatalf("early review setup moved job head to %s, want %s", tip, firstSHA)
 	}
 	early := jsonCall("coordination", "handoff", "send", "--job", "1", "--to", "quality", "--assignment", fmt.Sprint(merge.Assignment.ID), "--outcome", "Review the merge assignment", "--decisions", "none", "--evidence", "merge result", "--constraints", "none", "--permissions", "none", "--criterion", "reviewed")

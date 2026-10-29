@@ -58,14 +58,10 @@ type upstreamReport struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// hostChecks runs the checks the start of the factory, `asmai init` and
-// `asmai doctor` all run, without changing anything: that this platform is
-// certified, that the configuration file staffs the roles and holds no
-// problem, that the pinned Claude Code is installed, reports the pinned
-// version, uses a Claude subscription sign-in and lets AsmAI's permission
-// rules take effect, and that Claude
-// Code trusts the directories agents start in. It returns them with the
-// configuration file's path and the configuration, when it could be read.
+// hostChecks runs doctor's read-only host checks: the platform, staffing,
+// pinned Claude Code version, subscription sign-in, permission rules,
+// pinned Lavish installation and directory trust. It returns the checks
+// with the configuration file's path and the configuration, when readable.
 func hostChecks(paths statedir.Paths, home string, registered []store.Repository) (checks []daemon.Check, configFile string, cfg config.Config, err error) {
 	p, err := providers.ParsePins(pins)
 	if err != nil {
@@ -110,6 +106,23 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 				return daemon.Check(certify.Version(context.Background(), path, p.ClaudeCode.Version, providers.ClaudeCodeVersion))
 			}, daemon.SignInCheck,
 			func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir, paths.Socket) })...)
+	}
+	// A Lavish pinned but not yet published for this platform leaves nothing to install.
+	if lavish, _, err := pinnedLavishPlan(paths); err != nil {
+		checks = append(checks, daemon.Check{Name: "Lavish", Problem: err.Error(), Fix: "run an asmai built with its pins file"})
+	} else if lavish != nil {
+		state, err := lavish.Standing(lavish.Version)
+		name := "Lavish " + lavish.Version
+		switch {
+		case err != nil:
+			checks = append(checks, daemon.Check{Name: name, Problem: err.Error(), Fix: "run `asmai providers install`"})
+		case state == providers.StateMissing:
+			checks = append(checks, daemon.Check{Name: name, Problem: fmt.Sprintf("the pinned Lavish %s is not installed at %s, so the factory cannot show you decision requests", lavish.Version, lavish.Path), Fix: "run `asmai providers install`"})
+		case state == providers.StateMismatch:
+			checks = append(checks, daemon.Check{Name: name, Problem: fmt.Sprintf("the Lavish at %s is not the pinned build %s or is not executable, so the factory cannot show you decision requests", lavish.Path, lavish.Version), Fix: "run `asmai providers install`"})
+		default:
+			checks = append(checks, daemon.Check{Name: name, OK: true})
+		}
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
 	return checks, configFile, cfg, nil
@@ -263,11 +276,11 @@ func upstreamStatus() upstreamReport {
 	return report
 }
 
-// doctor is `asmai doctor`: it runs the checks the start of the factory
-// runs, and changes nothing. It also reports what the pinned Claude Code
-// cannot hide from an agent, marks added and repository skills as
-// unqualified, and says when upstream has a newer skill release. It exits 1
-// when a check fails; the rest it only reports.
+// doctor is `asmai doctor`: it checks the host without changing anything.
+// It also reports what the pinned Claude Code cannot hide from an agent,
+// marks added and repository skills as unqualified, and says when upstream
+// has a newer skill release. It exits 1 when a check fails; the rest it
+// only reports.
 func doctor(o *output, paths statedir.Paths) int {
 	home, err := os.UserHomeDir()
 	if err != nil {

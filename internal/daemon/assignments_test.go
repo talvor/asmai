@@ -130,6 +130,9 @@ func TestJobOpenRefusesAnOriginBranchInItsJobNumberNamespace(t *testing.T) {
 		{"same job branch", "asmai/test/job-1-clash"},
 		{"another slug", "asmai/test/job-1-other-title"},
 		{"assignment branch", "asmai/test/job-1/1"},
+		{"asmai parent", "asmai"},
+		{"prefix parent", "asmai/test"},
+		{"assignment parent", "asmai/test/job-1"},
 	} {
 		t.Run(branchAtOrigin.name, func(t *testing.T) {
 			paths := stateDir(t)

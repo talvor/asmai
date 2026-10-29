@@ -20,6 +20,7 @@ Before this decision, a job branch was named `asmai/job-<n>-<slug>` and an assig
 
 - Two installs can share an origin. Two factories sharing one state directory remain out of scope: each install has its own clone and state directory, and only origin is shared.
 - A user who changes `branch_prefix` while jobs are open leaves those jobs on their old names, and new jobs use the new prefix.
+- Finish or cancel jobs before upgrading; handling jobs left open across an upgrade is best-effort. A branchless old job gets the new prefix on retry, while a follow-up on an old job with an open PR continues that PR's existing branch.
 - The README's paragraph on job and assignment branches, its configuration reference and the glossary change with the implementation.
 - A job whose prefix and job-number branch namespace already exists on origin is refused before it is recorded. Other branch-creation failures leave the job open for its first assignment or `asmai job link` to retry.
 - The origin check is not a reservation. Two installs sharing a prefix can open the same job number and slug between the check and a branch push. If one pushes before the other's later branch check, the latter may already have recorded its job without a branch; the branch error is logged rather than returned by `job open`.

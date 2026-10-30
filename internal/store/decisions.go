@@ -378,11 +378,11 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 		return Dispatch{}, fmt.Errorf("assignment %d's latest worker dispatch %d is %s; wait for it to stop before redispatching", a.ID, w.Dispatch.ID, w.Dispatch.State)
 	}
 	for _, d := range unknown {
-		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), d.ID); err != nil {
+		if _, err := tx.Exec(`UPDATE dispatches SET state = ?, closed = ?, updated_at = ? WHERE id = ?`, DispatchStopped, ClosedRedispatched, timestamp(at), d.ID); err != nil {
 			return Dispatch{}, err
 		}
 		if _, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
-			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": DispatchUnknown, "state": DispatchStopped, "assignment": a.ID,
+			"id": d.ID, "agent": a.Worker, "generation": d.Generation, "from": DispatchUnknown, "state": DispatchStopped, "closed": ClosedRedispatched, "assignment": a.ID,
 		}); err != nil {
 			return Dispatch{}, err
 		}

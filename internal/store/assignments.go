@@ -268,6 +268,9 @@ type Report struct {
 	Commit    string `json:"commit"`
 	JobTip    string `json:"job_tip"`
 	TookInTip bool   `json:"took_in_tip"`
+	// Late says the result came in after the turn of its dispatch ended with
+	// no report, from work, such as sub-agents', that went on after it.
+	Late bool `json:"late,omitempty"`
 	ReportInput
 	// Effects are the effects the worker recorded in this dispatch before it
 	// made the report.
@@ -815,6 +818,75 @@ func currentDispatch(tx *sql.Tx, dispatch int64, agent string, generation int) (
 	return job, about.Int64, nil
 }
 
+// workedDispatch is currentDispatch, or the late dispatch of agent's session
+// of generation when that is dispatch, which it reports.
+func workedDispatch(tx *sql.Tx, dispatch int64, agent string, generation int) (job, assignment int64, late bool, err error) {
+	job, assignment, err = currentDispatch(tx, dispatch, agent, generation)
+	if err == nil {
+		return job, assignment, false, nil
+	}
+	if lateID, _, lateErr := lateDispatch(tx, agent, generation); lateErr != nil || lateID != dispatch {
+		return 0, 0, false, err
+	}
+	err = tx.QueryRow(`SELECT m.job, m.assignment FROM dispatches d JOIN messages m ON m.id = d.message WHERE d.id = ?`, dispatch).Scan(&job, &assignment)
+	return job, assignment, true, err
+}
+
+// LateDispatch returns the dispatch that worker, by address, still reports
+// on in its session of generation after the turn the session ran for it has
+// ended; see lateDispatch.
+func (s *Store) LateDispatch(worker string, generation int) (int64, error) {
+	dispatch, _, err := lateDispatch(s.db, worker, generation)
+	return dispatch, err
+}
+
+// lateDispatch returns the dispatch, and the assignment it gives, that
+// worker's session of generation still works on once the turn it ran for
+// that dispatch has ended. A worker's turn can end while sub-agents it
+// started are still running, and what they finish still belongs to that
+// dispatch. It is the latest dispatch of the active assignment the worker
+// carries, when the dispatch went to this session and was closed only
+// because its turn ended with no report. A dispatch closed in any other way,
+// or an assignment that was cancelled, given to another worker or is no
+// longer active, takes no late work: the error says why, and what the worker
+// does next.
+func lateDispatch(q querier, worker string, generation int) (dispatch, assignment int64, err error) {
+	var state, owner string
+	err = q.QueryRow(`SELECT id, state, owner FROM assignments WHERE worker = ? AND NOT `+endedAssignment+` ORDER BY id DESC LIMIT 1`, worker).Scan(&assignment, &state, &owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, fmt.Errorf("%s carries no assignment that takes a report: the one it worked on was accepted, cancelled or given to another worker. Report nothing more on it, and run `asmai inbox` for what you have been sent", worker)
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	if state != AssignmentActive {
+		return 0, 0, fmt.Errorf("assignment %d is %s, so it takes no new report. Keep your work as it is, and run `asmai inbox` for what %s sends you", assignment, state, owner)
+	}
+	w, err := workerDispatch(q, assignment)
+	if err != nil {
+		return 0, 0, err
+	}
+	var closed string
+	if err := q.QueryRow(`SELECT closed FROM dispatches WHERE id = ?`, w.Dispatch.ID).Scan(&closed); err != nil {
+		return 0, 0, err
+	}
+	switch {
+	case w.Dispatch.State != DispatchStopped:
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d is %s and waits for you: fetch it with `asmai inbox` and report on it", w.Dispatch.ID, assignment, w.Dispatch.State)
+	case w.Report != "":
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d already ended in a %s report; a new report needs a new dispatch, which %s sends. Keep your work as it is, and run `asmai inbox` for it", w.Dispatch.ID, assignment, w.Report, owner)
+	case w.Dispatch.Generation != generation:
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d went to an earlier session of %s; run `asmai inbox` and report on the dispatch it gives you", w.Dispatch.ID, assignment, worker)
+	case closed != ClosedTurnEnded:
+		reason := closed
+		if reason == "" {
+			reason = "unrecorded"
+		}
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d was closed (%s), so it takes no report. Keep your work as it is, and run `asmai inbox` for the dispatch %s sends you next", w.Dispatch.ID, assignment, reason, owner)
+	}
+	return w.Dispatch.ID, assignment, nil
+}
+
 // EffectRecorded records an effect that generation of agent's session made
 // in dispatch, and journals it. kind says what it is, such as push, and ref
 // what it is of, such as a branch and the commit pushed.
@@ -824,7 +896,8 @@ func (s *Store) EffectRecorded(agent string, generation int, dispatch int64, kin
 	}
 	var e Effect
 	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
-		job, assignment, err := currentDispatch(tx, dispatch, agent, generation)
+		// The late work of a turn that ended is recorded on its dispatch.
+		job, assignment, _, err := workedDispatch(tx, dispatch, agent, generation)
 		if err != nil {
 			return "", nil, err
 		}
@@ -876,7 +949,8 @@ func dispatchEffects(q interface {
 type Submission struct {
 	Agent      string
 	Generation int
-	// Dispatch is the dispatch the worker is working on.
+	// Dispatch is the dispatch the worker is working on, or the late
+	// dispatch a result of a turn that ended goes on.
 	Dispatch int64
 	// Kind is ReportResult or ReportBlocked.
 	Kind string
@@ -911,9 +985,14 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 		return Report{}, Dispatch{}, err
 	}
 	defer tx.Rollback()
-	_, assignmentID, err := currentDispatch(tx, sub.Dispatch, sub.Agent, sub.Generation)
+	// A result can come in after the turn of its dispatch ended, when the
+	// sub-agents the worker started finished later; a blocked report cannot.
+	_, assignmentID, late, err := workedDispatch(tx, sub.Dispatch, sub.Agent, sub.Generation)
 	if err != nil {
 		return Report{}, Dispatch{}, err
+	}
+	if late && sub.Kind != ReportResult {
+		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d is not the dispatch %s is working on in generation %d", sub.Dispatch, sub.Agent, sub.Generation)
 	}
 	if assignmentID == 0 {
 		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d is about no assignment, so there is nothing to report", sub.Dispatch)
@@ -1019,7 +1098,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	}
 	r := Report{
 		Assignment: a.ID, Dispatch: sub.Dispatch, Kind: sub.Kind, Agent: sub.Agent,
-		Commit: sub.Commit, JobTip: sub.JobTip, TookInTip: sub.TookInTip,
+		Commit: sub.Commit, JobTip: sub.JobTip, TookInTip: sub.TookInTip, Late: late,
 		ReportInput: in, Effects: effects, CreatedAt: at.UTC(),
 	}
 	data, err := json.Marshal(r)

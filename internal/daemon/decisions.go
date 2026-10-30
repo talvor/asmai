@@ -665,8 +665,9 @@ func (d *daemon) tellStalled(a store.Assignment, dispatch int64) {
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()
 	body := fmt.Sprintf("%s's turn for dispatch %d of assignment %d of job %d ended with no result and no blocked report. The assignment is still active and nothing is retried.\n%s\n"+
+		"A turn can end while sub-agents the worker started are still running: a result of their work still comes in on dispatch %d, with no redispatch, as long as the dispatch is the assignment's latest.\n"+
 		"Look at `asmai brief %d` and the effects %s recorded. Once the cause is fixed, send the assignment to %s again in a new dispatch with `asmai redispatch --assignment %d --reason <why>`.",
-		a.Worker, dispatch, a.ID, a.Job, d.originHolds(ctx, a), a.Job, a.Worker, a.Worker, a.ID)
+		a.Worker, dispatch, a.ID, a.Job, d.originHolds(ctx, a), dispatch, a.Job, a.Worker, a.Worker, a.ID)
 	d.mu.Lock()
 	if d.stopping {
 		d.mu.Unlock()

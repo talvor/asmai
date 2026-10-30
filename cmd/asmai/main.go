@@ -107,7 +107,8 @@ commands you type:
                               --repository-skills <role> (repeat for each role) and
                               --writable <path>[=<ENV>] (repeat for each folder), the folders
                               outside their workspaces that the repository's workers may write,
-                              such as a build cache; with none, the folders its language suggests
+                              such as a build cache; with none, the folders its language suggests.
+                              It needs the factory running: run asmai start first
   asmai repo list             list the registered repositories
   asmai repo show <name>      show what is recorded for a registered repository
   asmai repo remove <name>    remove a repository's record, its configuration entry and its

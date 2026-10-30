@@ -77,13 +77,13 @@ func heldUncertainAnswer(tx *sql.Tx, dispatch int64, leader string, reasons []st
 }
 
 // stopHeldAnswer stops the uncertain dispatch of h, which a redelivery or a
-// retirement ends: it is never offered to the worker again.
-func stopHeldAnswer(tx *sql.Tx, h uncertainHold, at time.Time) error {
-	if _, err := tx.Exec(`UPDATE dispatches SET state = ?, updated_at = ? WHERE id = ?`, DispatchStopped, timestamp(at), h.dispatch.ID); err != nil {
+// retirement ends, as closed says: it is never offered to the worker again.
+func stopHeldAnswer(tx *sql.Tx, h uncertainHold, closed string, at time.Time) error {
+	if _, err := tx.Exec(`UPDATE dispatches SET state = ?, closed = ?, updated_at = ? WHERE id = ?`, DispatchStopped, closed, timestamp(at), h.dispatch.ID); err != nil {
 		return err
 	}
 	_, err := appendEntry(tx, at, KindDispatchChanged, map[string]any{
-		"id": h.dispatch.ID, "agent": h.dispatch.Agent, "generation": h.dispatch.Generation, "from": DispatchUnknown, "state": DispatchStopped, "assignment": h.assignment.ID,
+		"id": h.dispatch.ID, "agent": h.dispatch.Agent, "generation": h.dispatch.Generation, "from": DispatchUnknown, "state": DispatchStopped, "closed": closed, "assignment": h.assignment.ID,
 	})
 	return err
 }
@@ -104,7 +104,7 @@ func (s *Store) AnswerRedelivered(dispatch int64, leader string, reasons []strin
 		return Assignment{}, Dispatch{}, err
 	}
 	a := h.assignment
-	if err := stopHeldAnswer(tx, h, at); err != nil {
+	if err := stopHeldAnswer(tx, h, ClosedAnswerRedelivered, at); err != nil {
 		return Assignment{}, Dispatch{}, err
 	}
 	if _, err := tx.Exec(`UPDATE assignments SET state = ? WHERE id = ?`, AssignmentActive, a.ID); err != nil {
@@ -143,7 +143,7 @@ func (s *Store) AnswerRetired(dispatch int64, leader string, reasons []string, a
 		return Assignment{}, err
 	}
 	a := h.assignment
-	if err := stopHeldAnswer(tx, h, at); err != nil {
+	if err := stopHeldAnswer(tx, h, ClosedAnswerRetired, at); err != nil {
 		return Assignment{}, err
 	}
 	if _, err := appendEntry(tx, at, KindDecisionAnswerRetired, map[string]any{

@@ -174,12 +174,14 @@ func TestAStoppedWorkersAssignmentIsResumedInANewDispatchThatIsRecordedAsOne(t *
 func TestEvidenceFromBeforeARestartNeverChangesTheResumedDispatchAndEveryResultStaysTiedToItsDispatch(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	a, stopped := stoppedAssignment(t, s)
-	if _, err := s.EffectRecorded("worker1@engineering", 1, stopped.ID, "commit", otherCommit, assignmentsAt); err == nil {
-		t.Fatal("an effect was recorded in a dispatch that had stopped")
-	}
 	resumed, err := s.AssignmentResumed(a.ID, stopped.ID, nativeID, "Continue.", assignmentsAt)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Once the resumption is the assignment's latest dispatch, the dispatch
+	// that stopped takes no late work.
+	if _, err := s.EffectRecorded("worker1@engineering", 1, stopped.ID, "commit", otherCommit, assignmentsAt); err == nil {
+		t.Fatal("an effect was recorded in a dispatch that had stopped")
 	}
 	// The restart: a new session, which the resumption's dispatch is bound to.
 	if g := startWorker(t, s, a.ID, nativeID); g != 2 {

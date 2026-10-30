@@ -25,6 +25,24 @@ const (
 	DispatchUnknown   = "unknown"
 )
 
+// Why a dispatch was stopped, which the dispatch records as it is closed. A
+// turn that ended with no report leaves its dispatch open to the late work of
+// that turn: a worker's turn can end while sub-agents it started are still
+// running, and what they finish is still reported on that dispatch. Every
+// other close is final.
+const (
+	// ClosedTurnEnded is a turn that ended with no report, and
+	// ClosedReported one that ended after the report its dispatch took.
+	ClosedTurnEnded = "turn-ended"
+	ClosedReported  = "reported"
+	// ClosedRedispatched is uncertain work an owner's redispatch dropped,
+	// and ClosedAnswerRedelivered and ClosedAnswerRetired an uncertain
+	// decision answer the owner delivered again or retired.
+	ClosedRedispatched      = "redispatched"
+	ClosedAnswerRedelivered = "answer-redelivered"
+	ClosedAnswerRetired     = "answer-retired"
+)
+
 type Handoff struct {
 	ID          int64    `json:"id"`
 	Job         int64    `json:"job"`
@@ -542,28 +560,41 @@ func (s *Store) PendingLeaders() ([]string, error) {
 // session lock while using this method, so an old generation cannot win.
 func (s *Store) ChangeDispatch(id int64, generation int, from, to, transcript string, at time.Time) error {
 	return s.change(at, func(tx *sql.Tx) (string, any, error) {
-		// The dispatch records the skills of the session it went to.
-		result, err := tx.Exec(`UPDATE dispatches SET state=?,generation=?,transcript=CASE WHEN ?='' THEN transcript ELSE ? END,updated_at=?,
-			bundle=CASE WHEN state=? THEN COALESCE((SELECT n.bundle FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), bundle) ELSE bundle END,
-			skills=CASE WHEN state=? THEN COALESCE((SELECT n.skills FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), skills) ELSE skills END,
-			unqualified=CASE WHEN state=? THEN COALESCE((SELECT n.unqualified FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), unqualified) ELSE unqualified END
-			WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), DispatchCreated, generation, DispatchCreated, generation, DispatchCreated, generation, id, from, generation)
-		if err != nil {
-			return "", nil, err
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return "", nil, err
-		}
-		if n != 1 {
-			return "", nil, fmt.Errorf("dispatch %d is not %s in generation %d", id, from, generation)
-		}
-		var bundle, skills, unqualified string
-		if err := tx.QueryRow(`SELECT bundle, skills, unqualified FROM dispatches WHERE id=?`, id).Scan(&bundle, &skills, &unqualified); err != nil {
-			return "", nil, err
-		}
-		return KindDispatchChanged, map[string]any{"id": id, "generation": generation, "from": from, "state": to, "transcript": transcript, "bundle": bundle, "skills": json.RawMessage(skills), "unqualified": json.RawMessage(unqualified)}, nil
+		data, err := changeDispatch(tx, id, generation, from, to, transcript, "", at)
+		return KindDispatchChanged, data, err
 	})
+}
+
+// changeDispatch makes the transition ChangeDispatch commits in tx, and
+// returns its journal entry's data. closed, when it is given, is why the
+// dispatch was stopped.
+func changeDispatch(tx *sql.Tx, id int64, generation int, from, to, transcript, closed string, at time.Time) (map[string]any, error) {
+	// The dispatch records the skills of the session it went to.
+	result, err := tx.Exec(`UPDATE dispatches SET state=?,generation=?,transcript=CASE WHEN ?='' THEN transcript ELSE ? END,updated_at=?,
+		closed=CASE WHEN ?='' THEN closed ELSE ? END,
+		bundle=CASE WHEN state=? THEN COALESCE((SELECT n.bundle FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), bundle) ELSE bundle END,
+		skills=CASE WHEN state=? THEN COALESCE((SELECT n.skills FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), skills) ELSE skills END,
+		unqualified=CASE WHEN state=? THEN COALESCE((SELECT n.unqualified FROM native_sessions n WHERE n.agent=dispatches.agent AND n.generation=?), unqualified) ELSE unqualified END
+		WHERE id=? AND state=? AND (generation=0 OR generation=?)`, to, generation, transcript, transcript, timestamp(at), closed, closed, DispatchCreated, generation, DispatchCreated, generation, DispatchCreated, generation, id, from, generation)
+	if err != nil {
+		return nil, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n != 1 {
+		return nil, fmt.Errorf("dispatch %d is not %s in generation %d", id, from, generation)
+	}
+	var bundle, skills, unqualified string
+	if err := tx.QueryRow(`SELECT bundle, skills, unqualified FROM dispatches WHERE id=?`, id).Scan(&bundle, &skills, &unqualified); err != nil {
+		return nil, err
+	}
+	data := map[string]any{"id": id, "generation": generation, "from": from, "state": to, "transcript": transcript, "bundle": bundle, "skills": json.RawMessage(skills), "unqualified": json.RawMessage(unqualified)}
+	if closed != "" {
+		data["closed"] = closed
+	}
+	return data, nil
 }
 
 func (s *Store) WorkFetchedDispatch(id int64, agent string, generation int, at time.Time) error {
@@ -615,20 +646,32 @@ func (s *Store) ObservedAutomated(d Dispatch, role string, payload json.RawMessa
 	return tx.Commit()
 }
 
+// StopDispatchIfWorking stops dispatch id of generation when it is working,
+// because the turn its session ran for it ended, and reports whether it did.
+// The dispatch records why it was closed: after the report it took, or with
+// none.
 func (s *Store) StopDispatchIfWorking(id int64, generation int, transcript string, at time.Time) (bool, error) {
-	var state string
-	err := s.db.QueryRow(`SELECT state FROM dispatches WHERE id=? AND generation=?`, id, generation).Scan(&state)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if state != DispatchWorking {
-		return false, nil
-	}
-	if err := s.ChangeDispatch(id, generation, DispatchWorking, DispatchStopped, transcript, at); err != nil {
-		return false, err
-	}
-	return true, nil
+	stopped := false
+	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
+		var state string
+		err := tx.QueryRow(`SELECT state FROM dispatches WHERE id=? AND generation=?`, id, generation).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && state != DispatchWorking {
+			return "", nil, nil
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		closed := ClosedTurnEnded
+		var reports int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM reports WHERE dispatch=?`, id).Scan(&reports); err != nil {
+			return "", nil, err
+		}
+		if reports > 0 {
+			closed = ClosedReported
+		}
+		data, err := changeDispatch(tx, id, generation, DispatchWorking, DispatchStopped, transcript, closed, at)
+		stopped = err == nil
+		return KindDispatchChanged, data, err
+	})
+	return stopped && err == nil, err
 }

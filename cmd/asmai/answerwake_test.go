@@ -41,6 +41,11 @@ func TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOw
 		fakeRun(`git merge --no-edit asmai/test/job-1-add-a-greeting`, 0, "up to date"),
 		fakeRun(`git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 2 recorded: push"),
 		fakeRun(`asmai decision request --title 'Which greeting?' --option hello --option hi --recommend hello`, 0, "decision request 1, version 1, recorded for job 1"),
+		// The daemon tells the owning leader the worker stopped with no
+		// result, and the leader's answer is a dispatch of its own. The
+		// worker stops once the answer is recorded, so the answer is
+		// dispatch 5 and not whichever of the two is made first.
+		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/answered" ]; do sleep 0.02; done`, 0, ""),
 		hookStep("Stop", "assignment", ""),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		// Typed as the Stop hook ran: reported under the finished turn.
@@ -51,6 +56,7 @@ func TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOw
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "Decision request 1, version 1"),
 		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "the answer goes to worker1@engineering, dispatch 5"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/answered"`, 0, ""),
 	}
 	assignmentWorkerStop = "closing"
 	t.Cleanup(func() { assignmentWorkerStop = "assignment" })

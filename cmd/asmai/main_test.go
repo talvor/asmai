@@ -102,6 +102,16 @@ func TestHelpPrintsUsage(t *testing.T) {
 	}
 }
 
+// `asmai repo add` is refused while the factory is stopped, so the help
+// says to start it first.
+func TestHelpSaysRepoAddNeedsTheFactoryRunning(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	run([]string{"--help"}, strings.NewReader(""), &stdout, &stderr)
+	if want := "It needs the factory running: run asmai start first"; !strings.Contains(stdout.String(), want) {
+		t.Errorf("asmai --help printed %q, want it to say %q", stdout.String(), want)
+	}
+}
+
 // The scripted fake provider is for development tests only: the asmai
 // executable must never contain it.
 func TestTheFakeProviderIsNotBuiltIn(t *testing.T) {

@@ -993,7 +993,7 @@ func TestInitYesAcceptsClaudeDefaultModelFlagWithoutPrompts(t *testing.T) {
 	}
 	trustFactory(t, stateDir)
 	stdout, stderr, code = runIn(t, "", "init", "--yes", "--claude-default-model", "sonnet")
-	if code != 0 || !strings.Contains(stdout, "Init is done") {
+	if want := "Init is done: run `asmai start` to start the factory, then `asmai repo add` to register a repository for it to work on; `asmai repo add` needs the factory running."; code != 0 || !strings.Contains(stdout, want) {
 		t.Errorf("init retry with the saved Sonnet model exited %d printing %q", code, stdout+stderr)
 	}
 	stdout, stderr, code = runIn(t, "", "init", "--yes", "--claude-default-model", "opus")

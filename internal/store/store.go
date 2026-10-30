@@ -348,6 +348,9 @@ CREATE TABLE blocked_reports (
 );
 ALTER TABLE messages ADD COLUMN blocked INTEGER REFERENCES blocked_reports(id);
 `,
+	`
+ALTER TABLE dispatches ADD COLUMN closed TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

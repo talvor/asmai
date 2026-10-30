@@ -549,7 +549,8 @@ func slug(text string) string {
 	return strings.TrimRight(b.String()[:min(b.Len(), maxSlug)], "-")
 }
 
-// effect records an effect req's session made in its current dispatch.
+// effect records an effect req's session made in its current dispatch, or a
+// worker's in the late dispatch of a turn that ended.
 func (d *daemon) effect(req Request) (store.Effect, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -557,14 +558,20 @@ func (d *daemon) effect(req Request) (store.Effect, error) {
 	if err != nil {
 		return store.Effect{}, err
 	}
-	if l.currentDispatch == 0 {
+	dispatch := l.currentDispatch
+	if dispatch == 0 && ref.address.Name == roles.Leader {
 		return store.Effect{}, refuse("%s has no current dispatch to tag the effect with; record effects while working on a dispatch you fetched with `asmai inbox`", ref.address)
 	}
-	authorized, err := d.grantedEffect(ref, req.Kind, l.currentDispatch)
+	if dispatch == 0 {
+		if dispatch, err = d.lateDispatch(ref, "to tag the effect with"); err != nil {
+			return store.Effect{}, err
+		}
+	}
+	authorized, err := d.grantedEffect(ref, req.Kind, dispatch)
 	if err != nil {
 		return store.Effect{}, err
 	}
-	e, err := d.store.EffectRecorded(ref.address.String(), ref.generation, l.currentDispatch, req.Kind, req.Ref, time.Now())
+	e, err := d.store.EffectRecorded(ref.address.String(), ref.generation, dispatch, req.Kind, req.Ref, time.Now())
 	if err != nil {
 		return store.Effect{}, refuse("%v", err)
 	}
@@ -596,8 +603,9 @@ const (
 
 // trailers returns the trailers a commit of req's worker carries: the job of
 // the assignment in its current dispatch, the worker and the dispatch. Only a
-// worker commits, and only while it works on a dispatch it fetched. It returns
-// none for a worker of a repository that has the trailers switched off.
+// worker commits, and only while it works on a dispatch it fetched, or on
+// the late dispatch of a turn that ended. It returns none for a worker of a
+// repository that has the trailers switched off.
 func (d *daemon) trailers(req Request) ([]string, error) {
 	d.mu.Lock()
 	ref, l, err := d.caller(req)
@@ -613,7 +621,9 @@ func (d *daemon) trailers(req Request) ([]string, error) {
 		return nil, refuse("%s commits nothing: a leader's work goes through its workers", ref.address)
 	}
 	if current == 0 {
-		return nil, refuse("%s has no current dispatch to name in the commit; commit while working on the assignment you fetched with `asmai inbox`", ref.address)
+		if current, err = d.lateDispatch(ref, "to name in the commit"); err != nil {
+			return nil, err
+		}
 	}
 	a, err := d.store.DispatchAssignment(current)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -636,7 +646,9 @@ func (d *daemon) trailers(req Request) ([]string, error) {
 }
 
 // report records the result or the blocked report of the assignment req's
-// worker carries in its current dispatch. A result submits the assignment.
+// worker carries in its current dispatch. A result submits the assignment,
+// and with no current dispatch, goes on the late dispatch of a turn that
+// ended.
 // The report goes to the owning leader, which is started if it is not
 // running; the returned dispatch is the leader's, to nudge.
 func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
@@ -657,12 +669,21 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	if err != nil {
 		return store.Report{}, store.Dispatch{}, err
 	}
-	if current == 0 {
+	dispatch := current
+	if dispatch == 0 && kind == store.ReportBlocked {
 		return store.Report{}, store.Dispatch{}, refuse("%s has no current dispatch to report on; report on the assignment you fetched with `asmai inbox`", ref.address)
 	}
-	a, err := d.store.DispatchAssignment(current)
+	if dispatch == 0 {
+		// The worker's turn for its dispatch ended while work it started,
+		// such as sub-agents, went on: the result of that work still goes
+		// on the dispatch.
+		if dispatch, err = d.lateDispatch(ref, "to report on"); err != nil {
+			return store.Report{}, store.Dispatch{}, err
+		}
+	}
+	a, err := d.store.DispatchAssignment(dispatch)
 	if errors.Is(err, sql.ErrNoRows) {
-		return store.Report{}, store.Dispatch{}, refuse("dispatch %d is about no assignment, so there is nothing to report", current)
+		return store.Report{}, store.Dispatch{}, refuse("dispatch %d is about no assignment, so there is nothing to report", dispatch)
 	}
 	if err != nil {
 		return store.Report{}, store.Dispatch{}, err
@@ -715,22 +736,34 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	if _, l, err := d.caller(req); err != nil {
 		return store.Report{}, store.Dispatch{}, err
 	} else if l.currentDispatch != current {
-		return store.Report{}, store.Dispatch{}, refuse("dispatch %d is no longer %s's current dispatch", current, ref.address)
+		return store.Report{}, store.Dispatch{}, refuse("dispatch %d is no longer %s's current dispatch", dispatch, ref.address)
 	}
-	r, dispatch, err := d.store.ReportSubmitted(store.Submission{
-		Agent: ref.address.String(), Generation: ref.generation, Dispatch: current, Kind: kind,
+	r, owners, err := d.store.ReportSubmitted(store.Submission{
+		Agent: ref.address.String(), Generation: ref.generation, Dispatch: dispatch, Kind: kind,
 		Commit: commit, JobTip: branch.Tip, TookInTip: tookIn, Input: input,
 	}, time.Now())
 	if err != nil {
 		return store.Report{}, store.Dispatch{}, refuse("%v", err)
 	}
-	d.log.Info("report submitted", "kind", kind, "assignment", a.ID, "job", a.Job, "worker", ref.address.String(), "commit", commit, "dispatch", dispatch.ID)
-	if owner, err := roles.ParseAddress(dispatch.Agent); err == nil {
+	d.log.Info("report submitted", "kind", kind, "assignment", a.ID, "job", a.Job, "worker", ref.address.String(), "commit", commit, "dispatch", owners.ID)
+	if owner, err := roles.ParseAddress(owners.Agent); err == nil {
 		if err := d.ensureAgent(owner); err != nil {
-			d.log.Error("starting the owning leader", "agent", dispatch.Agent, "dispatch", dispatch.ID, "error", err)
+			d.log.Error("starting the owning leader", "agent", owners.Agent, "dispatch", owners.ID, "error", err)
 		}
 	}
-	return r, dispatch, nil
+	return r, owners, nil
+}
+
+// lateDispatch returns the dispatch ref's worker, which has no current
+// dispatch, still works on because the turn it ran for that dispatch ended
+// while its work went on. Otherwise it refuses, saying what the worker had
+// no dispatch for, why no late dispatch takes it and what to do next.
+func (d *daemon) lateDispatch(ref sessionRef, purpose string) (int64, error) {
+	dispatch, err := d.store.LateDispatch(ref.address.String(), ref.generation)
+	if err != nil {
+		return 0, refuse("%s has no current dispatch %s, and no dispatch whose turn ended takes it: %v", ref.address, purpose, err)
+	}
+	return dispatch, nil
 }
 
 // checkWritingReport checks that a writing assignment's workspace is at a

@@ -284,7 +284,7 @@ func initFactory(o *output, paths statedir.Paths, stdin io.Reader, assumeYes boo
 	if o.structured() {
 		return o.printData(map[string]any{"steps": steps})
 	}
-	fmt.Fprintln(w, "Init is done: `asmai start` starts the factory, and `asmai repo add` registers a repository for it to work on.")
+	fmt.Fprintln(w, "Init is done: run `asmai start` to start the factory, then `asmai repo add` to register a repository for it to work on; `asmai repo add` needs the factory running.")
 	return 0
 }
 

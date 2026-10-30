@@ -745,7 +745,7 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 	if err != nil {
 		return store.Report{}, store.Dispatch{}, refuse("%v", err)
 	}
-	d.log.Info("report submitted", "kind", kind, "assignment", a.ID, "job", a.Job, "worker", ref.address.String(), "commit", commit, "dispatch", owners.ID, "late", r.Late)
+	d.log.Info("report submitted", "kind", kind, "assignment", a.ID, "job", a.Job, "worker", ref.address.String(), "commit", commit, "dispatch", owners.ID)
 	if owner, err := roles.ParseAddress(owners.Agent); err == nil {
 		if err := d.ensureAgent(owner); err != nil {
 			d.log.Error("starting the owning leader", "agent", owners.Agent, "dispatch", owners.ID, "error", err)

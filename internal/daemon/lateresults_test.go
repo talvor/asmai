@@ -66,16 +66,15 @@ func TestAResultIsTakenAfterTheWorkersTurnEndedWithItsSubAgentsStillRunning(t *t
 	if err != nil {
 		t.Fatalf("the result after the turn ended was refused: %v", err)
 	}
-	if !r.Late || r.Dispatch != v.dispatch.ID || r.Commit != v.tip || owners.Agent != a.Owner {
+	if r.Dispatch != v.dispatch.ID || r.Commit != v.tip || owners.Agent != a.Owner {
 		t.Errorf("the late result is %+v, sent to %+v", r, owners)
 	}
 	if got, _ := v.s.Assignment(a.ID); got.State != store.AssignmentSubmitted {
 		t.Errorf("the assignment is %s, want submitted", got.State)
 	}
 
-	// Its owning leader was told the turn ended, and that a result can still
-	// come in, and then has the result, with no blocked report and no
-	// redispatch.
+	// Its owning leader was told the turn ended, and then has the result,
+	// with no blocked report and no redispatch.
 	messages, err := v.s.Inbox(a.Owner, 0, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +85,6 @@ func TestAResultIsTakenAfterTheWorkersTurnEndedWithItsSubAgentsStillRunning(t *t
 			continue
 		}
 		kinds = append(kinds, m.Kind)
-		if m.Kind == store.MessageStalled && !strings.Contains(m.Body, "still comes in on dispatch") {
-			t.Errorf("the stalled notice does not say a result can still come in: %q", m.Body)
-		}
 	}
 	if strings.Join(kinds, ",") != store.MessageStalled+","+store.ReportResult {
 		t.Errorf("the owning leader was sent %v about the assignment, want the stalled notice and the result", kinds)

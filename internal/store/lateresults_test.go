@@ -68,7 +68,7 @@ func TestAResultOfATurnThatEndedWithNoReportIsTakenOnItsDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the late result was refused: %v", err)
 	}
-	if !r.Late || r.Dispatch != d.ID || owners.Agent != a.Owner {
+	if r.Dispatch != d.ID || owners.Agent != a.Owner {
 		t.Errorf("the late result is %+v, sent to %+v", r, owners)
 	}
 	if got, _ := s.Assignment(a.ID); got.State != AssignmentSubmitted {

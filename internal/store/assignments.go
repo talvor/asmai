@@ -268,9 +268,6 @@ type Report struct {
 	Commit    string `json:"commit"`
 	JobTip    string `json:"job_tip"`
 	TookInTip bool   `json:"took_in_tip"`
-	// Late says the result came in after the turn of its dispatch ended with
-	// no report, from work, such as sub-agents', that went on after it.
-	Late bool `json:"late,omitempty"`
 	ReportInput
 	// Effects are the effects the worker recorded in this dispatch before it
 	// made the report.
@@ -1098,7 +1095,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	}
 	r := Report{
 		Assignment: a.ID, Dispatch: sub.Dispatch, Kind: sub.Kind, Agent: sub.Agent,
-		Commit: sub.Commit, JobTip: sub.JobTip, TookInTip: sub.TookInTip, Late: late,
+		Commit: sub.Commit, JobTip: sub.JobTip, TookInTip: sub.TookInTip,
 		ReportInput: in, Effects: effects, CreatedAt: at.UTC(),
 	}
 	data, err := json.Marshal(r)

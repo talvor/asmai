@@ -6,7 +6,7 @@ M3 passes no new qualification case. Its proving scenarios S3 and S7 prove its r
 
 | | |
 |---|---|
-| Commit | `9732f87` (`main` after [pull request #252](https://github.com/talvor/asmai/pull/252), "install the pinned Lavish during init"). It includes the fixes for #205, #206, #207, #236, #239, #245 and #246, all merged |
+| Demo build commit | `9732f87` (`main` after [pull request #252](https://github.com/talvor/asmai/pull/252), "install the pinned Lavish during init"). It includes the fixes for #205, #206, #207, #236, #239, #245 and #246, all merged |
 | Provider | Claude Code 2.1.292, pinned; Lavish 0.1.89, pinned (`pins.json`) |
 | Hosts | `asmai-vm` and the qualification Mac, each as its harness user `phillip` ([qualification hosts](qualification-hosts.md)). The demo ran on the Mac |
 | Harness | No new case. The run is the demo path below on a build from the commit (`make build`), with no `./bin/qualify` check ([the qualification harness](qualification-harness.md)) |
@@ -16,10 +16,10 @@ M3 passes no new qualification case. Its proving scenarios S3 and S7 prove its r
 | | Result |
 |---|---|
 | `asmai-vm`, `make test` | **Passed** at `05ca7ad` (`main` after [pull request #261](https://github.com/talvor/asmai/pull/261), the fix for #256), on Ubuntu 24.04 x86_64: exit 0, all 25 packages ok (`qualification` 563.9s). The earlier run at `9732f87` had failed (exit 2): `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` (`answerwake_test.go:57`, "timed out waiting for the worker's turn"), 4 of 4 when rerun alone. That is [#256](https://github.com/talvor/asmai/issues/256), now closed. The Linux exit check is met |
-| Mac, `make test` | Passed in full at `9732f87` (darwin/arm64), exit 0, all 25 packages ok (`cmd/asmai` 559.6s, `qualification` 561.3s) |
+| Mac, `make test` | **Passed** in full at `05ca7ad` (`main` after [pull request #261](https://github.com/talvor/asmai/pull/261)) on the qualification Mac (darwin/arm64), on the first run: exit 0, all 25 packages ok (`qualification` 590.7s). The earlier run at `9732f87` also passed in full: exit 0, all 25 packages ok (`cmd/asmai` 559.6s, `qualification` 561.3s) |
 | Hosted CI, this pull request | **pipeline-recorded after merge** (`test (ubuntu-latest)` and `test (macos-latest)`) |
 
-A macOS failure is recorded as a ticket for the next milestone: there was none at `9732f87`, where `make test` passed on the Mac. The Mac was not rerun in full at `05ca7ad` for this record; while verifying the #256 fix, a Mac run failed once in `TestASetupWorkersQuestionsReachTheUserInLavishThroughCoordinationsLeaderAndTheAnswersAreRecordedAtOnce` (`internal/daemon`), failed 1 of 10 on rerun, and is ticketed as [#260](https://github.com/talvor/asmai/issues/260) (open, cause unknown).
+A macOS failure is recorded as a ticket for the next milestone: there was none at `05ca7ad`, where `make test` passed in full on the first run, or at `9732f87`, where it also passed. An earlier Mac run while verifying the #256 fix failed once in `TestASetupWorkersQuestionsReachTheUserInLavishThroughCoordinationsLeaderAndTheAnswersAreRecordedAtOnce` (`internal/daemon`); the test failed 1 of 10 on rerun and is ticketed as [#260](https://github.com/talvor/asmai/issues/260) (open, cause unknown).
 
 ## The demo path
 

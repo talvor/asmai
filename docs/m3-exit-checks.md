@@ -15,11 +15,11 @@ M3 passes no new qualification case. Its proving scenarios S3 and S7 prove its r
 
 | | Result |
 |---|---|
-| `asmai-vm`, `make test` | **Not yet green:** failed (exit 2) at `9732f87` on Ubuntu 24.04 x86_64. One test failed in `cmd/asmai`: `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` (`answerwake_test.go:57`, "timed out waiting for the worker's turn"). Every other package passed. It also failed when rerun alone (4 of 4). Ticketed as [#256](https://github.com/talvor/asmai/issues/256): not a simple regression, as it passed at the #231 and #248 merges and failed at several commits between. Rerun `make test` on `asmai-vm` once the fix for #256 merges; the Linux exit check is not yet met |
+| `asmai-vm`, `make test` | **Passed** at `05ca7ad` (`main` after [pull request #261](https://github.com/talvor/asmai/pull/261), the fix for #256), on Ubuntu 24.04 x86_64: exit 0, all 25 packages ok (`qualification` 563.9s). The earlier run at `9732f87` had failed (exit 2): `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` (`answerwake_test.go:57`, "timed out waiting for the worker's turn"), 4 of 4 when rerun alone. That is [#256](https://github.com/talvor/asmai/issues/256), now closed. The Linux exit check is met |
 | Mac, `make test` | Passed in full at `9732f87` (darwin/arm64), exit 0, all 25 packages ok (`cmd/asmai` 559.6s, `qualification` 561.3s) |
 | Hosted CI, this pull request | **pipeline-recorded after merge** (`test (ubuntu-latest)` and `test (macos-latest)`) |
 
-A macOS failure is recorded as a ticket for the next milestone: there was none, since `make test` passed on the Mac. The one failure, on `asmai-vm`, is ticketed as #256 above.
+A macOS failure is recorded as a ticket for the next milestone: there was none at `9732f87`, where `make test` passed on the Mac. The Mac was not rerun in full at `05ca7ad` for this record; while verifying the #256 fix, a Mac run failed once in `TestASetupWorkersQuestionsReachTheUserInLavishThroughCoordinationsLeaderAndTheAnswersAreRecordedAtOnce` (`internal/daemon`), failed 1 of 10 on rerun, and is ticketed as [#260](https://github.com/talvor/asmai/issues/260) (open, cause unknown).
 
 ## The demo path
 
@@ -99,7 +99,8 @@ Filed after the run:
 
 - [#254](https://github.com/talvor/asmai/issues/254): the stall notice fires for a worker waiting on its own decision request.
 - [#255](https://github.com/talvor/asmai/issues/255): Research workers have no web access without auto mode (`WebFetch` is denied in `dontAsk` mode). The leader did not know how web access is granted and told the user to allow four hosts, but no allowed-sites list was added. The working change was `auto_mode = true` under `[providers.claude]`; after the factory restarted, the research worker read all four sites in auto permission mode.
-- [#256](https://github.com/talvor/asmai/issues/256): `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` fails on `asmai-vm` (see Development tests).
+- [#256](https://github.com/talvor/asmai/issues/256): `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` failed on `asmai-vm` (see Development tests). Closed, fixed by #261.
+- [#260](https://github.com/talvor/asmai/issues/260): `TestASetupWorkersQuestionsReachTheUserInLavishThroughCoordinationsLeaderAndTheAnswersAreRecordedAtOnce` is flaky on macOS. Open.
 
 Observed in this run and not yet ticketed:
 

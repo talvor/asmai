@@ -4,8 +4,6 @@ M3's exit checks ([#147](https://github.com/talvor/asmai/issues/147); [the M3 mi
 
 M3 passes no new qualification case. Its proving scenarios S3 and S7 prove its rules, by the demo path below.
 
-Cells marked **unrecorded** have not been run yet. Nothing in them is a result.
-
 | | |
 |---|---|
 | Commit | `9732f87` (`main` after [pull request #252](https://github.com/talvor/asmai/pull/252), "install the pinned Lavish during init"). It includes the fixes for #205, #206, #207, #236, #239, #245 and #246, all merged |
@@ -104,6 +102,7 @@ Filed after the run:
 - [#256](https://github.com/talvor/asmai/issues/256): `TestAnAnswerFromTheOwningLeaderWakesTheWorkerThatAskedAndItsTurnEndsAtItsOwnStop` fails on `asmai-vm` (see Development tests).
 
 Observed in this run and not yet ticketed:
+
 - The user's request to write job 4's result into `/Users/phillip/Documents` has no recorded outcome.
 
 ## Demo script

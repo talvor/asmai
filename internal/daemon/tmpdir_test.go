@@ -524,14 +524,14 @@ func readOnlyViewCopy(t *testing.T, dir, outside string) {
 	if err := os.MkdirAll(nested, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "issue-tracker.md"), []byte("x"), 0o400); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "issue-tracker.md"), []byte("x"), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(nested, "out")); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range []string{nested, filepath.Join(dir, "state", "views", "job-1", "docs"), filepath.Join(dir, "state", "views", "job-1"), filepath.Join(dir, "state", "views"), filepath.Join(dir, "state")} {
-		if err := os.Chmod(d, 0o500); err != nil {
+		if err := os.Chmod(d, 0o555); err != nil {
 			t.Fatal(err)
 		}
 	}

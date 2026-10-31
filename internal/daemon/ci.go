@@ -388,7 +388,7 @@ func (d *daemon) removeJobLocal(job int64) {
 		}
 	}
 	if dir := filepath.Join(d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", job)); exists(dir) {
-		if err := repos.RemoveTree(dir); err != nil {
+		if err := os.RemoveAll(dir); err != nil {
 			failed = errors.Join(failed, err)
 		} else {
 			removed = append(removed, dir)

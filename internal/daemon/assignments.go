@@ -763,25 +763,33 @@ func (d *daemon) lateDispatch(ref sessionRef, purpose string) (int64, error) {
 	return dispatch, nil
 }
 
-// stoppedReply says, on a message whose stopped dispatch is the latest the
-// worker ref has for its active assignment, that the dispatch is stopped and
-// is not the worker's current one, and whether it still takes the worker's
-// report: the worker is shown what is true where it fetches the dispatch, and
-// is not left to find out from a refusal.
 func (d *daemon) stoppedReply(ref sessionRef, m *store.Message) {
 	a := m.AssignmentData
-	if m.State != store.DispatchStopped || a == nil || a.Worker != ref.address.String() || a.State != store.AssignmentActive {
+	if m.State != store.DispatchStopped || a == nil || a.Worker != ref.address.String() {
 		return
 	}
-	if w, err := d.store.WorkerDispatch(a.ID); err != nil || w.Dispatch.ID != m.Dispatch {
+	m.Stopped = fmt.Sprintf("Dispatch %d is stopped and is not your current dispatch", m.Dispatch)
+	if a.State != store.AssignmentActive {
+		m.Stopped += fmt.Sprintf(", and it takes no report: assignment %d is %s.", a.ID, a.State)
+		return
+	}
+	w, err := d.store.WorkerDispatch(a.ID)
+	if err != nil {
+		m.Stopped += "."
+		return
+	}
+	if w.Dispatch.ID != m.Dispatch {
+		m.Stopped += fmt.Sprintf(", and it takes no report: it was superseded by dispatch %d of assignment %d.", w.Dispatch.ID, a.ID)
 		return
 	}
 	late, err := d.store.LateDispatch(ref.address.String(), ref.generation)
 	switch {
 	case err == nil && late == m.Dispatch:
-		m.Stopped = fmt.Sprintf("Dispatch %d is stopped and is not your current dispatch: your turn for it ended with no report. It still takes your report on assignment %d: run `asmai result` when the work is finished, or `asmai blocked` if you cannot go on.", m.Dispatch, a.ID)
+		m.Stopped += fmt.Sprintf(": your turn for it ended with no report. It still takes your report on assignment %d: run `asmai result` when the work is finished, or `asmai blocked` if you cannot go on.", a.ID)
 	case err != nil:
-		m.Stopped = fmt.Sprintf("Dispatch %d is stopped and is not your current dispatch, and it takes no report: %v.", m.Dispatch, err)
+		m.Stopped += fmt.Sprintf(", and it takes no report: %v.", err)
+	default:
+		m.Stopped += ", and it takes no report."
 	}
 }
 

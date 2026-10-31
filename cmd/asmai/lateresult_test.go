@@ -149,6 +149,7 @@ func TestALateResultIsRefusedOnceTheAssignmentIsRedispatched(t *testing.T) {
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		hookStep("Stop", "assignment", ""),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/leader-retried" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`asmai inbox --dispatch 3 | tee "$ASMAI_TEST_DIR/superseded-inbox"`, 0, "(?s)Dispatch 3 is stopped and is not your current dispatch, and it takes no report: it was superseded by dispatch 5 of assignment 1\\."),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x > "$ASMAI_TEST_DIR/redispatched-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/redispatched-refusal"; test "$status" -eq 1`, 0, "(?s)no current dispatch to report on, and no dispatch whose turn ended takes it: dispatch 5 of assignment 1 is \\w+, and is not your session's current dispatch: the daemon hands a dispatch to your session itself.*End your turn"),
 		fakeRun(`asmai blocked --reason x --needs y > "$ASMAI_TEST_DIR/redispatched-blocked-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/redispatched-blocked-refusal"; test "$status" -eq 1`, 0, "(?s)no current dispatch to report on, and no dispatch whose turn ended takes it: dispatch 5 of assignment 1 is \\w+, and is not your session's current dispatch"),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
@@ -172,7 +173,7 @@ func TestALateResultIsRefusedOnceTheAssignmentIsRedispatched(t *testing.T) {
 	assignmentWorkerStop = "again"
 	t.Cleanup(func() { assignmentWorkerStop = "assignment" })
 	_, testDir := assignmentFlow(t, worker, leader)
-	logOutputs(t, testDir, "redispatched-refusal", "redispatched-blocked-refusal")
+	logOutputs(t, testDir, "superseded-inbox", "redispatched-refusal", "redispatched-blocked-refusal")
 	submitted := journaled(t, "result.submitted")
 	if len(submitted) != 1 {
 		t.Fatalf("results submitted: %d, want the redispatch's one", len(submitted))
@@ -192,6 +193,7 @@ func TestALateResultIsRefusedOnceTheAssignmentIsCancelled(t *testing.T) {
 		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft'`, 0, ""),
 		hookStep("Stop", "assignment", ""),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/leader-cancelled" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`asmai inbox --dispatch 3 | tee "$ASMAI_TEST_DIR/cancelled-inbox"`, 0, "(?s)Dispatch 3 is stopped and is not your current dispatch, and it takes no report: assignment 1 is cancelling\\."),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x > "$ASMAI_TEST_DIR/cancelled-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/cancelled-refusal"; test "$status" -eq 1`, 0, "(?s)no current dispatch to report on, and no dispatch whose turn ended takes it: assignment 1 is cancelling, so it takes no new report.*the daemon hands a dispatch to your session itself"),
 		fakeRun(`asmai blocked --reason x --needs y > "$ASMAI_TEST_DIR/cancelled-blocked-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/cancelled-blocked-refusal"; test "$status" -eq 1`, 0, "(?s)no current dispatch to report on, and no dispatch whose turn ended takes it: assignment 1 is cancelling, so it takes no new report"),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
@@ -208,7 +210,7 @@ func TestALateResultIsRefusedOnceTheAssignmentIsCancelled(t *testing.T) {
 	assignmentWorkerStop = "cancel"
 	t.Cleanup(func() { assignmentWorkerStop = "assignment" })
 	_, testDir := assignmentFlow(t, worker, leader)
-	logOutputs(t, testDir, "cancelled-refusal", "cancelled-blocked-refusal")
+	logOutputs(t, testDir, "cancelled-inbox", "cancelled-refusal", "cancelled-blocked-refusal")
 	if got := len(journaled(t, "result.submitted")); got != 0 {
 		t.Errorf("results submitted: %d, want none for the cancelled assignment", got)
 	}

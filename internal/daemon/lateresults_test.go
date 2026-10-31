@@ -244,6 +244,33 @@ func TestTheInboxOfAWorkerWhoseTurnEndedSaysItsDispatchIsStoppedAndNotCurrent(t 
 	if strings.Contains(m.Stopped, "fetch it with `asmai inbox`") || strings.Contains(m.Stopped, "run `asmai inbox`") {
 		t.Errorf("the stopped dispatch sends the worker to asmai inbox: %q", m.Stopped)
 	}
+
+	next, err := v.s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = fetch(0)
+	for _, want := range []string{"is stopped and is not your current dispatch", "takes no report", "superseded by dispatch " + strconv.FormatInt(next.ID, 10)} {
+		if !strings.Contains(m.Stopped, want) {
+			t.Errorf("the superseded dispatch says %q, want %q", m.Stopped, want)
+		}
+	}
+	if strings.Contains(m.Stopped, "It still takes your report") {
+		t.Errorf("the superseded dispatch offers a report: %q", m.Stopped)
+	}
+
+	if _, _, err := v.s.CancellationRequested(a.ID, a.Owner, []string{"not needed"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	m = fetch(0)
+	for _, want := range []string{"is stopped and is not your current dispatch", "takes no report", "assignment " + strconv.FormatInt(a.ID, 10) + " is cancelling"} {
+		if !strings.Contains(m.Stopped, want) {
+			t.Errorf("the inactive assignment's dispatch says %q, want %q", m.Stopped, want)
+		}
+	}
+	if strings.Contains(m.Stopped, "It still takes your report") {
+		t.Errorf("the inactive assignment's dispatch offers a report: %q", m.Stopped)
+	}
 }
 
 func TestAWritingWorkersLateWorkIsCommittedAndRecordedOnTheDispatchWhoseTurnEnded(t *testing.T) {

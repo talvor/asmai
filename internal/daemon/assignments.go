@@ -674,7 +674,15 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 		// The worker's turn for its dispatch ended while work it started,
 		// such as sub-agents, went on: the result of that work, or the
 		// worker's word that it cannot go on, still goes on the dispatch.
-		if dispatch, err = d.lateDispatch(ref, "to report on"); err != nil {
+		if kind == store.ReportBlocked {
+			dispatch, err = d.store.BlockedDispatch(ref.address.String(), ref.generation)
+			if err != nil {
+				err = refuse("%s has no current dispatch to report on, and no dispatch whose turn ended takes it: %v", ref.address, err)
+			}
+		} else {
+			dispatch, err = d.lateDispatch(ref, "to report on")
+		}
+		if err != nil {
 			return store.Report{}, store.Dispatch{}, err
 		}
 	}
@@ -779,7 +787,7 @@ func (d *daemon) stoppedReply(ref sessionRef, m *store.Message) {
 		return
 	}
 	if w.Dispatch.ID != m.Dispatch {
-		m.Stopped += fmt.Sprintf(", and it takes no report: it was superseded by dispatch %d of assignment %d.", w.Dispatch.ID, a.ID)
+		m.Stopped += fmt.Sprintf(": it was superseded by dispatch %d of assignment %d, so it takes no result.", w.Dispatch.ID, a.ID)
 		return
 	}
 	late, err := d.store.LateDispatch(ref.address.String(), ref.generation)

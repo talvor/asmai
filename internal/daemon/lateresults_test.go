@@ -173,7 +173,13 @@ func TestARefusalForAWorkerWithNoCurrentDispatchNeverPointsAtAsmaiInboxToFixIt(t
 			result := store.ReportInput{Evidence: []string{"./check.sh -> passed"}, Checks: []store.Check{{Command: "./check.sh", Outcome: "passed"}}, Gaps: []string{}, Validation: &store.ValidationInput{Findings: []store.FindingInput{}}}
 			blocked := store.ReportInput{Reason: "which checks?", Needs: "the owner"}
 			for command, input := range map[string]store.ReportInput{CommandResult: result, CommandBlocked: blocked} {
-				_, _, err := v.d.report(Request{Session: "worker", Command: command, Report: &input})
+				r, owner, err := v.d.report(Request{Session: "worker", Command: command, Report: &input})
+				if name == "sent again by the owner" && command == CommandBlocked {
+					if err != nil || r.Kind != store.ReportBlocked || r.Dispatch != v.dispatch.ID || owner.Agent != v.assignment.Owner {
+						t.Errorf("blocked report before redispatch delivery is %+v, owner %+v, error %v", r, owner, err)
+					}
+					continue
+				}
 				if err == nil || !strings.Contains(err.Error(), tt.want) {
 					t.Errorf("%s returned %v, want it refused saying %q", command, err, tt.want)
 					continue
@@ -264,7 +270,7 @@ func TestTheInboxOfAWorkerWhoseTurnEndedSaysItsDispatchIsStoppedAndNotCurrent(t 
 		t.Fatal(err)
 	}
 	m = fetch(0)
-	for _, want := range []string{"is stopped and is not your current dispatch", "takes no report", "superseded by dispatch " + strconv.FormatInt(next.ID, 10)} {
+	for _, want := range []string{"is stopped and is not your current dispatch", "takes no result", "superseded by dispatch " + strconv.FormatInt(next.ID, 10)} {
 		if !strings.Contains(m.Stopped, want) {
 			t.Errorf("the superseded dispatch says %q, want %q", m.Stopped, want)
 		}

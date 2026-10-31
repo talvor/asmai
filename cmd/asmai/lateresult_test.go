@@ -149,9 +149,9 @@ func TestALateResultIsRefusedOnceTheAssignmentIsRedispatched(t *testing.T) {
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
 		hookStep("Stop", "assignment", ""),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/leader-retried" ]; do sleep 0.02; done`, 0, ""),
-		fakeRun(`asmai inbox --dispatch 3 | tee "$ASMAI_TEST_DIR/superseded-inbox"`, 0, "(?s)Dispatch 3 is stopped and is not your current dispatch, and it takes no report: it was superseded by dispatch 5 of assignment 1\\."),
+		fakeRun(`asmai inbox --dispatch 3 | tee "$ASMAI_TEST_DIR/superseded-inbox"`, 0, "(?s)Dispatch 3 is stopped and is not your current dispatch: it was superseded by dispatch 5 of assignment 1, so it takes no result\\."),
 		fakeRun(`asmai result --evidence x --test none --check none --gap none --pr-section x > "$ASMAI_TEST_DIR/redispatched-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/redispatched-refusal"; test "$status" -eq 1`, 0, "(?s)no current dispatch to report on, and no dispatch whose turn ended takes it: dispatch 5 of assignment 1 is \\w+, and is not your session's current dispatch: the daemon hands a dispatch to your session itself.*End your turn"),
-		fakeRun(`asmai blocked --reason x --needs y > "$ASMAI_TEST_DIR/redispatched-blocked-refusal" 2>&1; status=$?; cat "$ASMAI_TEST_DIR/redispatched-blocked-refusal"; test "$status" -eq 1`, 0, "(?s)no current dispatch to report on, and no dispatch whose turn ended takes it: dispatch 5 of assignment 1 is \\w+, and is not your session's current dispatch"),
+		fakeRun(`asmai blocked --reason x --needs y | tee "$ASMAI_TEST_DIR/redispatched-blocked"`, 0, "blocked recorded for assignment 1"),
 		`{"expect":"asmai inbox --dispatch 5\r"}`,
 		hookStep("UserPromptSubmit", "again", "asmai inbox --dispatch 5"),
 		fakeRun(`asmai inbox --dispatch 5`, 0, "redispatch from leader@engineering"),
@@ -166,14 +166,27 @@ func TestALateResultIsRefusedOnceTheAssignmentIsRedispatched(t *testing.T) {
 		fakeRun(`touch "$ASMAI_TEST_DIR/leader-retried"`, 0, ""),
 		hookStep("Stop", "report", ""),
 		`{"expect":"asmai inbox --dispatch 6\r"}`,
-		hookStep("UserPromptSubmit", "result", "asmai inbox --dispatch 6"),
-		fakeRun(`asmai inbox --dispatch 6`, 0, "(?s)result from worker1@engineering.*result 1 \\| assignment 1"),
+		hookStep("UserPromptSubmit", "blocked", "asmai inbox --dispatch 6"),
+		fakeRun(`asmai inbox --dispatch 6 | tee "$ASMAI_TEST_DIR/leader-blocked"`, 0, "(?s)blocked from worker1@engineering.*blocked 1 \\| assignment 1"),
+		hookStep("Stop", "blocked", ""),
+		`{"expect":"asmai inbox --dispatch 7\r"}`,
+		hookStep("UserPromptSubmit", "result", "asmai inbox --dispatch 7"),
+		fakeRun(`asmai inbox --dispatch 7 | tee "$ASMAI_TEST_DIR/leader-result"`, 0, "(?s)result from worker1@engineering.*result 2 \\| assignment 1"),
 		hookStep("Stop", "result", ""),
 	}
 	assignmentWorkerStop = "again"
 	t.Cleanup(func() { assignmentWorkerStop = "assignment" })
 	_, testDir := assignmentFlow(t, worker, leader)
-	logOutputs(t, testDir, "superseded-inbox", "redispatched-refusal", "redispatched-blocked-refusal")
+	logOutputs(t, testDir, "superseded-inbox", "redispatched-refusal", "redispatched-blocked")
+	blocked := journaled(t, "blocked.reported")
+	if len(blocked) != 1 {
+		t.Fatalf("blocked reports: %d, want one", len(blocked))
+	}
+	if got := decode[struct {
+		Dispatch int64 `json:"dispatch"`
+	}](t, blocked[0]); got.Dispatch != 3 {
+		t.Errorf("blocked report went on dispatch %d, want the stopped dispatch 3", got.Dispatch)
+	}
 	submitted := journaled(t, "result.submitted")
 	if len(submitted) != 1 {
 		t.Fatalf("results submitted: %d, want the redispatch's one", len(submitted))

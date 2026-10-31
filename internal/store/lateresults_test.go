@@ -120,16 +120,6 @@ func TestALateResultIsRefusedOnADispatchClosedAnyOtherWay(t *testing.T) {
 			},
 			"already ended in a blocked report",
 		},
-		"sent again": {
-			func(t *testing.T, s *Store, a Assignment, d Dispatch) int {
-				stop(t, s, d)
-				if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt); err != nil {
-					t.Fatal(err)
-				}
-				return 1
-			},
-			"is created, and is not your session's current dispatch",
-		},
 		"cancelling": {
 			func(t *testing.T, s *Store, a Assignment, d Dispatch) int {
 				stop(t, s, d)
@@ -188,6 +178,77 @@ func TestALateResultIsRefusedOnADispatchClosedAnyOtherWay(t *testing.T) {
 				if _, _, err := s.ReportSubmitted(sub, assignmentsAt); err == nil || !strings.Contains(err.Error(), "is not the dispatch") && !strings.Contains(err.Error(), "already ended") {
 					t.Errorf("a late %s was submitted with %v", kind, err)
 				}
+			}
+		})
+	}
+}
+
+func TestABlockedReportBeforeRedispatchDeliveryUsesTheStoppedDispatch(t *testing.T) {
+	for _, state := range []string{DispatchCreated, DispatchNudged, DispatchUnknown, DispatchDelivered} {
+		t.Run(state, func(t *testing.T) {
+			s := open(t, filepath.Join(t.TempDir(), "store.db"))
+			a, d := stoppedAssignment(t, s)
+			next, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state != DispatchCreated {
+				if err := s.ChangeDispatch(next.ID, 1, DispatchCreated, state, "", assignmentsAt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := s.LateDispatch(a.Worker, 1); err == nil || !strings.Contains(err.Error(), "is "+state+", and is not your session's current dispatch") {
+				t.Errorf("a result can use the old dispatch: %v", err)
+			}
+			if got, err := s.BlockedDispatch(a.Worker, 1); err != nil || got != d.ID {
+				t.Fatalf("blocked dispatch is %d (%v), want %d", got, err, d.ID)
+			}
+			r, owner, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt)
+			if err != nil || r.Dispatch != d.ID || owner.Agent != a.Owner {
+				t.Fatalf("blocked report is %+v, owner %+v, error %v", r, owner, err)
+			}
+			if got, err := s.WorkerDispatch(a.ID); err != nil || got.Dispatch.ID != next.ID || got.Dispatch.State != state {
+				t.Errorf("redispatch changed: %+v (%v)", got, err)
+			}
+			if _, err := s.BlockedDispatch(a.Worker, 1); err == nil || !strings.Contains(err.Error(), "already ended in a blocked report") {
+				t.Errorf("second blocked report can use the old dispatch: %v", err)
+			}
+		})
+	}
+}
+
+func TestABlockedReportBeforeRedispatchDeliveryStillRequiresAnActiveAssignmentAndTheSameSession(t *testing.T) {
+	for name, change := range map[string]func(t *testing.T, s *Store, a Assignment){
+		"cancelling": func(t *testing.T, s *Store, a Assignment) {
+			if _, _, err := s.CancellationRequested(a.ID, a.Owner, []string{"not needed"}, assignmentsAt); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"reassigned": func(t *testing.T, s *Store, a Assignment) {
+			if _, err := s.db.Exec(`UPDATE assignments SET worker = ? WHERE id = ?`, "worker2@engineering", a.ID); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"earlier session": func(t *testing.T, s *Store, a Assignment) {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := open(t, filepath.Join(t.TempDir(), "store.db"))
+			a, d := stoppedAssignment(t, s)
+			if _, err := s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, assignmentsAt); err != nil {
+				t.Fatal(err)
+			}
+			change(t, s, a)
+			generation := 1
+			if name == "earlier session" {
+				generation = 2
+			}
+			if _, err := s.BlockedDispatch(a.Worker, generation); err == nil {
+				t.Error("blocked dispatch was offered")
+			}
+			sub := submission(d, ReportBlocked)
+			sub.Generation = generation
+			if _, _, err := s.ReportSubmitted(sub, assignmentsAt); err == nil {
+				t.Error("blocked report was accepted")
 			}
 		})
 	}

@@ -817,12 +817,12 @@ func currentDispatch(tx *sql.Tx, dispatch int64, agent string, generation int) (
 
 // workedDispatch is currentDispatch, or the late dispatch of agent's session
 // of generation when that is dispatch.
-func workedDispatch(tx *sql.Tx, dispatch int64, agent string, generation int) (job, assignment int64, err error) {
+func workedDispatch(tx *sql.Tx, dispatch int64, agent string, generation int, blocked bool) (job, assignment int64, err error) {
 	job, assignment, err = currentDispatch(tx, dispatch, agent, generation)
 	if err == nil {
 		return job, assignment, nil
 	}
-	if lateID, _, lateErr := lateDispatch(tx, agent, generation); lateErr != nil || lateID != dispatch {
+	if lateID, _, lateErr := lateDispatch(tx, agent, generation, blocked); lateErr != nil || lateID != dispatch {
 		return 0, 0, err
 	}
 	err = tx.QueryRow(`SELECT m.job, m.assignment FROM dispatches d JOIN messages m ON m.id = d.message WHERE d.id = ?`, dispatch).Scan(&job, &assignment)
@@ -840,7 +840,12 @@ const reachedByTheDaemon = "the daemon hands a dispatch to your session itself, 
 // on in its session of generation after the turn the session ran for it has
 // ended; see lateDispatch.
 func (s *Store) LateDispatch(worker string, generation int) (int64, error) {
-	dispatch, _, err := lateDispatch(s.db, worker, generation)
+	dispatch, _, err := lateDispatch(s.db, worker, generation, false)
+	return dispatch, err
+}
+
+func (s *Store) BlockedDispatch(worker string, generation int) (int64, error) {
+	dispatch, _, err := lateDispatch(s.db, worker, generation, true)
 	return dispatch, err
 }
 
@@ -854,7 +859,7 @@ func (s *Store) LateDispatch(worker string, generation int) (int64, error) {
 // or an assignment that was cancelled, given to another worker or is no
 // longer active, takes no late work: the error says why, and what the worker
 // does next.
-func lateDispatch(q querier, worker string, generation int) (dispatch, assignment int64, err error) {
+func lateDispatch(q querier, worker string, generation int, blocked bool) (dispatch, assignment int64, err error) {
 	var state, owner string
 	err = q.QueryRow(`SELECT id, state, owner FROM assignments WHERE worker = ? AND NOT `+endedAssignment+` ORDER BY id DESC LIMIT 1`, worker).Scan(&assignment, &state, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -869,6 +874,22 @@ func lateDispatch(q querier, worker string, generation int) (dispatch, assignmen
 	w, err := workerDispatch(q, assignment)
 	if err != nil {
 		return 0, 0, err
+	}
+	if blocked && (w.Dispatch.State == DispatchCreated || w.Dispatch.State == DispatchNudged || w.Dispatch.State == DispatchUnknown || w.Dispatch.State == DispatchDelivered) {
+		err = q.QueryRow(`SELECT d.id, d.generation, d.state,
+			COALESCE((SELECT r.kind FROM reports r WHERE r.dispatch = d.id ORDER BY r.id LIMIT 1), '')
+			FROM messages m JOIN dispatches d ON d.message = m.id
+			WHERE m.assignment = ? AND m.recipient = ? AND d.id < ?
+			AND m.kind IN (?, ?, ?, ?, ?, ?) ORDER BY d.id DESC LIMIT 1`,
+			assignment, worker, w.Dispatch.ID, MessageAssignment, MessageRedispatch, MessageRejection,
+			MessageMovedTip, MessageResumption, MessageDecisionAnswer).
+			Scan(&w.Dispatch.ID, &w.Dispatch.Generation, &w.Dispatch.State, &w.Report)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, err
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, fmt.Errorf("assignment %d has no earlier dispatch for a blocked report", assignment)
+		}
 	}
 	var closed string
 	if err := q.QueryRow(`SELECT closed FROM dispatches WHERE id = ?`, w.Dispatch.ID).Scan(&closed); err != nil {
@@ -901,7 +922,7 @@ func (s *Store) EffectRecorded(agent string, generation int, dispatch int64, kin
 	var e Effect
 	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
 		// The late work of a turn that ended is recorded on its dispatch.
-		job, assignment, err := workedDispatch(tx, dispatch, agent, generation)
+		job, assignment, err := workedDispatch(tx, dispatch, agent, generation, false)
 		if err != nil {
 			return "", nil, err
 		}
@@ -992,7 +1013,7 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 	// A report can come in after the turn of its dispatch ended, when the
 	// sub-agents the worker started finished later, and a worker that cannot
 	// go on says so the same way a result comes in.
-	_, assignmentID, err := workedDispatch(tx, sub.Dispatch, sub.Agent, sub.Generation)
+	_, assignmentID, err := workedDispatch(tx, sub.Dispatch, sub.Agent, sub.Generation, sub.Kind == ReportBlocked)
 	if err != nil {
 		return Report{}, Dispatch{}, err
 	}

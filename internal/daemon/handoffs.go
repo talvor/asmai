@@ -150,6 +150,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 						d.listSkills(a)
 					}
 				}
+				d.stoppedReply(ref, &resp.Messages[i])
 				if err = d.workFetchedReply(l, ref, &resp.Messages[i]); err != nil {
 					break
 				}

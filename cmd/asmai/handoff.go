@@ -75,6 +75,9 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 	}
 	for _, m := range resp.Messages {
 		fmt.Fprintf(o.stdout, "message %d | dispatch %d | job %d | %s from %s\n", m.ID, m.Dispatch, m.Job, m.Kind, m.Sender)
+		if m.Stopped != "" {
+			fmt.Fprintln(o.stdout, m.Stopped)
+		}
 		if h := m.HandoffData; h != nil {
 			fmt.Fprintf(o.stdout, "handoff %d | %s -> %s | %s\nOutcome: %s\nDecisions: %s\nEvidence: %s\nConstraints: %s\nPermissions: %s\nAcceptance criteria:\n", h.ID, h.Sender, h.Receiver, h.State, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions)
 			for _, c := range h.Criteria {

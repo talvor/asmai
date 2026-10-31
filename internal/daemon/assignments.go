@@ -646,8 +646,8 @@ func (d *daemon) trailers(req Request) ([]string, error) {
 }
 
 // report records the result or the blocked report of the assignment req's
-// worker carries in its current dispatch. A result submits the assignment,
-// and with no current dispatch, goes on the late dispatch of a turn that
+// worker carries in its current dispatch. A result submits the assignment.
+// With no current dispatch, either goes on the late dispatch of a turn that
 // ended.
 // The report goes to the owning leader, which is started if it is not
 // running; the returned dispatch is the leader's, to nudge.
@@ -670,13 +670,10 @@ func (d *daemon) report(req Request) (store.Report, store.Dispatch, error) {
 		return store.Report{}, store.Dispatch{}, err
 	}
 	dispatch := current
-	if dispatch == 0 && kind == store.ReportBlocked {
-		return store.Report{}, store.Dispatch{}, refuse("%s has no current dispatch to report on; report on the assignment you fetched with `asmai inbox`", ref.address)
-	}
 	if dispatch == 0 {
 		// The worker's turn for its dispatch ended while work it started,
-		// such as sub-agents, went on: the result of that work still goes
-		// on the dispatch.
+		// such as sub-agents, went on: the result of that work, or the
+		// worker's word that it cannot go on, still goes on the dispatch.
 		if dispatch, err = d.lateDispatch(ref, "to report on"); err != nil {
 			return store.Report{}, store.Dispatch{}, err
 		}
@@ -764,6 +761,28 @@ func (d *daemon) lateDispatch(ref sessionRef, purpose string) (int64, error) {
 		return 0, refuse("%s has no current dispatch %s, and no dispatch whose turn ended takes it: %v", ref.address, purpose, err)
 	}
 	return dispatch, nil
+}
+
+// stoppedReply says, on a message whose stopped dispatch is the latest the
+// worker ref has for its active assignment, that the dispatch is stopped and
+// is not the worker's current one, and whether it still takes the worker's
+// report: the worker is shown what is true where it fetches the dispatch, and
+// is not left to find out from a refusal.
+func (d *daemon) stoppedReply(ref sessionRef, m *store.Message) {
+	a := m.AssignmentData
+	if m.State != store.DispatchStopped || a == nil || a.Worker != ref.address.String() || a.State != store.AssignmentActive {
+		return
+	}
+	if w, err := d.store.WorkerDispatch(a.ID); err != nil || w.Dispatch.ID != m.Dispatch {
+		return
+	}
+	late, err := d.store.LateDispatch(ref.address.String(), ref.generation)
+	switch {
+	case err == nil && late == m.Dispatch:
+		m.Stopped = fmt.Sprintf("Dispatch %d is stopped and is not your current dispatch: your turn for it ended with no report. It still takes your report on assignment %d: run `asmai result` when the work is finished, or `asmai blocked` if you cannot go on.", m.Dispatch, a.ID)
+	case err != nil:
+		m.Stopped = fmt.Sprintf("Dispatch %d is stopped and is not your current dispatch, and it takes no report: %v.", m.Dispatch, err)
+	}
 }
 
 // checkWritingReport checks that a writing assignment's workspace is at a

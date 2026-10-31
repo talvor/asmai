@@ -57,12 +57,9 @@ func TestAResultOfATurnThatEndedWithNoReportIsTakenOnItsDispatch(t *testing.T) {
 	}
 
 	// The finished work is pushed and recorded, and its result submitted,
-	// on the dispatch; a blocked report is not taken on it.
+	// on the dispatch.
 	if _, err := s.EffectRecorded(a.Worker, 1, d.ID, "push", "origin/"+a.Workspace.Branch+"@"+otherCommit, assignmentsAt); err != nil {
 		t.Fatalf("recording the late push: %v", err)
-	}
-	if _, _, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt); err == nil {
-		t.Error("a blocked report was taken on a dispatch whose turn ended")
 	}
 	r, owners, err := s.ReportSubmitted(submission(d, ReportResult), assignmentsAt)
 	if err != nil {
@@ -76,6 +73,28 @@ func TestAResultOfATurnThatEndedWithNoReportIsTakenOnItsDispatch(t *testing.T) {
 	}
 	if _, _, err := s.ReportSubmitted(submission(d, ReportResult), assignmentsAt); err == nil {
 		t.Error("a second late result was taken")
+	}
+}
+
+func TestABlockedReportOfATurnThatEndedWithNoReportIsTakenOnItsDispatch(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	a, d := stoppedAssignment(t, s)
+	r, owners, err := s.ReportSubmitted(submission(d, ReportBlocked), assignmentsAt)
+	if err != nil {
+		t.Fatalf("the late blocked report was refused: %v", err)
+	}
+	if r.Kind != ReportBlocked || r.Dispatch != d.ID || owners.Agent != a.Owner {
+		t.Errorf("the late blocked report is %+v, sent to %+v", r, owners)
+	}
+	// A blocked report leaves the assignment active, and ends the dispatch:
+	// neither a result nor another blocked report goes on it.
+	if got, _ := s.Assignment(a.ID); got.State != AssignmentActive {
+		t.Errorf("the assignment is %s, want it still active", got.State)
+	}
+	for _, kind := range []string{ReportResult, ReportBlocked} {
+		if _, _, err := s.ReportSubmitted(submission(d, kind), assignmentsAt); err == nil {
+			t.Errorf("a %s was taken on a dispatch that already ended in a blocked report", kind)
+		}
 	}
 }
 
@@ -109,7 +128,7 @@ func TestALateResultIsRefusedOnADispatchClosedAnyOtherWay(t *testing.T) {
 				}
 				return 1
 			},
-			"waits for you: fetch it with `asmai inbox`",
+			"is created, and is not your session's current dispatch",
 		},
 		"cancelling": {
 			func(t *testing.T, s *Store, a Assignment, d Dispatch) int {
@@ -156,13 +175,19 @@ func TestALateResultIsRefusedOnADispatchClosedAnyOtherWay(t *testing.T) {
 				t.Fatal(err)
 			}
 			generation := tt.close(t, s, a, d)
-			if _, err := s.LateDispatch(a.Worker, generation); err == nil || !strings.Contains(err.Error(), tt.want) {
+			_, err := s.LateDispatch(a.Worker, generation)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("the late dispatch was found with %v, want it refused saying %q", err, tt.want)
+			} else if strings.Contains(err.Error(), "run `asmai inbox`") || strings.Contains(err.Error(), "fetch it with `asmai inbox`") {
+				// Fetching by hand makes no dispatch current, so it is no way out.
+				t.Errorf("the refusal sends the worker to `asmai inbox`: %v", err)
 			}
-			sub := submission(d, ReportResult)
-			sub.Generation = generation
-			if _, _, err := s.ReportSubmitted(sub, assignmentsAt); err == nil || !strings.Contains(err.Error(), "is not the dispatch") && !strings.Contains(err.Error(), "already ended") {
-				t.Errorf("a late result was submitted with %v", err)
+			for _, kind := range []string{ReportResult, ReportBlocked} {
+				sub := submission(d, kind)
+				sub.Generation = generation
+				if _, _, err := s.ReportSubmitted(sub, assignmentsAt); err == nil || !strings.Contains(err.Error(), "is not the dispatch") && !strings.Contains(err.Error(), "already ended") {
+					t.Errorf("a late %s was submitted with %v", kind, err)
+				}
 			}
 		})
 	}

@@ -208,8 +208,8 @@ func TestTheInboxOfAWorkerWhoseTurnEndedSaysItsDispatchIsStoppedAndNotCurrent(t 
 		v.d.stoppedReply(ref, &messages[0])
 		return messages[0]
 	}
-	if m := fetch(v.dispatch.ID); m.Stopped != "" || m.Closed != "" {
-		t.Errorf("the current dispatch says %q (closed %q) in the inbox", m.Stopped, m.Closed)
+	if m := fetch(v.dispatch.ID); m.Stopped != "" {
+		t.Errorf("the current dispatch says %q in the inbox", m.Stopped)
 	}
 	if err := v.s.ChangeDispatch(v.dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
 		t.Fatal(err)
@@ -223,13 +223,27 @@ func TestTheInboxOfAWorkerWhoseTurnEndedSaysItsDispatchIsStoppedAndNotCurrent(t 
 	// says the dispatch is stopped and not current, and that it still takes
 	// the report.
 	m := fetch(0)
-	if m.State != store.DispatchStopped || m.Closed != store.ClosedTurnEnded {
-		t.Errorf("the inbox shows dispatch %d as %s, closed %q, want stopped by a turn that ended", m.Dispatch, m.State, m.Closed)
+	if m.State != store.DispatchStopped {
+		t.Errorf("the inbox shows dispatch %d as %s, want stopped", m.Dispatch, m.State)
 	}
 	for _, want := range []string{"Dispatch " + strconv.FormatInt(v.dispatch.ID, 10) + " is stopped and is not your current dispatch", "ended with no report", "still takes your report", "`asmai result`", "`asmai blocked`"} {
 		if !strings.Contains(m.Stopped, want) {
 			t.Errorf("the stopped dispatch says %q, want it to say %q", m.Stopped, want)
 		}
+	}
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["closed"]; ok {
+		t.Errorf("the structured inbox exposes a closed field: %s", encoded)
+	}
+	if string(fields["dispatch_state"]) != `"stopped"` || len(fields["stopped"]) == 0 {
+		t.Errorf("the structured inbox has no stopped status: %s", encoded)
 	}
 
 	// Once the worker has said it is blocked, the dispatch takes no report.

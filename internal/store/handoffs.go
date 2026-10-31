@@ -107,12 +107,6 @@ type Message struct {
 	// BlockedData is the leader's blocked report a blocked or a
 	// blocked.resolved message is about.
 	BlockedData *BlockedReport `json:"blocked_report_data,omitempty"`
-	// Closed is why a stopped dispatch was closed, one of the Closed
-	// constants; a dispatch that is not stopped has none. A stopped dispatch
-	// is never its session's current dispatch. Stopped is what that means
-	// for the worker the dispatch gave an assignment, when the daemon says
-	// so: whether the dispatch still takes its report, or what to do next.
-	Closed  string `json:"closed,omitempty"`
 	Stopped string `json:"stopped,omitempty"`
 }
 
@@ -399,7 +393,7 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.blocked,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.closed,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id LEFT JOIN assignments a ON a.id=m.assignment WHERE m.recipient=? AND (?=0 OR d.id=?) AND NOT (d.state=? AND m.fetched_at IS NULL) AND (m.fetched_at IS NOT NULL OR d.id=? OR a.worker IS NULL OR a.worker<>?) ORDER BY m.id`, agent, only, only, DispatchStopped, current, agent)
+	rows, err := tx.Query(`SELECT m.id,m.handoff,m.assignment,m.report,m.request,m.blocked,m.job,m.sender,m.recipient,m.kind,m.body,d.id,d.state,d.transcript,m.fetched_at,COALESCE(d.resumes,0) FROM messages m JOIN dispatches d ON d.message=m.id LEFT JOIN assignments a ON a.id=m.assignment WHERE m.recipient=? AND (?=0 OR d.id=?) AND NOT (d.state=? AND m.fetched_at IS NULL) AND (m.fetched_at IS NOT NULL OR d.id=? OR a.worker IS NULL OR a.worker<>?) ORDER BY m.id`, agent, only, only, DispatchStopped, current, agent)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +402,7 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 		var m Message
 		var fetched sql.NullString
 		var handoff, assignment, report, request, blocked sql.NullInt64
-		if err = rows.Scan(&m.ID, &handoff, &assignment, &report, &request, &blocked, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Closed, &m.Transcript, &fetched, &m.Resumes); err != nil {
+		if err = rows.Scan(&m.ID, &handoff, &assignment, &report, &request, &blocked, &m.Job, &m.Sender, &m.Recipient, &m.Kind, &m.Body, &m.Dispatch, &m.State, &m.Transcript, &fetched, &m.Resumes); err != nil {
 			break
 		}
 		m.Handoff, m.Assignment, m.Report, m.Request, m.Blocked = handoff.Int64, assignment.Int64, report.Int64, request.Int64, blocked.Int64

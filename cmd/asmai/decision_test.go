@@ -13,6 +13,9 @@ import (
 
 const resultFlagsForGreeting = `asmai result --evidence './check.sh exits 0 at HEAD' --artifact 'greeting.txt' --test 'check.sh asserts greeting.txt says hello' --check './check.sh -> passed' --gap none --pr-section 'Adds greeting.txt, saying hello. Before: no greeting.txt. After: check.sh passes.'`
 
+// The worker runtime can leave a copied read-only view in its assignment tmp.
+const copiedReadOnlyView = `mkdir -p "$TMPDIR/state/views/job-1/docs/agents" && printf 'copied view\n' > "$TMPDIR/state/views/job-1/docs/agents/issue-tracker.md" && chmod 444 "$TMPDIR/state/views/job-1/docs/agents/issue-tracker.md" && chmod 555 "$TMPDIR/state/views/job-1/docs/agents" "$TMPDIR/state/views/job-1/docs" "$TMPDIR/state/views/job-1" "$TMPDIR/state/views" "$TMPDIR/state" && ls -ld "$TMPDIR/state/views/job-1/docs/agents" "$TMPDIR/state/views/job-1/docs/agents/issue-tracker.md" > "$ASMAI_TEST_DIR/read-only-view-modes"`
+
 // greetingWorker is a worker that does the greeting assignment and submits its
 // result in the assignment's first dispatch, 3.
 func greetingWorker(branch string) []string {
@@ -113,6 +116,7 @@ func workerOf(t *testing.T, name string) agentJSON {
 
 func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsWorkspace(t *testing.T) {
 	const branch = "asmai/test/job-1/1"
+	worker := append([]string{fakeRun(copiedReadOnlyView, 0, "")}, greetingWorker(branch)...)
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "result 1"),
 		fakeRun(`asmai accept`, 1, "accept needs --assignment"),
@@ -127,7 +131,12 @@ func TestAcceptingAResultFastForwardsTheJobBranchEndsTheAssignmentAndRemovesItsW
 		fakeRun(`asmai cancel --assignment 1 --reason x`, 1, "assignment 1 is accepted, so it cannot be cancelled"),
 		fakeRun(`asmai brief 1`, 0, "(?s)Job branch: asmai/test/job-1-add-a-greeting \\(started from [0-9a-f]{40}, tip [0-9a-f]{40}\\).*1 worker1@engineering \\(owner leader@engineering\\) accepted on branch asmai/test/job-1/1"),
 	}
-	fixture, _ := assignmentFlow(t, greetingWorker(branch), leader)
+	fixture, testDir := assignmentFlow(t, worker, leader)
+	if modes, err := os.ReadFile(filepath.Join(testDir, "read-only-view-modes")); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Logf("copied view before acceptance:\n%s", modes)
+	}
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
 	if _, err := os.Stat(workerTmp(stateDir, 1)); !os.IsNotExist(err) {
 		t.Errorf("accept left the assignment temporary directory in place: %v", err)
@@ -312,6 +321,7 @@ func TestCancellingAnAssignmentMakesItsWorkerPushItsBranchAndStopBeforeItEnds(t 
 	const branch = "asmai/test/job-1/1"
 	worker := []string{
 		fakeRun(`asmai inbox --dispatch 3`, 0, "assignment 1"),
+		fakeRun(copiedReadOnlyView, 0, ""),
 		fakeRun(`printf 'draft\n' > notes.txt && git add -A && git commit -q -m 'Draft' && git push -q origin `+branch+` && asmai effect push "origin/`+branch+`@$(git rev-parse HEAD)"`, 0, "effect 1 recorded: push"),
 		fakeRun(`asmai blocked --reason 'Which greeting?' --needs 'a choice'`, 0, "blocked recorded for assignment 1"),
 		hookStep("Stop", "assignment", ""),
@@ -333,6 +343,11 @@ func TestCancellingAnAssignmentMakesItsWorkerPushItsBranchAndStopBeforeItEnds(t 
 		fakeRun(`asmai accept --assignment 1 --reason x`, 1, "so it has no result to accept"),
 	}
 	fixture, testDir := assignmentFlow(t, worker, leader)
+	if modes, err := os.ReadFile(filepath.Join(testDir, "read-only-view-modes")); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Logf("copied view before cancellation:\n%s", modes)
+	}
 	stateDir := filepath.Join(os.Getenv("HOME"), ".local", "state", "asmai")
 	clone := filepath.Join(stateDir, "repositories", "fixture")
 

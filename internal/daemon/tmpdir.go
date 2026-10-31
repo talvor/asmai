@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -101,7 +102,7 @@ func (d *daemon) assignmentTmp(id int64) (string, error) {
 }
 
 func (d *daemon) removeAssignmentTmp(a store.Assignment) error {
-	if err := os.RemoveAll(a.Workspace.Tmp); err != nil {
+	if err := repos.RemoveTree(a.Workspace.Tmp); err != nil {
 		d.log.Error("removing an assignment's temporary directory", "assignment", a.ID, "tmp", a.Workspace.Tmp, "error", err.Error())
 		return err
 	}
@@ -132,7 +133,7 @@ func (d *daemon) sweepTmp() error {
 		if live[e.Name()] {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(root, e.Name())); err != nil {
+		if err := repos.RemoveTree(filepath.Join(root, e.Name())); err != nil {
 			d.log.Error("removing a temporary directory no assignment holds", "directory", e.Name(), "error", err.Error())
 		}
 	}

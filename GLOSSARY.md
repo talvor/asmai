@@ -50,7 +50,7 @@ An agent spawned to carry out one bounded assignment at a time under one owning 
 A bounded piece of work entrusted to one worker by its owning leader, with an outcome and acceptance criteria.
 
 **Dispatch**:
-One identified delivery of work to a specific agent session. Only evidence tied to the current dispatch counts; a retry, correction, or resumption is always a new dispatch.
+One identified delivery of work to a specific agent session. Evidence stays tied to that dispatch even when its report arrives after the session's turn ends; a retry, correction, or resumption is always a new dispatch.
 _Avoid_: Attempt, run
 
 **Reconciliation**:

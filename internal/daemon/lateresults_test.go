@@ -291,6 +291,23 @@ func TestTheInboxOfAWorkerWhoseTurnEndedSaysItsDispatchIsStoppedAndNotCurrent(t 
 	if strings.Contains(m.Stopped, "It still takes your report") {
 		t.Errorf("the inactive assignment's dispatch offers a report: %q", m.Stopped)
 	}
+
+	// The old recipient can still fetch its stopped dispatch after the
+	// assignment is given to another worker. It must see why it cannot
+	// report, even though the assignment's current worker has changed.
+	m.AssignmentData.Worker = "worker2@quality"
+	v.d.stoppedReply(ref, &m)
+	for _, want := range []string{"is stopped and is not your current dispatch", "takes no report from you", "now held by worker2@quality"} {
+		if !strings.Contains(m.Stopped, want) {
+			t.Errorf("the reassigned dispatch says %q, want %q", m.Stopped, want)
+		}
+	}
+	m.Kind = store.ReportResult
+	m.Stopped = ""
+	v.d.stoppedReply(sessionRef{address: roles.LeaderOf(roles.Quality), generation: 1}, &m)
+	if m.Stopped != "" {
+		t.Errorf("a stopped result message to a leader says %q as if it were the worker's dispatch", m.Stopped)
+	}
 }
 
 func TestAWritingWorkersLateWorkIsCommittedAndRecordedOnTheDispatchWhoseTurnEnded(t *testing.T) {

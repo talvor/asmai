@@ -773,10 +773,15 @@ func (d *daemon) lateDispatch(ref sessionRef, purpose string) (int64, error) {
 
 func (d *daemon) stoppedReply(ref sessionRef, m *store.Message) {
 	a := m.AssignmentData
-	if m.State != store.DispatchStopped || a == nil || a.Worker != ref.address.String() {
+	_, isWorker := ref.address.WorkerNumber()
+	if m.State != store.DispatchStopped || a == nil || !isWorker {
 		return
 	}
 	m.Stopped = fmt.Sprintf("Dispatch %d is stopped and is not your current dispatch", m.Dispatch)
+	if a.Worker != ref.address.String() {
+		m.Stopped += fmt.Sprintf(", and it takes no report from you: assignment %d is now held by %s.", a.ID, a.Worker)
+		return
+	}
 	if a.State != store.AssignmentActive {
 		m.Stopped += fmt.Sprintf(", and it takes no report: assignment %d is %s.", a.ID, a.State)
 		return

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -107,6 +108,7 @@ func TestAWorkerWhoseDispatchWasStoppedFetchesItAgainAndFilesABlockedReport(t *t
 		hookStep("Stop", "assignment", ""),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/stalled-read" ]; do sleep 0.02; done`, 0, ""),
 		fakeRun(`asmai inbox --dispatch 3 | tee "$ASMAI_TEST_DIR/refetched-inbox"`, 0, "(?s)Dispatch 3 is stopped and is not your current dispatch.*It still takes your report on assignment 1"),
+		fakeRun(`asmai inbox --dispatch 3 --json | tee "$ASMAI_TEST_DIR/refetched-inbox-json"`, 0, `"dispatch_state": "stopped"`),
 		fakeRun(`asmai blocked --reason 'the review sub-agents never reported' --needs 'a new dispatch' | tee "$ASMAI_TEST_DIR/late-blocked"`, 0, "blocked recorded for assignment 1 at commit [0-9a-f]{40}; sent to leader@engineering as dispatch 5"),
 		// The dispatch ended in that report: no other report goes on it, and
 		// what the refusal says is true.
@@ -122,7 +124,21 @@ func TestAWorkerWhoseDispatchWasStoppedFetchesItAgainAndFilesABlockedReport(t *t
 		fakeRun(`asmai inbox --dispatch 5 | tee "$ASMAI_TEST_DIR/leader-blocked"`, 0, "(?s)blocked from worker1@engineering.*blocked 1 \\| assignment 1 \\| worker1@engineering.*Reason: the review sub-agents never reported\nNeeds: a new dispatch"),
 	}
 	_, testDir := assignmentFlow(t, worker, leader)
-	logOutputs(t, testDir, "refetched-inbox", "late-blocked", "reported-inbox", "after-blocked-refusal", "leader-blocked")
+	logOutputs(t, testDir, "refetched-inbox", "refetched-inbox-json", "late-blocked", "reported-inbox", "after-blocked-refusal", "leader-blocked")
+	data, err := os.ReadFile(filepath.Join(testDir, "refetched-inbox-json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(data, &messages); err != nil || len(messages) != 1 {
+		t.Fatalf("structured inbox has %d messages (%v): %s", len(messages), err, data)
+	}
+	if string(messages[0]["dispatch_state"]) != `"stopped"` || len(messages[0]["stopped"]) == 0 {
+		t.Errorf("structured inbox omits stopped status: %s", data)
+	}
+	if _, ok := messages[0]["closed"]; ok {
+		t.Errorf("structured inbox exposes a closed field: %s", data)
+	}
 	if got := closedReason(t, 3); got != "turn-ended" {
 		t.Errorf("the journal says dispatch 3 was closed as %q, want turn-ended", got)
 	}

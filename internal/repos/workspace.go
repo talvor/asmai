@@ -247,6 +247,16 @@ func makeWritable(dir string) {
 	})
 }
 
+// RemoveTree removes the tree at dir, which may hold read-only files and
+// directories, as a copy of a view does: it gives the owner write permission
+// on each of them first, since a file cannot be removed from a directory that
+// is not writable. It does not follow symbolic links, so it changes nothing
+// outside the tree, and it removes nothing if dir is missing.
+func RemoveTree(dir string) error {
+	makeWritable(dir)
+	return os.RemoveAll(dir)
+}
+
 // Uncommitted returns what the checkout at dir has changed and not committed,
 // one status line each, untracked files included.
 func Uncommitted(ctx context.Context, dir string) ([]string, error) {

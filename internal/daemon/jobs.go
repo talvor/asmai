@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -227,7 +227,7 @@ func (d *daemon) cleanScratch(job int64) ([]string, error) {
 	dir := filepath.Join(d.cfg.Paths.Workspaces, fmt.Sprintf("job-%d", job))
 	var removed []string
 	if exists(dir) {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := repos.RemoveTree(dir); err != nil {
 			return nil, fmt.Errorf("removing %s: %w", dir, err)
 		}
 		removed = append(removed, dir)

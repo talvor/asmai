@@ -514,3 +514,73 @@ func TestDaemonRestartRestoresLegacyTmpUnderShortRoot(t *testing.T) {
 		t.Logf("daemon restart restored assignment %d with legacy TMPDIR=%s", a.ID, got)
 	}
 }
+
+// readOnlyViewCopy makes dir hold a copy of a read-only view: nested
+// directories dr-xr-xr-x and files -r--r--r--, as the agent runtime leaves one
+// in an assignment's temporary directory, and a symbolic link out of the tree.
+func readOnlyViewCopy(t *testing.T, dir, outside string) {
+	t.Helper()
+	nested := filepath.Join(dir, "state", "views", "job-1", "docs", "agents")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "issue-tracker.md"), []byte("x"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(nested, "out")); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{nested, filepath.Join(dir, "state", "views", "job-1", "docs"), filepath.Join(dir, "state", "views", "job-1"), filepath.Join(dir, "state", "views"), filepath.Join(dir, "state")} {
+		if err := os.Chmod(d, 0o500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		filepath.WalkDir(dir, func(p string, e os.DirEntry, err error) error {
+			if e != nil && e.IsDir() {
+				os.Chmod(p, 0o700)
+			}
+			return nil
+		})
+	})
+}
+
+func TestRemovingAnAssignmentTmpClearsAReadOnlyCopyOfAView(t *testing.T) {
+	shortTmpBase(t, t.TempDir())
+	p := newJobFactory(t, store.MandateResearchOnly, false)
+	a := recordLiveTmpAssignment(t, p)
+	outside := t.TempDir()
+	keep := filepath.Join(outside, "keep")
+	if err := os.WriteFile(keep, []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	readOnlyViewCopy(t, a.Workspace.Tmp, outside)
+
+	if err := p.d.removeAssignmentTmp(a); err != nil {
+		t.Fatalf("removing the temporary directory with a read-only view copy: %v", err)
+	}
+	if _, err := os.Lstat(a.Workspace.Tmp); !os.IsNotExist(err) {
+		t.Errorf("the temporary directory remains: %v", err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("a file a symbolic link in the tree pointed to was removed: %v", err)
+	}
+}
+
+func TestSweepClearsOrphanedTmpHoldingAReadOnlyCopyOfAView(t *testing.T) {
+	shortTmpBase(t, t.TempDir())
+	p := newJobFactory(t, store.MandateResearchOnly, false)
+	live := recordLiveTmpAssignment(t, p)
+	stale, err := p.d.assignmentTmp(live.ID + 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnlyViewCopy(t, stale, t.TempDir())
+
+	if err := p.d.sweepTmp(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Errorf("the orphaned temporary directory with a read-only view copy remains: %v", err)
+	}
+}

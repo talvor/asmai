@@ -330,6 +330,7 @@ func TestStartingTheDaemonRunsTheSweep(t *testing.T) {
 	if err := os.MkdirAll(stale, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	readOnlyViewCopy(t, stale, t.TempDir())
 	otherDaemon := &daemon{cfg: Config{Paths: stateDir(t)}}
 	other, err := otherDaemon.assignmentTmp(7)
 	if err != nil {
@@ -565,6 +566,7 @@ func TestRemovingAnAssignmentTmpClearsAReadOnlyCopyOfAView(t *testing.T) {
 	if _, err := os.Stat(keep); err != nil {
 		t.Errorf("a file a symbolic link in the tree pointed to was removed: %v", err)
 	}
+	t.Logf("removed read-only assignment tmp %s; symlink target %s remains", a.Workspace.Tmp, keep)
 }
 
 func TestSweepClearsOrphanedTmpHoldingAReadOnlyCopyOfAView(t *testing.T) {
@@ -583,4 +585,5 @@ func TestSweepClearsOrphanedTmpHoldingAReadOnlyCopyOfAView(t *testing.T) {
 	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
 		t.Errorf("the orphaned temporary directory with a read-only view copy remains: %v", err)
 	}
+	t.Logf("swept orphaned read-only assignment tmp %s", stale)
 }

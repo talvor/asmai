@@ -379,6 +379,12 @@ func TestCoordinationCancelsAJobAtTheUsersWordAndEveryBranchStaysOnOrigin(t *tes
 func TestCancelledJobRemovesWorkspaceViewAndTmpHoldingReadOnlyViewCopy(t *testing.T) {
 	c := newCancellableJob(t, newTwoResults(t), false)
 	a := c.assignments[0]
+	view := filepath.Join(c.d.cfg.Paths.Views, fmt.Sprintf("job-%d", c.job.Number))
+	for _, path := range []string{view, a.Workspace.Path} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("before cancellation, expected %s: %v", path, err)
+		}
+	}
 	if err := os.MkdirAll(a.Workspace.Tmp, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -396,10 +402,10 @@ func TestCancelledJobRemovesWorkspaceViewAndTmpHoldingReadOnlyViewCopy(t *testin
 			}
 		}
 	}
-	view := filepath.Join(c.d.cfg.Paths.Views, fmt.Sprintf("job-%d", c.job.Number))
 	if _, err := os.Lstat(view); !os.IsNotExist(err) {
 		t.Errorf("cancelled job left its view %s: %v", view, err)
 	}
+	t.Logf("cancelled job removed assignment tmp %s, workspaces and view %s", a.Workspace.Tmp, view)
 }
 
 func TestAnAssignmentNeedingReconciliationIsCancelledWithItsJob(t *testing.T) {

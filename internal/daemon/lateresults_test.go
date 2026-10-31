@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -96,10 +97,14 @@ func TestAResultIsTakenAfterTheWorkersTurnEndedWithItsSubAgentsStillRunning(t *t
 	}
 }
 
-func TestABlockedReportAfterTheWorkersTurnEndedIsStillRefused(t *testing.T) {
+// A worker whose turn ended can say it is blocked, even though no dispatch is
+// current: the blocked report goes on the dispatch whose turn ended, as a
+// result does (#250).
+func TestABlockedReportAfterTheWorkersTurnEndedIsTakenOnItsDispatch(t *testing.T) {
 	v := newValidationFixture(t)
+	a := v.assignment
 	worker := roles.WorkerOf(roles.Quality, 1)
-	v.d.leaders[worker.String()] = &leader{address: worker, session: &session.Session{}, generation: 1, assignment: v.assignment.ID, currentDispatch: v.dispatch.ID}
+	v.d.leaders[worker.String()] = &leader{address: worker, session: &session.Session{}, generation: 1, assignment: a.ID, currentDispatch: v.dispatch.ID}
 	v.d.sessions["worker"] = sessionRef{address: worker, generation: 1}
 	if err := v.s.ChangeDispatch(v.dispatch.ID, 1, store.DispatchCreated, store.DispatchWorking, "", time.Now()); err != nil {
 		t.Fatal(err)
@@ -109,8 +114,199 @@ func TestABlockedReportAfterTheWorkersTurnEndedIsStillRefused(t *testing.T) {
 	}
 	v.d.agents.Wait()
 	input := store.ReportInput{Reason: "which checks?", Needs: "the owner"}
-	if _, _, err := v.d.report(Request{Session: "worker", Command: CommandBlocked, Report: &input}); err == nil || !strings.Contains(err.Error(), "no current dispatch to report on") {
-		t.Errorf("a blocked report after the turn ended returned %v", err)
+	r, owners, err := v.d.report(Request{Session: "worker", Command: CommandBlocked, Report: &input})
+	if err != nil {
+		t.Fatalf("a blocked report after the turn ended was refused: %v", err)
+	}
+	if r.Kind != store.ReportBlocked || r.Dispatch != v.dispatch.ID || owners.Agent != a.Owner {
+		t.Errorf("the late blocked report is %+v, sent to %+v", r, owners)
+	}
+	if got, _ := v.s.Assignment(a.ID); got.State != store.AssignmentActive {
+		t.Errorf("the assignment is %s after a blocked report, want it still active", got.State)
+	}
+	// The dispatch ended in that report, so it takes no other.
+	result := store.ReportInput{Evidence: []string{"./check.sh -> passed"}, Checks: []store.Check{{Command: "./check.sh", Outcome: "passed"}}, Gaps: []string{}, Validation: &store.ValidationInput{Findings: []store.FindingInput{}}}
+	if _, _, err := v.d.report(Request{Session: "worker", Command: CommandResult, Report: &result}); err == nil || !strings.Contains(err.Error(), "already ended in a blocked report") {
+		t.Errorf("a result after the blocked report returned %v", err)
+	}
+}
+
+// A worker whose turn ended, and whose dispatch the owner then sent again, is
+// not told to fetch the new dispatch with asmai inbox: fetching it by hand does
+// not make it current, and the daemon hands it over itself (#250).
+func TestARefusalForAWorkerWithNoCurrentDispatchNeverPointsAtAsmaiInboxToFixIt(t *testing.T) {
+	for name, tt := range map[string]struct {
+		// stalled leaves the worker's assignment as the case has it.
+		stalled func(t *testing.T, v validationFixture)
+		want    string
+	}{
+		"sent again by the owner": {
+			func(t *testing.T, v validationFixture) {
+				if _, err := v.s.AssignmentRedispatched(v.assignment.ID, v.assignment.Owner, []string{"try again"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			},
+			"is created, and is not your session's current dispatch",
+		},
+		"cancelling": {
+			func(t *testing.T, v validationFixture) {
+				if _, _, err := v.s.CancellationRequested(v.assignment.ID, v.assignment.Owner, []string{"not needed"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			},
+			"is cancelling, so it takes no new report",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := newValidationFixture(t)
+			worker := roles.WorkerOf(roles.Quality, 1)
+			v.d.leaders[worker.String()] = &leader{address: worker, session: &session.Session{}, generation: 1, assignment: v.assignment.ID, currentDispatch: v.dispatch.ID}
+			v.d.sessions["worker"] = sessionRef{address: worker, generation: 1}
+			if err := v.s.ChangeDispatch(v.dispatch.ID, 1, store.DispatchCreated, store.DispatchWorking, "", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if err := v.d.observe("worker", json.RawMessage(`{"hook_event_name":"Stop","prompt_id":"turn-1"}`)); err != nil {
+				t.Fatal(err)
+			}
+			v.d.agents.Wait()
+			tt.stalled(t, v)
+			result := store.ReportInput{Evidence: []string{"./check.sh -> passed"}, Checks: []store.Check{{Command: "./check.sh", Outcome: "passed"}}, Gaps: []string{}, Validation: &store.ValidationInput{Findings: []store.FindingInput{}}}
+			blocked := store.ReportInput{Reason: "which checks?", Needs: "the owner"}
+			for command, input := range map[string]store.ReportInput{CommandResult: result, CommandBlocked: blocked} {
+				r, owner, err := v.d.report(Request{Session: "worker", Command: command, Report: &input})
+				if name == "sent again by the owner" && command == CommandBlocked {
+					if err != nil || r.Kind != store.ReportBlocked || r.Dispatch != v.dispatch.ID || owner.Agent != v.assignment.Owner {
+						t.Errorf("blocked report before redispatch delivery is %+v, owner %+v, error %v", r, owner, err)
+					}
+					continue
+				}
+				if err == nil || !strings.Contains(err.Error(), tt.want) {
+					t.Errorf("%s returned %v, want it refused saying %q", command, err, tt.want)
+					continue
+				}
+				if strings.Contains(err.Error(), "fetch it with `asmai inbox`") || strings.Contains(err.Error(), "run `asmai inbox`") {
+					t.Errorf("%s was refused with advice to run asmai inbox, which cannot make a dispatch current: %v", command, err)
+				}
+			}
+		})
+	}
+}
+
+// What the worker fetches with asmai inbox says that its dispatch was stopped
+// when its turn ended and is not its current dispatch, and what it can still do
+// (#250).
+func TestTheInboxOfAWorkerWhoseTurnEndedSaysItsDispatchIsStoppedAndNotCurrent(t *testing.T) {
+	v := newValidationFixture(t)
+	a := v.assignment
+	worker := roles.WorkerOf(roles.Quality, 1)
+	ref := sessionRef{address: worker, generation: 1}
+	v.d.leaders[worker.String()] = &leader{address: worker, session: &session.Session{}, generation: 1, assignment: a.ID, currentDispatch: v.dispatch.ID}
+	v.d.sessions["worker"] = ref
+
+	// The worker fetches its assignment as the daemon's nudge makes it
+	// current, so the inbox shows it as a dispatch it is working on.
+	fetch := func(current int64) store.Message {
+		t.Helper()
+		messages, err := v.s.Inbox(worker.String(), v.dispatch.ID, current, time.Now())
+		if err != nil || len(messages) != 1 {
+			t.Fatalf("the worker's inbox holds %d messages (%v), want its assignment", len(messages), err)
+		}
+		v.d.stoppedReply(ref, &messages[0])
+		return messages[0]
+	}
+	if m := fetch(v.dispatch.ID); m.Stopped != "" {
+		t.Errorf("the current dispatch says %q in the inbox", m.Stopped)
+	}
+	if err := v.s.ChangeDispatch(v.dispatch.ID, 1, store.DispatchDelivered, store.DispatchWorking, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.d.observe("worker", json.RawMessage(`{"hook_event_name":"Stop","prompt_id":"turn-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	v.d.agents.Wait()
+
+	// The turn ended with the sub-agents running: running asmai inbox again
+	// says the dispatch is stopped and not current, and that it still takes
+	// the report.
+	m := fetch(0)
+	if m.State != store.DispatchStopped {
+		t.Errorf("the inbox shows dispatch %d as %s, want stopped", m.Dispatch, m.State)
+	}
+	for _, want := range []string{"Dispatch " + strconv.FormatInt(v.dispatch.ID, 10) + " is stopped and is not your current dispatch", "ended with no report", "still takes your report", "`asmai result`", "`asmai blocked`"} {
+		if !strings.Contains(m.Stopped, want) {
+			t.Errorf("the stopped dispatch says %q, want it to say %q", m.Stopped, want)
+		}
+	}
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["closed"]; ok {
+		t.Errorf("the structured inbox exposes a closed field: %s", encoded)
+	}
+	if string(fields["dispatch_state"]) != `"stopped"` || len(fields["stopped"]) == 0 {
+		t.Errorf("the structured inbox has no stopped status: %s", encoded)
+	}
+
+	// Once the worker has said it is blocked, the dispatch takes no report.
+	input := store.ReportInput{Reason: "which checks?", Needs: "the owner"}
+	if _, _, err := v.d.report(Request{Session: "worker", Command: CommandBlocked, Report: &input}); err != nil {
+		t.Fatal(err)
+	}
+	m = fetch(0)
+	if !strings.Contains(m.Stopped, "is stopped and is not your current dispatch, and it takes no report") || !strings.Contains(m.Stopped, "already ended in a blocked report") {
+		t.Errorf("the dispatch that ended in a blocked report says %q", m.Stopped)
+	}
+	if strings.Contains(m.Stopped, "fetch it with `asmai inbox`") || strings.Contains(m.Stopped, "run `asmai inbox`") {
+		t.Errorf("the stopped dispatch sends the worker to asmai inbox: %q", m.Stopped)
+	}
+
+	next, err := v.s.AssignmentRedispatched(a.ID, a.Owner, []string{"try again"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = fetch(0)
+	for _, want := range []string{"is stopped and is not your current dispatch", "takes no result", "superseded by dispatch " + strconv.FormatInt(next.ID, 10)} {
+		if !strings.Contains(m.Stopped, want) {
+			t.Errorf("the superseded dispatch says %q, want %q", m.Stopped, want)
+		}
+	}
+	if strings.Contains(m.Stopped, "It still takes your report") {
+		t.Errorf("the superseded dispatch offers a report: %q", m.Stopped)
+	}
+
+	if _, _, err := v.s.CancellationRequested(a.ID, a.Owner, []string{"not needed"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	m = fetch(0)
+	for _, want := range []string{"is stopped and is not your current dispatch", "takes no report", "assignment " + strconv.FormatInt(a.ID, 10) + " is cancelling"} {
+		if !strings.Contains(m.Stopped, want) {
+			t.Errorf("the inactive assignment's dispatch says %q, want %q", m.Stopped, want)
+		}
+	}
+	if strings.Contains(m.Stopped, "It still takes your report") {
+		t.Errorf("the inactive assignment's dispatch offers a report: %q", m.Stopped)
+	}
+
+	// The old recipient can still fetch its stopped dispatch after the
+	// assignment is given to another worker. It must see why it cannot
+	// report, even though the assignment's current worker has changed.
+	m.AssignmentData.Worker = "worker2@quality"
+	v.d.stoppedReply(ref, &m)
+	for _, want := range []string{"is stopped and is not your current dispatch", "takes no report from you", "now held by worker2@quality"} {
+		if !strings.Contains(m.Stopped, want) {
+			t.Errorf("the reassigned dispatch says %q, want %q", m.Stopped, want)
+		}
+	}
+	m.Kind = store.ReportResult
+	m.Stopped = ""
+	v.d.stoppedReply(sessionRef{address: roles.LeaderOf(roles.Quality), generation: 1}, &m)
+	if m.Stopped != "" {
+		t.Errorf("a stopped result message to a leader says %q as if it were the worker's dispatch", m.Stopped)
 	}
 }
 

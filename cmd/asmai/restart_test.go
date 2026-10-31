@@ -519,6 +519,9 @@ func TestWorkContinuesAcrossAStopAndAStartWithDispatchesAndResultsStillCorrelate
 		{"", []string{"effect", "commit", "0000000000000000000000000000000000000000"}, "unknown or superseded"},
 	} {
 		_, stderr, code := asAgent(t, string(credential), call.stdin, call.args...)
+		if call.args[0] == "result" {
+			t.Logf("the earlier session's result attempt: %s", stderr)
+		}
 		if code == 0 || !strings.Contains(stderr, call.want) {
 			t.Errorf("asmai %s with the credential of the session from before the restart exited %d printing %q, want a refusal saying %q", strings.Join(call.args, " "), code, stderr, call.want)
 		}

@@ -816,24 +816,36 @@ func currentDispatch(tx *sql.Tx, dispatch int64, agent string, generation int) (
 }
 
 // workedDispatch is currentDispatch, or the late dispatch of agent's session
-// of generation when that is dispatch, which it reports.
-func workedDispatch(tx *sql.Tx, dispatch int64, agent string, generation int) (job, assignment int64, late bool, err error) {
+// of generation when that is dispatch.
+func workedDispatch(tx *sql.Tx, dispatch int64, agent string, generation int, blocked bool) (job, assignment int64, err error) {
 	job, assignment, err = currentDispatch(tx, dispatch, agent, generation)
 	if err == nil {
-		return job, assignment, false, nil
+		return job, assignment, nil
 	}
-	if lateID, _, lateErr := lateDispatch(tx, agent, generation); lateErr != nil || lateID != dispatch {
-		return 0, 0, false, err
+	if lateID, _, lateErr := lateDispatch(tx, agent, generation, blocked); lateErr != nil || lateID != dispatch {
+		return 0, 0, err
 	}
 	err = tx.QueryRow(`SELECT m.job, m.assignment FROM dispatches d JOIN messages m ON m.id = d.message WHERE d.id = ?`, dispatch).Scan(&job, &assignment)
-	return job, assignment, true, err
+	return job, assignment, err
 }
+
+// reachedByTheDaemon is what a worker is told about a dispatch it does not
+// work on yet. A dispatch becomes current only when the daemon hands it to the
+// worker's session, by typing the prompt that fetches it once the worker's
+// turn ends: `asmai inbox` run by hand fetches what the worker already has,
+// and does not make one current.
+const reachedByTheDaemon = "the daemon hands a dispatch to your session itself, by typing the prompt that fetches it when your turn ends"
 
 // LateDispatch returns the dispatch that worker, by address, still reports
 // on in its session of generation after the turn the session ran for it has
 // ended; see lateDispatch.
 func (s *Store) LateDispatch(worker string, generation int) (int64, error) {
-	dispatch, _, err := lateDispatch(s.db, worker, generation)
+	dispatch, _, err := lateDispatch(s.db, worker, generation, false)
+	return dispatch, err
+}
+
+func (s *Store) BlockedDispatch(worker string, generation int) (int64, error) {
+	dispatch, _, err := lateDispatch(s.db, worker, generation, true)
 	return dispatch, err
 }
 
@@ -847,21 +859,37 @@ func (s *Store) LateDispatch(worker string, generation int) (int64, error) {
 // or an assignment that was cancelled, given to another worker or is no
 // longer active, takes no late work: the error says why, and what the worker
 // does next.
-func lateDispatch(q querier, worker string, generation int) (dispatch, assignment int64, err error) {
+func lateDispatch(q querier, worker string, generation int, blocked bool) (dispatch, assignment int64, err error) {
 	var state, owner string
 	err = q.QueryRow(`SELECT id, state, owner FROM assignments WHERE worker = ? AND NOT `+endedAssignment+` ORDER BY id DESC LIMIT 1`, worker).Scan(&assignment, &state, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, fmt.Errorf("%s carries no assignment that takes a report: the one it worked on was accepted, cancelled or given to another worker. Report nothing more on it, and run `asmai inbox` for what you have been sent", worker)
+		return 0, 0, fmt.Errorf("%s carries no assignment that takes a report: the one it worked on was accepted, cancelled or given to another worker. Report nothing more on it. What you are sent next reaches you from the daemon: %s", worker, reachedByTheDaemon)
 	}
 	if err != nil {
 		return 0, 0, err
 	}
 	if state != AssignmentActive {
-		return 0, 0, fmt.Errorf("assignment %d is %s, so it takes no new report. Keep your work as it is, and run `asmai inbox` for what %s sends you", assignment, state, owner)
+		return 0, 0, fmt.Errorf("assignment %d is %s, so it takes no new report. Keep your work as it is. What %s sends you next reaches you from the daemon: %s", assignment, state, owner, reachedByTheDaemon)
 	}
 	w, err := workerDispatch(q, assignment)
 	if err != nil {
 		return 0, 0, err
+	}
+	if blocked && (w.Dispatch.State == DispatchCreated || w.Dispatch.State == DispatchNudged || w.Dispatch.State == DispatchUnknown || w.Dispatch.State == DispatchDelivered) {
+		err = q.QueryRow(`SELECT d.id, d.generation, d.state,
+			COALESCE((SELECT r.kind FROM reports r WHERE r.dispatch = d.id ORDER BY r.id LIMIT 1), '')
+			FROM messages m JOIN dispatches d ON d.message = m.id
+			WHERE m.assignment = ? AND m.recipient = ? AND d.id < ?
+			AND m.kind IN (?, ?, ?, ?, ?, ?) ORDER BY d.id DESC LIMIT 1`,
+			assignment, worker, w.Dispatch.ID, MessageAssignment, MessageRedispatch, MessageRejection,
+			MessageMovedTip, MessageResumption, MessageDecisionAnswer).
+			Scan(&w.Dispatch.ID, &w.Dispatch.Generation, &w.Dispatch.State, &w.Report)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, err
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, fmt.Errorf("assignment %d has no earlier dispatch for a blocked report", assignment)
+		}
 	}
 	var closed string
 	if err := q.QueryRow(`SELECT closed FROM dispatches WHERE id = ?`, w.Dispatch.ID).Scan(&closed); err != nil {
@@ -869,17 +897,17 @@ func lateDispatch(q querier, worker string, generation int) (dispatch, assignmen
 	}
 	switch {
 	case w.Dispatch.State != DispatchStopped:
-		return 0, 0, fmt.Errorf("dispatch %d of assignment %d is %s and waits for you: fetch it with `asmai inbox` and report on it", w.Dispatch.ID, assignment, w.Dispatch.State)
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d is %s, and is not your session's current dispatch: %s, and `asmai inbox` run by hand does not make it current. End your turn, and report on it when it arrives", w.Dispatch.ID, assignment, w.Dispatch.State, reachedByTheDaemon)
 	case w.Report != "":
-		return 0, 0, fmt.Errorf("dispatch %d of assignment %d already ended in a %s report; a new report needs a new dispatch, which %s sends. Keep your work as it is, and run `asmai inbox` for it", w.Dispatch.ID, assignment, w.Report, owner)
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d already ended in a %s report; a new report needs a new dispatch, which %s sends. Keep your work as it is, and wait for it: %s", w.Dispatch.ID, assignment, w.Report, owner, reachedByTheDaemon)
 	case w.Dispatch.Generation != generation:
-		return 0, 0, fmt.Errorf("dispatch %d of assignment %d went to an earlier session of %s; run `asmai inbox` and report on the dispatch it gives you", w.Dispatch.ID, assignment, worker)
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d went to an earlier session of %s. Report on the dispatch this session is given next: %s", w.Dispatch.ID, assignment, worker, reachedByTheDaemon)
 	case closed != ClosedTurnEnded:
 		reason := closed
 		if reason == "" {
 			reason = "unrecorded"
 		}
-		return 0, 0, fmt.Errorf("dispatch %d of assignment %d was closed (%s), so it takes no report. Keep your work as it is, and run `asmai inbox` for the dispatch %s sends you next", w.Dispatch.ID, assignment, reason, owner)
+		return 0, 0, fmt.Errorf("dispatch %d of assignment %d was closed (%s), so it takes no report. Keep your work as it is, and wait for the dispatch %s sends you next: %s", w.Dispatch.ID, assignment, reason, owner, reachedByTheDaemon)
 	}
 	return w.Dispatch.ID, assignment, nil
 }
@@ -894,7 +922,7 @@ func (s *Store) EffectRecorded(agent string, generation int, dispatch int64, kin
 	var e Effect
 	err := s.change(at, func(tx *sql.Tx) (string, any, error) {
 		// The late work of a turn that ended is recorded on its dispatch.
-		job, assignment, _, err := workedDispatch(tx, dispatch, agent, generation)
+		job, assignment, err := workedDispatch(tx, dispatch, agent, generation, false)
 		if err != nil {
 			return "", nil, err
 		}
@@ -982,14 +1010,12 @@ func (s *Store) ReportSubmitted(sub Submission, at time.Time) (Report, Dispatch,
 		return Report{}, Dispatch{}, err
 	}
 	defer tx.Rollback()
-	// A result can come in after the turn of its dispatch ended, when the
-	// sub-agents the worker started finished later; a blocked report cannot.
-	_, assignmentID, late, err := workedDispatch(tx, sub.Dispatch, sub.Agent, sub.Generation)
+	// A report can come in after the turn of its dispatch ended, when the
+	// sub-agents the worker started finished later, and a worker that cannot
+	// go on says so the same way a result comes in.
+	_, assignmentID, err := workedDispatch(tx, sub.Dispatch, sub.Agent, sub.Generation, sub.Kind == ReportBlocked)
 	if err != nil {
 		return Report{}, Dispatch{}, err
-	}
-	if late && sub.Kind != ReportResult {
-		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d is not the dispatch %s is working on in generation %d", sub.Dispatch, sub.Agent, sub.Generation)
 	}
 	if assignmentID == 0 {
 		return Report{}, Dispatch{}, fmt.Errorf("dispatch %d is about no assignment, so there is nothing to report", sub.Dispatch)

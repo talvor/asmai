@@ -107,6 +107,7 @@ type Message struct {
 	// BlockedData is the leader's blocked report a blocked or a
 	// blocked.resolved message is about.
 	BlockedData *BlockedReport `json:"blocked_report_data,omitempty"`
+	Stopped     string         `json:"stopped,omitempty"`
 }
 
 type Dispatch struct {

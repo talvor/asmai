@@ -32,6 +32,7 @@ func uncertainAnswerFlow(t *testing.T, recover, second []string) (testDir string
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "Decision request 1, version 1"),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-stopped" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`until ASMAI_SESSION= asmai log | grep -q 'a worker stopped to wait on a decision request of its own.*dispatch=3'; do sleep 0.02; done`, 0, ""),
 		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "the answer goes to worker1@engineering, dispatch 5"),
 		hookStep("Stop", "report", ""),
 		`{"expect":"asmai inbox --dispatch 6\r"}`,

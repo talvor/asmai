@@ -114,8 +114,13 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 				return c
 			})...)
 	}
-	if probed && cfgReadable {
-		checks = append(checks, webAccessCheck(cfg, configFile, paths, verdict))
+	if cfgReadable {
+		if probed {
+			checks = append(checks, webAccessCheck(cfg, configFile, paths, verdict))
+		} else {
+			checks = append(checks, daemon.Check{Name: daemon.WebAccessName, OK: true,
+				Warning: "Research web access could not be confirmed because the permission rules probe did not pass"})
+		}
 	}
 	// A Lavish pinned but not yet published for this platform leaves nothing to install.
 	if lavish, _, err := pinnedLavishPlan(paths); err != nil {
@@ -140,6 +145,8 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 
 func webAccessCheck(cfg config.Config, configFile string, paths statedir.Paths, verdict providers.PermissionVerdict) daemon.Check {
 	configured := cfg.Providers[config.Claude].AutoMode
+	unconfirmed := daemon.Check{Name: daemon.WebAccessName, OK: true,
+		Warning: fmt.Sprintf("Research web access could not be confirmed; configured auto_mode = %t is unconfirmed", configured)}
 	data, err := os.ReadFile(configFile)
 	if err == nil {
 		resp, callErr := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
@@ -147,22 +154,33 @@ func webAccessCheck(cfg config.Config, configFile string, paths statedir.Paths, 
 			return daemon.WebAccessCheck(configured, verdict)
 		}
 		if callErr == nil && resp.ConfigApply != nil {
+			applied := configured
+			pending := false
 			for _, change := range resp.ConfigApply.Changes {
 				if change.Setting == "providers.claude.auto_mode" {
-					applied, parseErr := strconv.ParseBool(change.Before)
+					value, parseErr := strconv.ParseBool(change.Before)
 					if parseErr != nil {
-						break
+						return unconfirmed
 					}
-					check := daemon.WebAccessCheck(applied, verdict)
-					check.Warning = strings.TrimSpace(check.Warning + " The configuration file's auto_mode differs from the running factory; run `asmai config apply` to apply it.")
-					return check
+					applied, pending = value, true
+					break
 				}
 			}
-			return daemon.WebAccessCheck(configured, verdict)
+			var check daemon.Check
+			if applied {
+				check = daemon.Check{Name: daemon.WebAccessName, OK: true,
+					Warning: "auto_mode is applied, but Research web access for new workers is unconfirmed: doctor cannot read the running factory's cached Claude Code permission verdict"}
+			} else {
+				check = daemon.WebAccessCheck(false, verdict)
+				check.Warning += " The running factory's cached Claude Code permission verdict is unconfirmed."
+			}
+			if pending {
+				check.Warning += " The configuration file's auto_mode differs from the running factory; run `asmai config apply` to apply it."
+			}
+			return check
 		}
 	}
-	return daemon.Check{Name: daemon.WebAccessName, OK: true,
-		Warning: fmt.Sprintf("Research web access could not be confirmed; configured auto_mode = %t is unconfirmed", configured)}
+	return unconfirmed
 }
 
 // branchPrefixOf returns the prefix selected by cfg and where it comes from,

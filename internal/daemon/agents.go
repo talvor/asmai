@@ -494,18 +494,17 @@ const WebAccessName = "research web access"
 
 // WebAccessCheck reports the web access provided by AsmAI's permission rules.
 func WebAccessCheck(autoMode bool, verdict providers.PermissionVerdict) Check {
-	mode := providers.Permissions{Unattended: true, ManagedOnly: verdict.ManagedOnly}.Mode()
 	switch {
 	case !autoMode:
-		availability := "When Claude Code reports auto mode available, agents started afterwards use its classifier for each web request."
+		availability := "A fresh doctor probe reports auto mode available; when the factory uses it, agents started afterwards use Claude Code's classifier for each web request."
 		if !verdict.AutoModeAvailable {
-			availability = fmt.Sprintf("Claude Code reports auto mode unavailable (%s), so turning the switch on alone will not enable its classifier.", verdict.AutoModeWhy)
+			availability = fmt.Sprintf("A fresh doctor probe reports auto mode unavailable (%s), so turning the switch on alone will not enable its classifier.", verdict.AutoModeWhy)
 		}
 		return Check{Name: WebAccessName, OK: true,
-			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: in %s mode, web requests without an effective allow rule are denied; managed settings may supply one. A Research job needing an unreadable primary source discloses the gap or reports itself blocked. Run `asmai config edit` and set auto_mode = true under [providers.claude]. With the factory running, run `asmai config apply` to record the change as configuration.applied in the journal. If the factory is stopped, apply records nothing; the next start reads the edited file without a journal entry. %s AsmAI has no setting that allows named sites", mode, availability)}
+			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: unattended web requests without an effective allow rule are denied; managed settings may supply one. A Research job needing an unreadable primary source discloses the gap or reports itself blocked. Run `asmai config edit` and set auto_mode = true under [providers.claude]. With the factory running, run `asmai config apply` to record the change as configuration.applied in the journal. If the factory is stopped, apply records nothing; the next start reads the edited file without a journal entry. %s AsmAI has no setting that allows named sites", availability)}
 	case !verdict.AutoModeAvailable:
 		return Check{Name: WebAccessName, OK: true,
-			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: auto_mode is on, but auto mode is unavailable (%s), so they run in %s mode. Web requests without an effective allow rule are denied; managed settings may supply one. AsmAI has no setting that allows named sites", verdict.AutoModeWhy, mode)}
+			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: auto_mode is on, but a fresh doctor probe reports auto mode unavailable (%s). Unattended web requests without an effective allow rule are denied; managed settings may supply one. AsmAI has no setting that allows named sites", verdict.AutoModeWhy)}
 	}
 	return Check{Name: WebAccessName, OK: true}
 }

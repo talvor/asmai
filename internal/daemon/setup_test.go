@@ -393,13 +393,19 @@ func TestASetupWorkersQuestionsReachTheUserInLavishThroughCoordinationsLeaderAnd
 	}
 
 	// Coordination's leader is told at once what the user must declare, and not
-	// only when it reads the brief.
+	// only when it reads the brief. The daemon tells it in the step after it
+	// records the answers, so the answers being recorded above does not mean the
+	// notice is made yet: the test waits for it.
 	var notices []string
-	for _, m := range f.inbox(t, owner) {
-		if m.Kind == store.MessageSetup && strings.Contains(m.Body, "CI declaration") {
-			notices = append(notices, m.Body)
+	eventually(t, "Coordination's leader to be told of the CI declaration", func() bool {
+		notices = nil
+		for _, m := range f.inbox(t, owner) {
+			if m.Kind == store.MessageSetup && strings.Contains(m.Body, "CI declaration") {
+				notices = append(notices, m.Body)
+			}
 		}
-	}
+		return len(notices) > 0
+	})
 	if len(notices) != 1 || !strings.Contains(notices[0], "set `no_ci = true` in the [repositories.fixture] table") || !strings.Contains(notices[0], "tagged with job 1") {
 		t.Errorf("Coordination was told %q of the CI declaration, want the change once", notices)
 	}

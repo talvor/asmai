@@ -658,9 +658,8 @@ func (d *daemon) workerStopped(ref sessionRef, dispatch int64, kind string, assi
 	}()
 }
 
-// tellStalled tells the owning leader of a that its worker's turn for dispatch
-// ended with no result and no blocked report, and starts the leader if it is
-// not running.
+// tellStalled asks the store whether the worker's unreported turn warrants a
+// notice, then starts the owning leader if one was recorded and it is not running.
 func (d *daemon) tellStalled(a store.Assignment, dispatch int64) {
 	ctx, cancel := context.WithTimeout(d.work, gitTimeout)
 	defer cancel()

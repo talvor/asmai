@@ -32,9 +32,9 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 		hookStep("Stop", "assignment", ""),
 		fakeRun(`touch "$ASMAI_TEST_DIR/worker-stopped"`, 0, ""),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/answer-guard-checked" ]; do sleep 0.02; done`, 0, ""),
-		`{"expect":"asmai inbox --dispatch 6\r"}`,
-		hookStep("UserPromptSubmit", "answer", "asmai inbox --dispatch 6"),
-		fakeRun(`asmai inbox --dispatch 6`, 0, "(?s)Answer to version 1 of decision request 1, from leader@engineering:\nhello"),
+		`{"expect":"asmai inbox --dispatch 5\r"}`,
+		hookStep("UserPromptSubmit", "answer", "asmai inbox --dispatch 5"),
+		fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)Answer to version 1 of decision request 1, from leader@engineering:\nhello"),
 	}
 	leader := []string{
 		fakeRun(`asmai inbox --dispatch 4`, 0, "(?s)Decision request 1, version 1 \\| job 1 \\| from worker1@engineering to leader@engineering.*Question q1: Which greeting\\?.*recommended: hello"),
@@ -42,9 +42,8 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 		// An answer applies only to the version it names.
 		fakeRun(`asmai decision answer --request 1 --version 2 --answer hello`, 1, "decision request 1 has no version 2"),
 		fakeRun(`while [ ! -e "$ASMAI_TEST_DIR/worker-stopped" ]; do sleep 0.02; done`, 0, ""),
-		fakeRun(`until asmai inbox --dispatch 5 > "$ASMAI_TEST_DIR/stalled-notice" 2>/dev/null; do sleep 0.02; done; cat "$ASMAI_TEST_DIR/stalled-notice"`, 0, "stalled from daemon"),
-		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "version 1 of decision request 1 answered; the answer goes to worker1@engineering, dispatch 6"),
-		fakeRun(`asmai redispatch --assignment 1 --reason 'try to overtake the answer' > "$ASMAI_TEST_DIR/answer-guard-refusal" 2>&1; command_exit=$?; cat "$ASMAI_TEST_DIR/answer-guard-refusal"; test "$command_exit" -eq 1`, 0, "queued decision.answer dispatch 6"),
+		fakeRun(`asmai decision answer --request 1 --version 1 --answer hello --relied-on "the job's decisions"`, 0, "version 1 of decision request 1 answered; the answer goes to worker1@engineering, dispatch 5"),
+		fakeRun(`asmai redispatch --assignment 1 --reason 'try to overtake the answer' > "$ASMAI_TEST_DIR/answer-guard-refusal" 2>&1; command_exit=$?; cat "$ASMAI_TEST_DIR/answer-guard-refusal"; test "$command_exit" -eq 1`, 0, "queued decision.answer dispatch 5"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/answer-guard-checked"`, 0, ""),
 	}
 	assignmentWorkerStop = "answer"
@@ -52,15 +51,75 @@ func TestAWorkersDecisionRequestReachesItsOwningLeaderAndNeverTheUser(t *testing
 		assignmentWorkerStop = "assignment"
 	})
 	_, testDir := assignmentFlow(t, worker, leader)
+	answered := journaled(t, "decision.answered")
+	if len(answered) != 1 {
+		t.Fatalf("answers journaled: %+v", answered)
+	}
+	for _, entry := range journaled(t, store.KindMessageCreated) {
+		if entry.ID >= answered[0].ID {
+			continue
+		}
+		var message struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(entry.Data, &message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Kind == store.MessageStalled {
+			t.Fatal("the owner received a stalled notice while its worker waited on its own decision request")
+		}
+	}
+	if log, _, code := runAsmai(t, "log"); code != 0 || !strings.Contains(log, "a worker stopped to wait on a decision request of its own") {
+		t.Fatalf("the daemon did not process the worker's decision wait: %s", log)
+	} else {
+		for _, line := range strings.Split(log, "\n") {
+			if strings.Contains(line, "a worker stopped to wait on a decision request of its own") {
+				t.Logf("asmai log: %s", line)
+				break
+			}
+		}
+	}
+	waitFor(t, "a stalled notice after the answered worker stopped again", func() bool {
+		for _, entry := range journaled(t, store.KindMessageCreated) {
+			if entry.ID <= answered[0].ID {
+				continue
+			}
+			var message struct {
+				Kind string `json:"kind"`
+			}
+			if err := json.Unmarshal(entry.Data, &message); err != nil {
+				t.Fatal(err)
+			}
+			if message.Kind == store.MessageStalled {
+				return true
+			}
+		}
+		return false
+	})
+	log, _, code := runAsmai(t, "log")
+	if code != 0 {
+		t.Fatalf("asmai log exited %d", code)
+	}
+	foundAnsweredStall := false
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, "a worker stopped without a result or a blocked report") && strings.Contains(line, "dispatch=5") {
+			t.Logf("asmai log: %s", line)
+			foundAnsweredStall = true
+			break
+		}
+	}
+	if !foundAnsweredStall {
+		t.Fatalf("the worker's answered dispatch 5 was not reported as stalled: %s", log)
+	}
 	output, err := os.ReadFile(filepath.Join(testDir, "answer-guard-refusal"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("decision answer guard:\n%s", output)
-	if states := answerDispatchStates(t, 6); !strings.HasPrefix(states, "created,unknown,nudged,delivered,working") {
+	if states := answerDispatchStates(t, 5); !strings.HasPrefix(states, "created,unknown,nudged,delivered,working") {
 		t.Errorf("the guarded answer's dispatch states are %s", states)
 	} else {
-		t.Logf("decision answer dispatch 6: %s", states)
+		t.Logf("decision answer dispatch 5: %s", states)
 	}
 
 	// The user is not asked what a worker asked its leader, and listing

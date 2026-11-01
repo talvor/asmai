@@ -115,7 +115,7 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 			})...)
 	}
 	if probed && cfgReadable {
-		checks = append(checks, daemon.WebAccessCheck(cfg, verdict))
+		checks = append(checks, webAccessCheck(cfg, configFile, paths, verdict))
 	}
 	// A Lavish pinned but not yet published for this platform leaves nothing to install.
 	if lavish, _, err := pinnedLavishPlan(paths); err != nil {
@@ -136,6 +136,33 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
 	return checks, configFile, cfg, nil
+}
+
+func webAccessCheck(cfg config.Config, configFile string, paths statedir.Paths, verdict providers.PermissionVerdict) daemon.Check {
+	configured := cfg.Providers[config.Claude].AutoMode
+	data, err := os.ReadFile(configFile)
+	if err == nil {
+		resp, callErr := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
+		if errors.Is(callErr, daemon.ErrNotRunning) {
+			return daemon.WebAccessCheck(configured, verdict)
+		}
+		if callErr == nil && resp.ConfigApply != nil {
+			for _, change := range resp.ConfigApply.Changes {
+				if change.Setting == "providers.claude.auto_mode" {
+					applied, parseErr := strconv.ParseBool(change.Before)
+					if parseErr != nil {
+						break
+					}
+					check := daemon.WebAccessCheck(applied, verdict)
+					check.Warning = strings.TrimSpace(check.Warning + " The configuration file's auto_mode differs from the running factory; run `asmai config apply` to apply it.")
+					return check
+				}
+			}
+			return daemon.WebAccessCheck(configured, verdict)
+		}
+	}
+	return daemon.Check{Name: daemon.WebAccessName, OK: true,
+		Warning: fmt.Sprintf("Research web access could not be confirmed; configured auto_mode = %t is unconfirmed", configured)}
 }
 
 // branchPrefixOf returns the prefix selected by cfg and where it comes from,

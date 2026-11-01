@@ -492,22 +492,20 @@ func PermissionRulesVerdict(path, dir, socket string) (Check, providers.Permissi
 // can read the web.
 const WebAccessName = "research web access"
 
-// WebAccessCheck says, as a warning, where the agents nobody answers a prompt
-// for, Research workers among them, cannot read the web. AsmAI gives no
-// session a permission rule for WebFetch or a network host, so Claude Code
-// denies a web request in dontAsk and acceptEdits mode; only its auto mode,
-// where it is on and verdict reports it available, lets its classifier
-// decide such a request. It has no per-site allow list. It passes without a
-// warning where auto mode applies.
-func WebAccessCheck(cfg config.Config, verdict providers.PermissionVerdict) Check {
+// WebAccessCheck reports the web access provided by AsmAI's permission rules.
+func WebAccessCheck(autoMode bool, verdict providers.PermissionVerdict) Check {
 	mode := providers.Permissions{Unattended: true, ManagedOnly: verdict.ManagedOnly}.Mode()
 	switch {
-	case !cfg.Providers[config.Claude].AutoMode:
+	case !autoMode:
+		availability := "When Claude Code reports auto mode available, agents started afterwards use its classifier for each web request."
+		if !verdict.AutoModeAvailable {
+			availability = fmt.Sprintf("Claude Code reports auto mode unavailable (%s), so turning the switch on alone will not enable its classifier.", verdict.AutoModeWhy)
+		}
 		return Check{Name: WebAccessName, OK: true,
-			Warning: fmt.Sprintf("Research workers cannot read the web: they run in %s mode, which denies WebFetch and every network host because no permission rule allows them, and AsmAI adds none. A Research job that needs a primary source off this machine delivers with gaps or reports itself blocked. To let them read public documentation, set auto_mode = true under [providers.claude] (`asmai config edit`), then run `asmai config apply`: agents started afterwards run in Claude Code's auto mode, where its classifier decides each web request, and the journal records the change as configuration.applied. AsmAI has no setting that allows named sites", mode)}
+			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: in %s mode, web requests without an effective allow rule are denied; managed settings may supply one. A Research job needing an unreadable primary source discloses the gap or reports itself blocked. Run `asmai config edit` and set auto_mode = true under [providers.claude]. With the factory running, run `asmai config apply` to record the change as configuration.applied in the journal. If the factory is stopped, apply records nothing; the next start reads the edited file without a journal entry. %s AsmAI has no setting that allows named sites", mode, availability)}
 	case !verdict.AutoModeAvailable:
 		return Check{Name: WebAccessName, OK: true,
-			Warning: fmt.Sprintf("Research workers cannot read the web: auto_mode is on, but auto mode is not available (%s), so they run in %s mode, which denies WebFetch and every network host. AsmAI has no setting that allows named sites; auto mode is the only way to let them read the web", verdict.AutoModeWhy, mode)}
+			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: auto_mode is on, but auto mode is unavailable (%s), so they run in %s mode. Web requests without an effective allow rule are denied; managed settings may supply one. AsmAI has no setting that allows named sites", verdict.AutoModeWhy, mode)}
 	}
 	return Check{Name: WebAccessName, OK: true}
 }

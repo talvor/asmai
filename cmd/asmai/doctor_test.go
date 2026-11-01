@@ -371,10 +371,7 @@ func TestDoctorDoesNotReportAnUnconfirmedConfiguredPrefixAsApplied(t *testing.T)
 	}
 }
 
-// With auto mode off, the agents nobody answers a prompt for cannot read the
-// web, and doctor says so, how to change it and that no per-site setting
-// exists, while every check still passes.
-func TestDoctorSaysResearchWorkersCannotReadTheWebWithAutoModeOff(t *testing.T) {
+func TestDoctorReportsMissingDefaultResearchWebAccess(t *testing.T) {
 	for name, config := range map[string]string{
 		"no setting":   staffing,
 		"switched off": staffing + "\n[providers.claude]\nauto_mode = false\n",
@@ -387,7 +384,7 @@ func TestDoctorSaysResearchWorkersCannotReadTheWebWithAutoModeOff(t *testing.T) 
 				t.Fatalf("asmai doctor exited %d, printing %q", code, stdout+stderr)
 			}
 			for _, want := range []string{
-				"ok      research web access", "warning: Research workers cannot read the web", "dontAsk mode",
+				"ok      research web access", "warning: Research workers have no web access from AsmAI by default", "dontAsk mode",
 				"auto_mode = true under [providers.claude]", "asmai config apply", "configuration.applied", "no setting that allows named sites",
 			} {
 				if !strings.Contains(stdout, want) {
@@ -398,26 +395,65 @@ func TestDoctorSaysResearchWorkersCannotReadTheWebWithAutoModeOff(t *testing.T) 
 	}
 }
 
-// With auto mode on and available, there is nothing to warn of.
 func TestDoctorHasNoWebAccessWarningWithAutoModeOn(t *testing.T) {
 	readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = true\n")
 	fakeUpstream(t, "v99.0.0", nil)
 	stdout, stderr, code := doctorIn(t)
-	if code != 0 || !strings.Contains(stdout, "ok      research web access") || strings.Contains(stdout, "cannot read the web") {
+	if code != 0 || !strings.Contains(stdout, "ok      research web access") || strings.Contains(stdout, "warning: Research workers have no web access") {
 		t.Errorf("asmai doctor exited %d printing\n%s\nwant research web access ok with no warning", code, stdout+stderr)
 	}
 }
 
-// With auto mode on but unavailable, the agents run without it, so Research
-// workers still cannot read the web, and doctor says why.
-func TestDoctorSaysResearchWorkersCannotReadTheWebWhereAutoModeIsUnavailable(t *testing.T) {
+func TestDoctorReportsUnavailableAutoModeForResearch(t *testing.T) {
 	readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = true\n")
 	fakeUpstream(t, "v99.0.0", nil)
 	t.Setenv(fakeprovider.AutoModeUnavailableEnv, "1")
 	stdout, _, _ := doctorIn(t)
-	for _, want := range []string{"Research workers cannot read the web", "auto_mode is on", "auto mode unavailable", "dontAsk mode"} {
+	for _, want := range []string{"Research workers have no web access from AsmAI by default", "auto_mode is on", "auto mode is unavailable", "dontAsk mode"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("asmai doctor printed\n%s\nwant it to say %q", stdout, want)
 		}
+	}
+}
+
+func TestDoctorDoesNotPromiseUnavailableAutoModeWillEnableWebAccess(t *testing.T) {
+	readyFactoryConfigured(t, idleLeader, staffing)
+	fakeUpstream(t, "v99.0.0", nil)
+	t.Setenv(fakeprovider.AutoModeUnavailableEnv, "1")
+	stdout, _, _ := doctorIn(t)
+	if !strings.Contains(stdout, "auto mode unavailable") || !strings.Contains(stdout, "turning the switch on alone will not enable its classifier") {
+		t.Errorf("doctor printed %q; want the unavailable auto mode warning", stdout)
+	}
+}
+
+func TestDoctorReportsAppliedAutoModeWhenFileHasPendingEdit(t *testing.T) {
+	for _, tc := range []struct {
+		name, applied, edited string
+		warning               bool
+	}{
+		{"pending enable", "false", "true", true},
+		{"pending disable", "true", "false", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = "+tc.applied+"\n")
+			fakeUpstream(t, "v99.0.0", nil)
+			writeConfig(t, staffing+"\n[providers.claude]\nauto_mode = "+tc.edited+"\n")
+			stdout, stderr, code := doctorIn(t, "--json")
+			var report struct {
+				Checks []daemon.Check `json:"checks"`
+			}
+			if code != 0 || json.Unmarshal([]byte(stdout), &report) != nil {
+				t.Fatalf("doctor --json exited %d printing %q, %q", code, stdout, stderr)
+			}
+			for _, check := range report.Checks {
+				if check.Name == daemon.WebAccessName {
+					if check.OK != true || strings.Contains(check.Warning, "no web access from AsmAI by default") != tc.warning || !strings.Contains(check.Warning, "differs from the running factory") {
+						t.Errorf("research web access check = %+v; applied auto_mode = %s, configured = %s", check, tc.applied, tc.edited)
+					}
+					return
+				}
+			}
+			t.Errorf("doctor omitted research web access check: %+v", report.Checks)
+		})
 	}
 }

@@ -60,8 +60,8 @@ const (
 	MessageReconciliation = "reconciliation"
 	// MessageRedispatch sends an active assignment, or one that needs
 	// reconciliation, to its worker again at its owning leader's command, and
-	// MessageStalled tells the owning leader that its worker's turn ended
-	// with no result and no blocked report.
+	// MessageStalled tells the owning leader when WorkerStalled records a
+	// notice for a worker's unreported turn.
 	MessageRedispatch = "redispatch"
 	MessageStalled    = "stalled"
 	// MessageRestoration tells a restored leader which job to load the brief

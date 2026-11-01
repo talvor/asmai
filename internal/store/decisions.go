@@ -406,10 +406,19 @@ func (s *Store) AssignmentRedispatched(id int64, leader string, reasons []string
 	return dispatch, tx.Commit()
 }
 
+// ErrWorkerWaiting is what WorkerStalled returns for a worker that stopped
+// to wait on a decision request of its own: it asked and is waiting for the
+// answer, so there is nothing to recover and the owner is told nothing.
+var ErrWorkerWaiting = errors.New("the worker is waiting on a decision request of its own")
+
 // WorkerStalled tells the owning leader of the active assignment id, with a
 // message with body and a dispatch of its own, which is returned, that its
 // worker's turn for dispatch ended with no result and no blocked report. The
-// assignment is not changed.
+// assignment is not changed. A worker with a pending decision request of its
+// own about the assignment has stopped to wait for the answer: it is not
+// stalled, and ErrWorkerWaiting is returned with nothing recorded. The check
+// is made in the transaction that would record the notice, so a request made
+// in the same turn as the stop, before or after the stop is seen, counts.
 func (s *Store) WorkerStalled(id, dispatch int64, body string, at time.Time) (Dispatch, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -429,6 +438,13 @@ func (s *Store) WorkerStalled(id, dispatch int64, body string, at time.Time) (Di
 	}
 	if w.Report != "" {
 		return Dispatch{}, fmt.Errorf("dispatch %d ended in a report", dispatch)
+	}
+	var waiting bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM decision_requests WHERE assignment = ? AND requester = ? AND state = ?)`, a.ID, a.Worker, RequestPending).Scan(&waiting); err != nil {
+		return Dispatch{}, err
+	}
+	if waiting {
+		return Dispatch{}, ErrWorkerWaiting
 	}
 	told, err := createMessage(tx, messageRef{assignment: a.ID}, a.Job, Daemon, a.Owner, MessageStalled, body, at)
 	if err != nil {

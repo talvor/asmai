@@ -161,7 +161,7 @@ func TestWorkerExitBeforeFetchingNudgeAllowsReconciliationRedispatch(t *testing.
 	}
 }
 
-func TestDecisionRequestOrQueuedAnswerDoesNotSilenceWorkerStallNotice(t *testing.T) {
+func TestOnlyAPendingDecisionRequestOfTheWorkerSilencesItsStallNotice(t *testing.T) {
 	for _, answered := range []bool{false, true} {
 		name := "pending request"
 		if answered {
@@ -202,14 +202,17 @@ func TestDecisionRequestOrQueuedAnswerDoesNotSilenceWorkerStallNotice(t *testing
 			found := false
 			for _, message := range messages {
 				if message.Kind == store.MessageStalled && message.Assignment == a.ID {
+					if !answered {
+						t.Fatalf("a worker waiting on its own request was reported as stalled: %q", message.Body)
+					}
 					if !strings.Contains(message.Body, "asmai redispatch --assignment") || strings.Contains(message.Body, "asmai reject") || strings.Contains(message.Body, "asmai cancel") || strings.Contains(message.Body, "assigning the work again") {
 						t.Errorf("stalled notice offers the wrong recovery: %q", message.Body)
 					}
 					found = true
 				}
 			}
-			if !found {
-				t.Fatalf("decision state suppressed the stall notice: %+v", messages)
+			if answered && !found {
+				t.Fatalf("a queued answer suppressed the stall notice: %+v", messages)
 			}
 		})
 	}

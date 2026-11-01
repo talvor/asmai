@@ -673,6 +673,11 @@ func (d *daemon) tellStalled(a store.Assignment, dispatch int64) {
 		return
 	}
 	told, err := d.store.WorkerStalled(a.ID, dispatch, body, time.Now())
+	if errors.Is(err, store.ErrWorkerWaiting) {
+		d.mu.Unlock()
+		d.log.Info("a worker stopped to wait on a decision request of its own", "assignment", a.ID, "job", a.Job, "worker", a.Worker, "dispatch", dispatch)
+		return
+	}
 	if err != nil {
 		d.mu.Unlock()
 		d.log.Error("telling an owning leader that its worker stopped without a report", "assignment", a.ID, "dispatch", dispatch, "error", err.Error())

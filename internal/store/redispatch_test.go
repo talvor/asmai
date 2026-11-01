@@ -4,9 +4,11 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRedispatchRefusesAnUnfetchedAssignment(t *testing.T) {
@@ -439,4 +441,71 @@ func TestABlockedReportNeedsNoRecordedPushButAResultDoes(t *testing.T) {
 	if got, _ := s.Assignment(a.ID); got.State != AssignmentActive {
 		t.Errorf("the assignment is %s, want it still active", got.State)
 	}
+}
+
+func TestAWorkerWaitingOnADecisionRequestOfItsOwnIsNotReportedAsStalled(t *testing.T) {
+	stalled := func(t *testing.T, s *Store, a Assignment) int {
+		t.Helper()
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM messages WHERE assignment = ? AND kind = ?`, a.ID, MessageStalled).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	t.Run("a pending request made before the stop is processed", func(t *testing.T) {
+		s := open(t, filepath.Join(t.TempDir(), "store.db"))
+		a, d := stoppedAssignment(t, s)
+		if _, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.WorkerStalled(a.ID, d.ID, "stalled", assignmentsAt); !errors.Is(err, ErrWorkerWaiting) {
+			t.Fatalf("WorkerStalled = %v, want ErrWorkerWaiting", err)
+		}
+		if n := stalled(t, s, a); n != 0 {
+			t.Errorf("%d stalled messages were recorded", n)
+		}
+	})
+	t.Run("a request made after the stop but before the notice is made", func(t *testing.T) {
+		s := open(t, filepath.Join(t.TempDir(), "store.db"))
+		a, d := stoppedAssignment(t, s)
+		if n := stalled(t, s, a); n != 0 {
+			t.Fatalf("%d stalled messages before any", n)
+		}
+		if _, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.WorkerStalled(a.ID, d.ID, "stalled", assignmentsAt.Add(2*time.Second)); !errors.Is(err, ErrWorkerWaiting) {
+			t.Fatalf("WorkerStalled = %v, want ErrWorkerWaiting", err)
+		}
+	})
+	t.Run("a request that was answered before the stop", func(t *testing.T) {
+		s := open(t, filepath.Join(t.TempDir(), "store.db"))
+		a, d := stoppedAssignment(t, s)
+		r, _, err := s.DecisionRequested(workerRequest(a), assignmentsAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.DecisionAnswered(DecisionAnswer{Request: r.Request, Version: 1, Answerer: a.Owner, Text: "in-memory"}, assignmentsAt); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.WorkerStalled(a.ID, d.ID, "stalled", assignmentsAt); err != nil {
+			t.Fatalf("an answered request silenced the notice: %v", err)
+		}
+		if n := stalled(t, s, a); n != 1 {
+			t.Errorf("%d stalled messages, want 1", n)
+		}
+	})
+	t.Run("a pending request of the leader's, not the worker's", func(t *testing.T) {
+		s := open(t, filepath.Join(t.TempDir(), "store.db"))
+		a, d := stoppedAssignment(t, s)
+		in := workerRequest(a)
+		in.Requester, in.Recipient, in.Notify = a.Owner, ToUser, ""
+		in.Kind, in.Assignment, in.Blocks = RequestChoice, 0, nil
+		if _, _, err := s.DecisionRequested(in, assignmentsAt); err != nil {
+			t.Skipf("a leader's request of this shape is not made here: %v", err)
+		}
+		if _, err := s.WorkerStalled(a.ID, d.ID, "stalled", assignmentsAt); err != nil {
+			t.Fatalf("a leader's request silenced the notice: %v", err)
+		}
+	})
 }

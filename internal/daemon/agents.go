@@ -482,6 +482,36 @@ func PermissionRulesCheck(path, dir, socket string) Check {
 	return c
 }
 
+// PermissionRulesVerdict is PermissionRulesCheck with the verdict it was
+// made from, for a caller that reads more from it, such as WebAccessCheck.
+func PermissionRulesVerdict(path, dir, socket string) (Check, providers.PermissionVerdict) {
+	return permissionRulesVerdict(path, dir, socket)
+}
+
+// WebAccessName is the name of the check that says whether Research workers
+// can read the web.
+const WebAccessName = "research web access"
+
+// WebAccessCheck says, as a warning, where the agents nobody answers a prompt
+// for, Research workers among them, cannot read the web. AsmAI gives no
+// session a permission rule for WebFetch or a network host, so Claude Code
+// denies a web request in dontAsk and acceptEdits mode; only its auto mode,
+// where it is on and verdict reports it available, lets its classifier
+// decide such a request. It has no per-site allow list. It passes without a
+// warning where auto mode applies.
+func WebAccessCheck(cfg config.Config, verdict providers.PermissionVerdict) Check {
+	mode := providers.Permissions{Unattended: true, ManagedOnly: verdict.ManagedOnly}.Mode()
+	switch {
+	case !cfg.Providers[config.Claude].AutoMode:
+		return Check{Name: WebAccessName, OK: true,
+			Warning: fmt.Sprintf("Research workers cannot read the web: they run in %s mode, which denies WebFetch and every network host because no permission rule allows them, and AsmAI adds none. A Research job that needs a primary source off this machine delivers with gaps or reports itself blocked. To let them read public documentation, set auto_mode = true under [providers.claude] (`asmai config edit`), then run `asmai config apply`: agents started afterwards run in Claude Code's auto mode, where its classifier decides each web request, and the journal records the change as configuration.applied. AsmAI has no setting that allows named sites", mode)}
+	case !verdict.AutoModeAvailable:
+		return Check{Name: WebAccessName, OK: true,
+			Warning: fmt.Sprintf("Research workers cannot read the web: auto_mode is on, but auto mode is not available (%s), so they run in %s mode, which denies WebFetch and every network host. AsmAI has no setting that allows named sites; auto mode is the only way to let them read the web", verdict.AutoModeWhy, mode)}
+	}
+	return Check{Name: WebAccessName, OK: true}
+}
+
 // permissionRulesVerdict is PermissionRulesCheck with the verdict it was
 // made from.
 func permissionRulesVerdict(path, dir, socket string) (Check, providers.PermissionVerdict) {

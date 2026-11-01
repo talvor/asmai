@@ -75,6 +75,7 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	}
 	var problems []config.Problem
 	cfg, problems, err = fileProblems(configFile)
+	cfgReadable := err == nil
 	switch {
 	case errors.Is(err, config.ErrMissing):
 		checks = append(checks, daemon.Check{Name: "staffing", Problem: fmt.Sprintf("%s does not exist, so no role is staffed", configFile), Fix: "run `asmai init` to write the configuration file"})
@@ -98,6 +99,8 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 			dirs = append(dirs, r.Clone)
 		}
 	}
+	var verdict providers.PermissionVerdict
+	probed := false
 	platform, ok := providers.Platform(runtime.GOOS, runtime.GOARCH)
 	if ok {
 		plan, planErr := p.ClaudeCodePlan(platform, paths.Providers)
@@ -105,7 +108,14 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 			func(path string) daemon.Check {
 				return daemon.Check(certify.Version(context.Background(), path, p.ClaudeCode.Version, providers.ClaudeCodeVersion))
 			}, daemon.SignInCheck,
-			func(path string) daemon.Check { return daemon.PermissionRulesCheck(path, paths.Dir, paths.Socket) })...)
+			func(path string) daemon.Check {
+				c, v := daemon.PermissionRulesVerdict(path, paths.Dir, paths.Socket)
+				verdict, probed = v, c.OK
+				return c
+			})...)
+	}
+	if probed && cfgReadable {
+		checks = append(checks, daemon.WebAccessCheck(cfg, verdict))
 	}
 	// A Lavish pinned but not yet published for this platform leaves nothing to install.
 	if lavish, _, err := pinnedLavishPlan(paths); err != nil {

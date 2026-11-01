@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/fakeprovider"
 	"github.com/talvor/asmai/internal/skills"
 )
 
@@ -367,5 +368,56 @@ func TestDoctorDoesNotReportAnUnconfirmedConfiguredPrefixAsApplied(t *testing.T)
 	}
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil || report.BranchPrefix.Prefix != "" || report.BranchPrefix.Source != "applied prefix could not be confirmed" || report.BranchPrefix.ConfiguredUnconfirmed != "bob" {
 		t.Errorf("doctor --json printed %q, %q (%v); want an unconfirmed configured prefix", stdout, stderr, err)
+	}
+}
+
+// With auto mode off, the agents nobody answers a prompt for cannot read the
+// web, and doctor says so, how to change it and that no per-site setting
+// exists, while every check still passes.
+func TestDoctorSaysResearchWorkersCannotReadTheWebWithAutoModeOff(t *testing.T) {
+	for name, config := range map[string]string{
+		"no setting":   staffing,
+		"switched off": staffing + "\n[providers.claude]\nauto_mode = false\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			readyFactoryConfigured(t, idleLeader, config)
+			fakeUpstream(t, "v99.0.0", nil)
+			stdout, stderr, code := doctorIn(t)
+			if code != 0 {
+				t.Fatalf("asmai doctor exited %d, printing %q", code, stdout+stderr)
+			}
+			for _, want := range []string{
+				"ok      research web access", "warning: Research workers cannot read the web", "dontAsk mode",
+				"auto_mode = true under [providers.claude]", "asmai config apply", "configuration.applied", "no setting that allows named sites",
+			} {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("asmai doctor printed\n%s\nwant it to say %q", stdout, want)
+				}
+			}
+		})
+	}
+}
+
+// With auto mode on and available, there is nothing to warn of.
+func TestDoctorHasNoWebAccessWarningWithAutoModeOn(t *testing.T) {
+	readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = true\n")
+	fakeUpstream(t, "v99.0.0", nil)
+	stdout, stderr, code := doctorIn(t)
+	if code != 0 || !strings.Contains(stdout, "ok      research web access") || strings.Contains(stdout, "cannot read the web") {
+		t.Errorf("asmai doctor exited %d printing\n%s\nwant research web access ok with no warning", code, stdout+stderr)
+	}
+}
+
+// With auto mode on but unavailable, the agents run without it, so Research
+// workers still cannot read the web, and doctor says why.
+func TestDoctorSaysResearchWorkersCannotReadTheWebWhereAutoModeIsUnavailable(t *testing.T) {
+	readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = true\n")
+	fakeUpstream(t, "v99.0.0", nil)
+	t.Setenv(fakeprovider.AutoModeUnavailableEnv, "1")
+	stdout, _, _ := doctorIn(t)
+	for _, want := range []string{"Research workers cannot read the web", "auto_mode is on", "auto mode unavailable", "dontAsk mode"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("asmai doctor printed\n%s\nwant it to say %q", stdout, want)
+		}
 	}
 }

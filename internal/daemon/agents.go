@@ -482,6 +482,33 @@ func PermissionRulesCheck(path, dir, socket string) Check {
 	return c
 }
 
+// PermissionRulesVerdict is PermissionRulesCheck with the verdict it was
+// made from, for a caller that reads more from it, such as WebAccessCheck.
+func PermissionRulesVerdict(path, dir, socket string) (Check, providers.PermissionVerdict) {
+	return permissionRulesVerdict(path, dir, socket)
+}
+
+// WebAccessName is the name of the Research web access diagnostic.
+const WebAccessName = "research web access"
+
+// WebAccessCheck describes Research web access under AsmAI's default rules
+// and the supplied Claude Code permission verdict.
+func WebAccessCheck(autoMode bool, verdict providers.PermissionVerdict) Check {
+	switch {
+	case !autoMode:
+		availability := "A fresh doctor probe reports auto mode available; when the factory uses it, agents started afterwards use Claude Code's classifier for each web request."
+		if !verdict.AutoModeAvailable {
+			availability = fmt.Sprintf("A fresh doctor probe reports auto mode unavailable (%s), so turning the switch on alone will not enable its classifier.", verdict.AutoModeWhy)
+		}
+		return Check{Name: WebAccessName, OK: true,
+			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: unattended web requests without an effective allow rule are denied; managed settings may supply one. A Research job needing an unreadable primary source discloses the gap or reports itself blocked. Run `asmai config edit` and set auto_mode = true under [providers.claude]. With the factory running, run `asmai config apply` to record the change as configuration.applied in the journal. If the factory is stopped, apply records nothing; the next start reads the edited file without a journal entry. %s AsmAI has no setting that allows named sites", availability)}
+	case !verdict.AutoModeAvailable:
+		return Check{Name: WebAccessName, OK: true,
+			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: auto_mode is on, but a fresh doctor probe reports auto mode unavailable (%s). Unattended web requests without an effective allow rule are denied; managed settings may supply one. AsmAI has no setting that allows named sites", verdict.AutoModeWhy)}
+	}
+	return Check{Name: WebAccessName, OK: true}
+}
+
 // permissionRulesVerdict is PermissionRulesCheck with the verdict it was
 // made from.
 func permissionRulesVerdict(path, dir, socket string) (Check, providers.PermissionVerdict) {

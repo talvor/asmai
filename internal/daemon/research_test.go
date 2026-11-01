@@ -26,7 +26,7 @@ func TestAResearchLeaderStartsOnDemandWithItsInstructionsAndTheIndexOfItsWorkers
 		t.Fatal(err)
 	}
 	args := waitForFile(t, filepath.Join(p.out, "args"))
-	for _, want := range []string{"--model\nopus", "You are Research's leader", "## research\n", "## to-questionnaire\n", "tied to a cited source"} {
+	for _, want := range []string{"--model\nopus", "You are Research's leader", "## research\n", "## to-questionnaire\n", "tied to a cited source", "A source a worker could not read is a gap its result discloses"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("Research's leader's command line lacks %q: %s", want, args)
 		}
@@ -77,7 +77,7 @@ func TestAResearchJobWithNoRepositoryGivesItsWorkerAnEmptyScratchWorkspaceWithNo
 		t.Errorf("the worker started in %s, want its scratch workspace %s", got, cwd)
 	}
 	args := waitForFile(t, filepath.Join(p.out, "args"))
-	for _, want := range []string{"--model\nsonnet", "a Research worker", "--plugin-dir"} {
+	for _, want := range []string{"--model\nsonnet", "a Research worker", "--plugin-dir", "If reading a web page is denied, disclose it as a gap"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the Research worker's command line lacks %q: %s", want, args)
 		}

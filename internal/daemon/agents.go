@@ -488,11 +488,11 @@ func PermissionRulesVerdict(path, dir, socket string) (Check, providers.Permissi
 	return permissionRulesVerdict(path, dir, socket)
 }
 
-// WebAccessName is the name of the check that says whether Research workers
-// can read the web.
+// WebAccessName is the name of the Research web access diagnostic.
 const WebAccessName = "research web access"
 
-// WebAccessCheck reports the web access provided by AsmAI's permission rules.
+// WebAccessCheck describes Research web access under AsmAI's default rules
+// and the supplied Claude Code permission verdict.
 func WebAccessCheck(autoMode bool, verdict providers.PermissionVerdict) Check {
 	switch {
 	case !autoMode:

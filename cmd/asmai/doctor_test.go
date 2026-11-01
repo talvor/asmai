@@ -478,3 +478,78 @@ func TestDoctorReportsAppliedAutoModeWhenFileHasPendingEdit(t *testing.T) {
 		})
 	}
 }
+
+func TestResearchWebAccessGuidanceAndAutoModeApplyAreVisibleInTheJournal(t *testing.T) {
+	readyFactory(t, idleLeader)
+	fakeUpstream(t, "v99.0.0", nil)
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Fatalf("asmai start exited %d: %s", code, stderr)
+	}
+
+	before, stderr, code := doctorIn(t)
+	if code != 0 || !strings.Contains(before, "Research workers have no web access from AsmAI by default") {
+		t.Fatalf("asmai doctor exited %d printing %q, %q", code, before, stderr)
+	}
+	t.Logf("asmai doctor, default configuration:\n%s", before)
+
+	writeConfig(t, staffing+"\n[providers.claude]\nauto_mode = true\n")
+	pending, stderr, code := doctorIn(t)
+	if code != 0 || !strings.Contains(pending, "configuration file's auto_mode differs from the running factory") ||
+		!strings.Contains(pending, "Research workers have no web access from AsmAI by default") {
+		t.Fatalf("asmai doctor with a pending edit exited %d printing %q, %q", code, pending, stderr)
+	}
+	t.Logf("asmai doctor, edited but not applied:\n%s", pending)
+	if got := journaled(t, "configuration.applied"); len(got) != 0 {
+		t.Fatalf("doctor's preview journaled %d configurations", len(got))
+	}
+
+	appliedOutput, stderr, code := runIn(t, "y\n", "config", "apply")
+	if code != 0 || !strings.Contains(appliedOutput, "Applied, and journaled as configuration.applied") {
+		t.Fatalf("asmai config apply exited %d printing %q, %q", code, appliedOutput, stderr)
+	}
+	t.Logf("asmai config apply, factory running:\n%s", appliedOutput)
+	entries := journaled(t, "configuration.applied")
+	if len(entries) != 1 {
+		t.Fatalf("configuration.applied entries = %d; want one auto_mode change", len(entries))
+	}
+	var recorded struct {
+		Changes []struct {
+			Setting string `json:"setting"`
+			Before  string `json:"before"`
+			After   string `json:"after"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(entries[0].Data, &recorded); err != nil || len(recorded.Changes) != 1 ||
+		recorded.Changes[0].Setting != "providers.claude.auto_mode" ||
+		recorded.Changes[0].Before != "false" || recorded.Changes[0].After != "true" {
+		t.Fatalf("configuration.applied change = %+v (%v); want auto_mode false -> true", recorded.Changes, err)
+	}
+	t.Logf("asmai export, configuration.applied change: %+v", recorded.Changes[0])
+
+	after, stderr, code := doctorIn(t)
+	if code != 0 || !strings.Contains(after, "auto_mode is applied") ||
+		!strings.Contains(after, "Research web access for new workers is unconfirmed") {
+		t.Fatalf("asmai doctor after apply exited %d printing %q, %q", code, after, stderr)
+	}
+	t.Logf("asmai doctor, applied configuration:\n%s", after)
+
+	stopFactory(t)
+	writeConfig(t, staffing+"\n[providers.claude]\nauto_mode = false\n")
+	offline, stderr, code := runIn(t, "", "config", "apply")
+	if code != 0 || !strings.Contains(offline, "not running") {
+		t.Fatalf("asmai config apply with the factory stopped exited %d printing %q, %q", code, offline, stderr)
+	}
+	t.Logf("asmai config apply, factory stopped:\n%s", offline)
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Fatalf("asmai start after offline edit exited %d: %s", code, stderr)
+	}
+	if got := journaled(t, "configuration.applied"); len(got) != 1 {
+		t.Fatalf("stopped-factory apply and restart left %d configuration.applied entries; want one", len(got))
+	}
+	restarted, stderr, code := doctorIn(t)
+	if code != 0 || !strings.Contains(restarted, "Research workers have no web access from AsmAI by default") ||
+		strings.Contains(restarted, "configuration file's auto_mode differs from the running factory") {
+		t.Fatalf("asmai doctor after restart exited %d printing %q, %q", code, restarted, stderr)
+	}
+	t.Logf("asmai doctor, after restart with the offline edit:\n%s", restarted)
+}

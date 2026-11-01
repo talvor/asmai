@@ -60,8 +60,9 @@ type upstreamReport struct {
 
 // hostChecks runs doctor's read-only host checks: the platform, staffing,
 // pinned Claude Code version, subscription sign-in, permission rules,
-// pinned Lavish installation and directory trust. It returns the checks
-// with the configuration file's path and the configuration, when readable.
+// Research web access, pinned Lavish installation and directory trust. It
+// returns the checks with the configuration file's path and the configuration,
+// when readable.
 func hostChecks(paths statedir.Paths, home string, registered []store.Repository) (checks []daemon.Check, configFile string, cfg config.Config, err error) {
 	p, err := providers.ParsePins(pins)
 	if err != nil {

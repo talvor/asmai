@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -136,7 +137,12 @@ func coversAsmai(rule string) bool {
 // tools, with or without a specifier such as WebFetch(domain:example.com).
 func namesWebTool(rule string) bool {
 	tool, _, _ := strings.Cut(rule, "(")
-	return slices.Contains(webRules, tool)
+	for _, web := range webRules {
+		if matched, err := path.Match(tool, web); err == nil && matched {
+			return true
+		}
+	}
+	return false
 }
 
 // resolvedSocket is the path Claude Code's guard sees a connection to socket
@@ -301,7 +307,12 @@ func parsePermissionRules(out []byte, socket string) (v PermissionVerdict, found
 			}
 			v.WebAllowed = true
 			for _, rule := range webRules {
-				v.WebAllowed = v.WebAllowed && slices.Contains(applied, rule)
+				covered := false
+				for _, allow := range applied {
+					matched, err := path.Match(allow, rule)
+					covered = covered || err == nil && matched
+				}
+				v.WebAllowed = v.WebAllowed && covered
 			}
 			v.ManagedOnly = msg.Response.Response.State.ManagedOnly
 			for _, rule := range CommandRules() {

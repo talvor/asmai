@@ -58,6 +58,7 @@ const (
 	ManagedRulesOnlyEnv  = "ASMAI_FAKE_PROVIDER_MANAGED_RULES_ONLY"
 	ManagedRulesAllowEnv = "ASMAI_FAKE_PROVIDER_MANAGED_ALLOW"
 	ManagedRulesDenyEnv  = "ASMAI_FAKE_PROVIDER_MANAGED_DENY"
+	ManagedRulesAskEnv   = "ASMAI_FAKE_PROVIDER_MANAGED_ASK"
 	ManagedSandboxOffEnv = "ASMAI_FAKE_PROVIDER_MANAGED_SANDBOX_OFF"
 	ManagedSocketsOffEnv = "ASMAI_FAKE_PROVIDER_MANAGED_SOCKETS_OFF"
 	PlatformEnv          = "ASMAI_FAKE_PROVIDER_PLATFORM"
@@ -422,6 +423,11 @@ func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.W
 	for _, r := range strings.Split(os.Getenv(ManagedRulesDenyEnv), ",") {
 		if r = strings.TrimSpace(r); r != "" {
 			listed = append(listed, rule{Behavior: "deny", Source: "policySettings", Rule: r, Editability: "readonly"})
+		}
+	}
+	for _, r := range strings.Split(os.Getenv(ManagedRulesAskEnv), ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			listed = append(listed, rule{Behavior: "ask", Source: "policySettings", Rule: r, Editability: "readonly"})
 		}
 	}
 	sc := bufio.NewScanner(stdin)

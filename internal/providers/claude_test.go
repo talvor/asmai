@@ -782,15 +782,18 @@ func TestTheProbeReportsWhetherTheWebToolsAreAllowedOrRestricted(t *testing.T) {
 		allowed     bool
 		blocked     []string
 	}{
-		"AsmAI's rules in effect":             {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false)}, false, true, nil},
-		"AsmAI's rules ignored by the policy": {[]string{rule("allow", "WebFetch", true), rule("allow", "WebSearch", true)}, true, false, nil},
-		"an administrator allows both":        {[]string{rule("allow", "WebFetch", true), rule("allow", "WebFetch", false), rule("allow", "WebSearch", false)}, true, true, nil},
-		"an administrator allows one":         {[]string{rule("allow", "WebFetch", false)}, true, false, nil},
-		"no web rules at all":                 {nil, false, false, nil},
-		"a managed deny of one site":          {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "WebFetch(domain:example.com)", false)}, false, true, []string{"deny WebFetch(domain:example.com)"}},
-		"a managed ask for the search":        {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("ask", "WebSearch", false)}, false, true, []string{"ask WebSearch"}},
-		"a deny not in effect":                {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "WebFetch", true)}, false, true, nil},
-		"a deny of something else":            {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "Bash(curl:*)", false), rule("deny", "WebFetcher", false)}, false, true, nil},
+		"AsmAI's rules in effect":                  {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false)}, false, true, nil},
+		"AsmAI's rules ignored by the policy":      {[]string{rule("allow", "WebFetch", true), rule("allow", "WebSearch", true)}, true, false, nil},
+		"an administrator allows both":             {[]string{rule("allow", "WebFetch", true), rule("allow", "WebFetch", false), rule("allow", "WebSearch", false)}, true, true, nil},
+		"an administrator allows both by wildcard": {[]string{rule("allow", "Web*", false)}, true, true, nil},
+		"an administrator allows one":              {[]string{rule("allow", "WebFetch", false)}, true, false, nil},
+		"no web rules at all":                      {nil, false, false, nil},
+		"a managed deny of one site":               {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "WebFetch(domain:example.com)", false)}, false, true, []string{"deny WebFetch(domain:example.com)"}},
+		"a managed ask for the search":             {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("ask", "WebSearch", false)}, false, true, []string{"ask WebSearch"}},
+		"a managed wildcard deny":                  {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "Web*", false)}, false, true, []string{"deny Web*"}},
+		"a managed wildcard ask":                   {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("ask", "*", false)}, false, true, []string{"ask *"}},
+		"a deny not in effect":                     {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "WebFetch", true)}, false, true, nil},
+		"a deny of something else":                 {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "Bash(curl:*)", false), rule("deny", "WebFetcher", false)}, false, true, nil},
 	} {
 		v, found, err := parsePermissionRules(answer(c.managedOnly, c.rules...), "")
 		if err != nil || !found {

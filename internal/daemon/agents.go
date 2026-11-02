@@ -495,18 +495,23 @@ const WebAccessName = "research web access"
 // supplied Claude Code permission verdict. Research workers are given the
 // WebFetch and WebSearch rules (providers.WebRules) whatever auto_mode says,
 // so there is nothing to report on an account where Claude Code applies them.
-// It warns where it does not: under a managed policy that ignores the rules
-// AsmAI gives, unless an administrator allowed the web tools, and where a
-// managed deny or ask rule names one.
+// It reports the managed-policy exception and any missing allow, deny, or ask
+// rule that restricts the web tools.
 func WebAccessCheck(verdict providers.PermissionVerdict) Check {
 	name := WebAccessName
-	switch {
-	case len(verdict.WebBlocked) > 0:
-		return Check{Name: name, OK: true,
-			Warning: fmt.Sprintf("Research workers' web access is restricted on this account: its settings have the rules %s for the web tools, which Claude Code applies over the allow rules AsmAI gives Research workers (an ask rule raises a prompt nobody answers in a worker's terminal). A Research job needing a page they cover discloses the gap or reports itself blocked. An administrator can change the rules; AsmAI never changes managed settings", strings.Join(verdict.WebBlocked, ", "))}
-	case verdict.ManagedOnly && !verdict.WebAllowed:
-		return Check{Name: name, OK: true,
-			Warning: "Research workers may have no web access: this account's managed settings set " + providers.ManagedPolicySetting + ", so Claude Code ignores the WebFetch and WebSearch allow rules AsmAI gives them, and no managed allow rule covers both. A Research job needing a web page discloses the gap or reports itself blocked. An administrator can allow `WebFetch` and `WebSearch` in the managed settings' permissions.allow. AsmAI never changes managed settings"}
+	var warning []string
+	if verdict.ManagedOnly {
+		warning = append(warning, "This account's managed settings set "+providers.ManagedPolicySetting+", so Claude Code ignores AsmAI's Research WebFetch and WebSearch allow rules; web reading follows the effective managed rules, and auto_mode can still change the permission mode")
+		if !verdict.WebAllowed {
+			warning = append(warning, "Research workers may have no web access: no managed allow rule covers both tools. An administrator can allow `WebFetch` and `WebSearch` in the managed settings' permissions.allow")
+		}
+	}
+	if len(verdict.WebBlocked) > 0 {
+		warning = append(warning, fmt.Sprintf("Research workers' web access is restricted by %s (an ask rule raises a prompt nobody answers in a worker's terminal)", strings.Join(verdict.WebBlocked, ", ")))
+	}
+	if len(warning) > 0 {
+		warning = append(warning, "A Research job needing a denied page discloses the gap or reports itself blocked. An administrator can change the rules; AsmAI never changes managed settings")
+		return Check{Name: name, OK: true, Warning: strings.Join(warning, ". ")}
 	}
 	return Check{Name: name, OK: true}
 }

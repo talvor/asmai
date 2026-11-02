@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/talvor/asmai/internal/providers"
+	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -43,13 +44,23 @@ func TestOnlyAResearchWorkersSessionIsGivenTheWebRulesWhateverAutoModeSays(t *te
 		mode    string
 		sandbox string
 	}
-	start := func(t *testing.T, mandate string, repository bool, options factoryOptions, session, skill string) outcome {
+	start := func(t *testing.T, mandate string, repository bool, options factoryOptions, session, skill string, readOnly bool) outcome {
 		t.Helper()
 		p := newJobFactoryWith(t, mandate, repository, "", options)
 		if !repository {
 			trustWorkerFolder(t, p.d.cfg.ClaudeRecord, p.d.cfg.Paths, p.d.cfg.Paths.Workspaces)
+		} else {
+			trustWorkerFolder(t, p.d.cfg.ClaudeRecord, p.d.cfg.Paths, p.clone)
 		}
-		if _, _, err := p.d.assign(Request{Session: session, Command: CommandAssign, Job: p.job.Number, Outcome: "Do the work", Criteria: []string{"done"}, Skill: skill}); err != nil {
+		req := Request{Session: session, Command: CommandAssign, Job: p.job.Number, Outcome: "Do the work", Criteria: []string{"done"}, Skill: skill, ReadOnly: readOnly}
+		if readOnly {
+			branch, err := p.s.JobBranch(p.job.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Commit = branch.Tip
+		}
+		if _, _, err := p.d.assign(req); err != nil {
 			t.Fatal(err)
 		}
 		allow, mode, sandbox := allowedBy(t, waitForFile(t, filepath.Join(p.out, "args")))
@@ -75,20 +86,29 @@ func TestOnlyAResearchWorkersSessionIsGivenTheWebRulesWhateverAutoModeSays(t *te
 		"auto_mode off and auto mode available": {factoryOptions{answers: []string{autoModeAnswer(t, "")}}, "dontAsk"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			research := start(t, store.MandateResearchOnly, false, tc.options, "research", "research")
+			research := start(t, store.MandateResearchOnly, false, tc.options, roles.Research, "research", false)
 			if research.mode != tc.mode {
 				t.Errorf("the Research worker runs in the %q mode, want %q", research.mode, tc.mode)
 			}
 			if !slices.Contains(research.allow, "WebFetch") || !slices.Contains(research.allow, "WebSearch") {
 				t.Errorf("the Research worker is allowed %q, want WebFetch and WebSearch", research.allow)
 			}
-			planning := start(t, store.MandatePlanningOnly, true, tc.options, "planning", "grilling")
+			planning := start(t, store.MandatePlanningOnly, true, tc.options, roles.Planning, "grilling", false)
 			if hasWeb(planning.allow) {
 				t.Errorf("a Planning worker is allowed %q, want no web access", planning.allow)
 			}
-			engineering := start(t, store.MandateSetup, true, tc.options, "coordination", "setup-matt-pocock-skills")
-			if hasWeb(engineering.allow) {
-				t.Errorf("an Engineering worker is allowed %q, want no web access", engineering.allow)
+			for _, worker := range []struct {
+				role, mandate, skill string
+				readOnly             bool
+			}{
+				{roles.Coordination, store.MandateSetup, "setup-matt-pocock-skills", false},
+				{roles.Engineering, store.MandateTestedPR, "", false},
+				{roles.Quality, store.MandateTestedPR, "", true},
+			} {
+				got := start(t, worker.mandate, true, tc.options, worker.role, worker.skill, worker.readOnly)
+				if hasWeb(got.allow) {
+					t.Errorf("a %s worker is allowed %q, want no web access", worker.role, got.allow)
+				}
 			}
 			// Reading only: what separates a Research worker from another
 			// worker is the web rules, and the sandbox, which guards a
@@ -118,6 +138,29 @@ func TestOnlyAResearchWorkersSessionIsGivenTheWebRulesWhateverAutoModeSays(t *te
 			}
 			if strings.Contains(research.sandbox, "allowedDomains") {
 				t.Errorf("the Research worker's sandbox is %s, want no network domains for a shell", research.sandbox)
+			}
+		})
+	}
+}
+
+func TestNoRoleLeaderIsGivenWebRules(t *testing.T) {
+	for _, role := range []string{roles.Coordination, roles.Planning, roles.Research, roles.Engineering, roles.Quality} {
+		t.Run(role, func(t *testing.T) {
+			p := newJobFactoryWith(t, store.MandateTestedPR, true, "", factoryOptions{})
+			trustWorkerFolder(t, p.d.cfg.ClaudeRecord, p.d.cfg.Paths, p.clone)
+			address := roles.LeaderOf(role)
+			delete(p.d.leaders, address.String())
+			p.d.mu.Lock()
+			err := p.d.ensureAgent(address)
+			p.d.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			allow, _, _ := allowedBy(t, waitForFile(t, filepath.Join(p.out, "args")))
+			for _, rule := range allow {
+				if tool, _, _ := strings.Cut(rule, "("); tool == "WebFetch" || tool == "WebSearch" {
+					t.Errorf("%s's leader is allowed %q, want no web access", role, rule)
+				}
 			}
 		})
 	}

@@ -409,7 +409,7 @@ func TestDoctorSaysResearchWebAccessDependsOnTheManagedSettingsUnderTheManagedPo
 		t.Fatalf("asmai doctor exited %d printing %q", code, stdout)
 	}
 	check := webAccessCheckOf(t, stdout)
-	for _, want := range []string{"Research workers may have no web access", "allowManagedPermissionRulesOnly", "allow `WebFetch` and `WebSearch`", "never changes managed settings"} {
+	for _, want := range []string{"Research workers may have no web access", "allowManagedPermissionRulesOnly", "allow `WebFetch` and `WebSearch`", "auto_mode can still change the permission mode", "never changes managed settings"} {
 		if !check.OK || !strings.Contains(check.Warning, want) {
 			t.Errorf("research web access check = %+v; want an ok warning saying %q", check, want)
 		}
@@ -417,19 +417,42 @@ func TestDoctorSaysResearchWebAccessDependsOnTheManagedSettingsUnderTheManagedPo
 
 	t.Setenv(fakeprovider.ManagedRulesAllowEnv, "WebFetch, WebSearch, Bash(asmai:*)")
 	stdout, _, code = doctorIn(t, "--json")
-	if check = webAccessCheckOf(t, stdout); code != 0 || !check.OK || check.Warning != "" {
-		t.Errorf("with the web tools allowed in the managed settings: exited %d, research web access check = %+v; want no warning", code, check)
+	if check = webAccessCheckOf(t, stdout); code != 0 || !check.OK || !strings.Contains(check.Warning, "web reading follows the effective managed rules") || strings.Contains(check.Warning, "may have no web access") {
+		t.Errorf("with the web tools allowed in the managed settings: exited %d, research web access check = %+v; want the managed-policy exception", code, check)
 	}
 }
 
 func TestDoctorSaysWhenManagedSettingsDenyTheWebTools(t *testing.T) {
-	t.Setenv(fakeprovider.ManagedRulesDenyEnv, "WebFetch(domain:example.com)")
-	readyFactoryConfigured(t, idleLeader, staffing)
-	fakeUpstream(t, "v99.0.0", nil)
-	stdout, _, code := doctorIn(t, "--json")
-	check := webAccessCheckOf(t, stdout)
-	if code != 0 || !check.OK || !strings.Contains(check.Warning, "restricted") || !strings.Contains(check.Warning, "deny WebFetch(domain:example.com)") {
-		t.Errorf("exited %d, research web access check = %+v; want a warning naming the managed deny rule", code, check)
+	for _, tc := range []struct {
+		name, deny, ask string
+		managed         bool
+	}{
+		{"one domain", "WebFetch(domain:example.com)", "", false},
+		{"wildcard deny", "Web*", "", false},
+		{"wildcard ask", "", "*", false},
+		{"managed only and one domain", "WebFetch(domain:example.com)", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(fakeprovider.ManagedRulesDenyEnv, tc.deny)
+			t.Setenv(fakeprovider.ManagedRulesAskEnv, tc.ask)
+			if tc.managed {
+				t.Setenv(fakeprovider.ManagedRulesOnlyEnv, "1")
+			}
+			readyFactoryConfigured(t, idleLeader, staffing)
+			fakeUpstream(t, "v99.0.0", nil)
+			stdout, _, code := doctorIn(t, "--json")
+			check := webAccessCheckOf(t, stdout)
+			rule := "deny " + tc.deny
+			if tc.ask != "" {
+				rule = "ask " + tc.ask
+			}
+			if code != 0 || !check.OK || !strings.Contains(check.Warning, "restricted") || !strings.Contains(check.Warning, rule) {
+				t.Errorf("exited %d, research web access check = %+v; want a warning naming %q", code, check, rule)
+			}
+			if tc.managed && (!strings.Contains(check.Warning, "may have no web access") || !strings.Contains(check.Warning, "no managed allow rule covers both")) {
+				t.Errorf("research web access check = %+v; want the missing managed allow reported too", check)
+			}
+		})
 	}
 }
 

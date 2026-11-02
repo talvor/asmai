@@ -44,7 +44,8 @@ const ResumeFailsEnv = "ASMAI_FAKE_PROVIDER_RESUME_FAILS"
 // request as Claude Code does under a managed policy that sets
 // allowManagedPermissionRulesOnly: the rules it was given with --settings are
 // listed as not in effect. ManagedRulesAllowEnv names rules, separated by
-// commas, that the managed settings allow, and which are in effect.
+// commas, that the managed settings allow, and which are in effect, and
+// ManagedRulesDenyEnv rules the managed settings deny.
 // ManagedSandboxOffEnv, when set, makes the effective settings it answers a
 // settings request with turn the sandbox's auto-allow off, as managed
 // settings can; ManagedSocketsOffEnv leaves the daemon's socket out of the
@@ -56,6 +57,8 @@ const ResumeFailsEnv = "ASMAI_FAKE_PROVIDER_RESUME_FAILS"
 const (
 	ManagedRulesOnlyEnv  = "ASMAI_FAKE_PROVIDER_MANAGED_RULES_ONLY"
 	ManagedRulesAllowEnv = "ASMAI_FAKE_PROVIDER_MANAGED_ALLOW"
+	ManagedRulesDenyEnv  = "ASMAI_FAKE_PROVIDER_MANAGED_DENY"
+	ManagedRulesAskEnv   = "ASMAI_FAKE_PROVIDER_MANAGED_ASK"
 	ManagedSandboxOffEnv = "ASMAI_FAKE_PROVIDER_MANAGED_SANDBOX_OFF"
 	ManagedSocketsOffEnv = "ASMAI_FAKE_PROVIDER_MANAGED_SOCKETS_OFF"
 	PlatformEnv          = "ASMAI_FAKE_PROVIDER_PLATFORM"
@@ -415,6 +418,16 @@ func answerControlRequests(settings string, stdin io.Reader, stdout, stderr io.W
 	for _, r := range strings.Split(os.Getenv(ManagedRulesAllowEnv), ",") {
 		if r = strings.TrimSpace(r); r != "" {
 			listed = append(listed, rule{Behavior: "allow", Source: "policySettings", Rule: r, Editability: "readonly"})
+		}
+	}
+	for _, r := range strings.Split(os.Getenv(ManagedRulesDenyEnv), ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			listed = append(listed, rule{Behavior: "deny", Source: "policySettings", Rule: r, Editability: "readonly"})
+		}
+	}
+	for _, r := range strings.Split(os.Getenv(ManagedRulesAskEnv), ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			listed = append(listed, rule{Behavior: "ask", Source: "policySettings", Rule: r, Editability: "readonly"})
 		}
 	}
 	sc := bufio.NewScanner(stdin)

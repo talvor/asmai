@@ -103,6 +103,10 @@ type Permissions struct {
 	// managed permission rules, which ignore the rules the session is given:
 	// the sandbox then runs `asmai` and auto-allows it (ADR 0018).
 	ManagedOnly bool
+	// Web is set for a Research worker's session, which is given the rules
+	// that let it read public web pages and search the web (WebRules). No
+	// other session has them: nothing else is given web access.
+	Web bool
 	// Auto is set when the user switched auto mode on and Claude Code
 	// reports it available (PermissionVerdict.AutoModeAvailable): an
 	// unattended session then runs in auto mode instead of dontAsk, where
@@ -199,6 +203,23 @@ func CommandRules() []string {
 	return allow
 }
 
+// webRules are the permission rules a Research worker is given to read the
+// web: Claude Code's WebFetch and WebSearch tools, each allowed for every
+// site. Both only read: WebFetch makes GET requests for a page, and neither
+// writes to a site or reaches the network from a shell, so no rule here
+// covers Bash and the sandbox's network settings stay as they are. Claude
+// Code runs these tools in its own process, outside the sandbox that guards
+// the commands it runs, so the sandbox needs no network setting for them.
+var webRules = []string{"WebFetch", "WebSearch"}
+
+// WebRules returns the permission rules a Research worker's session is given
+// to read the web. Under a Claude Code managed policy that applies only
+// managed permission rules, an administrator adds them to the managed
+// settings.
+func WebRules() []string {
+	return slices.Clone(webRules)
+}
+
 // claudeCodeOwnSkills are the skills of Claude Code's own that the pinned
 // version still lists to a session once disableBundledSkills has removed the
 // skills it bundles: design and doctor, and plugin-authoring from its
@@ -263,6 +284,9 @@ func ClaudeCodeSettings(hookCommand string, guard WriteGuard, perms Permissions)
 	allow, excluded := commandRules(perms.ManagedOnly)
 	allow = append(allow, fileRules(perms.Editable)...)
 	allow = append(allow, readRules(perms.Readable)...)
+	if perms.Web {
+		allow = append(allow, webRules...)
+	}
 	sandbox := map[string]any{
 		"enabled":                  true,
 		"failIfUnavailable":        true,

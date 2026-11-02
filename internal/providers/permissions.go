@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -45,6 +46,16 @@ type PermissionVerdict struct {
 	// AsmaiAllowed is set when an allow rule in effect covers `asmai`:
 	// under the policy, one an administrator added to the managed settings.
 	AsmaiAllowed bool
+	// WebAllowed is set when an allow rule in effect covers each of WebRules,
+	// which a Research worker reads the web with: without a policy, AsmAI's
+	// own rules, and under the policy, rules an administrator added to the
+	// managed settings.
+	WebAllowed bool
+	// WebBlocked are the deny and ask rules in effect that name one of the
+	// web tools: a deny refuses the request, and an ask raises a prompt that
+	// nobody answers in a worker's terminal, so a Research worker is denied
+	// the pages they cover whatever allow rule it has.
+	WebBlocked []string
 	// SandboxAutoAllow is set when the session's effective sandbox settings
 	// have the sandbox on with auto-allow of the commands it runs, and
 	// SocketControl when they also allow the daemon's socket.
@@ -122,6 +133,18 @@ func coversAsmai(rule string) bool {
 	return false
 }
 
+// namesWebTool reports whether a permission rule is for one of the web
+// tools, with or without a specifier such as WebFetch(domain:example.com).
+func namesWebTool(rule string) bool {
+	tool, _, _ := strings.Cut(rule, "(")
+	for _, web := range webRules {
+		if matched, err := path.Match(tool, web); err == nil && matched {
+			return true
+		}
+	}
+	return false
+}
+
 // resolvedSocket is the path Claude Code's guard sees a connection to socket
 // resolve to: a socket under a symlink, such as macOS's /tmp, is allowed by
 // the directory it links to.
@@ -165,7 +188,7 @@ func ProbePermissionRules(ctx context.Context, path, dir, socket string, environ
 		probeSocket = resolvedSocket(socket)
 		sandbox["network"] = map[string]any{"allowUnixSockets": []string{probeSocket}}
 	}
-	settings, _ := json.Marshal(map[string]any{"permissions": map[string]any{"allow": CommandRules()}, "sandbox": sandbox})
+	settings, _ := json.Marshal(map[string]any{"permissions": map[string]any{"allow": append(CommandRules(), webRules...)}, "sandbox": sandbox})
 	cmd := exec.CommandContext(ctx, path, "-p",
 		"--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--settings", string(settings), "--setting-sources", "", "--strict-mcp-config")
@@ -269,10 +292,27 @@ func parsePermissionRules(out []byte, socket string) (v PermissionVerdict, found
 			}
 			var applied []string
 			for _, r := range msg.Response.Response.State.Rules {
-				if r.Behavior == "allow" && !r.NotInEffect {
+				if r.NotInEffect {
+					continue
+				}
+				switch r.Behavior {
+				case "allow":
 					applied = append(applied, r.Rule)
 					v.AsmaiAllowed = v.AsmaiAllowed || coversAsmai(r.Rule)
+				case "deny", "ask":
+					if namesWebTool(r.Rule) {
+						v.WebBlocked = append(v.WebBlocked, r.Behavior+" "+r.Rule)
+					}
 				}
+			}
+			v.WebAllowed = true
+			for _, rule := range webRules {
+				covered := false
+				for _, allow := range applied {
+					matched, err := path.Match(allow, rule)
+					covered = covered || err == nil && matched
+				}
+				v.WebAllowed = v.WebAllowed && covered
 			}
 			v.ManagedOnly = msg.Response.Response.State.ManagedOnly
 			for _, rule := range CommandRules() {

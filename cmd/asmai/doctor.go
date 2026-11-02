@@ -117,7 +117,7 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	}
 	if cfgReadable {
 		if probed {
-			checks = append(checks, webAccessCheck(cfg, configFile, paths, verdict))
+			checks = append(checks, daemon.WebAccessCheck(verdict))
 		} else {
 			checks = append(checks, daemon.Check{Name: daemon.WebAccessName, OK: true,
 				Warning: "Research web access could not be confirmed because the permission rules probe did not pass"})
@@ -142,46 +142,6 @@ func hostChecks(paths statedir.Paths, home string, registered []store.Repository
 	}
 	checks = append(checks, daemon.TrustCheck(record, dirs))
 	return checks, configFile, cfg, nil
-}
-
-func webAccessCheck(cfg config.Config, configFile string, paths statedir.Paths, verdict providers.PermissionVerdict) daemon.Check {
-	configured := cfg.Providers[config.Claude].AutoMode
-	unconfirmed := daemon.Check{Name: daemon.WebAccessName, OK: true,
-		Warning: fmt.Sprintf("Research web access could not be confirmed; configured auto_mode = %t is unconfirmed", configured)}
-	data, err := os.ReadFile(configFile)
-	if err == nil {
-		resp, callErr := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandConfigApply, Configuration: string(data)})
-		if errors.Is(callErr, daemon.ErrNotRunning) {
-			return daemon.WebAccessCheck(configured, verdict)
-		}
-		if callErr == nil && resp.ConfigApply != nil {
-			applied := configured
-			pending := false
-			for _, change := range resp.ConfigApply.Changes {
-				if change.Setting == "providers.claude.auto_mode" {
-					value, parseErr := strconv.ParseBool(change.Before)
-					if parseErr != nil {
-						return unconfirmed
-					}
-					applied, pending = value, true
-					break
-				}
-			}
-			var check daemon.Check
-			if applied {
-				check = daemon.Check{Name: daemon.WebAccessName, OK: true,
-					Warning: "auto_mode is applied, but Research web access for new workers is unconfirmed: doctor cannot read the running factory's cached Claude Code permission verdict"}
-			} else {
-				check = daemon.WebAccessCheck(false, verdict)
-				check.Warning += " The running factory's cached Claude Code permission verdict is unconfirmed."
-			}
-			if pending {
-				check.Warning += " The configuration file's auto_mode differs from the running factory; run `asmai config apply` to apply it."
-			}
-			return check
-		}
-	}
-	return unconfirmed
 }
 
 // branchPrefixOf returns the prefix selected by cfg and where it comes from,

@@ -677,3 +677,130 @@ func TestWithoutTheManagedPolicyTheSettingsAreUnchanged(t *testing.T) {
 		t.Errorf("without the policy the sandbox leaves %q alone, want asmai among them", s.Sandbox.ExcludedCommands)
 	}
 }
+
+// A Research worker's session reads the web through the WebFetch and
+// WebSearch allow rules, whatever the auto mode switch says, and no other
+// session is given them: not another worker, not a leader, Research's own
+// included. Neither the rules nor the sandbox give a shell the network.
+func TestOnlyAResearchWorkersSessionIsAllowedToReadTheWeb(t *testing.T) {
+	common, _, _ := permissionsOf(t, Permissions{})
+	editable := []string{"/state/workspaces/job-1/assignment-1/checkout"}
+	for name, perms := range map[string]Permissions{
+		"Coordination's leader":                   {},
+		"another leader":                          {Unattended: true},
+		"another leader in auto mode":             {Unattended: true, Auto: true},
+		"a worker of another role":                {Unattended: true, Editable: editable},
+		"a worker of another role in auto mode":   {Unattended: true, Auto: true, Editable: editable},
+		"a worker of another role under a policy": {Unattended: true, ManagedOnly: true, Editable: editable},
+	} {
+		allow, _, _ := permissionsOf(t, perms)
+		for _, rule := range WebRules() {
+			if slices.Contains(allow, rule) {
+				t.Errorf("%s is allowed %s, want no web access", name, rule)
+			}
+		}
+		for _, rule := range allow {
+			if tool, _, _ := strings.Cut(rule, "("); tool == "WebFetch" || tool == "WebSearch" {
+				t.Errorf("%s is allowed %s, want no web access", name, rule)
+			}
+		}
+	}
+
+	var research []Permissions
+	for _, auto := range []bool{false, true} {
+		for _, managedOnly := range []bool{false, true} {
+			research = append(research, Permissions{Unattended: true, Web: true, Auto: auto, ManagedOnly: managedOnly, Editable: editable})
+		}
+	}
+	for _, perms := range research {
+		allow, mode, _ := permissionsOf(t, perms)
+		if mode != perms.Mode() {
+			t.Errorf("a Research worker (%+v) runs in the %q mode, want %q", perms, mode, perms.Mode())
+		}
+		if !slices.Contains(allow, "WebFetch") || !slices.Contains(allow, "WebSearch") {
+			t.Errorf("a Research worker (%+v) is allowed %q, want WebFetch and WebSearch whatever auto mode says", perms, allow)
+		}
+		// Reading only: the web rules are the whole difference from any
+		// other worker, and name no shell command, file or site.
+		without := perms
+		without.Web = false
+		base, _, _ := permissionsOf(t, without)
+		if extra := slices.DeleteFunc(slices.Clone(allow), func(r string) bool { return slices.Contains(base, r) }); !slices.Equal(extra, WebRules()) {
+			t.Errorf("a Research worker (%+v) has the extra rules %q, want %q", perms, extra, WebRules())
+		}
+		if !slices.Equal(allow[:len(base)], base) {
+			t.Errorf("a Research worker's rules %q reorder the other worker's %q", allow, base)
+		}
+	}
+	if len(common) == 0 {
+		t.Error("a session has no command rules")
+	}
+	if got := WebRules(); !slices.Equal(got, []string{"WebFetch", "WebSearch"}) {
+		t.Errorf("the web rules are %q, want the two tools bare, which allow every site", got)
+	}
+}
+
+// The sandbox settings of a Research worker are those of any worker: Claude
+// Code runs WebFetch and WebSearch outside the sandbox that guards its
+// shell, so the web needs no network setting, and a shell gets none.
+func TestAResearchWorkersSandboxIsThatOfAnyWorker(t *testing.T) {
+	sandbox := func(web bool) string {
+		var settings struct {
+			Sandbox json.RawMessage `json:"sandbox"`
+		}
+		perms := Permissions{Unattended: true, Web: web}
+		guard := WriteGuard{Writable: []string{"/state/workspaces/tmp"}, Socket: "/run/asmai.sock"}
+		if err := json.Unmarshal([]byte(ClaudeCodeSettings("hook", guard, perms)), &settings); err != nil {
+			t.Fatal(err)
+		}
+		return string(settings.Sandbox)
+	}
+	if with, without := sandbox(true), sandbox(false); with != without {
+		t.Errorf("a Research worker's sandbox is %s, want the other workers' %s", with, without)
+	}
+	for _, field := range []string{"allowedDomains", "allowManagedDomainsOnly", "httpProxyPort"} {
+		if strings.Contains(sandbox(true), field) {
+			t.Errorf("a Research worker's sandbox sets %s, want no network setting for a shell", field)
+		}
+	}
+}
+
+// The probe finds out whether the web rules are in effect on this account,
+// and the rules in effect that restrict the web tools.
+func TestTheProbeReportsWhetherTheWebToolsAreAllowedOrRestricted(t *testing.T) {
+	answer := func(managedOnly bool, rules ...string) []byte {
+		list := strings.Join(rules, ",")
+		return []byte(`{"type":"control_response","response":{"subtype":"success","request_id":"asmai-permission-rules","response":{"state":{"rules":[` +
+			list + `],"managedOnly":` + map[bool]string{true: "true", false: "false"}[managedOnly] + `}}}}` + "\n")
+	}
+	rule := func(behavior, rule string, notInEffect bool) string {
+		return `{"behavior":"` + behavior + `","source":"x","rule":"` + rule + `","notInEffect":` + map[bool]string{true: "true", false: "false"}[notInEffect] + `}`
+	}
+	for name, c := range map[string]struct {
+		rules       []string
+		managedOnly bool
+		allowed     bool
+		blocked     []string
+	}{
+		"AsmAI's rules in effect":                  {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false)}, false, true, nil},
+		"AsmAI's rules ignored by the policy":      {[]string{rule("allow", "WebFetch", true), rule("allow", "WebSearch", true)}, true, false, nil},
+		"an administrator allows both":             {[]string{rule("allow", "WebFetch", true), rule("allow", "WebFetch", false), rule("allow", "WebSearch", false)}, true, true, nil},
+		"an administrator allows both by wildcard": {[]string{rule("allow", "Web*", false)}, true, true, nil},
+		"an administrator allows one":              {[]string{rule("allow", "WebFetch", false)}, true, false, nil},
+		"no web rules at all":                      {nil, false, false, nil},
+		"a managed deny of one site":               {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "WebFetch(domain:example.com)", false)}, false, true, []string{"deny WebFetch(domain:example.com)"}},
+		"a managed ask for the search":             {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("ask", "WebSearch", false)}, false, true, []string{"ask WebSearch"}},
+		"a managed wildcard deny":                  {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "Web*", false)}, false, true, []string{"deny Web*"}},
+		"a managed wildcard ask":                   {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("ask", "*", false)}, false, true, []string{"ask *"}},
+		"a deny not in effect":                     {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "WebFetch", true)}, false, true, nil},
+		"a deny of something else":                 {[]string{rule("allow", "WebFetch", false), rule("allow", "WebSearch", false), rule("deny", "Bash(curl:*)", false), rule("deny", "WebFetcher", false)}, false, true, nil},
+	} {
+		v, found, err := parsePermissionRules(answer(c.managedOnly, c.rules...), "")
+		if err != nil || !found {
+			t.Fatalf("%s: found = %t, err = %v", name, found, err)
+		}
+		if v.WebAllowed != c.allowed || !slices.Equal(v.WebBlocked, c.blocked) {
+			t.Errorf("%s: WebAllowed = %t, WebBlocked = %q; want %t, %q", name, v.WebAllowed, v.WebBlocked, c.allowed, c.blocked)
+		}
+	}
+}

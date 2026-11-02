@@ -491,22 +491,24 @@ func PermissionRulesVerdict(path, dir, socket string) (Check, providers.Permissi
 // WebAccessName is the name of the Research web access diagnostic.
 const WebAccessName = "research web access"
 
-// WebAccessCheck describes Research web access under AsmAI's default rules
-// and the supplied Claude Code permission verdict.
-func WebAccessCheck(autoMode bool, verdict providers.PermissionVerdict) Check {
+// WebAccessCheck describes Research web access under AsmAI's rules and the
+// supplied Claude Code permission verdict. Research workers are given the
+// WebFetch and WebSearch rules (providers.WebRules) whatever auto_mode says,
+// so there is nothing to report on an account where Claude Code applies them.
+// It warns where it does not: under a managed policy that ignores the rules
+// AsmAI gives, unless an administrator allowed the web tools, and where a
+// managed deny or ask rule names one.
+func WebAccessCheck(verdict providers.PermissionVerdict) Check {
+	name := WebAccessName
 	switch {
-	case !autoMode:
-		availability := "A fresh doctor probe reports auto mode available; when the factory uses it, agents started afterwards use Claude Code's classifier for each web request."
-		if !verdict.AutoModeAvailable {
-			availability = fmt.Sprintf("A fresh doctor probe reports auto mode unavailable (%s), so turning the switch on alone will not enable its classifier.", verdict.AutoModeWhy)
-		}
-		return Check{Name: WebAccessName, OK: true,
-			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: unattended web requests without an effective allow rule are denied; managed settings may supply one. A Research job needing an unreadable primary source discloses the gap or reports itself blocked. Run `asmai config edit` and set auto_mode = true under [providers.claude]. With the factory running, run `asmai config apply` to record the change as configuration.applied in the journal. If the factory is stopped, apply records nothing; the next start reads the edited file without a journal entry. %s AsmAI has no setting that allows named sites", availability)}
-	case !verdict.AutoModeAvailable:
-		return Check{Name: WebAccessName, OK: true,
-			Warning: fmt.Sprintf("Research workers have no web access from AsmAI by default: auto_mode is on, but a fresh doctor probe reports auto mode unavailable (%s). Unattended web requests without an effective allow rule are denied; managed settings may supply one. AsmAI has no setting that allows named sites", verdict.AutoModeWhy)}
+	case len(verdict.WebBlocked) > 0:
+		return Check{Name: name, OK: true,
+			Warning: fmt.Sprintf("Research workers' web access is restricted on this account: its settings have the rules %s for the web tools, which Claude Code applies over the allow rules AsmAI gives Research workers (an ask rule raises a prompt nobody answers in a worker's terminal). A Research job needing a page they cover discloses the gap or reports itself blocked. An administrator can change the rules; AsmAI never changes managed settings", strings.Join(verdict.WebBlocked, ", "))}
+	case verdict.ManagedOnly && !verdict.WebAllowed:
+		return Check{Name: name, OK: true,
+			Warning: "Research workers may have no web access: this account's managed settings set " + providers.ManagedPolicySetting + ", so Claude Code ignores the WebFetch and WebSearch allow rules AsmAI gives them, and no managed allow rule covers both. A Research job needing a web page discloses the gap or reports itself blocked. An administrator can allow `WebFetch` and `WebSearch` in the managed settings' permissions.allow. AsmAI never changes managed settings"}
 	}
-	return Check{Name: WebAccessName, OK: true}
+	return Check{Name: name, OK: true}
 }
 
 // permissionRulesVerdict is PermissionRulesCheck with the verdict it was
@@ -785,6 +787,9 @@ type launch struct {
 	// skills are the skills the session is given, as the per-session
 	// plugin its command line names.
 	skills []skills.Given
+	// web is set for a Research worker's session, which is the only session
+	// given the rules that let it read the web (providers.WebRules).
+	web bool
 }
 
 // startLeader starts l's session on the installed Claude Code, with
@@ -885,7 +890,7 @@ func (d *daemon) startWorker(l *leader, cfg config.Config, install store.Provide
 	}
 	// The worker's git adds the trailers to each commit, as the user.
 	maps.Copy(env, githooks.Environment(os.Environ(), d.cfg.Paths.GitHooks))
-	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: writable, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: given})
+	return d.startSession(l, install, launch{instructions: instructions, model: staffing.WorkerModel, dir: a.Workspace.Path, env: env, writable: writable, editable: []string{a.Workspace.Path, a.Workspace.Tmp}, assignment: a.ID, resume: resume, skills: given, web: l.address.Role == roles.Research})
 }
 
 // startSession starts l's session on the installed Claude Code as launch
@@ -909,7 +914,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	applied := d.applied
 	d.configMu.Unlock()
 	auto, _ := d.autoMode(applied, install.Path)
-	perms := providers.Permissions{Unattended: l.address != roles.LeaderOf(roles.Coordination), Editable: launch.editable, ManagedOnly: d.managedOnly(install.Path), Auto: auto}
+	perms := providers.Permissions{Unattended: l.address != roles.LeaderOf(roles.Coordination), Editable: launch.editable, ManagedOnly: d.managedOnly(install.Path), Auto: auto, Web: launch.web}
 	// The session's skills are written as a plugin for it alone, copied
 	// afresh at each start from the bundle in the executable and from the
 	// directories of added and repository skills, so editing those never

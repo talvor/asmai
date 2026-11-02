@@ -371,185 +371,81 @@ func TestDoctorDoesNotReportAnUnconfirmedConfiguredPrefixAsApplied(t *testing.T)
 	}
 }
 
-func TestDoctorReportsMissingDefaultResearchWebAccess(t *testing.T) {
+func TestDoctorSaysNothingAboutResearchWebAccessInTheDefaultConfiguration(t *testing.T) {
 	for name, config := range map[string]string{
-		"no setting":   staffing,
-		"switched off": staffing + "\n[providers.claude]\nauto_mode = false\n",
+		"no setting":                   staffing,
+		"auto mode off":                staffing + "\n[providers.claude]\nauto_mode = false\n",
+		"auto mode on":                 staffing + "\n[providers.claude]\nauto_mode = true\n",
+		"auto mode on but unavailable": staffing + "\n[providers.claude]\nauto_mode = true\n",
 	} {
 		t.Run(name, func(t *testing.T) {
+			if name == "auto mode on but unavailable" {
+				t.Setenv(fakeprovider.AutoModeUnavailableEnv, "1")
+			}
 			readyFactoryConfigured(t, idleLeader, config)
 			fakeUpstream(t, "v99.0.0", nil)
 			stdout, stderr, code := doctorIn(t)
 			if code != 0 {
 				t.Fatalf("asmai doctor exited %d, printing %q", code, stdout+stderr)
 			}
-			for _, want := range []string{
-				"ok      research web access", "warning: Research workers have no web access from AsmAI by default", "cached Claude Code permission verdict is unconfirmed",
-				"auto_mode = true under [providers.claude]", "asmai config apply", "configuration.applied", "no setting that allows named sites",
-			} {
-				if !strings.Contains(stdout, want) {
-					t.Errorf("asmai doctor printed\n%s\nwant it to say %q", stdout, want)
+			if !strings.Contains(stdout, "ok      research web access") {
+				t.Errorf("asmai doctor printed\n%s\nwant a research web access line that is ok", stdout)
+			}
+			for _, unwanted := range []string{"warning: Research", "no web access", "cannot confirm the running factory", "auto_mode = true under [providers.claude]"} {
+				if strings.Contains(stdout, unwanted) {
+					t.Errorf("asmai doctor printed\n%s\nwant no mention of %q", stdout, unwanted)
 				}
 			}
 		})
 	}
 }
 
-func TestDoctorMarksRunningAutoModeAvailabilityUnconfirmed(t *testing.T) {
-	readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = true\n")
-	fakeUpstream(t, "v99.0.0", nil)
-	stdout, stderr, code := doctorIn(t)
-	if code != 0 || !strings.Contains(stdout, "ok      research web access") || !strings.Contains(stdout, "Research web access for new workers is unconfirmed") {
-		t.Errorf("asmai doctor exited %d printing\n%s\nwant the running factory's verdict marked unconfirmed", code, stdout+stderr)
-	}
-}
-
-func TestDoctorDoesNotUseChangedProviderVerdictForRunningWorkers(t *testing.T) {
-	for _, tc := range []struct{ name, atStart, now string }{
-		{"became unavailable", "", "1"},
-		{"became available", "1", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(fakeprovider.AutoModeUnavailableEnv, tc.atStart)
-			readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = true\n")
-			fakeUpstream(t, "v99.0.0", nil)
-			t.Setenv(fakeprovider.AutoModeUnavailableEnv, tc.now)
-			stdout, _, code := doctorIn(t)
-			if code != 0 || !strings.Contains(stdout, "Research web access for new workers is unconfirmed") || strings.Contains(stdout, "auto mode is unavailable") || strings.Contains(stdout, "warning: Research workers have no web access") {
-				t.Errorf("doctor exited %d printing %q; want running factory verdict unconfirmed", code, stdout)
-			}
-		})
-	}
-}
-
-func TestDoctorUsesFreshVerdictWhenFactoryIsStopped(t *testing.T) {
-	readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = true\n")
-	fakeUpstream(t, "v99.0.0", nil)
-	stopFactory(t)
-	stdout, _, code := doctorIn(t)
-	if code != 0 || !strings.Contains(stdout, "ok      research web access") || strings.Contains(stdout, "warning: Research") {
-		t.Errorf("doctor exited %d printing %q; want no web access warning", code, stdout)
-	}
-	t.Setenv(fakeprovider.AutoModeUnavailableEnv, "1")
-	stdout, _, code = doctorIn(t)
-	if code != 0 || !strings.Contains(stdout, "fresh doctor probe reports auto mode unavailable") {
-		t.Errorf("doctor exited %d printing %q; want stopped-factory probe warning", code, stdout)
-	}
-}
-
-func TestDoctorDoesNotPromiseUnavailableAutoModeWillEnableWebAccess(t *testing.T) {
+func TestDoctorSaysResearchWebAccessDependsOnTheManagedSettingsUnderTheManagedPolicy(t *testing.T) {
+	t.Setenv(fakeprovider.ManagedRulesOnlyEnv, "1")
 	readyFactoryConfigured(t, idleLeader, staffing)
 	fakeUpstream(t, "v99.0.0", nil)
-	t.Setenv(fakeprovider.AutoModeUnavailableEnv, "1")
-	stdout, _, _ := doctorIn(t)
-	if !strings.Contains(stdout, "auto mode unavailable") || !strings.Contains(stdout, "turning the switch on alone will not enable its classifier") {
-		t.Errorf("doctor printed %q; want the unavailable auto mode warning", stdout)
+	stdout, _, code := doctorIn(t, "--json")
+	if code != 0 {
+		t.Fatalf("asmai doctor exited %d printing %q", code, stdout)
+	}
+	check := webAccessCheckOf(t, stdout)
+	for _, want := range []string{"Research workers may have no web access", "allowManagedPermissionRulesOnly", "allow `WebFetch` and `WebSearch`", "never changes managed settings"} {
+		if !check.OK || !strings.Contains(check.Warning, want) {
+			t.Errorf("research web access check = %+v; want an ok warning saying %q", check, want)
+		}
+	}
+
+	t.Setenv(fakeprovider.ManagedRulesAllowEnv, "WebFetch, WebSearch, Bash(asmai:*)")
+	stdout, _, code = doctorIn(t, "--json")
+	if check = webAccessCheckOf(t, stdout); code != 0 || !check.OK || check.Warning != "" {
+		t.Errorf("with the web tools allowed in the managed settings: exited %d, research web access check = %+v; want no warning", code, check)
 	}
 }
 
-func TestDoctorReportsAppliedAutoModeWhenFileHasPendingEdit(t *testing.T) {
-	for _, tc := range []struct {
-		name, applied, edited string
-		warning               bool
-	}{
-		{"pending enable", "false", "true", true},
-		{"pending disable", "true", "false", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			readyFactoryConfigured(t, idleLeader, staffing+"\n[providers.claude]\nauto_mode = "+tc.applied+"\n")
-			fakeUpstream(t, "v99.0.0", nil)
-			writeConfig(t, staffing+"\n[providers.claude]\nauto_mode = "+tc.edited+"\n")
-			stdout, stderr, code := doctorIn(t, "--json")
-			var report struct {
-				Checks []daemon.Check `json:"checks"`
-			}
-			if code != 0 || json.Unmarshal([]byte(stdout), &report) != nil {
-				t.Fatalf("doctor --json exited %d printing %q, %q", code, stdout, stderr)
-			}
-			for _, check := range report.Checks {
-				if check.Name == daemon.WebAccessName {
-					if check.OK != true || strings.Contains(check.Warning, "no web access from AsmAI by default") != tc.warning || !strings.Contains(check.Warning, "differs from the running factory") || !strings.Contains(check.Warning, "unconfirmed") {
-						t.Errorf("research web access check = %+v; applied auto_mode = %s, configured = %s", check, tc.applied, tc.edited)
-					}
-					return
-				}
-			}
-			t.Errorf("doctor omitted research web access check: %+v", report.Checks)
-		})
-	}
-}
-
-func TestResearchWebAccessGuidanceAndAutoModeApplyAreVisibleInTheJournal(t *testing.T) {
-	readyFactory(t, idleLeader)
+func TestDoctorSaysWhenManagedSettingsDenyTheWebTools(t *testing.T) {
+	t.Setenv(fakeprovider.ManagedRulesDenyEnv, "WebFetch(domain:example.com)")
+	readyFactoryConfigured(t, idleLeader, staffing)
 	fakeUpstream(t, "v99.0.0", nil)
-	if _, stderr, code := runAsmai(t, "start"); code != 0 {
-		t.Fatalf("asmai start exited %d: %s", code, stderr)
+	stdout, _, code := doctorIn(t, "--json")
+	check := webAccessCheckOf(t, stdout)
+	if code != 0 || !check.OK || !strings.Contains(check.Warning, "restricted") || !strings.Contains(check.Warning, "deny WebFetch(domain:example.com)") {
+		t.Errorf("exited %d, research web access check = %+v; want a warning naming the managed deny rule", code, check)
 	}
+}
 
-	before, stderr, code := doctorIn(t)
-	if code != 0 || !strings.Contains(before, "Research workers have no web access from AsmAI by default") {
-		t.Fatalf("asmai doctor exited %d printing %q, %q", code, before, stderr)
+func webAccessCheckOf(t *testing.T, doctorJSON string) daemon.Check {
+	t.Helper()
+	var report struct {
+		Checks []daemon.Check `json:"checks"`
 	}
-	t.Logf("asmai doctor, default configuration:\n%s", before)
-
-	writeConfig(t, staffing+"\n[providers.claude]\nauto_mode = true\n")
-	pending, stderr, code := doctorIn(t)
-	if code != 0 || !strings.Contains(pending, "configuration file's auto_mode differs from the running factory") ||
-		!strings.Contains(pending, "Research workers have no web access from AsmAI by default") {
-		t.Fatalf("asmai doctor with a pending edit exited %d printing %q, %q", code, pending, stderr)
+	if err := json.Unmarshal([]byte(doctorJSON), &report); err != nil {
+		t.Fatalf("doctor --json printed %q: %v", doctorJSON, err)
 	}
-	t.Logf("asmai doctor, edited but not applied:\n%s", pending)
-	if got := journaled(t, "configuration.applied"); len(got) != 0 {
-		t.Fatalf("doctor's preview journaled %d configurations", len(got))
+	for _, check := range report.Checks {
+		if check.Name == daemon.WebAccessName {
+			return check
+		}
 	}
-
-	appliedOutput, stderr, code := runIn(t, "y\n", "config", "apply")
-	if code != 0 || !strings.Contains(appliedOutput, "Applied, and journaled as configuration.applied") {
-		t.Fatalf("asmai config apply exited %d printing %q, %q", code, appliedOutput, stderr)
-	}
-	t.Logf("asmai config apply, factory running:\n%s", appliedOutput)
-	entries := journaled(t, "configuration.applied")
-	if len(entries) != 1 {
-		t.Fatalf("configuration.applied entries = %d; want one auto_mode change", len(entries))
-	}
-	var recorded struct {
-		Changes []struct {
-			Setting string `json:"setting"`
-			Before  string `json:"before"`
-			After   string `json:"after"`
-		} `json:"changes"`
-	}
-	if err := json.Unmarshal(entries[0].Data, &recorded); err != nil || len(recorded.Changes) != 1 ||
-		recorded.Changes[0].Setting != "providers.claude.auto_mode" ||
-		recorded.Changes[0].Before != "false" || recorded.Changes[0].After != "true" {
-		t.Fatalf("configuration.applied change = %+v (%v); want auto_mode false -> true", recorded.Changes, err)
-	}
-	t.Logf("asmai export, configuration.applied change: %+v", recorded.Changes[0])
-
-	after, stderr, code := doctorIn(t)
-	if code != 0 || !strings.Contains(after, "auto_mode is applied") ||
-		!strings.Contains(after, "Research web access for new workers is unconfirmed") {
-		t.Fatalf("asmai doctor after apply exited %d printing %q, %q", code, after, stderr)
-	}
-	t.Logf("asmai doctor, applied configuration:\n%s", after)
-
-	stopFactory(t)
-	writeConfig(t, staffing+"\n[providers.claude]\nauto_mode = false\n")
-	offline, stderr, code := runIn(t, "", "config", "apply")
-	if code != 0 || !strings.Contains(offline, "not running") {
-		t.Fatalf("asmai config apply with the factory stopped exited %d printing %q, %q", code, offline, stderr)
-	}
-	t.Logf("asmai config apply, factory stopped:\n%s", offline)
-	if _, stderr, code := runAsmai(t, "start"); code != 0 {
-		t.Fatalf("asmai start after offline edit exited %d: %s", code, stderr)
-	}
-	if got := journaled(t, "configuration.applied"); len(got) != 1 {
-		t.Fatalf("stopped-factory apply and restart left %d configuration.applied entries; want one", len(got))
-	}
-	restarted, stderr, code := doctorIn(t)
-	if code != 0 || !strings.Contains(restarted, "Research workers have no web access from AsmAI by default") ||
-		strings.Contains(restarted, "configuration file's auto_mode differs from the running factory") {
-		t.Fatalf("asmai doctor after restart exited %d printing %q, %q", code, restarted, stderr)
-	}
-	t.Logf("asmai doctor, after restart with the offline edit:\n%s", restarted)
+	t.Fatalf("doctor omitted the research web access check: %+v", report.Checks)
+	return daemon.Check{}
 }

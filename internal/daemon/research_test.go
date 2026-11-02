@@ -77,7 +77,7 @@ func TestAResearchJobWithNoRepositoryGivesItsWorkerAnEmptyScratchWorkspaceWithNo
 		t.Errorf("the worker started in %s, want its scratch workspace %s", got, cwd)
 	}
 	args := waitForFile(t, filepath.Join(p.out, "args"))
-	for _, want := range []string{"--model\nsonnet", "a Research worker", "--plugin-dir", "If reading a web page is denied, disclose it as a gap"} {
+	for _, want := range []string{"--model\nsonnet", "a Research worker", "--plugin-dir", "If reading a page is denied, which an administrator's managed settings can cause, disclose it as a gap"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the Research worker's command line lacks %q: %s", want, args)
 		}

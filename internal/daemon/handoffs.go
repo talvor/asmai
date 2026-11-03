@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
@@ -466,6 +467,14 @@ func (d *daemon) nudge(agent string) {
 	if err != nil {
 		d.log.Error("reading pending dispatch", "agent", agent, "error", err)
 		return
+	}
+	if l.address == roles.LeaderOf(roles.Coordination) {
+		// The nudge is never typed over the user's unsent text, whether or
+		// not they are still in the conversation: it waits until they
+		// submit it, or until the input box is empty again.
+		if text, readable := providers.ClaudeCodeUnsentText(l.session.Screen()); readable && text != "" {
+			return
+		}
 	}
 	prompt := fmt.Sprintf("asmai inbox --dispatch %d", dispatch.ID)
 	// Record uncertainty before the PTY write. A crash or failed write cannot

@@ -78,6 +78,9 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if m.Stopped != "" {
 			fmt.Fprintln(o.stdout, m.Stopped)
 		}
+		if m.Interrupted {
+			fmt.Fprintf(o.stdout, "Your turn for dispatch %d was interrupted, and this is message %d read again by its ID. Before you act on it again, check what your recorded asmai calls already did, in `asmai jobs` and the job's `asmai brief`, and never repeat one blindly.\n", m.Dispatch, m.ID)
+		}
 		if h := m.HandoffData; h != nil {
 			fmt.Fprintf(o.stdout, "handoff %d | %s -> %s | %s\nOutcome: %s\nDecisions: %s\nEvidence: %s\nConstraints: %s\nPermissions: %s\nAcceptance criteria:\n", h.ID, h.Sender, h.Receiver, h.State, h.Outcome, h.Decisions, h.Evidence, h.Constraints, h.Permissions)
 			for _, c := range h.Criteria {

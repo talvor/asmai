@@ -539,6 +539,24 @@ func TestCoordinationPresentsANativePromptTheDaemonRaisedAndNeverAnswersItForThe
 	}
 }
 
+func TestCoordinationReadsAnInterruptedTurnsMessagesAgainAndChecksItsRecordedCallsBeforeActing(t *testing.T) {
+	text, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"A turn the user interrupted",
+		"you are nudged again with the same dispatch",
+		"Read them again with `asmai inbox --dispatch <id>`: reads go by message ID",
+		"check your own recorded `asmai` calls, in `asmai jobs` and each job's `asmai brief <number>`",
+		"Never repeat a call blindly",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+}
+
 func TestCoordinationPresentsAChoiceOnceAndRecordsTheUsersOwnMessageWithItsReading(t *testing.T) {
 	text, err := LeaderInstructions(Coordination)
 	if err != nil {

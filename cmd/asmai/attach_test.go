@@ -118,6 +118,69 @@ func TestANativePromptShowsInFullBesideTheModel(t *testing.T) {
 	}
 }
 
+// The status line shows what waits on the user, the native prompts and then
+// the decision requests pending with them, and then the jobs that run, before
+// the model, in an observed session and in the conversation alike; a frame
+// tells the client whenever any of them changes, and one that says there are
+// none clears them.
+func TestTheStatusLineShowsWhatWaitsOnTheUserAndTheRunningJobs(t *testing.T) {
+	state := vt.New(300, 5).State()
+	prompts := []string{"worker1@engineering waits at a native prompt nobody can answer: Bash `cat > x`"}
+	decisions := []string{"job 3: decision request 7 waits on you in Lavish", "job 4: decision request 9 waits on you in the conversation"}
+	one, two, none := []int64{3}, []int64{3, 4}, []int64{}
+	noText := []string{}
+	for _, conversation := range []bool{false, true} {
+		hints := "leader@coordination · observing · Ctrl-] detaches · ↑/↓ history"
+		if conversation {
+			hints = "leader@coordination · conversation · Ctrl-] leaves · ↑/↓ history"
+		}
+		c := &attachClient{agent: "leader@coordination", conversation: conversation, model: daemon.Model{Name: "opus"}, columns: 300, rows: 6, dirty: make(chan struct{}, 1), end: make(chan string, 1)}
+		r, w := io.Pipe()
+		go c.readFrames(r)
+		enc := json.NewEncoder(w)
+		for _, tt := range []struct {
+			after daemon.Frame
+			want  string
+		}{
+			{daemon.Frame{State: &state, Prompts: &noText, Decisions: &noText, Jobs: &none}, " " + hints + " · opus"},
+			{daemon.Frame{Jobs: &one}, " " + hints + " · running job 3 · opus"},
+			{daemon.Frame{Decisions: &decisions, Jobs: &two}, " " + hints + " · " + decisions[0] + " · " + decisions[1] + " · running jobs 3, 4 · opus"},
+			{daemon.Frame{Prompts: &prompts}, " " + hints + " · " + prompts[0] + " · " + decisions[0] + " · " + decisions[1] + " · running jobs 3, 4 · opus"},
+			{daemon.Frame{Output: []byte("more output")}, " " + hints + " · " + prompts[0] + " · " + decisions[0] + " · " + decisions[1] + " · running jobs 3, 4 · opus"},
+			{daemon.Frame{Prompts: &noText, Decisions: &noText, Jobs: &none}, " " + hints + " · opus"},
+		} {
+			if err := enc.Encode(tt.after); err != nil {
+				t.Fatal(err)
+			}
+			<-c.dirty
+			c.mu.Lock()
+			got := statusText(c.statusLine())
+			c.mu.Unlock()
+			if got != tt.want {
+				t.Errorf("in the conversation %t, after the frame %+v the status line is %q, want %q", conversation, tt.after, got, tt.want)
+			}
+		}
+		w.Close()
+		<-c.end
+	}
+}
+
+// On a narrow terminal the model is cut before the running jobs, and the
+// jobs before what waits on the user.
+func TestTheRunningJobsShowBeforeTheModelOnANarrowTerminal(t *testing.T) {
+	decision := "job 3: decision request 7 waits on you in Lavish"
+	before := " worker1@engineering · observing · Ctrl-] detaches · ↑/↓ history · " + decision + " · running jobs 3, 4"
+	columns := utf8.RuneCountInString(before + " · cl")
+	c := &attachClient{agent: "worker1@engineering", decisions: []string{decision}, jobs: []int64{3, 4}, model: daemon.Model{Name: "claude-opus-5-5"}, columns: columns, rows: 6, term: vt.New(columns, 5)}
+	if got, want := statusText(c.statusLine()), before+" · cl"; got != want {
+		t.Errorf("on a %d-column terminal the status line is %q, want the decision and the jobs in full and then the model cut: %q", columns, got, want)
+	}
+	c.columns = utf8.RuneCountInString(before) - 3
+	if got, want := statusText(c.statusLine()), before[:len(before)-3]; got != want {
+		t.Errorf("on a %d-column terminal the status line is %q, want the decision in full and the jobs cut: %q", c.columns, got, want)
+	}
+}
+
 // asmai attach --json and --toon print the agent's model and effort with
 // the rest of the agent once the daemon knows them, and leave out each it
 // does not.

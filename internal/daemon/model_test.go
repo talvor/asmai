@@ -89,7 +89,13 @@ func TestAnAttachStreamSendsTheModelOnceAHookReportsItChanged(t *testing.T) {
 	t.Cleanup(func() { s.Stop(time.Second) })
 	address := roles.LeaderOf(roles.Coordination)
 	ref := sessionRef{address: address, generation: 2}
+	st, err := store.Open(stateDir(t).Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
 	d := &daemon{
+		store:   st,
 		leaders: map[string]*leader{address.String(): {address: address, generation: 2, session: s, model: "opus"}},
 		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

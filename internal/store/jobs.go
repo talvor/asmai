@@ -273,6 +273,25 @@ func (s *Store) Jobs() ([]Job, error) {
 	return jobs, nil
 }
 
+// OpenJobs returns the numbers of the jobs that run: open, neither paused
+// nor ended, in order.
+func (s *Store) OpenJobs() ([]int64, error) {
+	rows, err := s.db.Query(`SELECT number FROM jobs WHERE state = ? ORDER BY number`, JobOpen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	numbers := []int64{}
+	for rows.Next() {
+		var n int64
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		numbers = append(numbers, n)
+	}
+	return numbers, rows.Err()
+}
+
 // JobEntries returns journal records belonging to this job, newest first.
 func (s *Store) JobEntries(number int64) ([]Entry, error) {
 	rows, err := s.db.Query(`SELECT id, at, kind, data FROM journal WHERE (kind = ? AND json_extract(data, '$.number') = ?) OR json_extract(data, '$.job') = ? ORDER BY id DESC LIMIT 20`, KindJobOpened, number, number)

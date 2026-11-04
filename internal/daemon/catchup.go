@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/talvor/asmai/internal/lavish"
+	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/store"
 )
@@ -102,6 +103,13 @@ func (d *daemon) events(last int64) ([]Event, error) {
 		}
 		events = append(events, Event{Kind: EventWaiting, Job: r.Job, Text: text, Link: r.PageURL})
 	}
+	findings, err := d.store.NeedsYouFindings()
+	if err != nil {
+		return nil, fmt.Errorf("reading the needs-you findings: %w", err)
+	}
+	for _, item := range waitingOnYou(nil, nil, findings) {
+		events = append(events, Event{Kind: EventWaiting, Job: item.Job, Text: item.Text})
+	}
 
 	jobs, err := d.jobEvents(last)
 	if err != nil {
@@ -110,6 +118,19 @@ func (d *daemon) events(last int64) ([]Event, error) {
 	events = append(events, jobs...)
 
 	lives := d.liveAgents()
+	d.mu.Lock()
+	checks := slices.Clone(d.lastChecks)
+	heldAgent := d.lastHeldAgent
+	leader := d.leaders[heldAgent]
+	heldByChecks := leader == nil || leader.session == nil
+	d.mu.Unlock()
+	if heldAgent != "" && heldByChecks {
+		for _, c := range checks {
+			if !c.OK {
+				events = append(events, Event{Kind: EventHold, Agent: heldAgent, Text: fmt.Sprintf("%s is held, not started: %s: %s (fix: %s)", heldAgent, c.Name, c.Problem, c.Fix)})
+			}
+		}
+	}
 	works, err := d.store.AgentWorks()
 	if err != nil {
 		return nil, fmt.Errorf("reading what the agents do: %w", err)
@@ -170,7 +191,11 @@ func (d *daemon) jobEvents(last int64) ([]Event, error) {
 			kind := EventFinished
 			if e.Kind == store.KindChecksObserved {
 				kind = EventFailed
-				if latest, err := d.store.LatestChecks(data.Job); err != nil || latest.Verdict != "red" {
+				latest, err := d.store.LatestChecks(data.Job)
+				if err != nil || latest.Verdict != "red" {
+					continue
+				}
+				if _, head, ok := d.watched(data.Job); !ok || latest.Head != head {
 					continue
 				}
 				if j, err := d.store.Job(data.Job); err != nil || j.Ended() {
@@ -221,7 +246,7 @@ func (d *daemon) signInEvent() *Event {
 	if check.OK {
 		return nil
 	}
-	return &Event{Kind: EventSignIn, Agent: roles.LeaderOf(roles.Coordination).String(), Text: "Claude Code's sign-in is lost: " + check.Problem, Command: install.Path + " auth login"}
+	return &Event{Kind: EventSignIn, Agent: roles.LeaderOf(roles.Coordination).String(), Text: "Claude Code's sign-in is lost: " + check.Problem, Command: providers.ShellQuote(install.Path) + " auth login"}
 }
 
 // catchUp returns what the user returns to: the events since they last left

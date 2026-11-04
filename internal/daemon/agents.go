@@ -747,6 +747,7 @@ func (d *daemon) pinnedCopy() (store.ProviderInstall, bool) {
 // and keeps them for `asmai status`. d.mu is held.
 func (d *daemon) held(agent string, checks []Check) error {
 	d.lastChecks = checks
+	d.lastHeldAgent = agent
 	var why []string
 	for _, c := range checks {
 		if !c.OK {
@@ -778,7 +779,9 @@ func (d *daemon) ensureCoordination() []Check {
 	}
 	checks, cfg, install := d.checks()
 	d.lastChecks = checks
+	d.lastHeldAgent = ""
 	if failed(checks) {
+		d.lastHeldAgent = roles.LeaderOf(roles.Coordination).String()
 		for _, c := range checks {
 			if !c.OK {
 				d.log.Warn("a check failed, so Coordination's leader is not started", "check", c.Name, "problem", c.Problem, "fix", c.Fix)
@@ -798,6 +801,7 @@ func (d *daemon) ensureCoordination() []Check {
 		d.log.Error("starting an agent", "agent", l.address.String(), "error", err.Error())
 		checks = append(checks, Check{Name: l.address.String(), Problem: "it did not start: " + err.Error(), Fix: "see `asmai log`, then run `asmai start` again"})
 		d.lastChecks = checks
+		d.lastHeldAgent = l.address.String()
 	}
 	return checks
 }
@@ -1413,6 +1417,9 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	catchUp, err := d.catchUp()
 	if err != nil {
 		d.log.Error("reading the catch-up", "error", err.Error())
+		reply(conn, Response{Error: err.Error()})
+		d.leave(c, LeftByTerminalClose)
+		return
 	}
 	if err := d.store.ConversationEntered(address.String(), address.Role, c.generation, c.terminal, time.Now()); err != nil {
 		d.log.Error("journaling the conversation's start", "error", err.Error())

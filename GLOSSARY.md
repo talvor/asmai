@@ -209,10 +209,6 @@ The real repositories and tasks the proving scenarios run on.
 The user's ongoing exchange with Coordination in its interactive terminal. Unlike an intervention, leaving it never pauses automated delivery.
 _Avoid_: Chat, session
 
-**Catch-up**:
-What the attach client prints, drawn from the journal and the daemon's state, when the user returns to the conversation and before the live conversation: what changed since they last left, what waits on them, and the text they left unsent, offered back and never retyped. It is one line when nothing changed, and `asmai status` lists the same events.
-_Avoid_: Summary, digest, notification
-
 **Focused job**:
 The job the conversation is currently about. The user's messages apply to it unless they name another job.
 _Avoid_: Current job, active job

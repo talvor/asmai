@@ -5,6 +5,7 @@ package daemon
 import (
 	"database/sql"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/session"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -77,8 +79,8 @@ func TestTheCatchUpTellsOfEverythingThatChangedAndWaits(t *testing.T) {
 
 	// Jobs: one that failed, one the user paused, and one the user
 	// cancelled, so it finished.
-	other := f.openJob(t, "add a farewell")
-	if _, _, err := f.s.ChecksObserved(store.ChecksObservation{Job: other.Number, Number: 7, Head: "abc", Verdict: "red", Checks: []store.CheckState{{Name: "test", State: "failure"}}}, time.Now()); err != nil {
+	f.pushedPullRequest(t)
+	if _, _, err := f.s.ChecksObserved(store.ChecksObservation{Job: f.job.Number, Number: 7, Head: f.started, Verdict: "red", Checks: []store.CheckState{{Name: "test", State: "failure"}}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	paused := f.openJob(t, "add a salutation")
@@ -124,8 +126,8 @@ func TestTheCatchUpTellsOfEverythingThatChangedAndWaits(t *testing.T) {
 	if e := eventOf(t, c.Events, EventFinished); e.Job != cancelled.Number || !strings.Contains(e.Text, "was cancelled") {
 		t.Errorf("the finished job is %+v, want job %d", e, cancelled.Number)
 	}
-	if e := eventOf(t, c.Events, EventFailed); e.Job != other.Number || !strings.Contains(e.Text, "checks on its pull request are red") {
-		t.Errorf("the failed job is %+v, want job %d", e, other.Number)
+	if e := eventOf(t, c.Events, EventFailed); e.Job != f.job.Number || !strings.Contains(e.Text, "checks on its pull request are red") {
+		t.Errorf("the failed job is %+v, want job %d", e, f.job.Number)
 	}
 	if e := eventOf(t, c.Events, EventPaused); e.Job != paused.Number {
 		t.Errorf("the paused job is %+v, want job %d", e, paused.Number)
@@ -189,9 +191,12 @@ func TestTheCatchUpTellsOfInputTheUserStillHoldsAndAnUnknownOutcome(t *testing.T
 func TestTheCatchUpTellsOfALostSignInWithItsNativeCommand(t *testing.T) {
 	f := newTwoResults(t)
 	f.withWorkers(t)
-	signedIn := func(loggedIn bool) {
+	signedIn := func(loggedIn bool) string {
 		t.Helper()
-		path := filepath.Join(t.TempDir(), "claude")
+		path := filepath.Join(t.TempDir(), "provider with spaces", "claude")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		script := fmt.Sprintf("#!/bin/sh\necho '{\"loggedIn\":%t,\"authMethod\":\"claude.ai\"}'\n", loggedIn)
 		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
@@ -200,19 +205,138 @@ func TestTheCatchUpTellsOfALostSignInWithItsNativeCommand(t *testing.T) {
 		if _, err := f.s.ProviderInstalled(store.ProviderInstall{Name: providers.ClaudeCode, Version: "2.1.292", Path: path, SHA256: "x", InstalledAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
+		return path
 	}
 	signedIn(true)
 	if c, err := f.d.catchUp(); err != nil || len(c.Events) != 0 {
 		t.Fatalf("with the sign-in held, the catch-up is %+v (%v), want nothing", c, err)
 	}
-	signedIn(false)
+	path := signedIn(false)
 	c, err := f.d.catchUp()
 	if err != nil {
 		t.Fatal(err)
 	}
 	e := eventOf(t, c.Events, EventSignIn)
-	if !strings.HasSuffix(e.Command, "/claude auth login") || !strings.Contains(e.Text, "signed out") {
+	if e.Command != providers.ShellQuote(path)+" auth login" || !strings.Contains(e.Text, "signed out") {
 		t.Errorf("the lost sign-in is %+v, want Claude Code's own `auth login` command", e)
+	}
+}
+
+func (f twoResults) pushedPullRequest(t *testing.T) {
+	t.Helper()
+	branch := jobBranchFor(f.job)
+	at := time.Now()
+	if err := f.s.ChangeDispatch(f.reported[0].ID, 1, store.DispatchCreated, store.DispatchWorking, "", at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.JobBranchPushed(store.Push{Job: f.job.Number, Branch: branch, Commit: f.started, Leader: f.assignments[0].Owner, Dispatch: f.reported[0].ID}, 1, nil, at); err != nil {
+		t.Fatal(err)
+	}
+	pr := store.PullRequest{Job: f.job.Number, Number: 7, URL: "https://github.com/talvor/asmai-fixture/pull/7", Title: "Add a greeting", Branch: branch, Head: f.started, State: "OPEN", Leader: f.assignments[0].Owner, Dispatch: f.reported[0].ID}
+	if _, _, err := f.s.PullRequestRecorded(pr, 1, pr.URL, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheCatchUpAndStatusTellOfAcceptedNeedsYouFindingsAndFailedStartChecks(t *testing.T) {
+	v := newValidationFixture(t)
+	found := v.validated(t, store.FindingInput{Kind: store.FindingNeedsYou, Text: "Which greeting?\nThe request is ambiguous."})
+	v.d.mu.Lock()
+	v.d.held("worker1@quality", []Check{{Name: "provider", Problem: "changed since qualification", Fix: "restore the pinned provider"}})
+	v.d.mu.Unlock()
+	catchUp, err := v.d.catchUp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := v.d.events(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(catchUp.Events, status) {
+		t.Fatalf("catch-up events %+v differ from status events %+v", catchUp.Events, status)
+	}
+	if e := eventOf(t, status, EventWaiting); e.Job != v.job.Number || !strings.Contains(e.Text, fmt.Sprintf("finding %d: Which greeting?", found[0].ID)) {
+		t.Errorf("the accepted needs-you finding is %+v", e)
+	}
+	if e := eventOf(t, status, EventHold); e.Agent != "worker1@quality" || !strings.Contains(e.Text, "provider: changed since qualification (fix: restore the pinned provider)") {
+		t.Errorf("the failed start-check hold is %+v", e)
+	}
+}
+
+func TestAgentStatusKeepsDecisionLinksWithTheUser(t *testing.T) {
+	f := newLavishFactory(t)
+	page := f.request(t, 0, "Several questions")
+	s, err := session.Start(session.Spec{Path: "/bin/sleep", Args: []string{"30"}, Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Stop(time.Second) })
+	f.d.mu.Lock()
+	for _, leader := range f.d.leaders {
+		leader.session = nil
+	}
+	f.d.leaders[roles.LeaderOf(roles.Engineering).String()].session = s
+	f.d.mu.Unlock()
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for range 2 {
+			conn, err := l.AcceptUnix()
+			if err != nil {
+				return
+			}
+			f.d.handle(conn)
+			conn.Close()
+		}
+	}()
+	t.Setenv(SessionCredential, "")
+	user, err := Call(socket, Request{Command: CommandStatus, Events: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := Call(socket, Request{Command: CommandStatus, Session: "credential", Events: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := eventOf(t, user.Events, EventWaiting); e.Link != page.PageURL {
+		t.Errorf("the user received %+v, want the pending page", e)
+	}
+	for _, e := range agent.Events {
+		if e.Link != "" {
+			t.Errorf("agent status disclosed a decision page: %+v", e)
+		}
+	}
+}
+
+func TestTheCatchUpDoesNotCallOldHeadsFailed(t *testing.T) {
+	f := newTwoResults(t)
+	f.pushedPullRequest(t)
+	if err := f.s.ConversationLeft("leader@coordination", roles.Coordination, 1, "/dev/pts/test", LeftByDetaching, InputAutomation, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	red := store.ChecksObservation{Job: f.job.Number, Number: 7, Head: f.started, Verdict: "red", Checks: []store.CheckState{{Name: "test", State: "failure"}}}
+	if _, _, err := f.s.ChecksObserved(red, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := f.d.catchUp(); err != nil || !slices.Contains(kindsOf(c.Events), EventFailed) {
+		t.Fatalf("red checks on the pushed head: %+v (%v)", c, err)
+	}
+	db, err := sql.Open("sqlite3", f.d.cfg.Paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO pushes (job, branch, commit_id, result, outside, found, leader, dispatch, effect, merged_in, created_at)
+		SELECT job, branch, 'new-head', result, outside, found, leader, dispatch, effect, merged_in, created_at
+		FROM pushes WHERE job = ? ORDER BY id DESC LIMIT 1`, f.job.Number); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := f.d.catchUp(); err != nil || slices.Contains(kindsOf(c.Events), EventFailed) {
+		t.Fatalf("old red checks after a newer push: %+v (%v)", c, err)
 	}
 }
 

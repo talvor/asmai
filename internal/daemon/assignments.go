@@ -889,6 +889,9 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if failed(checks) {
 		return d.held(address.String(), checks)
 	}
+	if d.lastHeldAgent == address.String() {
+		d.lastHeldAgent = ""
+	}
 	// A worker whose assignment continues after a restart resumes the
 	// provider's session it was in, where the start recorded it.
 	resume := ""

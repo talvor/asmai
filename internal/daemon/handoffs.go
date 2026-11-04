@@ -398,6 +398,9 @@ func (d *daemon) ensureRoleLeader(role string) error {
 	if failed(checks) {
 		return d.held(roles.LeaderOf(role).String(), checks)
 	}
+	if d.lastHeldAgent == l.address.String() {
+		d.lastHeldAgent = ""
+	}
 	if l.restart != nil {
 		l.restart.Stop()
 		l.restart = nil

@@ -663,9 +663,10 @@ type daemon struct {
 	leaders map[string]*leader
 	// conversation is the user's conversation with Coordination, while it
 	// is open.
-	conversation *conversation
-	sessions     map[string]sessionRef
-	lastChecks   []Check
+	conversation  *conversation
+	sessions      map[string]sessionRef
+	lastChecks    []Check
+	lastHeldAgent string
 	// versionSeen holds, by path, the executable the version check last read
 	// the version of, so that a start looks again only at a file that
 	// changed, as one that updated itself does.
@@ -742,6 +743,11 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 			}
 			if resp.Events == nil {
 				resp.Events = []Event{}
+			}
+			if req.Session != "" {
+				for i := range resp.Events {
+					resp.Events[i].Link = ""
+				}
 			}
 		}
 		reply(conn, resp)

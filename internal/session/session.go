@@ -49,6 +49,9 @@ type Session struct {
 	mu        sync.Mutex
 	term      *vt.Terminal
 	followers map[chan Event]struct{}
+	// active is when a key was last typed into the session or it last
+	// wrote output.
+	active time.Time
 
 	// ended is set, under mu, once the session has no more followers to
 	// serve.
@@ -110,6 +113,7 @@ func (s *Session) readOutput() {
 		if n > 0 {
 			out := append([]byte(nil), buf[:n]...)
 			s.mu.Lock()
+			s.active = time.Now()
 			s.term.Write(out)
 			answers := s.term.TakeResponses()
 			for f := range s.followers {
@@ -133,7 +137,30 @@ func (s *Session) readOutput() {
 
 // Input types p into the session's terminal, as keys typed into it.
 func (s *Session) Input(p []byte) error {
+	s.mu.Lock()
+	s.active = time.Now()
+	s.mu.Unlock()
 	return s.write(p)
+}
+
+// Settle waits until the session has had neither keys typed into it nor
+// output for quiet, so that its screen shows the keys last typed, but for no
+// longer than limit, and not once it has ended.
+func (s *Session) Settle(quiet, limit time.Duration) {
+	deadline := time.Now().Add(limit)
+	for {
+		s.mu.Lock()
+		wait := min(quiet-time.Since(s.active), time.Until(deadline))
+		s.mu.Unlock()
+		if wait <= 0 {
+			return
+		}
+		select {
+		case <-s.done:
+			return
+		case <-time.After(wait):
+		}
+	}
 }
 
 func (s *Session) write(p []byte) error {

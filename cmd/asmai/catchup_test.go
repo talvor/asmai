@@ -130,3 +130,66 @@ func TestTheCatchUpOffersTheUnsentTextBackAndShowsALostSignIn(t *testing.T) {
 		t.Errorf("the next return printed %s, want the unsent text offered once", printed)
 	}
 }
+
+// What waits on the user while they are away is told on their return, before
+// the live conversation, and in `asmai status`: the decision Coordination
+// asked in the conversation and Coordination's own native prompt, as the
+// daemon recorded each.
+func TestTheCatchUpTellsOnReturnOfWhatWaitedWhileTheUserWasAway(t *testing.T) {
+	testDir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", testDir)
+	readyFactory(t, []string{
+		`{"screen": "> "}`,
+		`{"expect": "Greet the user\r"}`,
+		`{"hook": "UserPromptSubmit", "payload": {"hook_event_name": "UserPromptSubmit", "prompt": "Greet the user"}}`,
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Greet the user' --criterion 'Greets'`, 0, "Opened job 1"),
+		fakeRun(`asmai decision request --job 1 --title 'Which greeting?' --option hello --option hi`, 0, "decision request 1, version 1, recorded for job 1; it goes to user and is answered in conversation"),
+		`{"hook": "PermissionRequest", "payload": {"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "rm -rf build"}}}`,
+		`{"expect": "only typed by a test that means to"}`,
+	})
+	origin := filepath.Join(t.TempDir(), "fixture.git")
+	gitIn(t, t.TempDir(), "init", "--bare", "-b", "main", origin)
+	work := t.TempDir()
+	gitIn(t, work, "clone", "--quiet", origin, "fixture")
+	checkout := filepath.Join(work, "fixture")
+	commitSetUp(t, checkout, "initial")
+	gitIn(t, checkout, "push", "--quiet", "origin", "HEAD:main")
+	if _, stderr, code := runAsmai(t, "repo", "add", origin); code != 0 {
+		t.Fatalf("repo add: %s", stderr)
+	}
+
+	a := inTerminal(t, 300, 31)
+	waitFor(t, "Coordination's prompt", a.shows(">"))
+	a.ptmx.WriteString("Greet the user\r")
+	waitFor(t, "the decision and the native prompt on the status line", func() bool {
+		line := a.lines()[30]
+		return strings.Contains(line, "decision request 1 waits on you") && strings.Contains(line, "rm -rf build")
+	})
+	leaveFrom(t, a)
+
+	wants := []string{
+		"waiting on you: leader@coordination waits at a native prompt the user answers in the conversation: Bash `rm -rf build`",
+		"waiting on you: job 1: decision request 1 waits on you in the conversation",
+	}
+	stdout, stderr, code := runAsmai(t, "status")
+	if code != 0 {
+		t.Fatalf("asmai status exited %d: %s", code, stderr)
+	}
+	for _, want := range []string{"waiting on you", "decision request 1 waits on you", "rm -rf build"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("asmai status printed %s, want it to hold %q", stdout, want)
+		}
+	}
+
+	b := inTerminal(t, 300, 31)
+	waitFor(t, "the conversation", func() bool { return len(b.printedBeforeTheConversation()) > 0 })
+	printed := strings.Join(b.printedBeforeTheConversation(), "\n")
+	if !strings.Contains(printed, "Since you left:") {
+		t.Errorf("the return printed\n%s\nwant a catch-up before the conversation", printed)
+	}
+	for _, want := range wants {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the catch-up printed before the conversation is\n%s\nwant it to hold %q", printed, want)
+		}
+	}
+}

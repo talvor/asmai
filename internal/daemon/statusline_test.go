@@ -151,7 +151,7 @@ func TestAnAttachStreamKeepsTheStatusLineCurrentWhileTheAgentDrawsNothing(t *tes
 	t.Cleanup(func() { s.Stop(time.Second) })
 	server, client := connectedPair(t)
 	attached := &Leader{Agent: "leader@engineering", State: store.AgentRunning, Generation: 1, PID: s.PID()}
-	go f.d.stream(server, bufio.NewReader(server), Request{}, s, attached, nil)
+	go f.d.stream(server, bufio.NewReader(server), Request{}, s, attached, nil, nil)
 
 	r := bufio.NewReader(client)
 	if _, err := r.ReadBytes('\n'); err != nil {

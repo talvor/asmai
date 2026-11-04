@@ -102,7 +102,7 @@ func TestAnAttachStreamSendsTheModelOnceAHookReportsItChanged(t *testing.T) {
 	server, client := connectedPair(t)
 	model := d.modelOf(address.String(), 2)
 	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: 2, PID: s.PID(), Model: model.Name, Effort: model.Effort}
-	go d.stream(server, bufio.NewReader(server), Request{}, s, attached, nil)
+	go d.stream(server, bufio.NewReader(server), Request{}, s, attached, nil, nil)
 
 	r := bufio.NewReader(client)
 	line, err := r.ReadBytes('\n')

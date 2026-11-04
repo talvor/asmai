@@ -214,19 +214,12 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 	}
 
 	// With the factory running, asmai chat attaches without starting
-	// anything, and while it is open the conversation is refused in another
-	// terminal.
+	// anything. A second terminal takes the conversation over from it (see
+	// takeover_test.go).
 	b := inTerminal(t, 100, 25, "chat")
 	waitFor(t, "the conversation again", func() bool {
 		return strings.HasSuffix(strings.TrimRight(b.lines()[24], " "), "leader@coordination · conversation · Ctrl-] leaves · ↑/↓ history · opus")
 	})
-	second := inTerminal(t, 100, 25, "chat")
-	if code := second.exited(t); code != 1 {
-		t.Errorf("a second conversation exited %d, want 1", code)
-	}
-	if want := "the conversation is open in another terminal (" + b.name + ")"; !second.shows(want)() {
-		t.Errorf("a second conversation printed\n%s\nwant it to say %q", strings.Join(second.lines(), "\n"), want)
-	}
 	var screen struct {
 		Started bool       `json:"started"`
 		Agent   leaderJSON `json:"agent"`

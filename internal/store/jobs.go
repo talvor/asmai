@@ -84,8 +84,9 @@ func (s *Store) NextJobNumber() (int64, error) {
 }
 
 // JobOpened verifies a witnessed message and a registered repository in the
-// same transaction that numbers and journals the job. A nudge or observation
-// can never stand in for the user's words.
+// same transaction that numbers and journals the job, and gives it the
+// conversation's focus. A nudge or observation can never stand in for the
+// user's words.
 func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 	if (job.Witness <= 0 && !latest) || strings.TrimSpace(job.Reading) == "" || !slices.Contains(Mandates, job.Mandate) || len(job.Criteria) == 0 {
 		return Job{}, fmt.Errorf("job open needs a witnessed message, a reading, a mandate (%s or %s) and acceptance criteria", strings.Join(Mandates[:len(Mandates)-1], ", "), Mandates[len(Mandates)-1])
@@ -132,6 +133,10 @@ func (s *Store) JobOpened(job Job, latest bool, at time.Time) (Job, error) {
 		return Job{}, err
 	}
 	if _, err := appendEntry(tx, at, KindJobOpened, job); err != nil {
+		return Job{}, err
+	}
+	// A new request's job takes the conversation's focus (04 rule 14).
+	if _, err := focusMoved(tx, job.Number, job.Witness, at); err != nil {
 		return Job{}, err
 	}
 	return job, tx.Commit()

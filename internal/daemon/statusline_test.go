@@ -219,9 +219,15 @@ func TestAFrameOfTheStatusLineCarriesOnlyWhatChanged(t *testing.T) {
 	if !changed || string(line) != `{"jobs":[1,2]}` {
 		t.Errorf("a change in the jobs makes the frame %s, want only the jobs", line)
 	}
+	now.focus = 2
+	f, _ = now.frame(was, false)
+	line, _ = json.Marshal(f)
+	if string(line) != `{"focus":2,"jobs":[1,2]}` {
+		t.Errorf("a change in the focus and the jobs makes the frame %s, want only them", line)
+	}
 	f, _ = now.frame(now, true)
 	line, _ = json.Marshal(f)
-	if string(line) != `{"prompts":[],"decisions":["job 1: decision request 1 waits on you in Lavish"],"jobs":[1,2]}` {
+	if string(line) != `{"prompts":[],"decisions":["job 1: decision request 1 waits on you in Lavish"],"focus":2,"jobs":[1,2]}` {
 		t.Errorf("the whole status line makes the frame %s, want every part, the empty ones too", line)
 	}
 }

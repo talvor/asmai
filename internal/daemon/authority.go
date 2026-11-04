@@ -55,6 +55,11 @@ func (d *daemon) authorize(req Request) error {
 			return nil
 		}
 		return fmt.Errorf("only leader@coordination may run asmai job cancel, at the user's own word: an owning leader cancels its own workers' assignments with asmai cancel")
+	case CommandFocus:
+		if ref.address == roles.LeaderOf(roles.Coordination) {
+			return nil
+		}
+		return fmt.Errorf("only leader@coordination may run asmai focus: it moves the conversation's focus at the user's word")
 	case CommandAssign:
 		if ownsWorkers(ref.address) {
 			return nil
@@ -140,7 +145,7 @@ func (d *daemon) authorize(req Request) error {
 // run, and so needs the session's credential.
 func isAgentCommand(command string) bool {
 	switch command {
-	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandHook, CommandBrief, CommandInbox,
+	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandFocus, CommandHook, CommandBrief, CommandInbox,
 		CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline,
 		CommandAssign, CommandEffect, CommandResult, CommandBlocked, CommandBlockedReport, CommandBlockedResolve, CommandAccept, CommandReject, CommandCancel, CommandRedispatch,
 		CommandAnswerRedeliver, CommandAnswerRetire, CommandPush, CommandDecisionRecord, CommandDecisionRequest, CommandDecisionAnswer, CommandDecisionPresent, CommandTrailers, CommandAuthorize, CommandGrantInvalidate:
@@ -151,7 +156,7 @@ func isAgentCommand(command string) bool {
 
 func commandName(command string) string {
 	switch command {
-	case CommandStart, CommandStop, CommandStatus, CommandAgents, CommandExport, CommandAttach, CommandHook, CommandBrief, CommandJobs:
+	case CommandStart, CommandStop, CommandStatus, CommandAgents, CommandExport, CommandAttach, CommandHook, CommandBrief, CommandJobs, CommandFocus:
 		return command
 	case CommandConversation:
 		return "chat"

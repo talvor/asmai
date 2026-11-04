@@ -11,13 +11,15 @@ import (
 
 // statusLine is what the status line of every attached terminal shows from
 // the daemon's state (ADR 0004): what waits on the user, the native prompts
-// agents wait at and the decision requests pending with them, and the jobs
-// that run. An attach stream sends it with its first frame and whatever of it
+// agents wait at and the decision requests pending with them, the
+// conversation's focused job, or zero before any job had the focus, and the
+// jobs that run. An attach stream sends it with its first frame and whatever of it
 // changes on its own, whether or not the attached agent draws anything, so it
 // is current in the middle of a turn and costs no model tokens.
 type statusLine struct {
 	prompts   []string
 	decisions []string
+	focus     int64
 	jobs      []int64
 }
 
@@ -25,7 +27,7 @@ type statusLine struct {
 // cannot read from the store it keeps from was, which is what the stream last
 // sent. d.mu is not held.
 func (d *daemon) statusLine(was statusLine) statusLine {
-	now := statusLine{prompts: []string{}, decisions: was.decisions, jobs: was.jobs}
+	now := statusLine{prompts: []string{}, decisions: was.decisions, focus: was.focus, jobs: was.jobs}
 	pending, err := d.store.PendingDecisions()
 	if err != nil {
 		d.log.Error("reading the pending decisions for the status line", "error", err.Error())
@@ -56,6 +58,11 @@ func (d *daemon) statusLine(was statusLine) statusLine {
 			}
 		}
 	}
+	if f, err := d.store.Focus(); err != nil {
+		d.log.Error("reading the focused job for the status line", "error", err.Error())
+	} else {
+		now.focus = f.Job
+	}
 	if jobs, err := d.store.OpenJobs(); err != nil {
 		d.log.Error("reading the running jobs for the status line", "error", err.Error())
 	} else {
@@ -85,8 +92,11 @@ func (s statusLine) frame(was statusLine, all bool) (Frame, bool) {
 	if all || !slices.Equal(s.decisions, was.decisions) {
 		f.Decisions = &s.decisions
 	}
+	if all || s.focus != was.focus {
+		f.Focus = &s.focus
+	}
 	if all || !slices.Equal(s.jobs, was.jobs) {
 		f.Jobs = &s.jobs
 	}
-	return f, f.Prompts != nil || f.Decisions != nil || f.Jobs != nil
+	return f, f.Prompts != nil || f.Decisions != nil || f.Focus != nil || f.Jobs != nil
 }

@@ -600,7 +600,9 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 	if m.Kind != store.MessageRestoration || m.Job != 1 || m.Sender != store.Daemon {
 		t.Errorf("the message is %+v, want a restoration about the first job", m)
 	}
-	for _, want := range []string{"`asmai brief 1`", "`asmai brief 2`", "asmai inbox", "leader@coordination"} {
+	// The job opened last has the conversation's focus, and Coordination is
+	// told so.
+	for _, want := range []string{"`asmai brief 1`", "`asmai brief 2`", "asmai inbox", "leader@coordination", "Job 2 has the conversation's focus"} {
 		if !strings.Contains(m.Body, want) {
 			t.Errorf("the restoration says %q, want it to say %q", m.Body, want)
 		}
@@ -613,8 +615,8 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 			restorations = append(restorations, m)
 		}
 	}
-	if err != nil || len(restorations) != 1 || strings.Contains(restorations[0].Body, "asmai brief 2") || !strings.Contains(restorations[0].Body, "Load `asmai brief 1` for job 1") {
-		t.Errorf("Engineering's restorations are %+v (%v), want one for job 1 only", restorations, err)
+	if err != nil || len(restorations) != 1 || strings.Contains(restorations[0].Body, "asmai brief 2") || !strings.Contains(restorations[0].Body, "Load `asmai brief 1` for job 1") || strings.Contains(restorations[0].Body, "focus") {
+		t.Errorf("Engineering's restorations are %+v (%v), want one for job 1 only, which says nothing of the conversation's focus", restorations, err)
 	}
 }
 

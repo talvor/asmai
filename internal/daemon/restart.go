@@ -371,7 +371,8 @@ func (d *daemon) cannotResume(l *leader, exit string) {
 
 // restoreBriefs tells each leader with open work to load the brief of each
 // job it has it in, in one message to it that waits in its inbox like any
-// other, about the first of them.
+// other, about the first of them. Coordination's leader is also told which
+// job has the conversation's focus.
 func (d *daemon) restoreBriefs() {
 	work, err := d.store.OpenLeaderWork()
 	if err != nil {
@@ -386,9 +387,19 @@ func (d *daemon) restoreBriefs() {
 		}
 		jobs[w.Leader] = append(jobs[w.Leader], w.Job)
 	}
+	var focus store.Focus
+	if f, err := d.store.Focus(); err != nil {
+		d.log.Error("reading the conversation's focused job", "error", err.Error())
+	} else {
+		focus = f
+	}
 	for _, leader := range leaders {
 		numbers := jobs[leader]
-		dispatch, made, err := d.store.LeaderRestored(leader, numbers[0], restorationBody(leader, numbers), time.Now())
+		body := restorationBody(leader, numbers)
+		if leader == roles.LeaderOf(roles.Coordination).String() && focus.Job != 0 {
+			body += fmt.Sprintf("\nJob %d has the conversation's focus: the user's messages apply to it unless they name another job.", focus.Job)
+		}
+		dispatch, made, err := d.store.LeaderRestored(leader, numbers[0], body, time.Now())
 		if err != nil {
 			d.log.Error("telling a restored leader to load its briefs", "agent", leader, "jobs", numbers, "error", err.Error())
 			continue

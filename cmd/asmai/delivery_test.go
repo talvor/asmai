@@ -209,7 +209,7 @@ func deliverJob(t *testing.T, refuseDraft bool) {
 		},
 		turn(2, "reply", fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering")),
 		turn(10, "delivery",
-			fakeRun(`asmai inbox --dispatch 10`, 0, "(?s)message [0-9]+ \\| dispatch 10 \\| job 1 \\| delivery from daemon\nJob 1 is delivered: its pull request #7, "+url+", is ready for review at head "+sha+", with every check green \\(CI / test\\)\\. The job has ended.*AsmAI never merges.*in a line tagged with job 1, with the link"),
+			fakeRun(`asmai inbox --dispatch 10`, 0, "(?s)message [0-9]+ \\| dispatch 10 \\| job 1 \\| delivery from daemon\nJob 1 is delivered: its pull request #7, "+url+", is ready for review at head "+sha+", with every check green \\(CI / test\\)\\. The job has ended.*AsmAI never merges.*in one line that starts `job 1:`, with the link"),
 			fakeRun(`asmai brief 1`, 0, "(?s)Job 1 \\| role: coordination \\| state: ended.*kept on origin; the job ended.*Checks on the pull request's head.*\n- green at "+sha+".*\n  - CI / test: passed\nJudged re-runs of red checks \\(once per head\\):\n- none\nDelivery:\n- pull request #7 "+url+" marked ready for review at "+sha),
 			`{"screen":"`+report+`\r\n> "}`,
 			touchFile("coordination-done"),

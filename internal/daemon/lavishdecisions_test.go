@@ -189,7 +189,7 @@ func TestARequestWithSeveralQuestionsIsAnsweredInLavishAndReachesTheOwningLeader
 	}
 	var confirm bool
 	for _, m := range f.inbox(t, "leader@coordination") {
-		confirm = confirm || m.Kind == store.MessageLavishSent && strings.Contains(m.Body, "in one line tagged job")
+		confirm = confirm || m.Kind == store.MessageLavishSent && strings.Contains(m.Body, "in one line that starts `job ")
 	}
 	if !confirm {
 		t.Error("Coordination was not told to confirm what the user sent in one line")

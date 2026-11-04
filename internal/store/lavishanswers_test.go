@@ -179,7 +179,7 @@ func TestAPartlyAnsweredPageRoutesWhatWasSentAndTheVersionStaysPending(t *testin
 			confirm = &coordinationInbox[i]
 		}
 	}
-	if confirm == nil || !strings.Contains(confirm.Body, "in one line tagged job") || !strings.Contains(confirm.Body, "2 of 3 questions are answered, and the version stays pending") {
+	if confirm == nil || !strings.Contains(confirm.Body, "in one line that starts `job 1:`") || !strings.Contains(confirm.Body, "2 of 3 questions are answered, and the version stays pending") {
 		t.Fatalf("Coordination's message = %+v", confirm)
 	}
 
@@ -409,7 +409,7 @@ func TestACoordinationRequestTakesOneMessageThatAlsoAsksForTheConfirmation(t *te
 	for _, m := range inbox {
 		if m.Kind == MessageDecisionAnswer || m.Kind == MessageLavishSent {
 			messages++
-			if !strings.Contains(m.Body, "chose: redis") || !strings.Contains(m.Body, "Confirm it to the user in the conversation in one line tagged job") {
+			if !strings.Contains(m.Body, "chose: redis") || !strings.Contains(m.Body, "Tell the user in one line that starts `job 1:`") {
 				t.Errorf("message = %+v", m)
 			}
 		}

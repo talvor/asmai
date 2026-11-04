@@ -84,7 +84,7 @@ func deliverNotes(t *testing.T, noCI bool) {
 		},
 		turn(2, "reply", fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@research")),
 		turn(5, "delivery",
-			fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)message [0-9]+ \\| dispatch 5 \\| job 1 \\| delivery from daemon\nJob 1 is delivered: its notes pull request #7, "+url+", is ready for review at head "+sha+", "+map[bool]string{false: "with every check green \\(CI / test\\)", true: "straight away, as its repository is declared as having no CI"}[noCI]+"\\. It holds only the job's notes.*Quality validated nothing.*AsmAI never merges.*in a line tagged with job 1, with the link"),
+			fakeRun(`asmai inbox --dispatch 5`, 0, "(?s)message [0-9]+ \\| dispatch 5 \\| job 1 \\| delivery from daemon\nJob 1 is delivered: its notes pull request #7, "+url+", is ready for review at head "+sha+", "+map[bool]string{false: "with every check green \\(CI / test\\)", true: "straight away, as its repository is declared as having no CI"}[noCI]+"\\. It holds only the job's notes.*Quality validated nothing.*AsmAI never merges.*in one line that starts `job 1:`, with the link"),
 			`{"screen":"`+report+`\r\n> "}`,
 			touchFile("coordination-done"),
 		),

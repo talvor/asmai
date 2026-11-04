@@ -26,18 +26,29 @@ type statusLine struct {
 // sent. d.mu is not held.
 func (d *daemon) statusLine(was statusLine) statusLine {
 	now := statusLine{prompts: []string{}, decisions: was.decisions, jobs: was.jobs}
-	// The prompts that raised a decision request already name it.
+	pending, err := d.store.PendingDecisions()
+	if err != nil {
+		d.log.Error("reading the pending decisions for the status line", "error", err.Error())
+	}
+	jobOf := map[int64]int64{}
+	for _, r := range pending {
+		jobOf[r.Request] = r.Job
+	}
+	// The prompts that raised a decision request already name it, with its
+	// job.
 	shown := map[int64]bool{}
 	if p := d.coordinationPrompt(); p != nil {
 		now.prompts = append(now.prompts, p.String())
 	}
 	for _, p := range d.waitingPrompts() {
-		now.prompts = append(now.prompts, p.String())
+		line := p.String()
+		if job, ok := jobOf[p.Request]; ok {
+			line = store.JobTag(job) + " " + line
+		}
+		now.prompts = append(now.prompts, line)
 		shown[p.Request] = true
 	}
-	if pending, err := d.store.PendingDecisions(); err != nil {
-		d.log.Error("reading the pending decisions for the status line", "error", err.Error())
-	} else {
+	if err == nil {
 		now.decisions = []string{}
 		for _, r := range pending {
 			if !shown[r.Request] {
@@ -54,13 +65,14 @@ func (d *daemon) statusLine(was statusLine) statusLine {
 }
 
 // decisionLine is how the status line shows a decision request pending with
-// the user: its job, its number and where the user answers it.
+// the user, from when it is made until it is answered: its job, its number
+// and where the user answers it.
 func decisionLine(r store.DecisionRequest) string {
 	where := "in the conversation"
 	if r.Surface == store.SurfaceLavish {
 		where = "in Lavish"
 	}
-	return fmt.Sprintf("job %d: decision request %d waits on you %s", r.Job, r.Request, where)
+	return fmt.Sprintf("%s decision request %d waits on you %s", store.JobTag(r.Job), r.Request, where)
 }
 
 // frame returns the frame that tells a client of what of s differs from was,

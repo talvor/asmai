@@ -20,7 +20,7 @@ func setupBody(r store.Repository) string {
 		"Carry them to the user in Lavish as your own decision request that carries the worker's, ask whether the repository has CI as the question with id %q and the options yes and no, and return the user's answer to the worker. "+
 		"The user's answers are recorded for the repository at once, and any job that starts before the setup pull request merges receives them as repository instructions. "+
 		"When the user says the repository has no CI, give them the change to make in the configuration; `asmai brief <job>` gives it. "+
-		"The setup files go on the job's branch: deliver them like a notes-only job with a short body, push with `asmai push <job>`, and the daemon marks the pull request ready and ends the job. Tell the user, in a line tagged with the job's number, that the job is open and what you need from them.",
+		"The setup files go on the job's branch: deliver them like a notes-only job with a short body, push with `asmai push <job>`, and the daemon marks the pull request ready and ends the job. Tell the user once, in a flagged block tagged with the job's number, that the job is open and what you need from them.",
 		r.Name, issueTrackerFile, store.CIQuestion)
 }
 
@@ -146,8 +146,8 @@ func (d *daemon) noticeCI(r store.DecisionRequest, answered []store.QuestionAnsw
 	if known, hasCI := store.CIDeclared(answers); !known || hasCI || d.noCIOf(j.Repository) {
 		return
 	}
-	body := fmt.Sprintf("The user answered the CI question of job %d, the setup of %s. CI declaration: %s. Give them the change in a flagged line tagged with job %d now: the setup pull request waits for checks that never come until they make it.",
-		j.Number, j.Repository, d.ciInstruction(j.Repository, answers), j.Number)
+	body := fmt.Sprintf("The user answered the CI question of job %d, the setup of %s. CI declaration: %s. %s, with the change, now: the setup pull request waits for checks that never come until they make it.",
+		j.Number, j.Repository, d.ciInstruction(j.Repository, answers), store.FlaggedBlock(j.Number))
 	dispatch, err := d.store.SetupNoticed(j.Number, body, time.Now())
 	if err != nil {
 		d.log.Error("telling Coordination what the user must declare about CI", "job", j.Number, "error", err.Error())

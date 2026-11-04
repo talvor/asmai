@@ -406,7 +406,7 @@ func TestASetupWorkersQuestionsReachTheUserInLavishThroughCoordinationsLeaderAnd
 		}
 		return len(notices) > 0
 	})
-	if len(notices) != 1 || !strings.Contains(notices[0], "set `no_ci = true` in the [repositories.fixture] table") || !strings.Contains(notices[0], "tagged with job 1") {
+	if len(notices) != 1 || !strings.Contains(notices[0], "set `no_ci = true` in the [repositories.fixture] table") || !strings.Contains(notices[0], "in a flagged block whose first line starts `⚑ job 1:`") {
 		t.Errorf("Coordination was told %q of the CI declaration, want the change once", notices)
 	}
 
@@ -508,7 +508,7 @@ func TestTheDeliveryOfASetupJobTellsCoordinationTheLinkAndWhatTheUserStillDoesAb
 	body := deliveryBody(p.job, delivery)
 	for _, want := range []string{
 		"the setup pull request #7 of repository fixture, https://github.com/o/fixture/pull/7, is ready for review at head bbb, straight away, as its repository is declared as having no CI",
-		"setup files", "Quality validated nothing", "ready is not merged", "tagged with job 1, with the link",
+		"setup files", "Quality validated nothing", "ready is not merged", "in one line that starts `job 1:`, with the link",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the delivery message lacks %q: %s", want, body)

@@ -120,7 +120,7 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if m.Kind == store.MessageRedispatch {
 			fmt.Fprintf(o.stdout, "%s\n", m.Body)
 		}
-		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageStalled || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed || m.Kind == store.MessageGrantEnded || m.Kind == store.MessageSetup {
+		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageStalled || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed || m.Kind == store.MessageGrantEnded || m.Kind == store.MessageSetup || m.Kind == store.MessageJobCancelled {
 			fmt.Fprintf(o.stdout, "%s\n", m.Body)
 		}
 		if a := m.AssignmentData; a != nil {
@@ -145,6 +145,9 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 				fmt.Fprintf(o.stdout, "The user sent version %d of decision request %d from its Lavish page, which went to %s:\n%s\n", r.Version, r.Request, r.Requester, m.Body)
 			} else {
 				printRequest(o.stdout, *r)
+				if m.Kind == store.MessageDecisionRequest && r.Recipient == store.ToUser {
+					fmt.Fprintln(o.stdout, r.Presentation())
+				}
 			}
 		}
 	}

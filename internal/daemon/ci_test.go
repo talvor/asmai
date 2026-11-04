@@ -47,7 +47,7 @@ func TestTheBriefShowsTheChecksOnTheHeadAndTheDelivery(t *testing.T) {
 
 func TestCoordinationIsToldTheLinkAndThatReadyIsNotMerged(t *testing.T) {
 	body := deliveryBody(store.Job{Number: 3}, store.Delivery{Number: 7, URL: "https://github.com/o/r/pull/7", Head: "bbb", Checks: []store.CheckState{{Name: "CI / test"}, {Name: "lint"}}})
-	for _, want := range []string{"Job 3 is delivered", "https://github.com/o/r/pull/7", "head bbb", "(CI / test, lint)", "The job has ended", "its branches stay on origin", "AsmAI never merges", "in a line tagged with job 3, with the link"} {
+	for _, want := range []string{"Job 3 is delivered", "https://github.com/o/r/pull/7", "head bbb", "(CI / test, lint)", "The job has ended", "its branches stay on origin", "AsmAI never merges", "in one line that starts `job 3:`, with the link"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the delivery message lacks %q: %s", want, body)
 		}

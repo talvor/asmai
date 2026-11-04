@@ -468,7 +468,7 @@ func (a LavishAnswer) confirmation(r DecisionRequest, unanswered []string) strin
 	} else if len(unanswered) > 0 {
 		left = fmt.Sprintf("%d of %d questions are answered, and the version stays pending", len(r.Answered), len(r.Questions))
 	}
-	return fmt.Sprintf("Confirm it to the user in the conversation in one line tagged job %d: their Lavish page for decision request %d, version %d, %s (%s); %s.\n", r.Job, r.Request, r.Version, where, summaryOf(a), left)
+	return fmt.Sprintf("%s that their Lavish page for decision request %d, version %d, %s (%s); %s. Never relay it again.\n", OneLine(r.Job), r.Request, r.Version, where, summaryOf(a), left)
 }
 
 // summaryOf says in a few words what a Lavish answer holds.

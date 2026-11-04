@@ -467,7 +467,7 @@ func (d *daemon) nudge(agent string) {
 	l := d.leaders[agent]
 	var settling *session.Session
 	if d.mayNudge(l) && l.address == roles.LeaderOf(roles.Coordination) {
-		if _, err := d.store.NextDispatch(agent); err == nil {
+		if _, err := d.store.NextDispatch(agent); err == nil || l.clearUnsent {
 			settling = l.session
 		}
 	}
@@ -480,6 +480,26 @@ func (d *daemon) nudge(agent string) {
 	l = d.leaders[agent]
 	if !d.mayNudge(l) {
 		return
+	}
+	if l.clearUnsent {
+		// At the first boundary after the user left the conversation with
+		// unsent text, which leaving saved, the input box is cleared for the
+		// nudges held for it. The text itself is never typed again.
+		l.clearUnsent = false
+		if text, readable := providers.ClaudeCodeUnsentText(l.session.Screen()); readable && text != "" {
+			if err := l.session.Input([]byte(providers.ClaudeCodeClearInput)); err != nil {
+				d.log.Error("clearing the user's saved unsent text", "agent", agent, "error", err)
+				return
+			}
+			s := l.session
+			d.mu.Unlock()
+			s.Settle(settleQuiet, settleLimit)
+			d.mu.Lock()
+			l = d.leaders[agent]
+			if !d.mayNudge(l) {
+				return
+			}
+		}
 	}
 	var dispatch store.Dispatch
 	var err error

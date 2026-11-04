@@ -757,7 +757,7 @@ func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
 	if observation != 2 || message != 3 {
 		t.Errorf("the observation and the witnessed message are entries %d and %d, want 2 and 3", observation, message)
 	}
-	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", at.Add(time.Minute)); err != nil {
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", "", at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := s.Journal()
@@ -779,6 +779,46 @@ func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
 	}
 	if !entries[2].At.Equal(at.Add(time.Second)) {
 		t.Errorf("the witnessed message is journaled at %v, want %v", entries[2].At, at.Add(time.Second))
+	}
+}
+
+func TestLeavingTheConversationSavesTheUnsentTextAndRecordsWhenTheUserLastLeft(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	if last, err := s.LastLeft(); err != nil || !last.IsZero() {
+		t.Errorf("before the user ever left, LastLeft is %v (%v), want the zero time", last, err)
+	}
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", "half a thought", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/4", "terminal closed", "automation", "", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if last, err := s.LastLeft(); err != nil || !last.Equal(at.Add(time.Minute)) {
+		t.Errorf("LastLeft is %v (%v), want %v", last, err, at.Add(time.Minute))
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Kind+" "+string(e.Data))
+	}
+	want := []string{
+		`conversation.left {"agent":"leader@coordination","generation":1,"how":"detached","input":"automation","role":"coordination","terminal":"/dev/pts/3"}`,
+		`unsent.saved {"agent":"leader@coordination","terminal":"/dev/pts/3","text":"half a thought","left":1}`,
+		`conversation.left {"agent":"leader@coordination","generation":1,"how":"terminal closed","input":"automation","role":"coordination","terminal":"/dev/pts/4"}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	texts, err := s.UnsentTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(texts) != 1 || texts[0].Agent != "leader@coordination" || texts[0].Terminal != "/dev/pts/3" || texts[0].Text != "half a thought" || texts[0].Left != 1 || !texts[0].At.Equal(at) {
+		t.Errorf("the saved unsent texts are %+v, want only the text left unsent in /dev/pts/3, saved at %v as it left", texts, at)
 	}
 }
 

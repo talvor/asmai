@@ -12,6 +12,10 @@ import (
 // box, before the text typed into it.
 const claudeCodePrompt = "❯"
 
+// ClaudeCodeClearInput is the key that empties Claude Code's input box: Ctrl-L,
+// which the pinned Claude Code binds to its chat:clearInput action.
+const ClaudeCodeClearInput = "\x0c"
+
 // ClaudeCodeUnsentText reads the text typed into Claude Code's input box and
 // not yet submitted from screen, the terminal Claude Code draws, and reports
 // whether screen shows the box at all. Claude Code draws the box as the rows

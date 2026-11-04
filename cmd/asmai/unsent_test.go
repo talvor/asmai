@@ -96,11 +96,34 @@ func stillWaiting(t *testing.T) bool {
 	return slices.Equal(replyStates(t), []string{"created"})
 }
 
-// A reply that reaches Coordination while the user has unsent text in its
-// input box waits: it is not typed while the user is in the conversation,
-// nor once they leave it with the text still unsent, and is typed once they
-// come back and submit the text.
-func TestANudgeIsNeverTypedOverTheUsersUnsentText(t *testing.T) {
+// savedUnsent returns the unsent text the journal saved as the user left the
+// conversation, and how they left each time, in order.
+func savedUnsent(t *testing.T) (texts, hows []string) {
+	t.Helper()
+	for _, e := range journaled(t, "unsent.saved") {
+		var u struct {
+			Text string `json:"text"`
+		}
+		json.Unmarshal(e.Data, &u)
+		texts = append(texts, u.Text)
+	}
+	for _, e := range journaled(t, "conversation.left") {
+		var l struct {
+			How string `json:"how"`
+		}
+		json.Unmarshal(e.Data, &l)
+		hows = append(hows, l.How)
+	}
+	return texts, hows
+}
+
+// leavingWithUnsentText is the user leaving the conversation, as leave
+// leaves it, with text unsent in Coordination's input box while a reply
+// waits for it: the reply is not typed over the text while they are in the
+// conversation, and once they leave the text is saved, the box is cleared
+// and the reply typed, and the text is never typed again. how is how the
+// journal must say the user left.
+func leavingWithUnsentText(t *testing.T, how string, leave func(a *attachedTerminal)) {
 	dir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", dir)
 	coordination := append(slices.Clone(handingOff),
@@ -108,15 +131,14 @@ func TestANudgeIsNeverTypedOverTheUsersUnsentText(t *testing.T) {
 		inputBox("draft"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/drafted"`, 0, ""),
 		// Anything else typed here, a nudge included, ends the fake.
-		`{"expect":"\r"}`,
-		`{"hook":"UserPromptSubmit","payload":{"hook_event_name":"UserPromptSubmit","prompt":"draft"}}`,
+		`{"expect":"\u000c"}`,
 		inputBox(""),
-		`{"hook":"Stop","payload":{"hook_event_name":"Stop"}}`,
 		`{"expect":"asmai inbox --dispatch 2\r"}`,
 		`{"hook":"UserPromptSubmit","payload":{"hook_event_name":"UserPromptSubmit","prompt":"asmai inbox --dispatch 2"}}`,
 		fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/fetched"`, 0, ""),
 		`{"hook":"Stop","payload":{"hook_event_name":"Stop"}}`,
+		// The saved text typed again, or anything else, ends the fake.
 		`{"expect":"only typed by a test that means to"}`,
 	)
 	replyingFactory(t, dir, coordination)
@@ -133,22 +155,24 @@ func TestANudgeIsNeverTypedOverTheUsersUnsentText(t *testing.T) {
 		t.Fatalf("with the user's text unsent in the conversation, the reply went %v, want it waiting", replyStates(t))
 	}
 
-	// Leaving with the text unsent does not let the nudge be typed over it.
-	a.ptmx.WriteString("\x1d")
-	if code := a.exited(t); code != 0 {
-		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
-	}
-	if !stillWaiting(t) {
-		t.Fatalf("with the user's text left unsent in Coordination's input box, the reply went %v, want it waiting", replyStates(t))
-	}
-
-	// Submitting it lets the nudge be typed, once Coordination's turn ends.
-	b := inTerminal(t, 100, 25, "chat")
-	waitFor(t, "the user's unsent text", b.shows("❯ draft"))
-	b.ptmx.WriteString("\r")
+	leave(a)
 	waitFor(t, "the reply's nudge", touched(dir, "fetched"))
 	if got := strings.Join(replyStates(t), ","); got != "created,unknown,nudged,delivered,working" {
 		t.Errorf("the reply went %s, want created,unknown,nudged,delivered,working", got)
+	}
+	if texts, hows := savedUnsent(t); !slices.Equal(texts, []string{"draft"}) || !slices.Equal(hows, []string{how}) {
+		t.Errorf("leaving saved the unsent texts %q, leaving %q, want only \"draft\" saved as the user left %s", texts, hows, how)
+	}
+	left := journaled(t, "conversation.left")
+	saved := journaled(t, "unsent.saved")
+	if len(left) != 1 || len(saved) != 1 || !saved[0].At.Equal(left[0].At) {
+		t.Errorf("the text was saved at %+v, want it saved as the user left at %+v", saved, left)
+	}
+
+	// The text was never submitted, and is never typed again.
+	time.Sleep(500 * time.Millisecond)
+	if ended := entries(t, "session.ended"); len(ended) != 0 {
+		t.Errorf("Coordination's session ended, as the fake does when typed what it did not expect: %s", ended)
 	}
 	var texts []string
 	for _, e := range journaled(t, "message.witnessed") {
@@ -158,13 +182,34 @@ func TestANudgeIsNeverTypedOverTheUsersUnsentText(t *testing.T) {
 		json.Unmarshal(e.Data, &m)
 		texts = append(texts, m.Text)
 	}
-	if want := []string{"Please implement fixture", "draft"}; !slices.Equal(texts, want) {
+	if want := []string{"Please implement fixture"}; !slices.Equal(texts, want) {
 		t.Errorf("the witnessed messages are %q, want %q", texts, want)
 	}
 }
 
+// Detaching with text unsent in Coordination's input box saves it and lets
+// the reply that waited for it be typed at once.
+func TestDetachingSavesTheUsersUnsentTextAndResumesDelivery(t *testing.T) {
+	leavingWithUnsentText(t, "detached", func(a *attachedTerminal) {
+		a.ptmx.WriteString("\x1d")
+		if code := a.exited(t); code != 0 {
+			t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
+		}
+	})
+}
+
+// A terminal or SSH connection that drops with text unsent in Coordination's
+// input box leaves the conversation as detaching does.
+func TestADroppedConnectionSavesTheUsersUnsentTextAndResumesDelivery(t *testing.T) {
+	leavingWithUnsentText(t, "terminal closed", func(a *attachedTerminal) {
+		a.cmd.Process.Kill()
+		<-a.done
+	})
+}
+
 // A reply waiting while the user is in the conversation is not typed over
-// text they type and leave at once, before Coordination has drawn it.
+// text they type and leave at once, before Coordination has drawn it: the
+// text is saved as drawn, and the box cleared before the reply is typed.
 func TestANudgeWaitsForTheUsersLastKeysToBeDrawn(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", dir)
@@ -176,6 +221,10 @@ func TestANudgeWaitsForTheUsersLastKeysToBeDrawn(t *testing.T) {
 		fakeRun(`sleep 0.05`, 0, ""),
 		inputBox("draft"),
 		// Anything typed here, a nudge included, ends the fake.
+		`{"expect":"\u000c"}`,
+		inputBox(""),
+		`{"expect":"asmai inbox --dispatch 2\r"}`,
+		fakeRun(`touch "$ASMAI_TEST_DIR/nudged"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,
 	)
 	replyingFactory(t, dir, coordination)
@@ -196,8 +245,63 @@ func TestANudgeWaitsForTheUsersLastKeysToBeDrawn(t *testing.T) {
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}
-	if !stillWaiting(t) {
-		t.Fatalf("with the user's text typed just before leaving, the reply went %v, want it waiting", replyStates(t))
+	waitFor(t, "the reply's nudge", touched(dir, "nudged"))
+	if texts, _ := savedUnsent(t); !slices.Equal(texts, []string{"draft"}) {
+		t.Errorf("with the user's text typed just before leaving, leaving saved %q, want \"draft\"", texts)
+	}
+}
+
+// Leaving with text unsent in the middle of an automated turn saves it, and
+// Coordination's input box is cleared once that turn ends, at its boundary.
+func TestUnsentTextLeftInTheMiddleOfAnAutomatedTurnIsClearedAtItsBoundary(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", dir)
+	coordination := append(slices.Clone(handingOff),
+		`{"expect":"asmai inbox --dispatch 2\r"}`,
+		`{"hook":"UserPromptSubmit","payload":{"hook_event_name":"UserPromptSubmit","prompt_id":"reply","prompt":"asmai inbox --dispatch 2"}}`,
+		`{"screen":"\u001b[HWorking (esc to interrupt)"}`,
+		fakeRun(`touch "$ASMAI_TEST_DIR/automated"`, 0, ""),
+		`{"expect":"draft"}`,
+		inputBox("draft"),
+		fakeRun(`touch "$ASMAI_TEST_DIR/drafted"`, 0, ""),
+		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/left" ]; do sleep 0.02; done`, 0, ""),
+		fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering"),
+		`{"hook":"Stop","payload":{"hook_event_name":"Stop","prompt_id":"reply"}}`,
+		`{"expect":"\u000c"}`,
+		inputBox(""),
+		fakeRun(`touch "$ASMAI_TEST_DIR/cleared"`, 0, ""),
+		// The saved text typed again, or anything else, ends the fake.
+		`{"expect":"only typed by a test that means to"}`,
+	)
+	replyingFactory(t, dir, coordination)
+
+	a := inTerminal(t, 100, 25)
+	waitFor(t, "Coordination's input box", a.shows("❯ Try"))
+	a.ptmx.WriteString("Please implement fixture\r")
+	waitFor(t, "the handoff to Engineering", touched(dir, "handed-off"))
+	a.ptmx.WriteString("\x1d")
+	if code := a.exited(t); code != 0 {
+		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
+	}
+	os.WriteFile(filepath.Join(dir, "release"), nil, 0o600)
+	waitFor(t, "the reply's automated turn", touched(dir, "automated"))
+
+	b := inTerminal(t, 100, 25, "chat")
+	waitFor(t, "Coordination's automated turn", b.shows("Working (esc to interrupt)"))
+	b.ptmx.WriteString("draft")
+	waitFor(t, "the user's unsent text", touched(dir, "drafted"))
+	b.ptmx.WriteString("\x1d")
+	if code := b.exited(t); code != 0 {
+		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
+	}
+	if texts, _ := savedUnsent(t); !slices.Equal(texts, []string{"draft"}) {
+		t.Errorf("leaving in the middle of the automated turn saved %q, want \"draft\"", texts)
+	}
+	os.WriteFile(filepath.Join(dir, "left"), nil, 0o600)
+	waitFor(t, "Coordination's input box cleared", touched(dir, "cleared"))
+	time.Sleep(500 * time.Millisecond)
+	if ended := entries(t, "session.ended"); len(ended) != 0 {
+		t.Errorf("Coordination's session ended, as the fake does when typed what it did not expect: %s", ended)
 	}
 }
 

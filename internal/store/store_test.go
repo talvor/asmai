@@ -785,17 +785,11 @@ func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
 func TestLeavingTheConversationSavesTheUnsentTextAndRecordsWhenTheUserLastLeft(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
-	if last, err := s.LastLeft(); err != nil || !last.IsZero() {
-		t.Errorf("before the user ever left, LastLeft is %v (%v), want the zero time", last, err)
-	}
 	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", "half a thought", at); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/4", "terminal closed", "automation", "", at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
-	}
-	if last, err := s.LastLeft(); err != nil || !last.Equal(at.Add(time.Minute)) {
-		t.Errorf("LastLeft is %v (%v), want %v", last, err, at.Add(time.Minute))
 	}
 	entries, err := s.Journal()
 	if err != nil {
@@ -813,12 +807,14 @@ func TestLeavingTheConversationSavesTheUnsentTextAndRecordsWhenTheUserLastLeft(t
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	texts, err := s.UnsentTexts()
-	if err != nil {
-		t.Fatal(err)
+	var lastLeft time.Time
+	for _, e := range entries {
+		if e.Kind == KindConversationLeft {
+			lastLeft = e.At
+		}
 	}
-	if len(texts) != 1 || texts[0].Agent != "leader@coordination" || texts[0].Terminal != "/dev/pts/3" || texts[0].Text != "half a thought" || texts[0].Left != 1 || !texts[0].At.Equal(at) {
-		t.Errorf("the saved unsent texts are %+v, want only the text left unsent in /dev/pts/3, saved at %v as it left", texts, at)
+	if !lastLeft.Equal(at.Add(time.Minute)) {
+		t.Errorf("the user last left at %v, want %v", lastLeft, at.Add(time.Minute))
 	}
 }
 

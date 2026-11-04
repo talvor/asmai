@@ -1044,54 +1044,12 @@ func (s *Store) ConversationLeft(agent, role string, generation int, terminal, h
 }
 
 // UnsentText is text the user left unsent in an agent's input box when they
-// left the conversation from Terminal, as the journal entry Left records,
-// saved at At.
+// left the conversation from Terminal, as the journal entry Left records.
 type UnsentText struct {
-	Agent    string    `json:"agent"`
-	Terminal string    `json:"terminal"`
-	Text     string    `json:"text"`
-	Left     int64     `json:"left"`
-	At       time.Time `json:"-"`
-}
-
-// UnsentTexts returns the unsent text the user's departures from the
-// conversation saved, oldest first.
-func (s *Store) UnsentTexts() ([]UnsentText, error) {
-	rows, err := s.db.Query(`SELECT at, data FROM journal WHERE kind = ? ORDER BY id`, KindUnsentTextSaved)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	texts := []UnsentText{}
-	for rows.Next() {
-		var u UnsentText
-		var at, data string
-		if err := rows.Scan(&at, &data); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(data), &u); err != nil {
-			return nil, err
-		}
-		if u.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
-			return nil, err
-		}
-		texts = append(texts, u)
-	}
-	return texts, rows.Err()
-}
-
-// LastLeft returns when the user last left the conversation, and the zero
-// time if they never have.
-func (s *Store) LastLeft() (time.Time, error) {
-	var at string
-	err := s.db.QueryRow(`SELECT at FROM journal WHERE kind = ? ORDER BY id DESC LIMIT 1`, KindConversationLeft).Scan(&at)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, nil
-	}
-	if err != nil {
-		return time.Time{}, err
-	}
-	return time.Parse(time.RFC3339Nano, at)
+	Agent    string `json:"agent"`
+	Terminal string `json:"terminal"`
+	Text     string `json:"text"`
+	Left     int64  `json:"left"`
 }
 
 // Agents returns every agent the store records, by address.

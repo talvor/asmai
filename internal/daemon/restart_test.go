@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -617,6 +618,53 @@ func TestARestoredLeaderIsToldOnceToLoadTheBriefOfEachJobItHasOpenWorkIn(t *test
 	}
 	if err != nil || len(restorations) != 1 || strings.Contains(restorations[0].Body, "asmai brief 2") || !strings.Contains(restorations[0].Body, "Load `asmai brief 1` for job 1") || strings.Contains(restorations[0].Body, "focus") {
 		t.Errorf("Engineering's restorations are %+v (%v), want one for job 1 only, which says nothing of the conversation's focus", restorations, err)
+	}
+}
+
+// The focus stays on a job that has ended, and Coordination is told which
+// job has it after a restart even when it has no open work.
+func TestARestoredCoordinationIsToldTheFocusWhenEveryJobHasEnded(t *testing.T) {
+	s, _ := restartStore(t, nil)
+	say := func(text string) int64 {
+		t.Helper()
+		_, witness, err := s.ObservedWitnessed(store.Witnessed{Agent: "leader@coordination", Role: roles.Coordination, Generation: 1, Terminal: "/dev/pts/test", Text: text}, "UserPromptSubmit", json.RawMessage(`{}`), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return witness
+	}
+	second, err := s.JobOpened(store.Job{Repository: "fixture", Witness: say("add a farewell"), Reading: "Add a farewell", Mandate: store.MandateTestedPR, Criteria: []string{"it says goodbye"}}, false, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, moved, err := s.FocusChanged(1, say("switch to 1"), false, time.Now()); err != nil || !moved {
+		t.Fatalf("switching to job 1: moved %v (%v)", moved, err)
+	}
+	for _, job := range []int64{1, second.Number} {
+		if _, err := s.JobCancelled(store.JobCancel{Job: job, Witness: say(fmt.Sprintf("cancel job %d", job))}, time.Now()); err != nil {
+			t.Fatalf("cancelling job %d: %v", job, err)
+		}
+	}
+	d := recoveringDaemon(s)
+
+	d.recoverWork(true)
+
+	messages, err := s.Inbox("leader@coordination", 0, 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restorations []store.Message
+	for _, m := range messages {
+		if m.Kind == store.MessageRestoration {
+			restorations = append(restorations, m)
+		}
+	}
+	if len(restorations) != 1 {
+		t.Fatalf("Coordination's restorations are %+v, want one", restorations)
+	}
+	m := restorations[0]
+	if m.Job != 1 || !strings.Contains(m.Body, "Job 1 has the conversation's focus") || !strings.Contains(m.Body, "asmai inbox") || strings.Contains(m.Body, "asmai brief") {
+		t.Errorf("the restoration is %+v, want one about job 1 that names it as having the focus and loads no brief", m)
 	}
 }
 

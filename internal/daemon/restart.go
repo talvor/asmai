@@ -372,7 +372,8 @@ func (d *daemon) cannotResume(l *leader, exit string) {
 // restoreBriefs tells each leader with open work to load the brief of each
 // job it has it in, in one message to it that waits in its inbox like any
 // other, about the first of them. Coordination's leader is also told which
-// job has the conversation's focus.
+// job has the conversation's focus, in a message about that job when it has
+// no open work.
 func (d *daemon) restoreBriefs() {
 	work, err := d.store.OpenLeaderWork()
 	if err != nil {
@@ -393,13 +394,22 @@ func (d *daemon) restoreBriefs() {
 	} else {
 		focus = f
 	}
+	coordination := roles.LeaderOf(roles.Coordination).String()
+	if _, ok := jobs[coordination]; !ok && focus.Job != 0 {
+		leaders = append(leaders, coordination)
+	}
 	for _, leader := range leaders {
 		numbers := jobs[leader]
-		body := restorationBody(leader, numbers)
-		if leader == roles.LeaderOf(roles.Coordination).String() && focus.Job != 0 {
+		job := focus.Job
+		body := fmt.Sprintf("The factory was stopped and started again, so you are a new session of %s and start without what you knew.\n"+
+			"Run `asmai inbox` for everything waiting for you. Nothing you did before the stop is lost: the briefs and the journal hold it.", leader)
+		if len(numbers) > 0 {
+			job, body = numbers[0], restorationBody(leader, numbers)
+		}
+		if leader == coordination && focus.Job != 0 {
 			body += fmt.Sprintf("\nJob %d has the conversation's focus: the user's messages apply to it unless they name another job.", focus.Job)
 		}
-		dispatch, made, err := d.store.LeaderRestored(leader, numbers[0], body, time.Now())
+		dispatch, made, err := d.store.LeaderRestored(leader, job, body, time.Now())
 		if err != nil {
 			d.log.Error("telling a restored leader to load its briefs", "agent", leader, "jobs", numbers, "error", err.Error())
 			continue

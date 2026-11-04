@@ -16,6 +16,7 @@ import (
 	"github.com/talvor/asmai/internal/providers"
 	"github.com/talvor/asmai/internal/repos"
 	"github.com/talvor/asmai/internal/roles"
+	"github.com/talvor/asmai/internal/session"
 	"github.com/talvor/asmai/internal/store"
 )
 
@@ -453,11 +454,31 @@ func (d *daemon) initialBoundary(ref sessionRef, transcript string) {
 	}()
 }
 
+// A nudge for Coordination waits for its screen to settle after the last
+// key typed into it, for at most settleLimit, so that the user's unsent text
+// is on the screen it reads.
+const (
+	settleQuiet = 300 * time.Millisecond
+	settleLimit = 2 * time.Second
+)
+
 func (d *daemon) nudge(agent string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	l := d.leaders[agent]
-	if l == nil || l.session == nil || l.userInput || !l.ready || l.inputUnknown || l.pendingDispatch != 0 || l.currentDispatch != 0 || d.stopping {
+	var settling *session.Session
+	if d.mayNudge(l) && l.address == roles.LeaderOf(roles.Coordination) {
+		if _, err := d.store.NextDispatch(agent); err == nil {
+			settling = l.session
+		}
+	}
+	d.mu.Unlock()
+	if settling != nil {
+		settling.Settle(settleQuiet, settleLimit)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l = d.leaders[agent]
+	if !d.mayNudge(l) {
 		return
 	}
 	dispatch, err := d.store.NextDispatch(agent)
@@ -490,6 +511,12 @@ func (d *daemon) nudge(agent string) {
 	if err = l.session.Input([]byte(prompt + "\r")); err != nil {
 		d.log.Error("typing nudge", "dispatch", dispatch.ID, "error", err)
 	}
+}
+
+// mayNudge is called with d.mu held, and says whether automation may type a
+// nudge into l now.
+func (d *daemon) mayNudge(l *leader) bool {
+	return l != nil && l.session != nil && !l.userInput && l.ready && !l.inputUnknown && l.pendingDispatch == 0 && l.currentDispatch == 0 && !d.stopping
 }
 
 func (d *daemon) automatedSubmitted(ref sessionRef, prompt, promptID, transcript string, payload json.RawMessage) (bool, error) {

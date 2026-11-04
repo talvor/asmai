@@ -163,6 +163,44 @@ func TestANudgeIsNeverTypedOverTheUsersUnsentText(t *testing.T) {
 	}
 }
 
+// A reply waiting while the user is in the conversation is not typed over
+// text they type and leave at once, before Coordination has drawn it.
+func TestANudgeWaitsForTheUsersLastKeysToBeDrawn(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", dir)
+	coordination := append(slices.Clone(handingOff),
+		`{"expect":"x\u007f"}`,
+		inputBox(""),
+		fakeRun(`touch "$ASMAI_TEST_DIR/erased"`, 0, ""),
+		`{"expect":"draft"}`,
+		fakeRun(`sleep 0.05`, 0, ""),
+		inputBox("draft"),
+		// Anything typed here, a nudge included, ends the fake.
+		`{"expect":"only typed by a test that means to"}`,
+	)
+	replyingFactory(t, dir, coordination)
+
+	a := inTerminal(t, 100, 25)
+	waitFor(t, "Coordination's input box", a.shows("❯ Try"))
+	a.ptmx.WriteString("Please implement fixture\r")
+	waitFor(t, "the handoff to Engineering", touched(dir, "handed-off"))
+	a.ptmx.WriteString("x\x7f")
+	waitFor(t, "the user's key erased", touched(dir, "erased"))
+	os.WriteFile(filepath.Join(dir, "release"), nil, 0o600)
+	waitFor(t, "Engineering's reply", touched(dir, "replied"))
+	if !stillWaiting(t) {
+		t.Fatalf("with the user holding Coordination's input, the reply went %v, want it waiting", replyStates(t))
+	}
+
+	a.ptmx.WriteString("draft\x1d")
+	if code := a.exited(t); code != 0 {
+		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
+	}
+	if !stillWaiting(t) {
+		t.Fatalf("with the user's text typed just before leaving, the reply went %v, want it waiting", replyStates(t))
+	}
+}
+
 // A reply that reaches Coordination while the user holds its input waits
 // until they leave the conversation, and is typed then. Esc and the other
 // keys the user types in the middle of that automated turn reach

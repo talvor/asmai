@@ -401,11 +401,10 @@ func (d *daemon) restoreBriefs() {
 	for _, leader := range leaders {
 		numbers := jobs[leader]
 		job := focus.Job
-		body := fmt.Sprintf("The factory was stopped and started again, so you are a new session of %s and start without what you knew.\n"+
-			"Run `asmai inbox` for everything waiting for you. Nothing you did before the stop is lost: the briefs and the journal hold it.", leader)
 		if len(numbers) > 0 {
-			job, body = numbers[0], restorationBody(leader, numbers)
+			job = numbers[0]
 		}
+		body := restorationBody(leader, numbers)
 		if leader == coordination && focus.Job != 0 {
 			body += fmt.Sprintf("\nJob %d has the conversation's focus: the user's messages apply to it unless they name another job.", focus.Job)
 		}
@@ -421,18 +420,23 @@ func (d *daemon) restoreBriefs() {
 }
 
 // restorationBody is what a restored leader is told: to load the brief of
-// each of its jobs with open work, and to fetch what waits for it.
+// each of its jobs with open work, and to fetch what waits for it. With no
+// jobs it is told only to fetch what waits for it.
 func restorationBody(leader string, jobs []int64) string {
 	var briefs []string
 	for _, job := range jobs {
 		briefs = append(briefs, fmt.Sprintf("`asmai brief %d`", job))
 	}
-	which := fmt.Sprintf("Load %s for job %d", briefs[0], jobs[0])
-	if len(jobs) > 1 {
-		which = fmt.Sprintf("Load the brief of each of your jobs with open work, %s", strings.Join(briefs, ", "))
+	which := "Run `asmai inbox` for everything waiting for you."
+	if len(jobs) > 0 {
+		load := fmt.Sprintf("Load %s for job %d", briefs[0], jobs[0])
+		if len(jobs) > 1 {
+			load = fmt.Sprintf("Load the brief of each of your jobs with open work, %s", strings.Join(briefs, ", "))
+		}
+		which = load + ", and run `asmai inbox` for everything waiting for you, each as its own command in its own Bash call, then continue the open work you have in each."
 	}
 	return fmt.Sprintf("The factory was stopped and started again, so you are a new session of %s and start without what you knew.\n"+
-		"%s, and run `asmai inbox` for everything waiting for you, each as its own command in its own Bash call, then continue the open work you have in each. Nothing you did before the stop is lost: the briefs and the journal hold it.",
+		"%s Nothing you did before the stop is lost: the briefs and the journal hold it.",
 		leader, which)
 }
 

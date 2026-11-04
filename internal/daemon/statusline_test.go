@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,8 +18,8 @@ import (
 
 // The status line shows what waits on the user: the native prompts agents
 // wait at, Coordination's among them, and the decision requests pending
-// with the user, each once, as a prompt that raised a request already names
-// it; and then the jobs that run.
+// with the user, each once and tagged with its job, as a prompt that raised a
+// request already names it; and then the jobs that run.
 func TestTheStatusLineShowsThePromptsThePendingDecisionsAndTheRunningJobs(t *testing.T) {
 	f := newTwoResults(t)
 	f.withWorkers(t)
@@ -43,7 +44,7 @@ func TestTheStatusLineShowsThePromptsThePendingDecisionsAndTheRunningJobs(t *tes
 	got := f.d.statusLine(empty)
 	prompts := []string{
 		coordination + " waits at a native prompt the user answers in the conversation: Bash `rm -rf build`",
-		fmt.Sprintf("%s waits at a native prompt the user decides (decision request %d): Bash `cat > x`", worker, forPrompt.Request),
+		fmt.Sprintf("job %d: %s waits at a native prompt the user decides (decision request %d): Bash `cat > x`", f.job.Number, worker, forPrompt.Request),
 	}
 	decisions := []string{fmt.Sprintf("job %d: decision request %d waits on you in the conversation", f.job.Number, asked.Request)}
 	if !slices.Equal(got.prompts, prompts) || !slices.Equal(got.decisions, decisions) || !slices.Equal(got.jobs, []int64{f.job.Number}) {
@@ -56,6 +57,83 @@ func TestTheStatusLineShowsThePromptsThePendingDecisionsAndTheRunningJobs(t *tes
 	f.d.leaders[coordination].session = nil
 	if got := f.d.statusLine(empty); len(got.prompts) != 0 || len(got.decisions) != 2 {
 		t.Errorf("with the prompts past, the status line is %+v, want no prompt and both decisions", got)
+	}
+}
+
+// A decision is presented once, and the status line keeps it visible from
+// when it is asked until the user answers it: through its presentation, a
+// second presentation refused, a refused record that clears the
+// presentation, and the other work of the factory; once it is answered it is
+// gone. Coordination is told as much when the request reaches it.
+func TestAPendingDecisionStaysOnTheStatusLineUntilTheUserAnswersIt(t *testing.T) {
+	f := newTwoResults(t)
+	f.withWorkers(t)
+	empty := statusLine{prompts: []string{}, decisions: []string{}, jobs: []int64{}}
+	r, dispatch, err := f.d.decisionRequest(Request{Session: "credential", Command: CommandDecisionRequest, Job: f.job.Number, Kind: store.RequestChoice, Questions: cacheQuestion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	told, err := f.s.Inbox("leader@coordination", dispatch.ID, dispatch.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("in a flagged block whose first line starts `⚑ job %d:`", f.job.Number),
+		fmt.Sprintf("`asmai decision present --request %d --version 1`", r.Request),
+		"The status line keeps it visible until they answer it, so never show it again or remind them of it",
+	} {
+		if len(told) != 1 || !strings.Contains(told[0].Body, want) {
+			t.Errorf("Coordination was told %+v of the request, want it to say %q", told, want)
+		}
+	}
+
+	want := []string{fmt.Sprintf("job %d: decision request %d waits on you in the conversation", f.job.Number, r.Request)}
+	stays := func(when string) {
+		t.Helper()
+		if got := f.d.statusLine(empty).decisions; !slices.Equal(got, want) {
+			t.Errorf("%s, the status line shows the decisions %q, want %q", when, got, want)
+		}
+	}
+	present := func() error {
+		_, err := f.d.decisionPresent(Request{Session: "coordination", Command: CommandDecisionPresent, Request: r.Request, Version: r.Version})
+		return err
+	}
+	stays("once it is asked")
+	if err := present(); err != nil {
+		t.Fatal(err)
+	}
+	stays("once it is presented")
+	if err := present(); err == nil || !strings.Contains(err.Error(), "presented already") {
+		t.Fatalf("presenting it twice = %v, want it refused", err)
+	}
+	stays("after a second presentation was refused")
+
+	// A record citing a nudge is refused and clears the presentation, and
+	// the decision still waits.
+	if err := f.s.Observed("leader@coordination", "coordination", 1, "UserPromptSubmit", json.RawMessage(`{}`), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := f.s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := f.d.conversationAnswer(Request{Session: "coordination", Command: CommandDecisionRecord, Request: r.Request, Version: r.Version, Cites: journal[len(journal)-1].ID, Choice: "redis", Reading: "redis"}); err == nil {
+		t.Fatal("a record citing a nudge was taken as the user's answer")
+	}
+	stays("after a record citing a nudge was refused")
+
+	// Other work goes on, and the decision stays.
+	witness := f.userSays(t, "add a farewell")
+	if _, err := f.s.JobOpened(store.Job{Repository: "fixture", Witness: witness, Reading: "Add a farewell", Mandate: store.MandateTestedPR, Criteria: []string{"done"}}, false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	stays("after another job opened")
+
+	if _, _, err := f.userDecision(t, r, "redis", "redis"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.d.statusLine(empty).decisions; len(got) != 0 {
+		t.Errorf("after the user answered, the status line shows the decisions %q, want none", got)
 	}
 }
 

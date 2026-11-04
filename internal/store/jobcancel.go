@@ -266,7 +266,7 @@ func cancellationSummary(c JobCancellation, closed *PullRequest, pushing, gone, 
 	if len(withdrawn) > 0 {
 		fmt.Fprintf(&b, " Decision requests %v are withdrawn, and their Lavish pages end.", withdrawn)
 	}
-	fmt.Fprintf(&b, " Every branch stays on origin. Tell the user, in a line tagged with job %d.", c.Job.Number)
+	fmt.Fprintf(&b, " Every branch stays on origin. %s.", OneLine(c.Job.Number))
 	return b.String()
 }
 

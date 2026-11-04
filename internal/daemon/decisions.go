@@ -379,7 +379,7 @@ func (d *daemon) scratchOutcomeBody(j store.Job, a store.Assignment, leader stri
 			fmt.Fprintf(&b, "  gap: %s\n", gap)
 		}
 	}
-	fmt.Fprintf(&b, "Tell the user, in a line tagged with job %d, where the results are, and that `asmai job clean %d` removes them.", j.Number, j.Number)
+	fmt.Fprintf(&b, "%s where the results are, and that `asmai job clean %d` removes them.", store.OneLine(j.Number), j.Number)
 	return b.String(), nil
 }
 

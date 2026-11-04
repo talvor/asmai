@@ -580,6 +580,32 @@ func TestCoordinationPresentsAChoiceOnceAndRecordsTheUsersOwnMessageWithItsReadi
 	}
 }
 
+// Each automated item reaches the user as one line tagged with its job's
+// number, what needs the user as a flagged block shown once, and detail when
+// they ask; the status line keeps a pending decision visible (04 rules 7, 8
+// and 9).
+func TestCoordinationGivesEachItemOneTaggedLineAndWhatNeedsTheUserOneFlaggedBlock(t *testing.T) {
+	text, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"as one line that starts with its job's tag, `job 14:`",
+		"give detail only when the user asks",
+		"Every line about a job carries its number",
+		"its first line starts `⚑ job 14:`",
+		"Show each block once. Never show it again, and never remind the user of it",
+		"the status line of every attached terminal shows each decision request pending with the user, with its job, until it is answered",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+	if strings.Contains(text, "flagged line") {
+		t.Error("Coordination's leader's instructions ask for a flagged line, not a flagged block")
+	}
+}
+
 func TestLeadersSendSeveralQuestionsToLavishAndCoordinationConfirmsWhatTheUserSentInOneLine(t *testing.T) {
 	for _, role := range []string{Planning, Research, Engineering, Quality} {
 		text, err := LeaderInstructions(role)

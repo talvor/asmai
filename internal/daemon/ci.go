@@ -303,21 +303,21 @@ func deliveryBody(j store.Job, p store.Delivery) string {
 				"It holds only the repository's setup files, which one of Coordination's workers wrote and its leader accepted against the mandate: Quality validated nothing. "+
 				"The job has ended: its workspaces and view are removed, and its branches stay on origin. "+
 				"AsmAI never merges: ready is not merged, and the user reviews and merges it. "+
-				"Tell the user, in a line tagged with job %d, with the link.",
-				j.Number, p.Number, j.Repository, p.URL, p.Head, ready, j.Number)
+				store.OneLine(j.Number)+", with the link.",
+				j.Number, p.Number, j.Repository, p.URL, p.Head, ready)
 		}
 		return fmt.Sprintf("Job %d is delivered: its notes pull request #%d, %s, is ready for review at head %s, %s. "+
 			"It holds only the job's notes, which its own leader accepted against the mandate: Quality validated nothing. "+
 			"The job has ended: its workspaces and view are removed, and its branches stay on origin. "+
 			"AsmAI never merges: ready is not merged, and the user reviews and merges it. "+
-			"Tell the user, in a line tagged with job %d, with the link.",
-			j.Number, p.Number, p.URL, p.Head, ready, j.Number)
+			store.OneLine(j.Number)+", with the link.",
+			j.Number, p.Number, p.URL, p.Head, ready)
 	}
 	return fmt.Sprintf("Job %d is delivered: its pull request #%d, %s, is ready for review at head %s, with every check green (%s). "+
 		"The job has ended: its workspaces and view are removed, and its branches stay on origin. "+
 		"AsmAI never merges: ready is not merged, and the user reviews and merges it. "+
-		"Tell the user, in a line tagged with job %d, with the link.",
-		j.Number, p.Number, p.URL, p.Head, store.CheckNames(p.Checks), j.Number)
+		store.OneLine(j.Number)+", with the link.",
+		j.Number, p.Number, p.URL, p.Head, store.CheckNames(p.Checks))
 }
 
 // removeJobLocal removes everything local to job, which has ended: its view,

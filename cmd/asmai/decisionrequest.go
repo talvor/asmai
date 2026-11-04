@@ -120,6 +120,8 @@ func decisionRequest(o *output, paths statedir.Paths, f requestFlags) int {
 	switch {
 	case r.Recipient != store.ToUser:
 		fmt.Fprintln(o.stdout, "next: work that depends on the choice waits for the answer, and independent work goes on; `asmai inbox` brings it")
+	case r.Requester == store.CoordinationLeader:
+		fmt.Fprintln(o.stdout, "next: "+r.Presentation())
 	case r.Surface == store.SurfaceLavish:
 		fmt.Fprintln(o.stdout, "next: the daemon renders your questions and your own content in a Lavish page for the user, collects what they send and brings it to you in `asmai inbox`, word for word; Coordination tells them where the page is. A page they send with some questions unanswered reaches you at once and the request stays pending, partly answered; work that depends on the choice waits for the answer, and independent work goes on")
 	default:
@@ -177,6 +179,7 @@ func decisionPresent(o *output, paths statedir.Paths, f requestFlags) int {
 	r := resp.DecisionRequest
 	fmt.Fprintf(o.stdout, "version %d of decision request %d presented, for job %d; the user answers it in the conversation\n", r.Version, r.Request, r.Job)
 	fmt.Fprintf(o.stdout, "next: wait for their next message; when it arrives, record it with `asmai decision record --request %d --version %d --cites <its witnessed ID> --reading <your reading> --choice <what they chose>`\n", r.Request, r.Version)
+	fmt.Fprintln(o.stdout, "the status line shows it until they answer it: never show it again or remind them of it, unless a record of the answer is refused")
 	return 0
 }
 

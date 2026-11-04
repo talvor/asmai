@@ -658,9 +658,14 @@ func carriedAnswer(q queryer, worker DecisionRequest, request int64, leader stri
 	return e, nil
 }
 
-// requestSummary is the one line a message about r opens with.
+// requestSummary is the one line a message about r opens with, followed, for
+// a request to the user, by how Coordination's leader presents it.
 func requestSummary(r DecisionRequest) string {
-	return fmt.Sprintf("decision request %d, version %d, from %s, answered in %s", r.Request, r.Version, r.Requester, r.Surface)
+	summary := fmt.Sprintf("decision request %d, version %d, from %s, answered in %s", r.Request, r.Version, r.Requester, r.Surface)
+	if r.Recipient == ToUser {
+		summary += ". " + r.Presentation()
+	}
+	return summary
 }
 
 // DecisionAnswered records the answer to one version of a decision request.

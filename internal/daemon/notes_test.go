@@ -190,7 +190,7 @@ func TestAPrototypeAcceptedToStayOnItsBranchMovesNoJobBranchAndItsOriginBranchSt
 func TestCoordinationIsToldANotesPullRequestIsReadyAndThatNoOneValidatedIt(t *testing.T) {
 	j := store.Job{Number: 3, Repository: "fixture", Mandate: store.MandateResearchOnly}
 	green := deliveryBody(j, store.Delivery{Number: 7, URL: "https://github.com/o/r/pull/7", Head: "bbb", Checks: []store.CheckState{{Name: "CI / test"}}})
-	for _, want := range []string{"Job 3 is delivered", "its notes pull request #7, https://github.com/o/r/pull/7", "head bbb, with every check green (CI / test)", "Quality validated nothing", "The job has ended", "AsmAI never merges", "in a line tagged with job 3, with the link"} {
+	for _, want := range []string{"Job 3 is delivered", "its notes pull request #7, https://github.com/o/r/pull/7", "head bbb, with every check green (CI / test)", "Quality validated nothing", "The job has ended", "AsmAI never merges", "in one line that starts `job 3:`, with the link"} {
 		if !strings.Contains(green, want) {
 			t.Errorf("the delivery message lacks %q: %s", want, green)
 		}

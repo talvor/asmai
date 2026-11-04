@@ -61,6 +61,13 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 		resp.Removed, err = d.cleanScratch(req.Job)
 	case CommandJobs:
 		resp.Jobs, err = d.store.Jobs()
+	case CommandFocus:
+		var f store.Focus
+		var j store.Job
+		if f, j, resp.FocusMoved, err = d.focus(req); err == nil {
+			resp.Focus, resp.Job = &f, &j
+			resp.Brief, err = d.jobBrief(j)
+		}
 	case CommandJob, CommandBrief:
 		var j store.Job
 		j, err = d.store.Job(req.Job)
@@ -70,90 +77,7 @@ func (d *daemon) jobCommand(conn *net.UnixConn, req Request) {
 		if err == nil {
 			resp.Job = &j
 			if req.Command == CommandBrief {
-				var repository store.Repository
-				if j.Repository != "" {
-					repository, err = d.store.Repository(j.Repository)
-					if errors.Is(err, sql.ErrNoRows) {
-						err = nil
-					}
-				}
-				var entries []store.Entry
-				if err == nil {
-					entries, err = d.store.JobEntries(j.Number)
-				}
-				if err == nil {
-					var handoffs []store.Handoff
-					handoffs, err = d.store.HandoffsForJob(j.Number)
-					var assignments []store.Assignment
-					if err == nil {
-						assignments, err = d.store.AssignmentsForJob(j.Number)
-					}
-					var findings []store.Finding
-					if err == nil {
-						findings, err = d.store.Findings(j.Number)
-					}
-					var pushes []store.Push
-					if err == nil {
-						pushes, err = d.store.Pushes(j.Number)
-					}
-					var prs []store.PullRequest
-					if err == nil {
-						prs, err = d.store.PullRequests(j.Number)
-					}
-					var branch *store.JobBranch
-					if b, e := d.store.JobBranch(j.Number); e == nil {
-						branch = &b
-					} else if !errors.Is(e, sql.ErrNoRows) {
-						err = e
-					}
-					var continued []store.PullRequest
-					if branch != nil && branch.Continues != 0 && err == nil {
-						var pr store.PullRequest
-						pr, err = d.continuedPullRequest(branch.Continues)
-						if err == nil {
-							continued = []store.PullRequest{pr}
-						}
-					}
-					var checks *store.ChecksObservation
-					if o, e := d.store.LatestChecks(j.Number); e == nil {
-						checks = &o
-					} else if !errors.Is(e, sql.ErrNoRows) && err == nil {
-						err = e
-					}
-					var delivery *store.Delivery
-					if del, e := d.store.JobDelivery(j.Number); e == nil {
-						delivery = &del
-					} else if !errors.Is(e, sql.ErrNoRows) && err == nil {
-						err = e
-					}
-					var reruns []store.Rerun
-					if err == nil {
-						reruns, err = d.store.Reruns(j.Number)
-					}
-					var records []store.DecisionRecord
-					if err == nil {
-						records, err = d.store.DecisionRecords(j.Number)
-					}
-					var requests []store.DecisionRequest
-					if err == nil {
-						requests, err = d.store.JobDecisionRequests(j.Number)
-					}
-					var grants []store.Grant
-					if err == nil {
-						grants, err = d.store.GrantsOf(j.Number)
-					}
-					var blocked []store.BlockedReport
-					if err == nil {
-						blocked, err = d.store.JobBlockedReports(j.Number)
-					}
-					var setup string
-					if err == nil {
-						setup, err = d.setupSection(j)
-					}
-					if err == nil {
-						resp.Brief = brief(j, repository, entries, handoffs, branch, continued, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, blocked, grants, setup)
-					}
-				}
+				resp.Brief, err = d.jobBrief(j)
 			}
 		}
 	}
@@ -484,4 +408,113 @@ func questionTitles(questions []store.Question) string {
 		titles[i] = q.Title
 	}
 	return strings.Join(titles, "; ")
+}
+
+// jobBrief is job j's brief, generated from the store (02 rule 22).
+func (d *daemon) jobBrief(j store.Job) (string, error) {
+	var repository store.Repository
+	if j.Repository != "" {
+		var err error
+		if repository, err = d.store.Repository(j.Repository); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+	}
+	entries, err := d.store.JobEntries(j.Number)
+	if err != nil {
+		return "", err
+	}
+	handoffs, err := d.store.HandoffsForJob(j.Number)
+	if err != nil {
+		return "", err
+	}
+	assignments, err := d.store.AssignmentsForJob(j.Number)
+	if err != nil {
+		return "", err
+	}
+	findings, err := d.store.Findings(j.Number)
+	if err != nil {
+		return "", err
+	}
+	pushes, err := d.store.Pushes(j.Number)
+	if err != nil {
+		return "", err
+	}
+	prs, err := d.store.PullRequests(j.Number)
+	if err != nil {
+		return "", err
+	}
+	var branch *store.JobBranch
+	if b, err := d.store.JobBranch(j.Number); err == nil {
+		branch = &b
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	var continued []store.PullRequest
+	if branch != nil && branch.Continues != 0 {
+		pr, err := d.continuedPullRequest(branch.Continues)
+		if err != nil {
+			return "", err
+		}
+		continued = []store.PullRequest{pr}
+	}
+	var checks *store.ChecksObservation
+	if o, err := d.store.LatestChecks(j.Number); err == nil {
+		checks = &o
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	var delivery *store.Delivery
+	if del, err := d.store.JobDelivery(j.Number); err == nil {
+		delivery = &del
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	reruns, err := d.store.Reruns(j.Number)
+	if err != nil {
+		return "", err
+	}
+	records, err := d.store.DecisionRecords(j.Number)
+	if err != nil {
+		return "", err
+	}
+	requests, err := d.store.JobDecisionRequests(j.Number)
+	if err != nil {
+		return "", err
+	}
+	grants, err := d.store.GrantsOf(j.Number)
+	if err != nil {
+		return "", err
+	}
+	blocked, err := d.store.JobBlockedReports(j.Number)
+	if err != nil {
+		return "", err
+	}
+	setup, err := d.setupSection(j)
+	if err != nil {
+		return "", err
+	}
+	return brief(j, repository, entries, handoffs, branch, continued, assignments, findings, pushes, prs, checks, delivery, reruns, records, requests, blocked, grants, setup), nil
+}
+
+// focus moves the conversation's focus to the job req names, for
+// Coordination's leader only, at the user's word: the witnessed message req
+// cites is the one that made the change, recorded with it (04 rule 13). It
+// returns the focus, its job and whether the focus moved; a job that already
+// has the focus keeps it, and nothing is recorded.
+func (d *daemon) focus(req Request) (store.Focus, store.Job, bool, error) {
+	if req.Job <= 0 || (req.Witness <= 0 && !req.LatestWitness) {
+		return store.Focus{}, store.Job{}, false, refuse("focus needs the job and the user's own words that switch to it: --message latest or --message <witnessed-id>")
+	}
+	f, moved, err := d.store.FocusChanged(req.Job, req.Witness, req.LatestWitness, time.Now())
+	if err != nil {
+		return store.Focus{}, store.Job{}, false, refuse("%v", err)
+	}
+	j, err := d.store.Job(f.Job)
+	if err != nil {
+		return store.Focus{}, store.Job{}, false, err
+	}
+	if moved {
+		d.log.Info("the conversation's focus moved at the user's word", "job", f.Job, "previous", f.Previous, "witness", f.Witness)
+	}
+	return f, j, moved, nil
 }

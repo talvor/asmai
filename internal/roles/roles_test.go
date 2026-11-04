@@ -286,6 +286,29 @@ func TestCoordinationsInstructionsReportEachDeliveryStepAndTheLinkWhenAJobEnds(t
 	}
 }
 
+func TestCoordinationsInstructionsKeepOneFocusedJobAndSwitchItOnlyAtTheUsersWord(t *testing.T) {
+	leader, err := LeaderInstructions(Coordination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"The conversation has one focused job",
+		"The user's messages apply to it unless they name another job, as `14: …` or `job 14` does",
+		"the focus stays where it is",
+		"the job you open takes the focus",
+		"\"switch to 14\", run `asmai focus <number> --message latest` immediately after their message",
+		"prints that job's brief, which you load",
+		"tell the user, in a line tagged with the job's number, that it has the focus",
+		"A factory-wide question",
+		"needs no job",
+		"Move the focus only at the user's word",
+	} {
+		if !strings.Contains(leader, want) {
+			t.Errorf("Coordination's leader's instructions lack %q", want)
+		}
+	}
+}
+
 func TestEngineeringsInstructionsLeaveCIAndMarkingThePullRequestReadyToTheDaemon(t *testing.T) {
 	leader, err := LeaderInstructions(Engineering)
 	if err != nil {

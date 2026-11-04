@@ -149,6 +149,10 @@ commands agents run:
                               is the reason: the daemon cancels every assignment, each ending once its branch
                               push is confirmed, closes the open pull request with a comment, withdraws the
                               pending decision requests and discards unreviewed results; branches stay on origin
+  asmai focus <number> --message latest|<id>
+                              Coordination's leader moves the conversation's focus to a job at the user's word,
+                              whose witnessed message is recorded with the change, and loads the job's brief;
+                              a job opened takes the focus itself
   asmai brief <number>        read a job's canonical brief
   asmai inbox [--dispatch <id>]  fetch messages; a fetch records delivery once per message
   asmai handoff send --job <number> --to <leader> --outcome <text> --decisions <text> --evidence <text> --constraints <text> --permissions <text> --criterion <text> [--record <id>] [--assignment <id>]
@@ -329,6 +333,7 @@ var positional = map[string][]string{
 	"job show":         {"name the job number, as `asmai jobs` shows it"},
 	"job clean":        {"name the job number, as `asmai jobs` shows it"},
 	"job cancel":       {"name the job number, as `asmai jobs` shows it"},
+	"focus":            {"name the job number, as `asmai jobs` shows it"},
 	"brief":            {"name the job number, as `asmai jobs` shows it"},
 	"push":             {"name the job number, as `asmai jobs` shows it"},
 	"grant revoke":     {"name the grant, as `asmai grants` lists them"},
@@ -463,6 +468,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Int64Var(&linkFollows, "follows", 0, "the number of the job it follows")
 	case "job cancel":
 		flags.StringVar(&message, "message", "", "latest or the journal ID of the witnessed message whose words are the reason")
+	case "focus":
+		flags.StringVar(&message, "message", "", "latest or the journal ID of the witnessed message in which the user switches to the job")
 	case "handoff send":
 		flags.Int64Var(&handoffJob, "job", 0, "job number")
 		flags.StringVar(&recipient, "to", "", "receiving leader")
@@ -610,7 +617,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
-	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "answer redeliver", "answer retire", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
+	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "focus", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "answer redeliver", "answer retire", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
 		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
@@ -678,6 +685,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return jobLink(o, paths, linkJob, linkFollows)
 	case "job cancel":
 		return jobCancel(o, paths, arg, message)
+	case "focus":
+		return focus(o, paths, arg, message)
 	case "job open":
 		return jobOpen(o, paths, message, repository, reading, mandate, criteria)
 	case "brief":

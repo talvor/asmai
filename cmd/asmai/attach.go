@@ -137,10 +137,12 @@ type attachClient struct {
 	mu     sync.Mutex
 	notice string
 	// prompts are the native prompts agents wait at, decisions the decision
-	// requests pending with the user and jobs the jobs that run, as the
-	// daemon knows them, which the status line shows.
+	// requests pending with the user, focus the conversation's focused job,
+	// zero before any job had it, and jobs the jobs that run, as the daemon
+	// knows them, which the status line shows.
 	prompts   []string
 	decisions []string
+	focus     int64
 	jobs      []int64
 	// model is the model the agent runs and its effort, as the daemon
 	// knows them, which the status line shows.
@@ -188,6 +190,9 @@ func (c *attachClient) readFrames(r io.Reader) {
 		}
 		if f.Decisions != nil {
 			c.decisions = *f.Decisions
+		}
+		if f.Focus != nil {
+			c.focus = *f.Focus
 		}
 		if f.Jobs != nil {
 			c.jobs = *f.Jobs
@@ -436,8 +441,8 @@ func (c *attachClient) frame() []byte {
 }
 
 // statusLine draws the status line on the terminal's last row, with the keys,
-// how far back the view is scrolled, what waits on the user and the jobs that
-// run, and puts the cursor back where the agent's is.
+// how far back the view is scrolled, what waits on the user, the focused job
+// and the jobs that run, and puts the cursor back where the agent's is.
 func (c *attachClient) statusLine() string {
 	text := fmt.Sprintf(" %s · observing · Ctrl-] detaches · ↑/↓ history", c.agent)
 	if c.conversation {
@@ -451,10 +456,14 @@ func (c *attachClient) statusLine() string {
 			text += " · " + c.notice
 		}
 	}
-	// What waits on the user comes first, then the jobs that run, so that
-	// on a narrow terminal the rest is cut before them.
+	// What waits on the user comes first, then the focused job and the
+	// jobs that run, so that on a narrow terminal the rest is cut before
+	// them.
 	for _, p := range slices.Concat(c.prompts, c.decisions) {
 		text += " · " + strings.Map(printable, p)
+	}
+	if c.focus > 0 {
+		text += fmt.Sprintf(" · focus job %d", c.focus)
 	}
 	if jobs := runningJobs(c.jobs); jobs != "" {
 		text += " · " + jobs

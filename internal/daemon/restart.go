@@ -371,7 +371,9 @@ func (d *daemon) cannotResume(l *leader, exit string) {
 
 // restoreBriefs tells each leader with open work to load the brief of each
 // job it has it in, in one message to it that waits in its inbox like any
-// other, about the first of them.
+// other, about the first of them. Coordination's leader is also told which
+// job has the conversation's focus, in a message about that job when it has
+// no open work.
 func (d *daemon) restoreBriefs() {
 	work, err := d.store.OpenLeaderWork()
 	if err != nil {
@@ -386,9 +388,27 @@ func (d *daemon) restoreBriefs() {
 		}
 		jobs[w.Leader] = append(jobs[w.Leader], w.Job)
 	}
+	var focus store.Focus
+	if f, err := d.store.Focus(); err != nil {
+		d.log.Error("reading the conversation's focused job", "error", err.Error())
+	} else {
+		focus = f
+	}
+	coordination := roles.LeaderOf(roles.Coordination).String()
+	if _, ok := jobs[coordination]; !ok && focus.Job != 0 {
+		leaders = append(leaders, coordination)
+	}
 	for _, leader := range leaders {
 		numbers := jobs[leader]
-		dispatch, made, err := d.store.LeaderRestored(leader, numbers[0], restorationBody(leader, numbers), time.Now())
+		job := focus.Job
+		if len(numbers) > 0 {
+			job = numbers[0]
+		}
+		body := restorationBody(leader, numbers)
+		if leader == coordination && focus.Job != 0 {
+			body += fmt.Sprintf("\nJob %d has the conversation's focus: the user's messages apply to it unless they name another job.", focus.Job)
+		}
+		dispatch, made, err := d.store.LeaderRestored(leader, job, body, time.Now())
 		if err != nil {
 			d.log.Error("telling a restored leader to load its briefs", "agent", leader, "jobs", numbers, "error", err.Error())
 			continue
@@ -400,18 +420,23 @@ func (d *daemon) restoreBriefs() {
 }
 
 // restorationBody is what a restored leader is told: to load the brief of
-// each of its jobs with open work, and to fetch what waits for it.
+// each of its jobs with open work, and to fetch what waits for it. With no
+// jobs it is told only to fetch what waits for it.
 func restorationBody(leader string, jobs []int64) string {
 	var briefs []string
 	for _, job := range jobs {
 		briefs = append(briefs, fmt.Sprintf("`asmai brief %d`", job))
 	}
-	which := fmt.Sprintf("Load %s for job %d", briefs[0], jobs[0])
-	if len(jobs) > 1 {
-		which = fmt.Sprintf("Load the brief of each of your jobs with open work, %s", strings.Join(briefs, ", "))
+	which := "Run `asmai inbox` for everything waiting for you."
+	if len(jobs) > 0 {
+		load := fmt.Sprintf("Load %s for job %d", briefs[0], jobs[0])
+		if len(jobs) > 1 {
+			load = fmt.Sprintf("Load the brief of each of your jobs with open work, %s", strings.Join(briefs, ", "))
+		}
+		which = load + ", and run `asmai inbox` for everything waiting for you, each as its own command in its own Bash call, then continue the open work you have in each."
 	}
 	return fmt.Sprintf("The factory was stopped and started again, so you are a new session of %s and start without what you knew.\n"+
-		"%s, and run `asmai inbox` for everything waiting for you, each as its own command in its own Bash call, then continue the open work you have in each. Nothing you did before the stop is lost: the briefs and the journal hold it.",
+		"%s Nothing you did before the stop is lost: the briefs and the journal hold it.",
 		leader, which)
 }
 

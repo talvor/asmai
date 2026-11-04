@@ -49,7 +49,7 @@ func jobOpen(o *output, paths statedir.Paths, message, repository, reading, mand
 	} else {
 		fmt.Fprintf(o.stdout, "Opened job %d for %s.\n", resp.Job.Number, resp.Job.Repository)
 	}
-	fmt.Fprintf(o.stdout, "Read its brief with `asmai brief %d`.\n", resp.Job.Number)
+	fmt.Fprintf(o.stdout, "It has the conversation's focus. Read its brief with `asmai brief %d`.\n", resp.Job.Number)
 	return 0
 }
 
@@ -124,6 +124,43 @@ func jobCancel(o *output, paths statedir.Paths, number, message string) int {
 		fmt.Fprintf(o.stdout, "Decision request %d (version %d) is withdrawn, and its page ends.\n", r.Request, r.Version)
 	}
 	fmt.Fprintln(o.stdout, "Every branch stays on origin.")
+	return 0
+}
+
+// focus moves the conversation's focus to a job at the user's word, for
+// Coordination's leader: the witnessed message message names is recorded
+// with the change. It prints the job's brief, which the leader loads as it
+// switches.
+func focus(o *output, paths statedir.Paths, number, message string) int {
+	n, err := jobNumber(number)
+	if err != nil {
+		return o.fail(err)
+	}
+	if message == "" {
+		return o.fail(fmt.Errorf("focus needs the user's own words that switch to the job: --message latest or --message <witnessed-id>"))
+	}
+	var witness int64
+	if message != "latest" {
+		if witness, err = jobNumber(message); err != nil {
+			return o.fail(fmt.Errorf("--message: %w", err))
+		}
+	}
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandFocus, Job: n, Witness: witness, LatestWitness: message == "latest"})
+	if err != nil {
+		return o.fail(err)
+	}
+	if o.structured() {
+		return o.printData(map[string]any{"focus": resp.Focus, "moved": resp.FocusMoved, "brief": resp.Brief})
+	}
+	switch f := resp.Focus; {
+	case !resp.FocusMoved:
+		fmt.Fprintf(o.stdout, "Job %d already has the conversation's focus, since witnessed message %d.\n", f.Job, f.Witness)
+	case f.Previous != 0:
+		fmt.Fprintf(o.stdout, "The conversation's focus moves from job %d to job %d, at the user's word in witnessed message %d. Tell the user that job %d has the focus.\n", f.Previous, f.Job, f.Witness, f.Job)
+	default:
+		fmt.Fprintf(o.stdout, "The conversation's focus moves to job %d, at the user's word in witnessed message %d. Tell the user that job %d has the focus.\n", f.Job, f.Witness, f.Job)
+	}
+	fmt.Fprint(o.stdout, resp.Brief)
 	return 0
 }
 

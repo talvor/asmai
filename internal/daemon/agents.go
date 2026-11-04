@@ -119,11 +119,13 @@ type Frame struct {
 	Ended  string    `json:"ended,omitempty"`
 	Left   bool      `json:"left,omitempty"`
 	// Prompts, when set, are the native prompts agents now wait at,
-	// Decisions the decision requests pending with the user, and Jobs the
+	// Decisions the decision requests pending with the user, Focus the
+	// conversation's focused job, zero before any job had it, and Jobs the
 	// jobs that run, as the status line shows them: the stream sends each
 	// with its first frame and whenever it changes.
 	Prompts   *[]string `json:"prompts,omitempty"`
 	Decisions *[]string `json:"decisions,omitempty"`
+	Focus     *int64    `json:"focus,omitempty"`
 	Jobs      *[]int64  `json:"jobs,omitempty"`
 	// Model, when set, is the agent's model and effort as they now are: the
 	// stream sends it whenever either changes after its answer.

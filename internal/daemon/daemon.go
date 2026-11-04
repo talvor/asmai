@@ -84,7 +84,11 @@ const (
 	// CommandJobCancel is Coordination's leader cancelling a job at the
 	// user's word: the daemon cancels its assignments, closes its pull
 	// request, withdraws its decision requests and ends it as cancelled.
-	CommandJobCancel      = "job.cancel"
+	CommandJobCancel = "job.cancel"
+	// CommandFocus is Coordination's leader moving the conversation's focus
+	// to a job at the user's word, citing their witnessed message, and
+	// loading that job's brief (04 rule 13).
+	CommandFocus          = "focus"
 	CommandJobs           = "jobs"
 	CommandJob            = "job"
 	CommandBrief          = "brief"
@@ -340,6 +344,11 @@ type Response struct {
 	Removed []string `json:"removed,omitempty"`
 	// Cancellation is what a job cancel did.
 	Cancellation *store.JobCancellation `json:"cancellation,omitempty"`
+	// Focus is the conversation's focused job after a focus command, and
+	// FocusMoved says the command moved it: a job that already had the
+	// focus keeps it.
+	Focus      *store.Focus `json:"focus,omitempty"`
+	FocusMoved bool         `json:"focus_moved,omitempty"`
 	// Returned says an accept found the job branch moved after the result
 	// was submitted, so it returned the result to its worker instead of
 	// accepting it: not a rejection, and Decision is nil.
@@ -826,7 +835,7 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.repoCommand(conn, req)
 	case CommandConfigApply:
 		d.configApplyCommand(conn, req)
-	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandJobClean, CommandJobs, CommandJob, CommandBrief:
+	case CommandJobOpen, CommandJobLink, CommandJobCancel, CommandJobClean, CommandFocus, CommandJobs, CommandJob, CommandBrief:
 		d.jobCommand(conn, req)
 	case CommandInbox, CommandHandoffSend, CommandHandoffAccept, CommandHandoffClarify, CommandHandoffDecline:
 		d.handoffCommand(conn, req)

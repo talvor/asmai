@@ -119,8 +119,9 @@ func TestANativePromptShowsInFullBesideTheModel(t *testing.T) {
 }
 
 // The status line shows what waits on the user, the native prompts and then
-// the decision requests pending with them, and then the jobs that run, before
-// the model, in an observed session and in the conversation alike; a frame
+// the decision requests pending with them, and then the focused job and the
+// jobs that run, before the model, in an observed session and in the
+// conversation alike; a frame
 // tells the client whenever any of them changes, and one that says there are
 // none clears them.
 func TestTheStatusLineShowsWhatWaitsOnTheUserAndTheRunningJobs(t *testing.T) {
@@ -128,6 +129,7 @@ func TestTheStatusLineShowsWhatWaitsOnTheUserAndTheRunningJobs(t *testing.T) {
 	prompts := []string{"worker1@engineering waits at a native prompt nobody can answer: Bash `cat > x`"}
 	decisions := []string{"job 3: decision request 7 waits on you in Lavish", "job 4: decision request 9 waits on you in the conversation"}
 	one, two, none := []int64{3}, []int64{3, 4}, []int64{}
+	focused, unfocused := int64(4), int64(0)
 	noText := []string{}
 	for _, conversation := range []bool{false, true} {
 		hints := "leader@coordination · observing · Ctrl-] detaches · ↑/↓ history"
@@ -146,8 +148,10 @@ func TestTheStatusLineShowsWhatWaitsOnTheUserAndTheRunningJobs(t *testing.T) {
 			{daemon.Frame{Jobs: &one}, " " + hints + " · running job 3 · opus"},
 			{daemon.Frame{Decisions: &decisions, Jobs: &two}, " " + hints + " · " + decisions[0] + " · " + decisions[1] + " · running jobs 3, 4 · opus"},
 			{daemon.Frame{Prompts: &prompts}, " " + hints + " · " + prompts[0] + " · " + decisions[0] + " · " + decisions[1] + " · running jobs 3, 4 · opus"},
-			{daemon.Frame{Output: []byte("more output")}, " " + hints + " · " + prompts[0] + " · " + decisions[0] + " · " + decisions[1] + " · running jobs 3, 4 · opus"},
-			{daemon.Frame{Prompts: &noText, Decisions: &noText, Jobs: &none}, " " + hints + " · opus"},
+			{daemon.Frame{Focus: &focused}, " " + hints + " · " + prompts[0] + " · " + decisions[0] + " · " + decisions[1] + " · focus job 4 · running jobs 3, 4 · opus"},
+			{daemon.Frame{Output: []byte("more output")}, " " + hints + " · " + prompts[0] + " · " + decisions[0] + " · " + decisions[1] + " · focus job 4 · running jobs 3, 4 · opus"},
+			{daemon.Frame{Prompts: &noText, Decisions: &noText, Jobs: &none}, " " + hints + " · focus job 4 · opus"},
+			{daemon.Frame{Focus: &unfocused}, " " + hints + " · opus"},
 		} {
 			if err := enc.Encode(tt.after); err != nil {
 				t.Fatal(err)

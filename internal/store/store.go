@@ -351,6 +351,12 @@ ALTER TABLE messages ADD COLUMN blocked INTEGER REFERENCES blocked_reports(id);
 	`
 ALTER TABLE dispatches ADD COLUMN closed TEXT NOT NULL DEFAULT '';
 `,
+	`
+CREATE TABLE focus_changes (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL REFERENCES jobs(number), previous INTEGER NOT NULL DEFAULT 0,
+ witness INTEGER NOT NULL, changed_at TEXT NOT NULL
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

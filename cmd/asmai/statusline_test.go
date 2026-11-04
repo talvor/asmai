@@ -12,8 +12,9 @@ import (
 // The provider's terminal is one row shorter than the user's, and its screen
 // draws in full above the status line at that height. In the middle of
 // Coordination's turn, with nothing more drawn and no turn ended, the
-// status line shows the job Coordination opened as it runs, the decision it
-// asked the user and its own native prompt, as the daemon records each.
+// status line shows the job Coordination opened as it runs and has the
+// focus, the decision it asked the user and its own native prompt, as the
+// daemon records each.
 func TestTheStatusLineShowsWhatWaitsAndTheRunningJobsUnderTheProvidersShorterScreen(t *testing.T) {
 	testDir := t.TempDir()
 	t.Setenv("ASMAI_TEST_DIR", testDir)
@@ -60,7 +61,7 @@ func TestTheStatusLineShowsWhatWaitsAndTheRunningJobsUnderTheProvidersShorterScr
 		t.Fatal(err)
 	}
 	want := hints + " · leader@coordination waits at a native prompt the user answers in the conversation: Bash `rm -rf build`" +
-		" · job 1: decision request 1 waits on you in the conversation · running job 1 · opus"
+		" · job 1: decision request 1 waits on you in the conversation · focus job 1 · running job 1 · opus"
 	waitFor(t, "the status line to show what waits and the running job", func() bool {
 		return strings.TrimSpace(a.lines()[rows-1]) == want
 	})

@@ -211,6 +211,14 @@ type leader struct {
 	// managedOnly is set when the session started under the managed policy
 	// that has Claude Code apply only the administrator's permission rules.
 	managedOnly bool
+	// interrupted is the dispatch whose automated turn the user may have
+	// interrupted with Esc or Ctrl-C in the conversation. Claude Code reports
+	// no interrupt, so the turn's state is unknown, and nothing is typed,
+	// until the session next reports a finished turn. renudge is the
+	// dispatch that finished turn showed was interrupted, which is nudged
+	// again at that boundary.
+	interrupted int64
+	renudge     int64
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -976,6 +984,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.model, l.effort = launch.model, ""
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
+	l.interrupted, l.renudge = 0, 0
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
@@ -1126,7 +1135,7 @@ func (d *daemon) leaderStates() []Leader {
 		if l.session != nil {
 			state.State, state.Generation, state.PID = store.AgentRunning, l.generation, l.session.PID()
 			state.Input = InputAutomation
-			if l.inputUnknown {
+			if l.inputUnknown || l.interrupted != 0 {
 				state.Input = InputUnknown
 			} else if l.userInput {
 				state.Input = InputUser
@@ -1400,6 +1409,9 @@ func (d *daemon) typed(c *conversation, keys []byte) {
 		l.submits += n
 		l.submitTerminal = c.terminal
 	}
+	if l.currentDispatch != 0 && c.interrupts(keys) {
+		l.interrupted = l.currentDispatch
+	}
 	d.mu.Unlock()
 	if err := c.session.Input(keys); err != nil {
 		d.log.Warn("typing the user's keys into the conversation", "agent", l.address.String(), "error", err.Error())
@@ -1440,6 +1452,16 @@ func (c *conversation) enters(keys []byte) int {
 		}
 	}
 	return n
+}
+
+// interrupts reports whether keys, the next the user typed in c, which
+// enters has read, end with the Esc key or hold Ctrl-C outside a paste: the
+// keys that interrupt Claude Code's turn.
+func (c *conversation) interrupts(keys []byte) bool {
+	if c.pasting || len(keys) == 0 {
+		return false
+	}
+	return keys[len(keys)-1] == 0x1b || bytes.IndexByte(keys, 0x03) >= 0
 }
 
 // leave closes the conversation c, which the user left as how says: the

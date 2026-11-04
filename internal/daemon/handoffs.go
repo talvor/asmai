@@ -459,7 +459,16 @@ func (d *daemon) nudge(agent string) {
 	if l == nil || l.session == nil || l.userInput || !l.ready || l.inputUnknown || l.pendingDispatch != 0 || l.currentDispatch != 0 || d.stopping {
 		return
 	}
-	dispatch, err := d.store.NextDispatch(agent)
+	var dispatch store.Dispatch
+	var err error
+	if l.renudge != 0 {
+		// The dispatch of the turn the user interrupted goes first, nudged
+		// again for its messages to be read again.
+		dispatch = store.Dispatch{ID: l.renudge, Agent: agent, State: store.DispatchNudged}
+		l.renudge = 0
+	} else {
+		dispatch, err = d.store.NextDispatch(agent)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return
 	}
@@ -529,6 +538,11 @@ func (d *daemon) endCurrentDispatch(ref sessionRef, promptID, transcript string)
 	if promptID != "" {
 		l.stoppedPromptID = promptID
 	}
+	if l.interrupted != 0 {
+		if settled, err := d.interruptedTurn(l, ref, promptID, transcript); settled {
+			return 0, err
+		}
+	}
 	if l.currentDispatch == 0 || promptID == "" {
 		return 0, nil
 	}
@@ -548,4 +562,29 @@ func (d *daemon) endCurrentDispatch(ref sessionRef, promptID, transcript string)
 		return id, err
 	}
 	return 0, err
+}
+
+// interruptedTurn settles the automated turn of l's session, ref, that the
+// user may have interrupted, now that the session reports a finished turn
+// under prompt. Claude Code has no interrupt hook, so this Stop is the first
+// qualified sign that the turn is over. When it is the turn's own, the turn
+// finished as any does, and false is returned for it to end so. Otherwise the
+// turn ended without its Stop: it was interrupted, which is journaled, and
+// its dispatch is nudged again at this boundary for its messages to be read
+// again, by their IDs. A dispatch whose turn reported no prompt cannot be
+// told from a later one, and is nudged again too: reading it again repeats
+// nothing. d.mu is held.
+func (d *daemon) interruptedTurn(l *leader, ref sessionRef, prompt, transcript string) (bool, error) {
+	id := l.interrupted
+	l.interrupted = 0
+	if id != l.currentDispatch || prompt != "" && prompt == l.currentPromptID {
+		return false, nil
+	}
+	l.currentDispatch, l.currentPromptID = 0, ""
+	if err := d.store.InterruptedDispatch(id, ref.address.String(), ref.generation, transcript, time.Now()); err != nil {
+		return true, err
+	}
+	l.renudge = id
+	d.log.Info("an interrupted turn is nudged again", "agent", ref.address.String(), "generation", ref.generation, "dispatch", id)
+	return true, nil
 }

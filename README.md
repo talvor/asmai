@@ -282,6 +282,10 @@ Coordination opens a job with `asmai job open --message latest --repository <nam
 
 From your first key until Claude Code confirms your message submitted, you own Coordination's input; otherwise automation does, so delivery never waits on your being there. Ctrl-] leaves the conversation: it is not an intervention, so leaving pauses nothing and returns Coordination's input to automation at once. `conversation.entered` and `conversation.left` entries record each visit. One terminal at a time holds the conversation; `asmai chat` in another is refused until you leave the first.
 
+When you interrupt Coordination's automated turn, with Esc or Ctrl-C, nothing is typed into Coordination until Claude Code next reports a finished turn, such as the one your next message starts; meanwhile `asmai status` shows its input as `unknown`. When that finished turn is not the interrupted one's own, the interrupted turn is journaled as a `dispatch.changed` entry marked `interrupted`, and Coordination is nudged again with the same dispatch. It reads the same messages again by their IDs, so nothing is delivered twice, and the inbox tells it to check its recorded `asmai` calls, in `asmai jobs` and the job's brief, before it acts again, so nothing is blindly repeated.
+
+Known limitation: Claude Code reports no interrupt, so AsmAI cannot tell when an interrupted turn ended. Until Claude Code reports a finished turn, its state is unknown and Coordination's automated delivery is held: interrupt it and leave without sending a message, and nothing reaches Coordination until you return and send one.
+
 The factory's state directory, `~/.local/state/asmai`, is readable only by the user and contains:
 
 - `store.db`, the store: an SQLite database, built into `asmai`, that only the daemon opens. It holds the factory's current state and the journal of everything that happened, and writes each change in the same transaction as its journal entry. The journal is append-only and never trimmed. Inspect it with `asmai export`, never by editing it.

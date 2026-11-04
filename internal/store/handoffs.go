@@ -108,6 +108,9 @@ type Message struct {
 	// blocked.resolved message is about.
 	BlockedData *BlockedReport `json:"blocked_report_data,omitempty"`
 	Stopped     string         `json:"stopped,omitempty"`
+	// Interrupted is set when the message is read again because its
+	// recipient's turn for its dispatch was interrupted.
+	Interrupted bool `json:"interrupted,omitempty"`
 }
 
 type Dispatch struct {
@@ -471,6 +474,9 @@ func (s *Store) Inbox(agent string, only, current int64, at time.Time) ([]Messag
 			if m.State != DispatchNudged {
 				continue
 			}
+			if m.Interrupted, err = dispatchInterrupted(tx, m.Dispatch); err != nil {
+				return nil, err
+			}
 		} else {
 			if _, err = tx.Exec(`UPDATE messages SET fetched_at=? WHERE id=?`, timestamp(at), m.ID); err != nil {
 				return nil, err
@@ -645,6 +651,41 @@ func (s *Store) ObservedAutomated(d Dispatch, role string, payload json.RawMessa
 		return err
 	}
 	return tx.Commit()
+}
+
+// InterruptedDispatch records that the turn generation of agent's session
+// ran for dispatch id ended without the provider reporting it finished: the
+// user interrupted it. The dispatch goes back to nudged, an acknowledged nudge
+// whose messages are to be read again, and the change is journaled as
+// interrupted.
+func (s *Store) InterruptedDispatch(id int64, agent string, generation int, transcript string, at time.Time) error {
+	return s.change(at, func(tx *sql.Tx) (string, any, error) {
+		var state string
+		err := tx.QueryRow(`SELECT state FROM dispatches WHERE id=? AND agent=? AND generation=?`, id, agent, generation).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, fmt.Errorf("dispatch %d is not %s's in generation %d", id, agent, generation)
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		if state != DispatchNudged && state != DispatchDelivered && state != DispatchWorking {
+			return "", nil, fmt.Errorf("dispatch %d is %s, not a submitted turn's", id, state)
+		}
+		data, err := changeDispatch(tx, id, generation, state, DispatchNudged, transcript, "", at)
+		if err != nil {
+			return "", nil, err
+		}
+		data["agent"], data["interrupted"] = agent, true
+		return KindDispatchChanged, data, nil
+	})
+}
+
+// dispatchInterrupted reports whether the journal holds a turn for dispatch id
+// that was interrupted.
+func dispatchInterrupted(tx *sql.Tx, id int64) (bool, error) {
+	var n int
+	err := tx.QueryRow(`SELECT count(*) FROM journal WHERE kind=? AND json_extract(data, '$.id')=? AND json_extract(data, '$.interrupted')`, KindDispatchChanged, id).Scan(&n)
+	return n > 0, err
 }
 
 // StopDispatchIfWorking stops dispatch id of generation when it is working,

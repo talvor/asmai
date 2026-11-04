@@ -356,7 +356,7 @@ func (d *daemon) liveAgents() map[string]agentLive {
 			continue
 		}
 		live := agentLive{input: InputAutomation}
-		if l.inputUnknown {
+		if l.inputUnknown || l.interrupted != 0 {
 			live.input = InputUnknown
 		} else if l.userInput {
 			live.input = InputUser

@@ -365,6 +365,7 @@ func TestAcknowledgedNudgeRepeatsUntilTheInboxIsFetched(t *testing.T) {
 		`{"hook":"UserPromptSubmit","payload":{"hook_event_name":"UserPromptSubmit","prompt":"asmai inbox --dispatch 2","prompt_id":"reply"}}`,
 		fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering"),
 		`{"hook":"Stop","payload":{"hook_event_name":"Stop","prompt_id":"reply"}}`,
+		fakeRun(`touch "$ASMAI_TEST_DIR/replied"`, 0, ""),
 		`{"expect":"only typed by a test that means to"}`,
 	}
 	readyFactory(t, coordination)
@@ -376,6 +377,7 @@ func TestAcknowledgedNudgeRepeatsUntilTheInboxIsFetched(t *testing.T) {
 	waitFor(t, "Coordination prompt", a.shows(">"))
 	a.ptmx.WriteString("Send a handoff\r")
 	waitFor(t, "repeat nudge and answer", touched(dir, "done"))
+	waitFor(t, "Coordination fetching the reply", touched(dir, "replied"))
 	var states []string
 	for _, e := range journaled(t, "dispatch.changed") {
 		var d struct {

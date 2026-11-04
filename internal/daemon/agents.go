@@ -118,6 +118,10 @@ type Frame struct {
 	Output []byte    `json:"output,omitempty"`
 	Ended  string    `json:"ended,omitempty"`
 	Left   bool      `json:"left,omitempty"`
+	// TakenOver, when set, says that another terminal, which it names,
+	// attached to the conversation and took it over: the stream goes on, but
+	// the client only observes.
+	TakenOver string `json:"takenOver,omitempty"`
 	// Prompts, when set, are the native prompts agents now wait at,
 	// Decisions the decision requests pending with the user, Focus the
 	// conversation's focused job, zero before any job had it, and Jobs the
@@ -149,6 +153,7 @@ const (
 	LeftByDetaching     = "detached"
 	LeftByTerminalClose = "terminal closed"
 	LeftBySessionEnd    = "session ended"
+	LeftByTakeover      = "taken over"
 )
 
 // leader is an agent's session while it runs: a role's leader, or a worker
@@ -268,6 +273,13 @@ type conversation struct {
 	// of a paste's bracket that the next keys may finish.
 	pasting bool
 	carry   []byte
+	// displaced is set, under the daemon's lock, once a newer terminal took
+	// the conversation over, which saved this terminal's unsent text as
+	// leaving does. This terminal then only observes: its keys reach
+	// nothing. takenOver tells its stream, which sends the terminal the
+	// notice.
+	displaced bool
+	takenOver chan string
 }
 
 // sessionRef is the session an agent session's credential belongs to.
@@ -1355,7 +1367,7 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	d.log.Info("attached", "agent", address.String(), "generation", generation)
 	defer d.log.Info("detached", "agent", address.String(), "generation", generation)
-	d.stream(conn, r, req, s, attached, nil)
+	d.stream(conn, r, req, s, attached, nil, nil)
 }
 
 // converse opens the conversation: it attaches the user's terminal, named
@@ -1363,15 +1375,12 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 // leader's session to conn as attach does, while the keys the client sends
 // are typed into it. The conversation is not an intervention: leaving it,
 // however the user leaves, returns the leader's input to automation at once
-// and pauses nothing. One terminal at a time holds the conversation.
+// and pauses nothing. One terminal at a time holds the conversation, the
+// newest to attach: an older one is told and only observes from then on, and
+// the text it left unsent is saved as if the user had left (04 rule 19).
 func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	address := roles.LeaderOf(roles.Coordination)
 	d.mu.Lock()
-	if c := d.conversation; c != nil {
-		d.mu.Unlock()
-		reply(conn, Response{Error: fmt.Sprintf("the conversation is open in another terminal (%s); leave it there with Ctrl-] first", c.terminal)})
-		return
-	}
 	l := d.leaders[address.String()]
 	if l == nil || l.session == nil {
 		d.mu.Unlock()
@@ -1382,22 +1391,31 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	if terminal == "" {
 		terminal = "a terminal asmai could not name"
 	}
-	c := &conversation{leader: l, session: l.session, generation: l.generation, terminal: terminal}
+	c := &conversation{leader: l, session: l.session, generation: l.generation, terminal: terminal, takenOver: make(chan string, 1)}
+	older := d.conversation
+	if older != nil {
+		older.displaced = true
+		older.takenOver <- terminal
+	}
 	d.conversation = c
 	// Text the user left unsent and comes back to is theirs again: it is
 	// never cleared while they are in the conversation.
 	l.clearUnsent = false
 	d.mu.Unlock()
 
+	// The older terminal's text is saved before this one can type.
+	if older != nil {
+		d.farewell(older, LeftByTakeover)
+	}
 	if err := d.store.ConversationEntered(address.String(), address.Role, c.generation, c.terminal, time.Now()); err != nil {
 		d.log.Error("journaling the conversation's start", "error", err.Error())
 	}
 	d.log.Info("the user entered the conversation", "agent", address.String(), "generation", c.generation, "terminal", c.terminal)
 	model := d.modelOf(address.String(), c.generation)
 	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: c.generation, PID: c.session.PID(), Conversation: c.terminal, Model: model.Name, Effort: model.Effort}
-	how := d.stream(conn, r, req, c.session, attached, func(keys []byte) { d.typed(c, keys) })
+	how := d.stream(conn, r, req, c.session, attached, c.takenOver, func(keys []byte) { d.typed(c, keys) })
 	d.leave(c, how)
-	if how == LeftByDetaching {
+	if how == LeftByDetaching && !d.displaced(c) {
 		json.NewEncoder(conn).Encode(Frame{Left: true})
 	}
 }
@@ -1409,7 +1427,7 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 func (d *daemon) typed(c *conversation, keys []byte) {
 	d.mu.Lock()
 	l := c.leader
-	if l.session != c.session {
+	if l.session != c.session || c.displaced {
 		d.mu.Unlock()
 		return
 	}
@@ -1481,6 +1499,12 @@ func (c *conversation) interrupts(keys []byte) bool {
 // rules 2, 15 and 16).
 func (d *daemon) leave(c *conversation, how string) {
 	d.mu.Lock()
+	if c.displaced {
+		// A newer terminal took the conversation, and saved this one's
+		// text then.
+		d.mu.Unlock()
+		return
+	}
 	if d.conversation == c {
 		d.conversation = nil
 	}
@@ -1489,10 +1513,33 @@ func (d *daemon) leave(c *conversation, how string) {
 		l.userInput = false
 	}
 	d.mu.Unlock()
+	d.farewell(c, how)
+}
+
+// displaced reports whether a newer terminal took the conversation c over.
+func (d *daemon) displaced(c *conversation) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return c.displaced
+}
+
+// farewell journals the user leaving the conversation c as how says, with
+// the text they left unsent in its input box, and nudges. When a newer
+// terminal took the conversation over, what the journal records is as if the
+// user had left, but the input stays theirs while they have a message under
+// way, for the terminal that took over shows it.
+func (d *daemon) farewell(c *conversation, how string) {
+	l := c.leader
+	input := InputAutomation
+	d.mu.Lock()
+	if how == LeftByTakeover && l.session == c.session && l.userInput {
+		input = InputUser
+	}
+	d.mu.Unlock()
 	// The text is read once the keys the user typed last are drawn.
 	c.session.Settle(settleQuiet, settleLimit)
 	unsent, _ := providers.ClaudeCodeUnsentText(c.session.Screen())
-	if err := d.store.ConversationLeft(l.address.String(), l.address.Role, c.generation, c.terminal, how, InputAutomation, unsent, time.Now()); err != nil {
+	if err := d.store.ConversationLeft(l.address.String(), l.address.Role, c.generation, c.terminal, how, input, unsent, time.Now()); err != nil {
 		d.log.Error("journaling leaving the conversation", "error", err.Error())
 	} else if unsent != "" && how != LeftBySessionEnd {
 		d.mu.Lock()
@@ -1511,7 +1558,7 @@ func (d *daemon) leave(c *conversation, how string) {
 // the agent's terminal. Only given keys may it also type: each key it sends
 // is passed to keys, and it may ask to leave, which ends the stream with
 // LeftByDetaching for the caller to answer.
-func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, keys func([]byte)) (how string) {
+func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, takenOver <-chan string, keys func([]byte)) (how string) {
 	if req.Columns > 0 && req.Rows > 0 {
 		s.Resize(req.Columns, req.Rows)
 	}
@@ -1578,6 +1625,10 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 				if !send(Frame{Model: &model}) {
 					return LeftByTerminalClose
 				}
+			}
+		case terminal := <-takenOver:
+			if !send(Frame{TakenOver: terminal}) {
+				return LeftByTerminalClose
 			}
 		case <-gone:
 			if leaving {

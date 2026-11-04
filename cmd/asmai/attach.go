@@ -136,6 +136,9 @@ type attachClient struct {
 
 	mu     sync.Mutex
 	notice string
+	// takenOver names the terminal that took the conversation over, once
+	// one did: this one then only observes.
+	takenOver string
 	// prompts are the native prompts agents wait at, decisions the decision
 	// requests pending with the user, focus the conversation's focused job,
 	// zero before any job had it, and jobs the jobs that run, as the daemon
@@ -199,6 +202,9 @@ func (c *attachClient) readFrames(r io.Reader) {
 		}
 		if f.Model != nil {
 			c.model = *f.Model
+		}
+		if f.TakenOver != "" {
+			c.takenOver = f.TakenOver
 		}
 		switch {
 		case f.State != nil:
@@ -304,13 +310,13 @@ func (c *attachClient) typed(keys []byte) bool {
 	if len(keys) > 0 {
 		c.mu.Lock()
 		keys = c.scroll(keys)
-		if c.conversation {
+		if c.conversation && c.takenOver == "" {
 			c.notice = ""
 		}
 		c.mu.Unlock()
 		c.markDirty()
 	}
-	if c.conversation && len(keys) > 0 {
+	if c.conversation && len(keys) > 0 && !c.observing() {
 		c.send(daemon.ClientMessage{Keys: keys})
 	}
 	if detach >= 0 {
@@ -345,7 +351,7 @@ func (c *attachClient) scroll(keys []byte) []byte {
 		}
 		rest = append(rest, keys[0])
 		keys = keys[1:]
-		if c.conversation {
+		if c.conversation && c.takenOver == "" {
 			c.back = 0
 		}
 	}
@@ -355,7 +361,7 @@ func (c *attachClient) scroll(keys []byte) []byte {
 // leave detaches: from the conversation, once the daemon says the user has
 // left it.
 func (c *attachClient) leave() {
-	if !c.conversation {
+	if !c.conversation || c.observing() {
 		c.finish(fmt.Sprintf("Detached from %s.", c.agent))
 		return
 	}
@@ -364,6 +370,14 @@ func (c *attachClient) leave() {
 		return
 	}
 	time.AfterFunc(leaveWait, func() { c.finish(leftConversation) })
+}
+
+// observing reports whether another terminal took the conversation over from
+// this one, which then only observes.
+func (c *attachClient) observing() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.takenOver != ""
 }
 
 // send sends the daemon one line.
@@ -389,8 +403,10 @@ func (c *attachClient) followSize(fd int) {
 		resized := columns != c.columns || rows != c.rows
 		c.columns, c.rows = columns, rows
 		c.renderer.Invalidate()
+		observing := c.takenOver != ""
 		c.mu.Unlock()
-		if resized {
+		// The terminal that took the conversation sizes the agent's.
+		if resized && !observing {
 			c.send(daemon.ClientMessage{Columns: columns, Rows: max(rows-1, 1)})
 		}
 		c.markDirty()
@@ -429,7 +445,8 @@ func (c *attachClient) frame() []byte {
 	}
 	frame := c.renderer.RenderBack(c.term, c.columns, max(c.rows-1, 0), c.back)
 	frame = append(frame, c.statusLine()...)
-	if c.conversation && c.term.BracketedPaste() != c.paste {
+	// Only the terminal that holds the conversation brackets pasted text.
+	if want := c.conversation && c.takenOver == "" && c.term.BracketedPaste(); want != c.paste {
 		c.paste = !c.paste
 		if c.paste {
 			frame = append(frame, "\x1b[?2004h"...)
@@ -448,10 +465,13 @@ func (c *attachClient) statusLine() string {
 	if c.conversation {
 		text = fmt.Sprintf(" %s · conversation · Ctrl-] leaves · ↑/↓ history", c.agent)
 	}
+	if c.takenOver != "" {
+		text = fmt.Sprintf(" %s · observing · the conversation moved to %s · Ctrl-] detaches · ↑/↓ history", c.agent, strings.Map(printable, c.takenOver))
+	}
 	if c.back > 0 {
 		text += fmt.Sprintf(" · %d of %d lines back", c.back, c.term.History())
 	}
-	if c.conversation {
+	if c.conversation && c.takenOver == "" {
 		if c.notice != "" {
 			text += " · " + c.notice
 		}

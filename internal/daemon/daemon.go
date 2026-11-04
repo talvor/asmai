@@ -176,6 +176,8 @@ type Request struct {
 	// terminal.
 	Columns int `json:"columns,omitempty"`
 	Rows    int `json:"rows,omitempty"`
+	// Events asks a status for the events the catch-up tells of.
+	Events bool `json:"events,omitempty"`
 	// Snapshot asks attach for the agent's screen as it is, without
 	// following it.
 	Snapshot bool `json:"snapshot,omitempty"`
@@ -318,7 +320,11 @@ type Response struct {
 	// Prompts are the native prompts agents wait at that nobody can
 	// answer.
 	Prompts []WaitingPrompt `json:"prompts,omitempty"`
-	Agents  []store.Agent   `json:"agents,omitempty"`
+	// Events are what the catch-up tells of, which a status asked for, and
+	// CatchUp what the conversation opens with.
+	Events  []Event       `json:"events,omitempty"`
+	CatchUp *CatchUp      `json:"catch_up,omitempty"`
+	Agents  []store.Agent `json:"agents,omitempty"`
 	// Change is one tick of the Dashboard's change subscription.
 	Change *DashboardChange `json:"change,omitempty"`
 	// Dashboard is the Dashboard's snapshot of the factory.
@@ -723,7 +729,22 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.mu.Lock()
 		checks := d.lastChecks
 		d.mu.Unlock()
-		reply(conn, Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates(), Prompts: d.waitingPrompts()})
+		resp := Response{Status: &d.status, Checks: checks, Leaders: d.leaderStates(), Prompts: d.waitingPrompts()}
+		if req.Events {
+			last, _, err := d.store.LastLeft()
+			if err == nil {
+				resp.Events, err = d.events(last)
+			}
+			if err != nil {
+				d.log.Error("reading the events for the status", "error", err.Error())
+				reply(conn, Response{Error: err.Error()})
+				return false
+			}
+			if resp.Events == nil {
+				resp.Events = []Event{}
+			}
+		}
+		reply(conn, resp)
 	case CommandStart:
 		checks := d.ensureCoordination()
 		if !failed(checks) {

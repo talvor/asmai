@@ -88,6 +88,11 @@ const (
 // updated itself.
 const VersionEnv = "ASMAI_FAKE_PROVIDER_VERSION"
 
+// SignedOutFileEnv names a file that, once it exists, makes the fake report
+// that it is signed out, so that a development test can lose the sign-in of
+// a factory that is already running.
+const SignedOutFileEnv = "ASMAI_FAKE_PROVIDER_SIGNED_OUT_FILE"
+
 // AuthMethodEnv selects the sign-in method reported to development tests.
 const AuthMethodEnv = "ASMAI_FAKE_PROVIDER_AUTH_METHOD"
 
@@ -122,6 +127,10 @@ func Main(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		method := os.Getenv(AuthMethodEnv)
 		if method == "" {
 			method = "claude.ai"
+		}
+		if _, err := os.Stat(os.Getenv(SignedOutFileEnv)); os.Getenv(SignedOutFileEnv) != "" && err == nil {
+			json.NewEncoder(stdout).Encode(map[string]any{"loggedIn": false, "authMethod": ""})
+			return 0
 		}
 		json.NewEncoder(stdout).Encode(map[string]any{"loggedIn": true, "authMethod": method})
 		return 0

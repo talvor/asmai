@@ -899,3 +899,38 @@ func TestARepositoryIsRemovedAndJournaledUnlessItHasAnOpenJob(t *testing.T) {
 		t.Errorf("the journal holds %s, want two registrations and the one removal", got)
 	}
 }
+
+func TestTheCatchUpReadsWhenTheUserLastLeftTheTextTheirLeavingSavedAndTheEntriesAfterIt(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	if id, when, err := s.LastLeft(); err != nil || id != 0 || !when.IsZero() {
+		t.Fatalf("LastLeft before the user ever left = %d, %v, %v, want none", id, when, err)
+	}
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", "half a thought", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/4", "terminal closed", "automation", "", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, last := entries[0].ID, entries[len(entries)-1].ID
+	if id, when, err := s.LastLeft(); err != nil || id != last || !when.Equal(at.Add(time.Minute)) {
+		t.Errorf("LastLeft = %d, %v, %v, want entry %d at %v", id, when, err, last, at.Add(time.Minute))
+	}
+	if texts, err := s.UnsentTextLeft(first); err != nil || len(texts) != 1 || texts[0].Text != "half a thought" || texts[0].Terminal != "/dev/pts/3" {
+		t.Errorf("UnsentTextLeft of the first leaving = %+v, %v, want the text it saved", texts, err)
+	}
+	if texts, err := s.UnsentTextLeft(last); err != nil || len(texts) != 0 {
+		t.Errorf("UnsentTextLeft of the last leaving = %+v, %v, want none", texts, err)
+	}
+	after, err := s.EntriesAfter(first, KindConversationLeft, KindUnsentTextSaved)
+	if err != nil || len(after) != 2 || after[0].Kind != KindUnsentTextSaved || after[1].ID != last {
+		t.Errorf("EntriesAfter(%d) = %+v, %v, want the saved text and the second leaving", first, after, err)
+	}
+	if none, err := s.EntriesAfter(0); err != nil || len(none) != 0 {
+		t.Errorf("EntriesAfter of no kind = %+v, %v, want none", none, err)
+	}
+}

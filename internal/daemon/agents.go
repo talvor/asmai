@@ -118,10 +118,13 @@ type Frame struct {
 	Output []byte    `json:"output,omitempty"`
 	Ended  string    `json:"ended,omitempty"`
 	Left   bool      `json:"left,omitempty"`
-	// Prompts, when set, are the native prompts agents now wait at that
-	// nobody can answer, as the status line shows them: the stream sends
-	// them first and whenever they change.
-	Prompts *[]string `json:"prompts,omitempty"`
+	// Prompts, when set, are the native prompts agents now wait at,
+	// Decisions the decision requests pending with the user, and Jobs the
+	// jobs that run, as the status line shows them: the stream sends each
+	// with its first frame and whenever it changes.
+	Prompts   *[]string `json:"prompts,omitempty"`
+	Decisions *[]string `json:"decisions,omitempty"`
+	Jobs      *[]int64  `json:"jobs,omitempty"`
 	// Model, when set, is the agent's model and effort as they now are: the
 	// stream sends it whenever either changes after its answer.
 	Model *Model `json:"model,omitempty"`
@@ -1504,10 +1507,10 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return enc.Encode(f) == nil
 	}
-	// The prompts go with the first frame, and on their own whenever they
-	// change.
-	prompts := d.promptLines()
-	pending := &prompts
+	// The status line goes with the first frame, and on its own whenever
+	// it changes.
+	status := d.statusLine(statusLine{prompts: []string{}, decisions: []string{}, jobs: []int64{}})
+	first := true
 	// The model and effort went with the answer, and go on their own
 	// whenever either changes.
 	model := Model{Name: attached.Model, Effort: attached.Effort}
@@ -1518,11 +1521,11 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 	for {
 		select {
 		case <-check.C:
-			if now := d.promptLines(); !slices.Equal(now, prompts) {
-				prompts = now
-				if pending == nil && !send(Frame{Prompts: &prompts}) {
-					return LeftByTerminalClose
-				}
+			now := d.statusLine(status)
+			f, changed := now.frame(status, false)
+			status = now
+			if changed && !first && !send(f) {
+				return LeftByTerminalClose
 			}
 			// No model at all means the attached session was replaced, which
 			// ends this stream: the client keeps the one it shows.
@@ -1539,10 +1542,12 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 			return LeftByTerminalClose
 		case e, ok := <-events:
 			if ok {
-				if !send(Frame{State: e.State, Output: e.Output, Prompts: pending}) {
+				f, _ := status.frame(status, first)
+				f.State, f.Output = e.State, e.Output
+				if !send(f) {
 					return LeftByTerminalClose
 				}
-				pending = nil
+				first = false
 				continue
 			}
 			select {

@@ -241,8 +241,10 @@ func TestTheDaemonRunsCoordinationsLeaderOnceItsChecksPass(t *testing.T) {
 	if first.State == nil || first.State.Columns != 50 || first.State.Rows != 10 {
 		t.Fatalf("the first frame is %+v, want the 50 by 10 terminal's state", first)
 	}
-	if first.Prompts == nil || len(*first.Prompts) != 0 {
-		t.Errorf("the first frame carries the prompts %v, want the status line told there are none", first.Prompts)
+	// The status line still shows Coordination's prompt, which waits on the
+	// user.
+	if want := []string{"leader@coordination waits at a native prompt the user answers in the conversation: Bash `rm -rf build`"}; first.Prompts == nil || !slices.Equal(*first.Prompts, want) {
+		t.Errorf("the first frame carries the prompts %v, want the status line told of Coordination's: %q", first.Prompts, want)
 	}
 	if term, _ := vt.FromState(*first.State); !strings.Contains(term.String(), "leader up") {
 		t.Errorf("the attached screen shows %q", term.String())

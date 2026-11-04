@@ -11,6 +11,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -134,9 +136,12 @@ type attachClient struct {
 
 	mu     sync.Mutex
 	notice string
-	// prompts are the native prompts agents wait at that nobody can answer,
-	// which the status line shows.
-	prompts []string
+	// prompts are the native prompts agents wait at, decisions the decision
+	// requests pending with the user and jobs the jobs that run, as the
+	// daemon knows them, which the status line shows.
+	prompts   []string
+	decisions []string
+	jobs      []int64
 	// model is the model the agent runs and its effort, as the daemon
 	// knows them, which the status line shows.
 	model daemon.Model
@@ -180,6 +185,12 @@ func (c *attachClient) readFrames(r io.Reader) {
 		c.mu.Lock()
 		if f.Prompts != nil {
 			c.prompts = *f.Prompts
+		}
+		if f.Decisions != nil {
+			c.decisions = *f.Decisions
+		}
+		if f.Jobs != nil {
+			c.jobs = *f.Jobs
 		}
 		if f.Model != nil {
 			c.model = *f.Model
@@ -424,9 +435,9 @@ func (c *attachClient) frame() []byte {
 	return frame
 }
 
-// statusLine draws the status line on the terminal's last row, with the keys
-// and how far back the view is scrolled, and puts the cursor back where the
-// agent's is.
+// statusLine draws the status line on the terminal's last row, with the keys,
+// how far back the view is scrolled, what waits on the user and the jobs that
+// run, and puts the cursor back where the agent's is.
 func (c *attachClient) statusLine() string {
 	text := fmt.Sprintf(" %s · observing · Ctrl-] detaches · ↑/↓ history", c.agent)
 	if c.conversation {
@@ -440,11 +451,16 @@ func (c *attachClient) statusLine() string {
 			text += " · " + c.notice
 		}
 	}
-	for _, p := range c.prompts {
+	// What waits on the user comes first, then the jobs that run, so that
+	// on a narrow terminal the rest is cut before them.
+	for _, p := range slices.Concat(c.prompts, c.decisions) {
 		text += " · " + strings.Map(printable, p)
 	}
-	// The model comes after the prompts, so that on a narrow terminal it is
-	// cut before what waits on the user.
+	if jobs := runningJobs(c.jobs); jobs != "" {
+		text += " · " + jobs
+	}
+	// The model comes after them, so that on a narrow terminal it is cut
+	// before what waits on the user.
 	if model := strings.Map(printable, c.model.Name); model != "" {
 		text += " · " + model
 		if effort := strings.Map(printable, c.model.Effort); effort != "" {
@@ -462,6 +478,23 @@ func (c *attachClient) statusLine() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\x1b[?2026h\x1b7\x1b[%d;1H\x1b[0;7m%s\x1b[0m\x1b8\x1b[?2026l", c.rows, line)
 	return b.String()
+}
+
+// runningJobs says which jobs run, as the status line shows them, or nothing
+// when none does.
+func runningJobs(jobs []int64) string {
+	numbers := make([]string, len(jobs))
+	for i, j := range jobs {
+		numbers[i] = strconv.FormatInt(j, 10)
+	}
+	switch len(jobs) {
+	case 0:
+		return ""
+	case 1:
+		return "running job " + numbers[0]
+	default:
+		return "running jobs " + strings.Join(numbers, ", ")
+	}
 }
 
 func printable(r rune) rune {

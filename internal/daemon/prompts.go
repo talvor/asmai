@@ -18,8 +18,8 @@ import (
 // raises a native permission prompt.
 const permissionRequested = "PermissionRequest"
 
-// promptCheck is how often an attach stream looks for a change in the native
-// prompts agents wait at, and in the attached agent's model and effort.
+// promptCheck is how often an attach stream looks for a change in its status
+// line, and in the attached agent's model and effort.
 const promptCheck = time.Second
 
 // WaitingPrompt is a native permission prompt an agent's session waits at.
@@ -40,8 +40,11 @@ type WaitingPrompt struct {
 // String is how `asmai status` and the status line show the prompt.
 func (p WaitingPrompt) String() string {
 	text := p.Agent + " waits at a native prompt nobody can answer"
-	if p.Request != 0 {
+	switch {
+	case p.Request != 0:
 		text = fmt.Sprintf("%s waits at a native prompt the user decides (decision request %d)", p.Agent, p.Request)
+	case p.Agent == roles.LeaderOf(roles.Coordination).String():
+		text = p.Agent + " waits at a native prompt the user answers in the conversation"
 	}
 	if p.About != "" {
 		text += ": " + p.About
@@ -228,11 +231,16 @@ func (d *daemon) waitingPrompts() []WaitingPrompt {
 	return prompts
 }
 
-// promptLines returns the waitingPrompts as the status line shows them.
-func (d *daemon) promptLines() []string {
-	lines := []string{}
-	for _, p := range d.waitingPrompts() {
-		lines = append(lines, p.String())
+// coordinationPrompt returns the native prompt Coordination's running session
+// waits at, which the user answers in the conversation, or nil. d.mu is not
+// held.
+func (d *daemon) coordinationPrompt() *WaitingPrompt {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l := d.leaders[roles.LeaderOf(roles.Coordination).String()]
+	if l == nil || l.session == nil || l.prompt == nil || l.prompt.Generation != l.generation {
+		return nil
 	}
-	return lines
+	p := *l.prompt
+	return &p
 }

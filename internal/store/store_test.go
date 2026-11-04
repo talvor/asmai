@@ -757,7 +757,7 @@ func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
 	if observation != 2 || message != 3 {
 		t.Errorf("the observation and the witnessed message are entries %d and %d, want 2 and 3", observation, message)
 	}
-	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", at.Add(time.Minute)); err != nil {
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", "", at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := s.Journal()
@@ -779,6 +779,42 @@ func TestAWitnessedMessageIsJournaledWithTheObservationItCites(t *testing.T) {
 	}
 	if !entries[2].At.Equal(at.Add(time.Second)) {
 		t.Errorf("the witnessed message is journaled at %v, want %v", entries[2].At, at.Add(time.Second))
+	}
+}
+
+func TestLeavingTheConversationSavesTheUnsentTextAndRecordsWhenTheUserLastLeft(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "store.db"))
+	at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/3", "detached", "automation", "half a thought", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConversationLeft("leader@coordination", "coordination", 1, "/dev/pts/4", "terminal closed", "automation", "", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.Journal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Kind+" "+string(e.Data))
+	}
+	want := []string{
+		`conversation.left {"agent":"leader@coordination","generation":1,"how":"detached","input":"automation","role":"coordination","terminal":"/dev/pts/3"}`,
+		`unsent.saved {"agent":"leader@coordination","terminal":"/dev/pts/3","text":"half a thought","left":1}`,
+		`conversation.left {"agent":"leader@coordination","generation":1,"how":"terminal closed","input":"automation","role":"coordination","terminal":"/dev/pts/4"}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the journal holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	var lastLeft time.Time
+	for _, e := range entries {
+		if e.Kind == KindConversationLeft {
+			lastLeft = e.At
+		}
+	}
+	if !lastLeft.Equal(at.Add(time.Minute)) {
+		t.Errorf("the user last left at %v, want %v", lastLeft, at.Add(time.Minute))
 	}
 }
 

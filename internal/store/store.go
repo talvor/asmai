@@ -381,6 +381,9 @@ const (
 	// entering and leaving the conversation with Coordination.
 	KindConversationEntered = "conversation.entered"
 	KindConversationLeft    = "conversation.left"
+	// KindUnsentTextSaved records the text the user left unsent in the
+	// conversation's input box, saved as they left it.
+	KindUnsentTextSaved = "unsent.saved"
 	// KindRepositoryAdded and KindRepositoryRemoved record the user
 	// registering and removing a repository.
 	KindRepositoryAdded   = "repository.added"
@@ -1017,12 +1020,36 @@ func (s *Store) ConversationEntered(agent, role string, generation int, terminal
 
 // ConversationLeft journals that the user left the conversation with
 // generation of agent's session, from their terminal: how is how they left,
-// and input who owns the session's input now.
-func (s *Store) ConversationLeft(agent, role string, generation int, terminal, how, input string, at time.Time) error {
-	return s.change(at, func(tx *sql.Tx) (string, any, error) {
-		data := map[string]any{"agent": agent, "role": role, "generation": generation, "terminal": terminal, "how": how, "input": input}
-		return KindConversationLeft, data, nil
-	})
+// and input who owns the session's input now. unsent is the text the user
+// left unsent in the session's input box, if any, which is saved with it
+// (04 rule 16).
+func (s *Store) ConversationLeft(agent, role string, generation int, terminal, how, input, unsent string, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	data := map[string]any{"agent": agent, "role": role, "generation": generation, "terminal": terminal, "how": how, "input": input}
+	left, err := appendEntry(tx, at, KindConversationLeft, data)
+	if err != nil {
+		return err
+	}
+	if unsent != "" {
+		saved := UnsentText{Agent: agent, Terminal: terminal, Text: unsent, Left: left}
+		if _, err := appendEntry(tx, at, KindUnsentTextSaved, saved); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// UnsentText is text the user left unsent in an agent's input box when they
+// left the conversation from Terminal, as the journal entry Left records.
+type UnsentText struct {
+	Agent    string `json:"agent"`
+	Terminal string `json:"terminal"`
+	Text     string `json:"text"`
+	Left     int64  `json:"left"`
 }
 
 // Agents returns every agent the store records, by address.

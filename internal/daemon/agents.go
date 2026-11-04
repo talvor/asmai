@@ -221,6 +221,10 @@ type leader struct {
 	// again at that boundary.
 	interrupted int64
 	renudge     int64
+	// clearUnsent is set when the user left the conversation with unsent
+	// text in Coordination's input box, which leaving saved, until the next
+	// boundary clears the box, or the user comes back to it first.
+	clearUnsent bool
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -986,7 +990,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.model, l.effort = launch.model, ""
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
-	l.interrupted, l.renudge = 0, 0
+	l.interrupted, l.renudge, l.clearUnsent = 0, 0, false
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
@@ -1380,6 +1384,9 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	c := &conversation{leader: l, session: l.session, generation: l.generation, terminal: terminal}
 	d.conversation = c
+	// Text the user left unsent and comes back to is theirs again: it is
+	// never cleared while they are in the conversation.
+	l.clearUnsent = false
 	d.mu.Unlock()
 
 	if err := d.store.ConversationEntered(address.String(), address.Role, c.generation, c.terminal, time.Now()); err != nil {
@@ -1467,7 +1474,11 @@ func (c *conversation) interrupts(keys []byte) bool {
 }
 
 // leave closes the conversation c, which the user left as how says: the
-// leader's input returns to automation at once, and nothing is paused.
+// leader's input returns to automation at once, and nothing is paused. The
+// text the user left unsent in its input box is saved with the journal's
+// record of their leaving, and the box is cleared at the next boundary, so
+// that the nudges held for it go on; the text is never typed again (04
+// rules 2, 15 and 16).
 func (d *daemon) leave(c *conversation, how string) {
 	d.mu.Lock()
 	if d.conversation == c {
@@ -1478,10 +1489,19 @@ func (d *daemon) leave(c *conversation, how string) {
 		l.userInput = false
 	}
 	d.mu.Unlock()
-	if err := d.store.ConversationLeft(l.address.String(), l.address.Role, c.generation, c.terminal, how, InputAutomation, time.Now()); err != nil {
+	// The text is read once the keys the user typed last are drawn.
+	c.session.Settle(settleQuiet, settleLimit)
+	unsent, _ := providers.ClaudeCodeUnsentText(c.session.Screen())
+	if err := d.store.ConversationLeft(l.address.String(), l.address.Role, c.generation, c.terminal, how, InputAutomation, unsent, time.Now()); err != nil {
 		d.log.Error("journaling leaving the conversation", "error", err.Error())
+	} else if unsent != "" && how != LeftBySessionEnd {
+		d.mu.Lock()
+		if l.session == c.session && d.conversation == nil {
+			l.clearUnsent = true
+		}
+		d.mu.Unlock()
 	}
-	d.log.Info("the user left the conversation", "agent", l.address.String(), "generation", c.generation, "terminal", c.terminal, "how", how)
+	d.log.Info("the user left the conversation", "agent", l.address.String(), "generation", c.generation, "terminal", c.terminal, "how", how, "unsent", unsent != "")
 	d.nudge(l.address.String())
 }
 

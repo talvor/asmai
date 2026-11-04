@@ -214,7 +214,7 @@ func TestSubscriptionTicksOnJournalPromptAndInputOwnerChanges(t *testing.T) {
 		t.Fatalf("a tick %d came with nothing changed", head)
 	}
 
-	if err := st.ConversationLeft(worker.String(), worker.Role, 1, "/dev/pts/1", "left", InputAutomation, time.Now()); err != nil {
+	if err := st.ConversationLeft(worker.String(), worker.Role, 1, "/dev/pts/1", "left", InputAutomation, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	want, err := st.JournalHead()

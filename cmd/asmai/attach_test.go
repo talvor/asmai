@@ -3,19 +3,73 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/creack/pty"
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/vt"
 )
+
+func TestConversationAttachFailsWhenDaemonOmitsCatchUp(t *testing.T) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ptmx.Close()
+	defer tty.Close()
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 100, Rows: 25}); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(".", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "s")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	done := make(chan error, 1)
+	go func() {
+		conn, err := listener.AcceptUnix()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+		var req daemon.Request
+		if err := json.NewDecoder(conn).Decode(&req); err != nil {
+			done <- err
+			return
+		}
+		done <- json.NewEncoder(conn).Encode(daemon.Response{Attached: &daemon.Leader{Agent: "leader@coordination"}})
+	}()
+	var stdout, stderr bytes.Buffer
+	o := &output{stdout: &stdout, stderr: &stderr}
+	if code := show(o, statedir.Paths{Socket: socket}, daemon.Request{Command: daemon.CommandConversation}, tty, tty, ""); code != 1 {
+		t.Errorf("attach exited %d, want an error", code)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "did not answer with the conversation's catch-up") || strings.Contains(stdout.String(), nothingChanged) {
+		t.Errorf("attach printed stdout %q and stderr %q", stdout.String(), stderr.String())
+	}
+}
 
 // The status line shows the native prompts agents wait at that nobody can
 // answer, from the frame that tells the client of them until one says

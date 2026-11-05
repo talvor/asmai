@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,43 @@ func TestUnderThePolicyANativePromptAtAWorkerIsRaisedToTheUserAndOnlyTheirWitnes
 				t.Error("the prompt was answered twice")
 			}
 		})
+	}
+}
+
+func TestAnsweredPromptStillWaitingForRelayAppearsInCatchUpAndStatus(t *testing.T) {
+	f := newTwoResults(t)
+	f.withWorkers(t)
+	agent, ref, _ := f.stalled(t, true)
+	f.d.promptObserved(ref, "PermissionRequest", json.RawMessage(permissionRequest))
+	pending := f.pendingPrompts(t)
+	if len(pending) != 1 {
+		t.Fatalf("pending prompts = %+v, want one", pending)
+	}
+	r := pending[0]
+	if _, err := f.d.decisionPresent(Request{Session: "coordination", Command: CommandDecisionPresent, Request: r.Request, Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	f.d.leaders[agent].session.Stop(time.Second)
+	said := f.userSays(t, "allow it")
+	if _, _, _, err := f.d.conversationAnswer(Request{Session: "coordination", Command: CommandDecisionRecord, Request: r.Request, Version: 1, Cites: said, Choice: store.PromptAllow, Reading: "the user allowed it"}); err != nil {
+		t.Fatal(err)
+	}
+	if pending := f.pendingPrompts(t); len(pending) != 0 {
+		t.Fatalf("answered prompt remained pending: %+v", pending)
+	}
+	catchUp, err := f.d.catchUp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := f.d.events(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(catchUp.Events, status) {
+		t.Fatalf("catch-up events %+v differ from status events %+v", catchUp.Events, status)
+	}
+	if e := eventOf(t, status, EventTerminal); e.Agent != agent || !strings.Contains(e.Text, "native prompt") || strings.Contains(e.Text, "user decides") {
+		t.Errorf("the unrelayed prompt is %+v", e)
 	}
 }
 

@@ -747,6 +747,7 @@ func (d *daemon) pinnedCopy() (store.ProviderInstall, bool) {
 // and keeps them for `asmai status`. d.mu is held.
 func (d *daemon) held(agent string, checks []Check) error {
 	d.lastChecks = checks
+	d.recordHeldChecks(agent, checks)
 	var why []string
 	for _, c := range checks {
 		if !c.OK {
@@ -755,6 +756,13 @@ func (d *daemon) held(agent string, checks []Check) error {
 		}
 	}
 	return fmt.Errorf("%s is held, not started: %s", agent, strings.Join(why, "; "))
+}
+
+func (d *daemon) recordHeldChecks(agent string, checks []Check) {
+	if d.heldChecks == nil {
+		d.heldChecks = map[string][]Check{}
+	}
+	d.heldChecks[agent] = slices.Clone(checks)
 }
 
 func failed(checks []Check) bool {
@@ -779,6 +787,7 @@ func (d *daemon) ensureCoordination() []Check {
 	checks, cfg, install := d.checks()
 	d.lastChecks = checks
 	if failed(checks) {
+		d.recordHeldChecks(roles.LeaderOf(roles.Coordination).String(), checks)
 		for _, c := range checks {
 			if !c.OK {
 				d.log.Warn("a check failed, so Coordination's leader is not started", "check", c.Name, "problem", c.Problem, "fix", c.Fix)
@@ -788,6 +797,7 @@ func (d *daemon) ensureCoordination() []Check {
 	}
 	l := d.leader(roles.Coordination)
 	if l.session != nil {
+		delete(d.heldChecks, l.address.String())
 		return checks
 	}
 	if l.restart != nil {
@@ -798,6 +808,9 @@ func (d *daemon) ensureCoordination() []Check {
 		d.log.Error("starting an agent", "agent", l.address.String(), "error", err.Error())
 		checks = append(checks, Check{Name: l.address.String(), Problem: "it did not start: " + err.Error(), Fix: "see `asmai log`, then run `asmai start` again"})
 		d.lastChecks = checks
+		d.recordHeldChecks(l.address.String(), checks)
+	} else {
+		delete(d.heldChecks, l.address.String())
 	}
 	return checks
 }
@@ -1367,7 +1380,7 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	d.log.Info("attached", "agent", address.String(), "generation", generation)
 	defer d.log.Info("detached", "agent", address.String(), "generation", generation)
-	d.stream(conn, r, req, s, attached, nil, nil)
+	d.stream(conn, r, req, s, attached, nil, nil, nil)
 }
 
 // converse opens the conversation: it attaches the user's terminal, named
@@ -1400,12 +1413,33 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	d.conversation = c
 	// Text the user left unsent and comes back to is theirs again: it is
 	// never cleared while they are in the conversation.
+	previousClearUnsent := l.clearUnsent
 	l.clearUnsent = false
 	d.mu.Unlock()
 
 	// The older terminal's text is saved before this one can type.
+	var savedUnsent bool
 	if older != nil {
-		d.farewell(older, LeftByTakeover)
+		savedUnsent = d.farewell(older, LeftByTakeover)
+	}
+	// The catch-up is what changed since the user last left, which entering
+	// the conversation does not move; a terminal taken over just now counts
+	// as the user having left it.
+	catchUp, err := d.catchUp()
+	if err != nil {
+		d.log.Error("reading the catch-up", "error", err.Error())
+		d.mu.Lock()
+		if d.conversation == c {
+			d.conversation = nil
+			if l.session == c.session {
+				l.userInput = false
+				l.clearUnsent = previousClearUnsent || savedUnsent
+			}
+		}
+		d.mu.Unlock()
+		d.nudge(address.String())
+		reply(conn, Response{Error: err.Error()})
+		return
 	}
 	if err := d.store.ConversationEntered(address.String(), address.Role, c.generation, c.terminal, time.Now()); err != nil {
 		d.log.Error("journaling the conversation's start", "error", err.Error())
@@ -1413,7 +1447,7 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	d.log.Info("the user entered the conversation", "agent", address.String(), "generation", c.generation, "terminal", c.terminal)
 	model := d.modelOf(address.String(), c.generation)
 	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: c.generation, PID: c.session.PID(), Conversation: c.terminal, Model: model.Name, Effort: model.Effort}
-	how := d.stream(conn, r, req, c.session, attached, c.takenOver, func(keys []byte) { d.typed(c, keys) })
+	how := d.stream(conn, r, req, c.session, attached, c.takenOver, &catchUp, func(keys []byte) { d.typed(c, keys) })
 	d.leave(c, how)
 	if how == LeftByDetaching && !d.displaced(c) {
 		json.NewEncoder(conn).Encode(Frame{Left: true})
@@ -1528,7 +1562,7 @@ func (d *daemon) displaced(c *conversation) bool {
 // terminal took the conversation over, what the journal records is as if the
 // user had left, but the input stays theirs while they have a message under
 // way, for the terminal that took over shows it.
-func (d *daemon) farewell(c *conversation, how string) {
+func (d *daemon) farewell(c *conversation, how string) bool {
 	l := c.leader
 	input := InputAutomation
 	d.mu.Lock()
@@ -1539,9 +1573,11 @@ func (d *daemon) farewell(c *conversation, how string) {
 	// The text is read once the keys the user typed last are drawn.
 	c.session.Settle(settleQuiet, settleLimit)
 	unsent, _ := providers.ClaudeCodeUnsentText(c.session.Screen())
+	saved := false
 	if err := d.store.ConversationLeft(l.address.String(), l.address.Role, c.generation, c.terminal, how, input, unsent, time.Now()); err != nil {
 		d.log.Error("journaling leaving the conversation", "error", err.Error())
 	} else if unsent != "" && how != LeftBySessionEnd {
+		saved = true
 		d.mu.Lock()
 		if l.session == c.session && d.conversation == nil {
 			l.clearUnsent = true
@@ -1550,6 +1586,7 @@ func (d *daemon) farewell(c *conversation, how string) {
 	}
 	d.log.Info("the user left the conversation", "agent", l.address.String(), "generation", c.generation, "terminal", c.terminal, "how", how, "unsent", unsent != "")
 	d.nudge(l.address.String())
+	return saved
 }
 
 // stream answers the client on conn, which r reads, with attached, then
@@ -1558,12 +1595,12 @@ func (d *daemon) farewell(c *conversation, how string) {
 // the agent's terminal. Only given keys may it also type: each key it sends
 // is passed to keys, and it may ask to leave, which ends the stream with
 // LeftByDetaching for the caller to answer.
-func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, takenOver <-chan string, keys func([]byte)) (how string) {
+func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, takenOver <-chan string, catchUp *CatchUp, keys func([]byte)) (how string) {
 	if req.Columns > 0 && req.Rows > 0 {
 		s.Resize(req.Columns, req.Rows)
 	}
 	conn.SetDeadline(time.Time{})
-	reply(conn, Response{Attached: attached})
+	reply(conn, Response{Attached: attached, CatchUp: catchUp})
 
 	gone := make(chan struct{})
 	leaving := false

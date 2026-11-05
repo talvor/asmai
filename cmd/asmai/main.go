@@ -67,7 +67,7 @@ commands you type:
                               the work: it restores Coordination and each leader with open work, and
                               runs each worker that had stopped at a boundary again, resuming its
                               native session where it can, in a new dispatch
-  asmai status                show the daemon, its version and each leader
+  asmai status                show the daemon, its version, each leader and what needs you
   asmai agents                list the factory's agents
   asmai jobs                  list numbered jobs
   asmai decisions             list the decisions waiting for you, each with its answer surface, the conversation
@@ -935,7 +935,7 @@ func stop(o *output, paths statedir.Paths) int {
 }
 
 func status(o *output, paths statedir.Paths) int {
-	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStatus})
+	resp, err := daemon.Call(paths.Socket, daemon.Request{Command: daemon.CommandStatus, Events: true})
 	if errors.Is(err, daemon.ErrNotRunning) {
 		if o.structured() {
 			return o.printData(map[string]any{"daemon": map[string]any{"running": false}, "state_dir": paths.Dir})
@@ -955,12 +955,16 @@ func status(o *output, paths statedir.Paths) int {
 		if prompts == nil {
 			prompts = []daemon.WaitingPrompt{}
 		}
-		return o.printData(map[string]any{"daemon": runningJSON(*resp.Status), "leaders": resp.Leaders, "prompts": prompts, "checks": checks, "state_dir": paths.Dir})
+		events := resp.Events
+		if events == nil {
+			events = []daemon.Event{}
+		}
+		return o.printData(map[string]any{"daemon": runningJSON(*resp.Status), "leaders": resp.Leaders, "prompts": prompts, "events": events, "checks": checks, "state_dir": paths.Dir})
 	}
 	rows := append(runningRows(*resp.Status, paths), leaderRows(resp.Leaders)...)
-	for _, p := range resp.Prompts {
-		rows = append(rows, []string{"native prompt", p.String()})
-	}
+	// The events are the catch-up's: what waits on you, the jobs that ended
+	// or failed since you left, holds, native prompts, and a lost sign-in.
+	rows = append(rows, eventRows(resp.Events)...)
 	failed := false
 	for _, c := range checks {
 		if !c.OK {

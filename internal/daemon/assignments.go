@@ -883,6 +883,7 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 		if l.assignment != a.ID {
 			return fmt.Errorf("%s is still running assignment %d, not assignment %d", address, l.assignment, a.ID)
 		}
+		delete(d.heldChecks, address.String())
 		return nil
 	}
 	checks, cfg, install := d.checks()
@@ -895,5 +896,9 @@ func (d *daemon) ensureWorker(address roles.Address) error {
 	if w, err := d.store.WorkerDispatch(a.ID); err == nil && w.Kind == store.MessageResumption && !w.Fetched {
 		resume = w.Dispatch.NativeSession
 	}
-	return d.startWorker(l, cfg, install, a, resume)
+	if err := d.startWorker(l, cfg, install, a, resume); err != nil {
+		return err
+	}
+	delete(d.heldChecks, address.String())
+	return nil
 }

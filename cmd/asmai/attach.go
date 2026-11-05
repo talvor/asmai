@@ -22,6 +22,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/talvor/asmai/internal/daemon"
+	"github.com/talvor/asmai/internal/lavish"
 	"github.com/talvor/asmai/internal/statedir"
 	"github.com/talvor/asmai/internal/vt"
 )
@@ -80,6 +81,14 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 	}
 	if resp.Attached == nil {
 		return o.fail(errors.New("the daemon did not answer with the agent it attached"))
+	}
+	// The conversation starts with the catch-up, on the user's own screen
+	// before the live conversation takes it over (04 rule 17).
+	if req.Command == daemon.CommandConversation {
+		if resp.CatchUp == nil {
+			return o.fail(errors.New("the daemon did not answer with the conversation's catch-up"))
+		}
+		printCatchUp(o.stdout, resp.CatchUp, func(port int) string { return lavish.ForwardCommand(sshDestination(), port) })
 	}
 	restore, err := term.MakeRaw(int(in.Fd()))
 	if err != nil {

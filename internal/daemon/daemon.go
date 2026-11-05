@@ -58,6 +58,11 @@ const (
 	// CommandAttach streams an agent's terminal to an attach client, or
 	// with Snapshot answers with its screen.
 	CommandAttach = "attach"
+	// CommandTake makes the user the input owner of the agent the request
+	// names, from their terminal, and streams its terminal to it with the
+	// user's keys typed in. It waits for the end of the agent's turn, or with
+	// Interrupt interrupts the turn instead (03 rule 32).
+	CommandTake = "take"
 	// CommandHook journals what an agent session's hook reported.
 	CommandHook = "hook"
 	// CommandConversation attaches the user's terminal to Coordination's
@@ -178,6 +183,9 @@ type Request struct {
 	Rows    int `json:"rows,omitempty"`
 	// Events asks a status for the events the catch-up tells of.
 	Events bool `json:"events,omitempty"`
+	// Interrupt asks take to interrupt the agent's running turn instead of
+	// waiting for its end.
+	Interrupt bool `json:"interrupt,omitempty"`
 	// Snapshot asks attach for the agent's screen as it is, without
 	// following it.
 	Snapshot bool `json:"snapshot,omitempty"`
@@ -807,6 +815,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.attach(conn, r, req)
 	case CommandConversation:
 		d.converse(conn, r, req)
+	case CommandTake:
+		d.take(conn, r, req)
 	case CommandHook:
 		if err := d.observe(req.Session, req.Payload); err != nil {
 			reply(conn, Response{Error: err.Error()})

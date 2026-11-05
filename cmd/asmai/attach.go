@@ -100,6 +100,7 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 		conn:         conn,
 		agent:        resp.Attached.Agent,
 		conversation: req.Command == daemon.CommandConversation,
+		taking:       req.Command == daemon.CommandTake,
 		notice:       notice,
 		model:        daemon.Model{Name: resp.Attached.Model, Effort: resp.Attached.Effort},
 		columns:      columns,
@@ -110,7 +111,7 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 	// The alternate screen keeps the user's own screen to come back to, and
 	// without autowrap the status line's last cell cannot scroll it.
 	out.WriteString("\x1b[?1049h\x1b[?7l\x1b[H\x1b[2J")
-	if c.conversation {
+	if c.input() {
 		out.WriteString(enhanceKeys)
 	}
 	go c.readFrames(r)
@@ -121,7 +122,7 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 	if c.paste {
 		out.WriteString("\x1b[?2004l")
 	}
-	if c.conversation {
+	if c.input() {
 		out.WriteString(restoreKeys)
 	}
 	out.WriteString("\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l")
@@ -138,6 +139,10 @@ type attachClient struct {
 	conn         net.Conn
 	agent        string
 	conversation bool
+	// taking is set when the user took the agent's input with `asmai take`:
+	// the keys they type reach it, as in the conversation, and detaching
+	// leaves the input with them.
+	taking bool
 	// sending keeps each line sent to the daemon whole.
 	sending sync.Mutex
 	// keys reads the keys the user types in the conversation.
@@ -156,6 +161,9 @@ type attachClient struct {
 	decisions []string
 	focus     int64
 	jobs      []int64
+	// held are the agents whose input the user holds, as the daemon knows
+	// them, which the status line shows.
+	held []string
 	// model is the model the agent runs and its effort, as the daemon
 	// knows them, which the status line shows.
 	model daemon.Model
@@ -178,6 +186,12 @@ func (c *attachClient) markDirty() {
 	case c.dirty <- struct{}{}:
 	default:
 	}
+}
+
+// input reports whether the keys the user types reach the agent: in the
+// conversation, and in the terminal that took the agent's input.
+func (c *attachClient) input() bool {
+	return c.conversation || c.taking
 }
 
 func (c *attachClient) finish(why string) {
@@ -208,6 +222,9 @@ func (c *attachClient) readFrames(r io.Reader) {
 		}
 		if f.Jobs != nil {
 			c.jobs = *f.Jobs
+		}
+		if f.Held != nil {
+			c.held = *f.Held
 		}
 		if f.Model != nil {
 			c.model = *f.Model
@@ -288,7 +305,7 @@ func (c *attachClient) readKeys(in io.Reader) {
 		select {
 		case r := <-reads:
 			keys := r.keys
-			if c.conversation {
+			if c.input() {
 				keys = c.keys.read(keys)
 				if r.err != nil {
 					keys = append(keys, c.keys.flush()...)
@@ -319,13 +336,13 @@ func (c *attachClient) typed(keys []byte) bool {
 	if len(keys) > 0 {
 		c.mu.Lock()
 		keys = c.scroll(keys)
-		if c.conversation && c.takenOver == "" {
+		if c.input() && c.takenOver == "" {
 			c.notice = ""
 		}
 		c.mu.Unlock()
 		c.markDirty()
 	}
-	if c.conversation && len(keys) > 0 && !c.observing() {
+	if c.input() && len(keys) > 0 && !c.observing() {
 		c.send(daemon.ClientMessage{Keys: keys})
 	}
 	if detach >= 0 {
@@ -360,7 +377,7 @@ func (c *attachClient) scroll(keys []byte) []byte {
 		}
 		rest = append(rest, keys[0])
 		keys = keys[1:]
-		if c.conversation && c.takenOver == "" {
+		if c.input() && c.takenOver == "" {
 			c.back = 0
 		}
 	}
@@ -370,6 +387,15 @@ func (c *attachClient) scroll(keys []byte) []byte {
 // leave detaches: from the conversation, once the daemon says the user has
 // left it.
 func (c *attachClient) leave() {
+	if c.taking {
+		// Detaching leaves the input with the user, who gives it back with a
+		// release.
+		if !c.observing() {
+			c.send(daemon.ClientMessage{Leave: true})
+			c.finish(fmt.Sprintf("Detached from %s. You still hold its input: its messages wait in its inbox.", c.agent))
+			return
+		}
+	}
 	if !c.conversation || c.observing() {
 		c.finish(fmt.Sprintf("Detached from %s.", c.agent))
 		return
@@ -455,7 +481,7 @@ func (c *attachClient) frame() []byte {
 	frame := c.renderer.RenderBack(c.term, c.columns, max(c.rows-1, 0), c.back)
 	frame = append(frame, c.statusLine()...)
 	// Only the terminal that holds the conversation brackets pasted text.
-	if want := c.conversation && c.takenOver == "" && c.term.BracketedPaste(); want != c.paste {
+	if want := c.input() && c.takenOver == "" && c.term.BracketedPaste(); want != c.paste {
 		c.paste = !c.paste
 		if c.paste {
 			frame = append(frame, "\x1b[?2004h"...)
@@ -474,13 +500,20 @@ func (c *attachClient) statusLine() string {
 	if c.conversation {
 		text = fmt.Sprintf(" %s · conversation · Ctrl-] leaves · ↑/↓ history", c.agent)
 	}
+	if c.taking {
+		text = fmt.Sprintf(" %s · typing · Ctrl-] detaches · ↑/↓ history", c.agent)
+	}
 	if c.takenOver != "" {
-		text = fmt.Sprintf(" %s · observing · the conversation moved to %s · Ctrl-] detaches · ↑/↓ history", c.agent, strings.Map(printable, c.takenOver))
+		moved := "the conversation"
+		if c.taking {
+			moved = "your hold on its input"
+		}
+		text = fmt.Sprintf(" %s · observing · %s moved to %s · Ctrl-] detaches · ↑/↓ history", c.agent, moved, strings.Map(printable, c.takenOver))
 	}
 	if c.back > 0 {
 		text += fmt.Sprintf(" · %d of %d lines back", c.back, c.term.History())
 	}
-	if c.conversation && c.takenOver == "" {
+	if c.input() && c.takenOver == "" {
 		if c.notice != "" {
 			text += " · " + c.notice
 		}
@@ -488,7 +521,7 @@ func (c *attachClient) statusLine() string {
 	// What waits on the user comes first, then the focused job and the
 	// jobs that run, so that on a narrow terminal the rest is cut before
 	// them.
-	for _, p := range slices.Concat(c.prompts, c.decisions) {
+	for _, p := range slices.Concat(c.prompts, c.decisions, c.held) {
 		text += " · " + strings.Map(printable, p)
 	}
 	if c.focus > 0 {

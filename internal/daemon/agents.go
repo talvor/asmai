@@ -92,6 +92,9 @@ type Leader struct {
 	// Conversation is the user's terminal the conversation is open in,
 	// when it is open with this leader.
 	Conversation string `json:"conversation,omitempty"`
+	// Taken is the user's terminal that holds the leader's input since the
+	// user took it with `asmai take`.
+	Taken string `json:"taken,omitempty"`
 	// Model is the model an attached agent's session runs, and Effort its
 	// effort level once the provider has reported it: the status line shows
 	// them.
@@ -131,6 +134,9 @@ type Frame struct {
 	Decisions *[]string `json:"decisions,omitempty"`
 	Focus     *int64    `json:"focus,omitempty"`
 	Jobs      *[]int64  `json:"jobs,omitempty"`
+	// Held, when set, are the agents whose input the user holds, which the
+	// stream sends with the rest of the status line.
+	Held *[]string `json:"held,omitempty"`
 	// Model, when set, is the agent's model and effort as they now are: the
 	// stream sends it whenever either changes after its answer.
 	Model *Model `json:"model,omitempty"`
@@ -230,6 +236,26 @@ type leader struct {
 	// text in Coordination's input box, which leaving saved, until the next
 	// boundary clears the box, or the user comes back to it first.
 	clearUnsent bool
+	// taken is the terminal the user took the session's input in with
+	// `asmai take`, once they did: the user holds the input, and automated
+	// input waits, until they release it. taking counts the takes that wait
+	// for the session's turn to end, which keep a nudge from starting
+	// another.
+	taken  *conversation
+	taking int
+}
+
+// inputOwner says who owns l's input, as the status shows it. d.mu is held.
+func (l *leader) inputOwner() string {
+	switch {
+	case l.taken != nil:
+		return InputUser
+	case l.inputUnknown || l.interrupted != 0:
+		return InputUnknown
+	case l.userInput:
+		return InputUser
+	}
+	return InputAutomation
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -1016,6 +1042,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
 	l.interrupted, l.renudge, l.clearUnsent = 0, 0, false
+	l.taken, l.taking = nil, 0
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
@@ -1165,14 +1192,12 @@ func (d *daemon) leaderStates() []Leader {
 		state := Leader{Agent: l.address.String(), State: store.AgentStopped}
 		if l.session != nil {
 			state.State, state.Generation, state.PID = store.AgentRunning, l.generation, l.session.PID()
-			state.Input = InputAutomation
-			if l.inputUnknown || l.interrupted != 0 {
-				state.Input = InputUnknown
-			} else if l.userInput {
-				state.Input = InputUser
-			}
+			state.Input = l.inputOwner()
 			if c := d.conversation; c != nil && c.leader == l {
 				state.Conversation = c.terminal
+			}
+			if l.taken != nil {
+				state.Taken = l.taken.terminal
 			}
 		}
 		states = append(states, state)

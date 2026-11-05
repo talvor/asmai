@@ -227,7 +227,7 @@ func TestAFrameOfTheStatusLineCarriesOnlyWhatChanged(t *testing.T) {
 	}
 	f, _ = now.frame(now, true)
 	line, _ = json.Marshal(f)
-	if string(line) != `{"prompts":[],"decisions":["job 1: decision request 1 waits on you in Lavish"],"focus":2,"jobs":[1,2]}` {
+	if string(line) != `{"prompts":[],"decisions":["job 1: decision request 1 waits on you in Lavish"],"focus":2,"jobs":[1,2],"held":[]}` {
 		t.Errorf("the whole status line makes the frame %s, want every part, the empty ones too", line)
 	}
 }

@@ -82,6 +82,13 @@ commands you type:
   asmai attach <agent>        show an agent's terminal and observe it; ↑/↓ scroll its history
                               and Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
+  asmai take <agent> [--interrupt]
+                              become the agent's input owner and type into its terminal. It waits for
+                              the agent's running turn to end; --interrupt interrupts the turn instead.
+                              Any unsent automated draft is recorded and cleared first. While you hold
+                              the input the agent's messages wait in its inbox. Ctrl-] detaches without
+                              giving the input back, and the status line keeps reminding you that you
+                              hold it. A newer take of the agent moves the hold to the newer terminal
   asmai dashboard             show the factory live in this terminal: agents, jobs and the log in three
                               tabs, 1, 2 and 3, under a banner of what waits on you; q leaves. It only
                               reads, never acts on the factory, and shows a message while the factory
@@ -333,6 +340,7 @@ var positional = map[string][]string{
 	"job show":         {"name the job number, as `asmai jobs` shows it"},
 	"job clean":        {"name the job number, as `asmai jobs` shows it"},
 	"job cancel":       {"name the job number, as `asmai jobs` shows it"},
+	"take":             {"name the agent, such as worker1@engineering or engineering"},
 	"focus":            {"name the job number, as `asmai jobs` shows it"},
 	"brief":            {"name the job number, as `asmai jobs` shows it"},
 	"push":             {"name the job number, as `asmai jobs` shows it"},
@@ -423,7 +431,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var blockedJob int64
 	var blockedBlocks listFlags
 	var decidedAssignment int64
-	var endsJob, prototype bool
+	var endsJob, prototype, interrupt bool
 	var reasons listFlags
 	var repoOptions repoSettings
 	var role roleChoices
@@ -440,6 +448,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&claudeDefaultModel, "claude-default-model", "", "Claude's fallback model in a new config (default opus)")
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
+	case "take":
+		flags.BoolVar(&interrupt, "interrupt", false, "interrupt the agent's running turn instead of waiting for its end")
 	case "log":
 		follow = flags.Bool("follow", false, "after the log, print each new line as it is written")
 	case "repo add":
@@ -618,7 +628,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "focus", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "answer redeliver", "answer retire", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
-		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
+		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean", "take"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -740,6 +750,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return dashboardCommand(o, paths, stdin)
 	case "attach":
 		return attach(o, paths, arg, stdin)
+	case "take":
+		return take(o, paths, arg, interrupt, stdin)
 	case "hook":
 		return hook(o, paths, stdin)
 	case "log":

@@ -384,6 +384,12 @@ const (
 	// KindUnsentTextSaved records the text the user left unsent in the
 	// conversation's input box, saved as they left it.
 	KindUnsentTextSaved = "unsent.saved"
+	// KindInputTaken records the user taking an agent's input, or a newer
+	// terminal moving the hold, and KindDraftCleared the automated draft
+	// that was recorded and cleared from the agent's input box before the
+	// input was handed over.
+	KindInputTaken   = "input.taken"
+	KindDraftCleared = "draft.cleared"
 	// KindRepositoryAdded and KindRepositoryRemoved record the user
 	// registering and removing a repository.
 	KindRepositoryAdded   = "repository.added"
@@ -1041,6 +1047,55 @@ func (s *Store) ConversationLeft(agent, role string, generation int, terminal, h
 		}
 	}
 	return tx.Commit()
+}
+
+// InputTake is the user taking generation of agent's session, from their
+// terminal. Interrupted says the user had the running turn interrupted
+// instead of waiting for its boundary, Moved that the user already held the
+// input and this terminal's take moved the hold, Dispatch the automated
+// dispatch the agent was working on when it was taken, if any, and Draft the
+// automated draft that was cleared from its input box, if any.
+type InputTake struct {
+	Agent       string `json:"agent"`
+	Role        string `json:"role"`
+	Generation  int    `json:"generation"`
+	Terminal    string `json:"terminal"`
+	Interrupted bool   `json:"interrupted,omitempty"`
+	Moved       bool   `json:"moved,omitempty"`
+	Dispatch    int64  `json:"dispatch,omitempty"`
+	Draft       string `json:"-"`
+}
+
+// DraftCleared is an automated draft recorded and cleared from an agent's
+// input box as the user took its input, as the journal entry Taken records
+// (03 rule 33).
+type DraftCleared struct {
+	Agent    string `json:"agent"`
+	Terminal string `json:"terminal"`
+	Text     string `json:"text"`
+	Taken    int64  `json:"taken"`
+}
+
+// InputTaken journals that the user took an agent's input as t says, and the
+// draft it cleared with it, in one transaction, and returns the ID of the
+// take's entry.
+func (s *Store) InputTaken(t InputTake, at time.Time) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	taken, err := appendEntry(tx, at, KindInputTaken, t)
+	if err != nil {
+		return 0, err
+	}
+	if t.Draft != "" {
+		cleared := DraftCleared{Agent: t.Agent, Terminal: t.Terminal, Text: t.Draft, Taken: taken}
+		if _, err := appendEntry(tx, at, KindDraftCleared, cleared); err != nil {
+			return 0, err
+		}
+	}
+	return taken, tx.Commit()
 }
 
 // UnsentText is text the user left unsent in an agent's input box when they

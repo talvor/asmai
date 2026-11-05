@@ -663,10 +663,10 @@ type daemon struct {
 	leaders map[string]*leader
 	// conversation is the user's conversation with Coordination, while it
 	// is open.
-	conversation  *conversation
-	sessions      map[string]sessionRef
-	lastChecks    []Check
-	lastHeldAgent string
+	conversation *conversation
+	sessions     map[string]sessionRef
+	lastChecks   []Check
+	heldChecks   map[string][]Check
 	// versionSeen holds, by path, the executable the version check last read
 	// the version of, so that a start looks again only at a file that
 	// changed, as one that updated itself does.

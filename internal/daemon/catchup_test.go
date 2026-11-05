@@ -3,7 +3,9 @@
 package daemon
 
 import (
+	"bufio"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -243,6 +245,7 @@ func TestTheCatchUpAndStatusTellOfAcceptedNeedsYouFindingsAndFailedStartChecks(t
 	found := v.validated(t, store.FindingInput{Kind: store.FindingNeedsYou, Text: "Which greeting?\nThe request is ambiguous."})
 	v.d.mu.Lock()
 	v.d.held("worker1@quality", []Check{{Name: "provider", Problem: "changed since qualification", Fix: "restore the pinned provider"}})
+	v.d.held("leader@research", []Check{{Name: "trust", Problem: "folder is untrusted", Fix: "trust the folder"}})
 	v.d.mu.Unlock()
 	catchUp, err := v.d.catchUp()
 	if err != nil {
@@ -258,8 +261,94 @@ func TestTheCatchUpAndStatusTellOfAcceptedNeedsYouFindingsAndFailedStartChecks(t
 	if e := eventOf(t, status, EventWaiting); e.Job != v.job.Number || !strings.Contains(e.Text, fmt.Sprintf("finding %d: Which greeting?", found[0].ID)) {
 		t.Errorf("the accepted needs-you finding is %+v", e)
 	}
-	if e := eventOf(t, status, EventHold); e.Agent != "worker1@quality" || !strings.Contains(e.Text, "provider: changed since qualification (fix: restore the pinned provider)") {
-		t.Errorf("the failed start-check hold is %+v", e)
+	holds := map[string]string{}
+	for _, e := range status {
+		if e.Kind == EventHold {
+			holds[e.Agent] = e.Text
+		}
+	}
+	if len(holds) != 2 || !strings.Contains(holds["worker1@quality"], "provider: changed since qualification (fix: restore the pinned provider)") || !strings.Contains(holds["leader@research"], "trust: folder is untrusted (fix: trust the folder)") {
+		t.Errorf("the failed start-check holds are %+v", holds)
+	}
+	v.d.mu.Lock()
+	address := roles.LeaderOf(roles.Research)
+	v.d.leaders[address.String()] = &leader{address: address, session: &session.Session{}}
+	if err := v.d.ensureRoleLeader(roles.Research); err != nil {
+		v.d.mu.Unlock()
+		t.Fatal(err)
+	}
+	v.d.mu.Unlock()
+	status, err = v.d.events(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range status {
+		if e.Kind == EventHold && e.Agent == address.String() {
+			t.Errorf("started agent still has a hold: %+v", e)
+		}
+	}
+	if e := eventOf(t, status, EventHold); e.Agent != "worker1@quality" {
+		t.Errorf("starting another agent removed the worker hold: %+v", status)
+	}
+}
+
+func TestFailedCatchUpReadPreservesLastDepartureAndUnsentText(t *testing.T) {
+	f := newTwoResults(t)
+	f.withWorkers(t)
+	coordination := roles.LeaderOf(roles.Coordination).String()
+	if err := f.s.ConversationLeft(coordination, roles.Coordination, 1, "/dev/pts/test", LeftByDetaching, InputAutomation, "draft to recover", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	last, _, err := f.s.LastLeft()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", f.d.cfg.Paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO journal (at, kind, data) VALUES (?, ?, ?)`, time.Now().UTC().Format(time.RFC3339Nano), store.KindUnsentTextSaved, "{broken"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := session.Start(session.Spec{Path: "/bin/sleep", Args: []string{"30"}, Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Stop(time.Second) })
+	f.d.mu.Lock()
+	f.d.leaders[coordination].session = s
+	f.d.mu.Unlock()
+	server, client := connectedPair(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.d.converse(server, bufio.NewReader(server), Request{Command: CommandConversation, Terminal: "/dev/pts/new"})
+	}()
+	var response Response
+	if err := json.NewDecoder(client).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if !strings.Contains(response.Error, "reading the text you left unsent") {
+		t.Errorf("failed attach answered %+v", response)
+	}
+	if after, _, err := f.s.LastLeft(); err != nil || after != last {
+		t.Errorf("failed attach moved last departure from %d to %d (%v)", last, after, err)
+	}
+	f.d.mu.Lock()
+	active, owned := f.d.conversation, f.d.leaders[coordination].userInput
+	f.d.mu.Unlock()
+	if active != nil || owned {
+		t.Errorf("failed attach left a conversation active or its input owned: %v, %v", active, owned)
+	}
+	var data string
+	if err := db.QueryRow(`SELECT data FROM journal WHERE kind = ? AND id > ? ORDER BY id LIMIT 1`, store.KindUnsentTextSaved, last).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	var unsent store.UnsentText
+	if err := json.Unmarshal([]byte(data), &unsent); err != nil || unsent.Left != last || unsent.Text != "draft to recover" {
+		t.Errorf("the departure's saved text is %+v (%v)", unsent, err)
 	}
 }
 

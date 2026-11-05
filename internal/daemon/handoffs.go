@@ -392,20 +392,22 @@ func (d *daemon) reviewPlan(ctx context.Context, j store.Job, repository store.R
 func (d *daemon) ensureRoleLeader(role string) error {
 	l := d.leader(role)
 	if l.session != nil {
+		delete(d.heldChecks, l.address.String())
 		return nil
 	}
 	checks, cfg, install := d.checks()
 	if failed(checks) {
 		return d.held(roles.LeaderOf(role).String(), checks)
 	}
-	if d.lastHeldAgent == l.address.String() {
-		d.lastHeldAgent = ""
-	}
 	if l.restart != nil {
 		l.restart.Stop()
 		l.restart = nil
 	}
-	return d.startLeader(l, cfg, install)
+	if err := d.startLeader(l, cfg, install); err != nil {
+		return err
+	}
+	delete(d.heldChecks, l.address.String())
+	return nil
 }
 
 // boundary is the only time automation gains permission to try a nudge.

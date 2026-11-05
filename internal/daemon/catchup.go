@@ -119,18 +119,17 @@ func (d *daemon) events(last int64) ([]Event, error) {
 
 	lives := d.liveAgents()
 	d.mu.Lock()
-	checks := slices.Clone(d.lastChecks)
-	heldAgent := d.lastHeldAgent
-	leader := d.leaders[heldAgent]
-	heldByChecks := leader == nil || leader.session == nil
-	d.mu.Unlock()
-	if heldAgent != "" && heldByChecks {
-		for _, c := range checks {
+	for _, heldAgent := range slices.Sorted(maps.Keys(d.heldChecks)) {
+		if leader := d.leaders[heldAgent]; leader != nil && leader.session != nil {
+			continue
+		}
+		for _, c := range d.heldChecks[heldAgent] {
 			if !c.OK {
 				events = append(events, Event{Kind: EventHold, Agent: heldAgent, Text: fmt.Sprintf("%s is held, not started: %s: %s (fix: %s)", heldAgent, c.Name, c.Problem, c.Fix)})
 			}
 		}
 	}
+	d.mu.Unlock()
 	works, err := d.store.AgentWorks()
 	if err != nil {
 		return nil, fmt.Errorf("reading what the agents do: %w", err)

@@ -747,7 +747,7 @@ func (d *daemon) pinnedCopy() (store.ProviderInstall, bool) {
 // and keeps them for `asmai status`. d.mu is held.
 func (d *daemon) held(agent string, checks []Check) error {
 	d.lastChecks = checks
-	d.lastHeldAgent = agent
+	d.recordHeldChecks(agent, checks)
 	var why []string
 	for _, c := range checks {
 		if !c.OK {
@@ -756,6 +756,13 @@ func (d *daemon) held(agent string, checks []Check) error {
 		}
 	}
 	return fmt.Errorf("%s is held, not started: %s", agent, strings.Join(why, "; "))
+}
+
+func (d *daemon) recordHeldChecks(agent string, checks []Check) {
+	if d.heldChecks == nil {
+		d.heldChecks = map[string][]Check{}
+	}
+	d.heldChecks[agent] = slices.Clone(checks)
 }
 
 func failed(checks []Check) bool {
@@ -779,9 +786,8 @@ func (d *daemon) ensureCoordination() []Check {
 	}
 	checks, cfg, install := d.checks()
 	d.lastChecks = checks
-	d.lastHeldAgent = ""
 	if failed(checks) {
-		d.lastHeldAgent = roles.LeaderOf(roles.Coordination).String()
+		d.recordHeldChecks(roles.LeaderOf(roles.Coordination).String(), checks)
 		for _, c := range checks {
 			if !c.OK {
 				d.log.Warn("a check failed, so Coordination's leader is not started", "check", c.Name, "problem", c.Problem, "fix", c.Fix)
@@ -791,6 +797,7 @@ func (d *daemon) ensureCoordination() []Check {
 	}
 	l := d.leader(roles.Coordination)
 	if l.session != nil {
+		delete(d.heldChecks, l.address.String())
 		return checks
 	}
 	if l.restart != nil {
@@ -801,7 +808,9 @@ func (d *daemon) ensureCoordination() []Check {
 		d.log.Error("starting an agent", "agent", l.address.String(), "error", err.Error())
 		checks = append(checks, Check{Name: l.address.String(), Problem: "it did not start: " + err.Error(), Fix: "see `asmai log`, then run `asmai start` again"})
 		d.lastChecks = checks
-		d.lastHeldAgent = l.address.String()
+		d.recordHeldChecks(l.address.String(), checks)
+	} else {
+		delete(d.heldChecks, l.address.String())
 	}
 	return checks
 }
@@ -1404,6 +1413,7 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	d.conversation = c
 	// Text the user left unsent and comes back to is theirs again: it is
 	// never cleared while they are in the conversation.
+	previousClearUnsent := l.clearUnsent
 	l.clearUnsent = false
 	d.mu.Unlock()
 
@@ -1417,8 +1427,16 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	catchUp, err := d.catchUp()
 	if err != nil {
 		d.log.Error("reading the catch-up", "error", err.Error())
+		d.mu.Lock()
+		if d.conversation == c {
+			d.conversation = nil
+			if l.session == c.session {
+				l.userInput = false
+				l.clearUnsent = previousClearUnsent
+			}
+		}
+		d.mu.Unlock()
 		reply(conn, Response{Error: err.Error()})
-		d.leave(c, LeftByTerminalClose)
 		return
 	}
 	if err := d.store.ConversationEntered(address.String(), address.Role, c.generation, c.terminal, time.Now()); err != nil {

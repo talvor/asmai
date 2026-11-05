@@ -21,13 +21,40 @@ type statusLine struct {
 	decisions []string
 	focus     int64
 	jobs      []int64
+	// holds are the running agents whose input the user holds after an
+	// `asmai take`, each in a line: it keeps reminding the user of an agent
+	// that stays paused until they release it.
+	holds []string
+}
+
+// holdLine is how the status line shows the user holding agent's input.
+func holdLine(agent string) string {
+	return "you hold " + agent + "'s input"
+}
+
+// heldInputs returns the status line's line for each running agent whose
+// input the user holds, in order of agent.
+func (d *daemon) heldInputs() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	held := []string{}
+	for name, l := range d.leaders {
+		if l.session != nil && l.userHolds() {
+			held = append(held, name)
+		}
+	}
+	slices.Sort(held)
+	for i, name := range held {
+		held[i] = holdLine(name)
+	}
+	return held
 }
 
 // statusLine reads the status line as the daemon's state now has it. What it
 // cannot read from the store it keeps from was, which is what the stream last
 // sent. d.mu is not held.
 func (d *daemon) statusLine(was statusLine) statusLine {
-	now := statusLine{prompts: []string{}, decisions: was.decisions, focus: was.focus, jobs: was.jobs}
+	now := statusLine{prompts: []string{}, decisions: was.decisions, focus: was.focus, jobs: was.jobs, holds: d.heldInputs()}
 	pending, err := d.store.PendingDecisions()
 	if err != nil {
 		d.log.Error("reading the pending decisions for the status line", "error", err.Error())
@@ -98,5 +125,8 @@ func (s statusLine) frame(was statusLine, all bool) (Frame, bool) {
 	if all || !slices.Equal(s.jobs, was.jobs) {
 		f.Jobs = &s.jobs
 	}
-	return f, f.Prompts != nil || f.Decisions != nil || f.Focus != nil || f.Jobs != nil
+	if all || !slices.Equal(s.holds, was.holds) {
+		f.Holds = &s.holds
+	}
+	return f, f.Prompts != nil || f.Decisions != nil || f.Focus != nil || f.Jobs != nil || f.Holds != nil
 }

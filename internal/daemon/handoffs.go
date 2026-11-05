@@ -550,7 +550,7 @@ func (d *daemon) nudge(agent string) {
 // mayNudge is called with d.mu held, and says whether automation may type a
 // nudge into l now.
 func (d *daemon) mayNudge(l *leader) bool {
-	return l != nil && l.session != nil && !l.userInput && l.ready && !l.inputUnknown && l.pendingDispatch == 0 && l.currentDispatch == 0 && !d.stopping
+	return l != nil && l.session != nil && !l.userInput && l.held == nil && l.ready && !l.inputUnknown && l.pendingDispatch == 0 && l.currentDispatch == 0 && !d.stopping
 }
 
 func (d *daemon) automatedSubmitted(ref sessionRef, prompt, promptID, transcript string, payload json.RawMessage) (bool, error) {

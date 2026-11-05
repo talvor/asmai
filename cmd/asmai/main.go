@@ -82,7 +82,14 @@ commands you type:
   asmai attach <agent>        show an agent's terminal and observe it; ↑/↓ scroll its history
                               and Ctrl-] detaches.
                               Address an agent as name@role, or by its role for its leader
-  asmai dashboard             show the factory live in this terminal: agents, jobs and the log in three
+  asmai take <agent> [--interrupt]
+                              become the agent's input owner: it waits for the agent's turn
+                              boundary, or with --interrupt interrupts the turn. An unsent draft in
+                              the agent's input box is saved to the journal and cleared first, and
+                              what is addressed to the agent waits in its inbox while you hold its
+                              input. The status line of every attached terminal shows the hold; a
+                              newer take moves it. Coordination's leader is taken with asmai chat
+  asmai dashboard            show the factory live in this terminal: agents, jobs and the log in three
                               tabs, 1, 2 and 3, under a banner of what waits on you; q leaves. It only
                               reads, never acts on the factory, and shows a message while the factory
                               is stopped. It needs a terminal of at least 80 columns by 24 rows
@@ -326,6 +333,7 @@ var groups = map[string][]string{
 // each is missing.
 var positional = map[string][]string{
 	"attach":           {"name the agent, such as leader@coordination or coordination"},
+	"take":             {"name the agent, such as worker1@engineering or engineering"},
 	"repo add":         {"name a local checkout or a URL"},
 	"repo show":        {"name the repository, as `asmai repo list` shows it"},
 	"repo remove":      {"name the repository, as `asmai repo list` shows it"},
@@ -423,7 +431,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var blockedJob int64
 	var blockedBlocks listFlags
 	var decidedAssignment int64
-	var endsJob, prototype bool
+	var endsJob, prototype, interrupt bool
 	var reasons listFlags
 	var repoOptions repoSettings
 	var role roleChoices
@@ -584,6 +592,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.Var(&request.records, "record", "the ID of the user's decision record of the job that satisfies the step the request asks for; may be repeated")
 		flags.Var(&request.grants, "grant", "the ID of a grant of a decision, whose scope covers the job, that satisfies the step the request asks for; may be repeated")
 		flags.Int64Var(&request.userAnswer, "user-answer", 0, "instead of --answer, your request that carried the worker's question to the user, which the user answered in Lavish: its words are the worker's answer, as the user gave them")
+	case "take":
+		flags.BoolVar(&interrupt, "interrupt", false, "interrupt the agent's turn instead of waiting for its turn boundary")
 	case "chat", "dashboard", "doctor", "decisions", "stop", "status", "agents", "jobs", "job show", "job clean", "brief", "push", "attach", "hook", "export", "version", "notices", "providers install", "providers list", "lavish", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list":
 	default:
 		fmt.Fprintf(stderr, "asmai: unknown command %q\n\n%s", name, usage)
@@ -618,7 +628,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "focus", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "answer redeliver", "answer retire", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
-		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean"}, name) {
+		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean", "take"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -740,6 +750,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return dashboardCommand(o, paths, stdin)
 	case "attach":
 		return attach(o, paths, arg, stdin)
+	case "take":
+		return take(o, paths, arg, interrupt, stdin)
 	case "hook":
 		return hook(o, paths, stdin)
 	case "log":

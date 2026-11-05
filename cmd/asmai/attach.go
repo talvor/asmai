@@ -156,6 +156,9 @@ type attachClient struct {
 	decisions []string
 	focus     int64
 	jobs      []int64
+	// holds are the agents whose input the user holds after a take, which
+	// the status line keeps showing.
+	holds []string
 	// model is the model the agent runs and its effort, as the daemon
 	// knows them, which the status line shows.
 	model daemon.Model
@@ -208,6 +211,9 @@ func (c *attachClient) readFrames(r io.Reader) {
 		}
 		if f.Jobs != nil {
 			c.jobs = *f.Jobs
+		}
+		if f.Holds != nil {
+			c.holds = *f.Holds
 		}
 		if f.Model != nil {
 			c.model = *f.Model
@@ -488,7 +494,7 @@ func (c *attachClient) statusLine() string {
 	// What waits on the user comes first, then the focused job and the
 	// jobs that run, so that on a narrow terminal the rest is cut before
 	// them.
-	for _, p := range slices.Concat(c.prompts, c.decisions) {
+	for _, p := range slices.Concat(c.prompts, c.decisions, c.holds) {
 		text += " · " + strings.Map(printable, p)
 	}
 	if c.focus > 0 {

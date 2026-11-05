@@ -63,6 +63,9 @@ const (
 	// CommandConversation attaches the user's terminal to Coordination's
 	// leader with input: the conversation.
 	CommandConversation = "conversation"
+	// CommandTake makes the user the input owner of an agent's session: at
+	// its turn boundary, or at once with Interrupt.
+	CommandTake = "take"
 	// CommandRepoAdd registers the repository the request names, with
 	// AsmAI's clone of it; CommandRepoList, CommandRepoShow and
 	// CommandRepoRemove list, show and remove registered repositories.
@@ -182,8 +185,11 @@ type Request struct {
 	// following it.
 	Snapshot bool `json:"snapshot,omitempty"`
 	// Terminal names the user's terminal the conversation is opened in,
-	// such as /dev/pts/3.
+	// such as /dev/pts/3, or the one a take is made from.
 	Terminal string `json:"terminal,omitempty"`
+	// Interrupt asks a take not to wait for the agent's turn boundary but to
+	// interrupt the turn.
+	Interrupt bool `json:"interrupt,omitempty"`
 	// Session is the credential of the agent session making the call, and
 	// Payload is what the provider passed a hook.
 	Session string          `json:"session,omitempty"`
@@ -335,6 +341,8 @@ type Response struct {
 	LogEntry *DashboardEntry `json:"log_entry,omitempty"`
 	// JobDetail is one job's detail, for the Dashboard.
 	JobDetail *DashboardJobDetail `json:"job_detail,omitempty"`
+	// Taken is what a take did.
+	Taken *Taken `json:"taken,omitempty"`
 	// Attached is the agent an attach follows, and Screen its screen when
 	// a snapshot was asked for.
 	Attached *Leader   `json:"attached,omitempty"`
@@ -807,6 +815,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.attach(conn, r, req)
 	case CommandConversation:
 		d.converse(conn, r, req)
+	case CommandTake:
+		d.take(conn, req)
 	case CommandHook:
 		if err := d.observe(req.Session, req.Payload); err != nil {
 			reply(conn, Response{Error: err.Error()})

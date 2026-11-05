@@ -384,6 +384,10 @@ const (
 	// KindUnsentTextSaved records the text the user left unsent in the
 	// conversation's input box, saved as they left it.
 	KindUnsentTextSaved = "unsent.saved"
+	// KindInputTaken records the user taking an agent's input with
+	// `asmai take`: the terminal, how they took it, and the automated draft
+	// the handover cleared, which unsent.saved holds.
+	KindInputTaken = "input.taken"
 	// KindRepositoryAdded and KindRepositoryRemoved record the user
 	// registering and removing a repository.
 	KindRepositoryAdded   = "repository.added"
@@ -1043,8 +1047,38 @@ func (s *Store) ConversationLeft(agent, role string, generation int, terminal, h
 	return tx.Commit()
 }
 
-// UnsentText is text the user left unsent in an agent's input box when they
-// left the conversation from Terminal, as the journal entry Left records.
+// InputTaken journals that the user took agent's input from terminal, for
+// generation of its session: how says whether they waited for the turn
+// boundary or interrupted the turn, and movedFrom, when set, the terminal
+// whose hold this take moved. unsent is the text the agent's input box held
+// at the handover, an automated draft that is cleared and never typed again;
+// it is saved in an unsent.saved entry beside the take.
+func (s *Store) InputTaken(agent, role string, generation int, terminal, how, movedFrom, unsent string, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	data := map[string]any{"agent": agent, "role": role, "generation": generation, "terminal": terminal, "how": how}
+	if movedFrom != "" {
+		data["movedFrom"] = movedFrom
+	}
+	taken, err := appendEntry(tx, at, KindInputTaken, data)
+	if err != nil {
+		return err
+	}
+	if unsent != "" {
+		saved := UnsentText{Agent: agent, Terminal: terminal, Text: unsent, Left: taken}
+		if _, err := appendEntry(tx, at, KindUnsentTextSaved, saved); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// UnsentText is text left unsent in an agent's input box, saved when the user
+// left the conversation from Terminal or took the agent's input from it, as
+// the journal entry Left records.
 type UnsentText struct {
 	Agent    string `json:"agent"`
 	Terminal string `json:"terminal"`

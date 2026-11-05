@@ -131,6 +131,9 @@ type Frame struct {
 	Decisions *[]string `json:"decisions,omitempty"`
 	Focus     *int64    `json:"focus,omitempty"`
 	Jobs      *[]int64  `json:"jobs,omitempty"`
+	// Holds, when set, are the agents whose input the user holds, as the
+	// status line shows them.
+	Holds *[]string `json:"holds,omitempty"`
 	// Model, when set, is the agent's model and effort as they now are: the
 	// stream sends it whenever either changes after its answer.
 	Model *Model `json:"model,omitempty"`
@@ -230,6 +233,25 @@ type leader struct {
 	// text in Coordination's input box, which leaving saved, until the next
 	// boundary clears the box, or the user comes back to it first.
 	clearUnsent bool
+	// held is the user's take of the session's input, if any: while it is
+	// set, automation types nothing into the session, and the messages for
+	// it wait in its inbox.
+	held *inputHold
+}
+
+// inputHold is one `asmai take`: the terminal it was made from, and whether
+// the handover has happened. Until it has, the take waits for the turn
+// boundary or has interrupted the turn, and automation is already paused. A
+// newer take replaces the hold, and the older one, if it still waits, ends.
+type inputHold struct {
+	terminal string
+	taken    bool
+}
+
+// userHolds reports whether the user holds the session's input through a
+// completed take. d.mu is held.
+func (l *leader) userHolds() bool {
+	return l.held != nil && l.held.taken
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -1015,7 +1037,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.model, l.effort = launch.model, ""
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
-	l.interrupted, l.renudge, l.clearUnsent = 0, 0, false
+	l.interrupted, l.renudge, l.clearUnsent, l.held = 0, 0, false, nil
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
@@ -1166,7 +1188,9 @@ func (d *daemon) leaderStates() []Leader {
 		if l.session != nil {
 			state.State, state.Generation, state.PID = store.AgentRunning, l.generation, l.session.PID()
 			state.Input = InputAutomation
-			if l.inputUnknown || l.interrupted != 0 {
+			if l.userHolds() {
+				state.Input = InputUser
+			} else if l.inputUnknown || l.interrupted != 0 {
 				state.Input = InputUnknown
 			} else if l.userInput {
 				state.Input = InputUser

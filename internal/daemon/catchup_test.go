@@ -186,6 +186,30 @@ func TestTheCatchUpTellsOfInputTheUserStillHoldsAndAnUnknownOutcome(t *testing.T
 	if c, err = f.d.catchUp(); err != nil || slices.Contains(kindsOf(c.Events), EventInput) {
 		t.Errorf("with the user in the conversation, the catch-up is %+v (%v), want no input held", c, err)
 	}
+	resubmitted, err := f.decide(CommandReject, f.assignments[0].ID, "the test needs another pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AssignmentNeedsReconciliation(f.assignments[0].ID, resubmitted.Dispatch.ID, "its session cannot be resumed", "Reconcile it.", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := f.s.WorkerDispatch(f.assignments[0].ID); err != nil || current.Dispatch.ID != resubmitted.Dispatch.ID || current.Dispatch.State != store.DispatchUnknown {
+		t.Fatalf("the interrupted dispatch is %+v (%v), want an unknown outcome", current, err)
+	}
+	c, err = f.d.catchUp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := f.d.events(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.Events, status) {
+		t.Fatalf("catch-up events %+v differ from status events %+v", c.Events, status)
+	}
+	if e := eventOf(t, c.Events, EventHold); e.Job != f.job.Number || e.Agent != f.assignments[0].Worker || !strings.Contains(e.Text, "outcome nobody knows") {
+		t.Errorf("the unknown dispatch outcome is %+v", e)
+	}
 }
 
 // A lost sign-in is told of with the provider's own sign-in command (04 rule
@@ -352,6 +376,75 @@ func TestFailedCatchUpReadPreservesLastDepartureAndUnsentText(t *testing.T) {
 	}
 }
 
+func TestFailedTakeoverCatchUpStillClearsSavedInputBeforeNudging(t *testing.T) {
+	f := newTwoResults(t)
+	f.withWorkers(t)
+	coordination := roles.LeaderOf(roles.Coordination).String()
+	capture := filepath.Join(t.TempDir(), "cleared")
+	rule := strings.Repeat("─", 60)
+	screen := fmt.Sprintf("\x1b[2J\x1b[H%s\r\n❯ draft to recover\r\n%s\x1b[2;19H", rule, rule)
+	script := `printf '%s' "$ASMAI_SCREEN"; stty raw -echo; dd bs=1 count=1 of="$ASMAI_CAPTURE" 2>/dev/null; sleep 60`
+	s, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", script}, Env: append(os.Environ(), "ASMAI_SCREEN="+screen, "ASMAI_CAPTURE="+capture), Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Stop(time.Second) })
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if text, readable := providers.ClaudeCodeUnsentText(s.Screen()); readable && text == "draft to recover" {
+			break
+		}
+	}
+	if text, readable := providers.ClaudeCodeUnsentText(s.Screen()); !readable || text != "draft to recover" {
+		t.Fatalf("the terminal shows %q (readable %t), want the unsent draft", text, readable)
+	}
+	f.d.mu.Lock()
+	l := f.d.leaders[coordination]
+	l.session, l.ready, l.userInput = s, false, true
+	f.d.conversation = &conversation{leader: l, session: s, generation: 1, terminal: "/dev/pts/old", takenOver: make(chan string, 1)}
+	f.d.mu.Unlock()
+	db, err := sql.Open("sqlite3", f.d.cfg.Paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER corrupt_takeover_catch_up AFTER INSERT ON journal WHEN NEW.kind = 'conversation.left' BEGIN INSERT INTO journal(at, kind, data) VALUES (NEW.at, 'unsent.saved', '{broken'); END`); err != nil {
+		t.Fatal(err)
+	}
+	server, client := connectedPair(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.d.converse(server, bufio.NewReader(server), Request{Command: CommandConversation, Terminal: "/dev/pts/new"})
+	}()
+	var response Response
+	if err := json.NewDecoder(client).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if !strings.Contains(response.Error, "reading the text you left unsent") {
+		t.Fatalf("failed takeover answered %+v", response)
+	}
+	f.d.mu.Lock()
+	active, clear, owned := f.d.conversation, l.clearUnsent, l.userInput
+	l.ready = true
+	f.d.mu.Unlock()
+	if active != nil || !clear || owned {
+		t.Fatalf("failed takeover left conversation %v, clear obligation %t, user input %t", active, clear, owned)
+	}
+	var savedData string
+	if err := db.QueryRow(`SELECT data FROM journal WHERE kind = ? AND data != '{broken' ORDER BY id DESC LIMIT 1`, store.KindUnsentTextSaved).Scan(&savedData); err != nil {
+		t.Fatal(err)
+	}
+	var saved store.UnsentText
+	if err := json.Unmarshal([]byte(savedData), &saved); err != nil || saved.Text != "draft to recover" {
+		t.Fatalf("saved unsent text = %+v (%v)", saved, err)
+	}
+	f.d.nudge(coordination)
+	if key, ok := typed(t, capture); !ok || key != providers.ClaudeCodeClearInput {
+		t.Errorf("the resumed terminal received %q (%t), want the clear-input key", key, ok)
+	}
+}
+
 func TestAgentStatusKeepsDecisionLinksWithTheUser(t *testing.T) {
 	f := newLavishFactory(t)
 	page := f.request(t, 0, "Several questions")
@@ -413,6 +506,27 @@ func TestTheCatchUpDoesNotCallOldHeadsFailed(t *testing.T) {
 	}
 	if c, err := f.d.catchUp(); err != nil || !slices.Contains(kindsOf(c.Events), EventFailed) {
 		t.Fatalf("red checks on the pushed head: %+v (%v)", c, err)
+	}
+	pr := store.PullRequest{Job: f.job.Number, Number: 8, URL: "https://github.com/talvor/asmai-fixture/pull/8", Title: "Add a greeting", Branch: jobBranchFor(f.job), Head: f.started, State: "OPEN", Leader: f.assignments[0].Owner, Dispatch: f.reported[0].ID}
+	if _, _, err := f.s.PullRequestRecorded(pr, 1, pr.URL, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	last, _, err := f.s.LastLeft()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := f.d.catchUp(); err != nil || slices.Contains(kindsOf(c.Events), EventFailed) {
+		t.Fatalf("old PR's red checks after a new PR on the same head: %+v (%v)", c, err)
+	}
+	if events, err := f.d.events(last); err != nil || slices.Contains(kindsOf(events), EventFailed) {
+		t.Fatalf("status reported the old PR's red checks: %+v (%v)", events, err)
+	}
+	red.Number = 8
+	if _, _, err := f.s.ChecksObserved(red, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := f.d.catchUp(); err != nil || !slices.Contains(kindsOf(c.Events), EventFailed) {
+		t.Fatalf("red checks on the current PR: %+v (%v)", c, err)
 	}
 	db, err := sql.Open("sqlite3", f.d.cfg.Paths.Store)
 	if err != nil {

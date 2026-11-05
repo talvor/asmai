@@ -60,7 +60,7 @@ func eventRows(events []daemon.Event) [][]string {
 // forwards the Lavish port when a link needs it, and the text the user left
 // unsent, which it only shows: it is never typed again (04 rules 16 to 18).
 func printCatchUp(w io.Writer, c *daemon.CatchUp, forward func(port int) string) {
-	if c == nil || (len(c.Events) == 0 && len(c.Unsent) == 0) {
+	if len(c.Events) == 0 && len(c.Unsent) == 0 {
 		fmt.Fprintln(w, nothingChanged)
 		return
 	}

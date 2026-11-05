@@ -88,6 +88,7 @@ func (d *daemon) events(last int64) ([]Event, error) {
 	// with it.
 	prompts := d.waitingPrompts()
 	raised := map[int64]WaitingPrompt{}
+	pendingRequests := map[int64]bool{}
 	for _, p := range prompts {
 		if p.Request != 0 {
 			raised[p.Request] = p
@@ -97,6 +98,7 @@ func (d *daemon) events(last int64) ([]Event, error) {
 		events = append(events, Event{Kind: EventWaiting, Agent: p.Agent, Text: p.String()})
 	}
 	for _, r := range pending {
+		pendingRequests[r.Request] = true
 		text := decisionLine(r)
 		if p, ok := raised[r.Request]; ok {
 			text = store.JobTag(r.Job) + " " + p.String()
@@ -146,8 +148,15 @@ func (d *daemon) events(last int64) ([]Event, error) {
 		}
 	}
 	for _, p := range prompts {
-		if p.Request == 0 {
-			events = append(events, Event{Kind: EventTerminal, Agent: p.Agent, Text: p.String()})
+		if !pendingRequests[p.Request] {
+			text := p.String()
+			if p.Request != 0 {
+				text = fmt.Sprintf("%s still waits at a native prompt after decision request %d", p.Agent, p.Request)
+				if p.About != "" {
+					text += ": " + p.About
+				}
+			}
+			events = append(events, Event{Kind: EventTerminal, Agent: p.Agent, Text: text})
 		}
 	}
 	for _, name := range running {
@@ -194,7 +203,7 @@ func (d *daemon) jobEvents(last int64) ([]Event, error) {
 				if err != nil || latest.Verdict != "red" {
 					continue
 				}
-				if _, head, ok := d.watched(data.Job); !ok || latest.Head != head {
+				if pr, head, ok := d.watched(data.Job); !ok || latest.Head != head || latest.Number != pr.Number {
 					continue
 				}
 				if j, err := d.store.Job(data.Job); err != nil || j.Ended() {

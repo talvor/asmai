@@ -1418,8 +1418,9 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	d.mu.Unlock()
 
 	// The older terminal's text is saved before this one can type.
+	var savedUnsent bool
 	if older != nil {
-		d.farewell(older, LeftByTakeover)
+		savedUnsent = d.farewell(older, LeftByTakeover)
 	}
 	// The catch-up is what changed since the user last left, which entering
 	// the conversation does not move; a terminal taken over just now counts
@@ -1432,10 +1433,11 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 			d.conversation = nil
 			if l.session == c.session {
 				l.userInput = false
-				l.clearUnsent = previousClearUnsent
+				l.clearUnsent = previousClearUnsent || savedUnsent
 			}
 		}
 		d.mu.Unlock()
+		d.nudge(address.String())
 		reply(conn, Response{Error: err.Error()})
 		return
 	}
@@ -1560,7 +1562,7 @@ func (d *daemon) displaced(c *conversation) bool {
 // terminal took the conversation over, what the journal records is as if the
 // user had left, but the input stays theirs while they have a message under
 // way, for the terminal that took over shows it.
-func (d *daemon) farewell(c *conversation, how string) {
+func (d *daemon) farewell(c *conversation, how string) bool {
 	l := c.leader
 	input := InputAutomation
 	d.mu.Lock()
@@ -1571,9 +1573,11 @@ func (d *daemon) farewell(c *conversation, how string) {
 	// The text is read once the keys the user typed last are drawn.
 	c.session.Settle(settleQuiet, settleLimit)
 	unsent, _ := providers.ClaudeCodeUnsentText(c.session.Screen())
+	saved := false
 	if err := d.store.ConversationLeft(l.address.String(), l.address.Role, c.generation, c.terminal, how, input, unsent, time.Now()); err != nil {
 		d.log.Error("journaling leaving the conversation", "error", err.Error())
 	} else if unsent != "" && how != LeftBySessionEnd {
+		saved = true
 		d.mu.Lock()
 		if l.session == c.session && d.conversation == nil {
 			l.clearUnsent = true
@@ -1582,6 +1586,7 @@ func (d *daemon) farewell(c *conversation, how string) {
 	}
 	d.log.Info("the user left the conversation", "agent", l.address.String(), "generation", c.generation, "terminal", c.terminal, "how", how, "unsent", unsent != "")
 	d.nudge(l.address.String())
+	return saved
 }
 
 // stream answers the client on conn, which r reads, with attached, then

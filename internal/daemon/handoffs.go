@@ -548,9 +548,10 @@ func (d *daemon) nudge(agent string) {
 }
 
 // mayNudge is called with d.mu held, and says whether automation may type a
-// nudge into l now.
+// nudge into l now. It may not while the user holds l's input, nor while a
+// take waits for the end of the turn that runs (03 rules 21 and 35).
 func (d *daemon) mayNudge(l *leader) bool {
-	return l != nil && l.session != nil && !l.userInput && l.ready && !l.inputUnknown && l.pendingDispatch == 0 && l.currentDispatch == 0 && !d.stopping
+	return l != nil && l.session != nil && !l.userInput && l.ready && !l.inputUnknown && l.pendingDispatch == 0 && l.currentDispatch == 0 && l.taken == nil && l.taking == 0 && !d.stopping
 }
 
 func (d *daemon) automatedSubmitted(ref sessionRef, prompt, promptID, transcript string, payload json.RawMessage) (bool, error) {

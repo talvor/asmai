@@ -355,12 +355,7 @@ func (d *daemon) liveAgents() map[string]agentLive {
 		if l.session == nil {
 			continue
 		}
-		live := agentLive{input: InputAutomation}
-		if l.inputUnknown || l.interrupted != 0 {
-			live.input = InputUnknown
-		} else if l.userInput {
-			live.input = InputUser
-		}
+		live := agentLive{input: l.inputOwner()}
 		if d.conversation != nil && d.conversation.leader == l {
 			live.conversation = d.conversation.terminal
 		}

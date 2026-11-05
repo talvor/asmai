@@ -287,6 +287,10 @@ A skill a registered repository carries, used only where the user has switched i
 **Intervention**:
 An explicit period of direct human interaction with an agent outside the normal Coordination conversation, with automated input paused and resulting decisions or changes recorded for its owner.
 
+**Taking an agent**:
+The user becoming an agent's input owner with `asmai take <agent>`. See [Taking an agent](README.md#taking-an-agent) for its behavior.
+_Avoid_: Grab, lock
+
 **Dashboard**:
 The read-only terminal view of the factory's agents, jobs and log, opened with `asmai dashboard`. It shows what is happening and hands the terminal to an agent's attach; it never acts on the factory.
 _Avoid_: Console, monitor

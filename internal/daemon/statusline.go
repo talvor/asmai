@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/talvor/asmai/internal/store"
@@ -21,13 +22,16 @@ type statusLine struct {
 	decisions []string
 	focus     int64
 	jobs      []int64
+	// held are the agents whose input the user holds, with `asmai take`,
+	// until they release it.
+	held []string
 }
 
 // statusLine reads the status line as the daemon's state now has it. What it
 // cannot read from the store it keeps from was, which is what the stream last
 // sent. d.mu is not held.
 func (d *daemon) statusLine(was statusLine) statusLine {
-	now := statusLine{prompts: []string{}, decisions: was.decisions, focus: was.focus, jobs: was.jobs}
+	now := statusLine{prompts: []string{}, decisions: was.decisions, focus: was.focus, jobs: was.jobs, held: d.heldInputs()}
 	pending, err := d.store.PendingDecisions()
 	if err != nil {
 		d.log.Error("reading the pending decisions for the status line", "error", err.Error())
@@ -71,6 +75,20 @@ func (d *daemon) statusLine(was statusLine) statusLine {
 	return now
 }
 
+// heldInputs are the lines of the status line for the agents whose input the
+// user holds, by agent.
+func (d *daemon) heldInputs() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	held := []string{}
+	for _, name := range slices.Sorted(maps.Keys(d.leaders)) {
+		if l := d.leaders[name]; l.session != nil && l.taken != nil {
+			held = append(held, fmt.Sprintf("you hold %s's input", name))
+		}
+	}
+	return held
+}
+
 // decisionLine is how the status line shows a decision request pending with
 // the user, from when it is made until it is answered: its job, its number
 // and where the user answers it.
@@ -92,11 +110,18 @@ func (s statusLine) frame(was statusLine, all bool) (Frame, bool) {
 	if all || !slices.Equal(s.decisions, was.decisions) {
 		f.Decisions = &s.decisions
 	}
+	if all || !slices.Equal(s.held, was.held) {
+		held := slices.Clone(s.held)
+		if held == nil {
+			held = []string{}
+		}
+		f.Held = &held
+	}
 	if all || s.focus != was.focus {
 		f.Focus = &s.focus
 	}
 	if all || !slices.Equal(s.jobs, was.jobs) {
 		f.Jobs = &s.jobs
 	}
-	return f, f.Prompts != nil || f.Decisions != nil || f.Focus != nil || f.Jobs != nil
+	return f, f.Prompts != nil || f.Decisions != nil || f.Focus != nil || f.Jobs != nil || f.Held != nil
 }

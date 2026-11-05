@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/talvor/asmai/internal/certify"
@@ -92,6 +93,9 @@ type Leader struct {
 	// Conversation is the user's terminal the conversation is open in,
 	// when it is open with this leader.
 	Conversation string `json:"conversation,omitempty"`
+	// Taken is the user's terminal that holds the leader's input since the
+	// user took it with `asmai take`.
+	Taken string `json:"taken,omitempty"`
 	// Model is the model an attached agent's session runs, and Effort its
 	// effort level once the provider has reported it: the status line shows
 	// them.
@@ -131,6 +135,9 @@ type Frame struct {
 	Decisions *[]string `json:"decisions,omitempty"`
 	Focus     *int64    `json:"focus,omitempty"`
 	Jobs      *[]int64  `json:"jobs,omitempty"`
+	// Held, when set, are the agents whose input the user holds, which the
+	// stream sends with the rest of the status line.
+	Held *[]string `json:"held,omitempty"`
 	// Model, when set, is the agent's model and effort as they now are: the
 	// stream sends it whenever either changes after its answer.
 	Model *Model `json:"model,omitempty"`
@@ -230,6 +237,27 @@ type leader struct {
 	// text in Coordination's input box, which leaving saved, until the next
 	// boundary clears the box, or the user comes back to it first.
 	clearUnsent bool
+	// taken is the terminal the user took the session's input in with
+	// `asmai take`, once they did: the user holds the input, and automated
+	// input waits, until they release it. taking counts takes awaiting a
+	// boundary or handover, which keep a nudge from starting another.
+	taken   *conversation
+	taking  int
+	takeMu  sync.Mutex
+	takeSeq uint64
+}
+
+// inputOwner says who owns l's input, as the status shows it. d.mu is held.
+func (l *leader) inputOwner() string {
+	switch {
+	case l.taken != nil:
+		return InputUser
+	case l.inputUnknown || l.interrupted != 0:
+		return InputUnknown
+	case l.userInput:
+		return InputUser
+	}
+	return InputAutomation
 }
 
 // submitted reports whether a prompt submission the leader's session
@@ -1016,6 +1044,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
 	l.interrupted, l.renudge, l.clearUnsent = 0, 0, false
+	l.taken, l.taking, l.takeSeq = nil, 0, 0
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
@@ -1165,14 +1194,12 @@ func (d *daemon) leaderStates() []Leader {
 		state := Leader{Agent: l.address.String(), State: store.AgentStopped}
 		if l.session != nil {
 			state.State, state.Generation, state.PID = store.AgentRunning, l.generation, l.session.PID()
-			state.Input = InputAutomation
-			if l.inputUnknown || l.interrupted != 0 {
-				state.Input = InputUnknown
-			} else if l.userInput {
-				state.Input = InputUser
-			}
+			state.Input = l.inputOwner()
 			if c := d.conversation; c != nil && c.leader == l {
 				state.Conversation = c.terminal
+			}
+			if l.taken != nil {
+				state.Taken = l.taken.terminal
 			}
 		}
 		states = append(states, state)
@@ -1380,7 +1407,7 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	d.log.Info("attached", "agent", address.String(), "generation", generation)
 	defer d.log.Info("detached", "agent", address.String(), "generation", generation)
-	d.stream(conn, r, req, s, attached, nil, nil, nil)
+	d.stream(conn, r, req, s, attached, nil, nil, nil, nil)
 }
 
 // converse opens the conversation: it attaches the user's terminal, named
@@ -1447,7 +1474,7 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	d.log.Info("the user entered the conversation", "agent", address.String(), "generation", c.generation, "terminal", c.terminal)
 	model := d.modelOf(address.String(), c.generation)
 	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: c.generation, PID: c.session.PID(), Conversation: c.terminal, Model: model.Name, Effort: model.Effort}
-	how := d.stream(conn, r, req, c.session, attached, c.takenOver, &catchUp, func(keys []byte) { d.typed(c, keys) })
+	how := d.stream(conn, r, req, c.session, attached, c.takenOver, &catchUp, func(keys []byte) { d.typed(c, keys) }, c)
 	d.leave(c, how)
 	if how == LeftByDetaching && !d.displaced(c) {
 		json.NewEncoder(conn).Encode(Frame{Left: true})
@@ -1459,6 +1486,8 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 // can submit their message is counted, so that the provider's confirmation
 // of it can be told apart from automation's submissions.
 func (d *daemon) typed(c *conversation, keys []byte) {
+	c.leader.takeMu.Lock()
+	defer c.leader.takeMu.Unlock()
 	d.mu.Lock()
 	l := c.leader
 	if l.session != c.session || c.displaced {
@@ -1589,15 +1618,32 @@ func (d *daemon) farewell(c *conversation, how string) bool {
 	return saved
 }
 
+func (d *daemon) resize(s *session.Session, agent string, owner *conversation, columns, rows int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l := d.leaders[agent]
+	if l == nil || l.session != s {
+		return
+	}
+	if owner != nil {
+		if l.taken != owner && d.conversation != owner {
+			return
+		}
+	} else if l.taken != nil || l.address == roles.LeaderOf(roles.Coordination) && d.conversation != nil {
+		return
+	}
+	s.Resize(columns, rows)
+}
+
 // stream answers the client on conn, which r reads, with attached, then
 // sends it session s's State and its output as it comes until the session
 // ends or the client goes, and returns which it was. The client may resize
 // the agent's terminal. Only given keys may it also type: each key it sends
 // is passed to keys, and it may ask to leave, which ends the stream with
 // LeftByDetaching for the caller to answer.
-func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, takenOver <-chan string, catchUp *CatchUp, keys func([]byte)) (how string) {
+func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, takenOver <-chan string, catchUp *CatchUp, keys func([]byte), owner *conversation) (how string) {
 	if req.Columns > 0 && req.Rows > 0 {
-		s.Resize(req.Columns, req.Rows)
+		d.resize(s, attached.Agent, owner, req.Columns, req.Rows)
 	}
 	conn.SetDeadline(time.Time{})
 	reply(conn, Response{Attached: attached, CatchUp: catchUp})
@@ -1616,7 +1662,7 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 				continue
 			}
 			if m.Columns > 0 && m.Rows > 0 {
-				s.Resize(m.Columns, m.Rows)
+				d.resize(s, attached.Agent, owner, m.Columns, m.Rows)
 			}
 			if keys == nil {
 				continue

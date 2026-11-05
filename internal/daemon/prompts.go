@@ -194,14 +194,23 @@ func PromptKeys(choice string) ([]byte, bool) {
 // else. d.mu is not held.
 func (d *daemon) relayPrompt(r store.DecisionRequest, choice string) {
 	d.mu.Lock()
+	l := d.leaders[r.Requester]
+	d.mu.Unlock()
+	if l == nil {
+		return
+	}
+	l.takeMu.Lock()
+	defer l.takeMu.Unlock()
+	d.mu.Lock()
 	defer d.mu.Unlock()
 	keys, ok := promptKeys[choice]
-	l := d.leaders[r.Requester]
 	switch {
 	case !ok:
 		d.log.Error("a native prompt's answer is neither of its options, so nothing is relayed", "request", r.Request, "choice", choice)
-	case l == nil || l.session == nil || l.prompt == nil || l.prompt.Request != r.Request || l.prompt.Generation != l.generation:
+	case d.leaders[r.Requester] != l || l.session == nil || l.prompt == nil || l.prompt.Request != r.Request || l.prompt.Generation != l.generation:
 		d.log.Warn("the agent no longer waits at the native prompt the user answered, so nothing is relayed", "agent", r.Requester, "request", r.Request)
+	case l.taken != nil:
+		d.log.Info("the user's answer to a native prompt waits while they hold the agent's input", "agent", r.Requester, "request", r.Request)
 	default:
 		if err := l.session.Input(keys); err != nil {
 			d.log.Error("typing the user's answer into the agent's terminal", "agent", r.Requester, "request", r.Request, "error", err.Error())

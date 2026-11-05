@@ -167,6 +167,28 @@ func TestATakeWaitsForTheRunningTurnsBoundaryAndNoNudgeSlipsInBetween(t *testing
 	}
 }
 
+func TestANativePromptIsABoundaryDuringAnAutomatedTurn(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.working(41)
+	w.f.d.mu.Lock()
+	w.l.prompt = &WaitingPrompt{Agent: w.name, About: "permission", Since: time.Now()}
+	w.f.d.mu.Unlock()
+	client, r, done := w.taking(t, "/dev/pts/7", false)
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	resp := answered(t, r)
+	if resp.Error != "" || resp.Attached == nil || resp.Attached.Input != InputUser {
+		t.Fatalf("taking at the native prompt was answered %+v", resp)
+	}
+	if got := w.typedSoFar(); got != "" {
+		t.Errorf("taking at the prompt typed %q, want no interrupt", got)
+	}
+	if taken := takeJournal(t, w.f.s, store.KindInputTaken); len(taken) != 1 || taken[0]["interrupted"] != nil {
+		t.Errorf("the prompt boundary was journaled as %v, want a take without an interrupt", taken)
+	}
+	client.Close()
+	<-done
+}
+
 // A take that waits stops waiting when its client goes, and the nudges it
 // held back go on.
 func TestATakeWhoseClientGoesBeforeTheBoundaryHoldsNothing(t *testing.T) {
@@ -181,6 +203,69 @@ func TestATakeWhoseClientGoesBeforeTheBoundaryHoldsNothing(t *testing.T) {
 	if w.l.taken != nil || w.l.taking != 0 {
 		t.Errorf("the abandoned take left the hold %v and %d takes counted, want none", w.l.taken, w.l.taking)
 	}
+}
+
+func TestAWaitingTakeCannotDisplaceANewerInterruptingTake(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.working(41)
+	older, olderReader, olderDone := w.taking(t, "/dev/pts/1", false)
+	eventually(t, "the older take waiting", func() bool {
+		w.f.d.mu.Lock()
+		defer w.f.d.mu.Unlock()
+		return w.l.taking == 1
+	})
+	newer, newerReader, newerDone := w.taking(t, "/dev/pts/2", true)
+	if resp := answered(t, newerReader); resp.Error != "" || resp.Attached == nil || resp.Attached.Taken != "/dev/pts/2" {
+		t.Fatalf("the newer take was answered %+v", resp)
+	}
+	older.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, olderReader); !strings.Contains(resp.Error, "superseded") {
+		t.Errorf("the older take was answered %+v, want superseded", resp)
+	}
+	w.f.d.mu.Lock()
+	holder := w.l.taken.terminal
+	w.f.d.mu.Unlock()
+	if holder != "/dev/pts/2" {
+		t.Errorf("the hold moved to %s, want the newer terminal", holder)
+	}
+	if taken := takeJournal(t, w.f.s, store.KindInputTaken); len(taken) != 1 || taken[0]["terminal"] != "/dev/pts/2" {
+		t.Errorf("the takes journaled are %v, want only the newer take", taken)
+	}
+	older.Close()
+	newer.Close()
+	<-olderDone
+	<-newerDone
+}
+
+func TestAWaitingTakeDoesNotCountAgainstAReplacementSession(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.working(41)
+	w.f.d.mu.Lock()
+	w.l.generation = 1
+	w.f.d.mu.Unlock()
+	client, r, done := w.taking(t, "/dev/pts/1", false)
+	eventually(t, "the old session's take waiting", func() bool {
+		w.f.d.mu.Lock()
+		defer w.f.d.mu.Unlock()
+		return w.l.taking == 1
+	})
+	w.f.d.mu.Lock()
+	w.l.session, w.l.generation, w.l.taking = &session.Session{}, 2, 0
+	w.l.ready, w.l.currentDispatch = false, 0
+	w.f.d.mu.Unlock()
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, r); !strings.Contains(resp.Error, "session ended") {
+		t.Errorf("the old take was answered %+v, want session ended", resp)
+	}
+	<-done
+	w.f.d.mu.Lock()
+	w.l.ready = true
+	counted, mayNudge := w.l.taking, w.f.d.mayNudge(w.l)
+	w.f.d.mu.Unlock()
+	if counted != 0 || !mayNudge {
+		t.Errorf("the replacement has %d takes counted and may nudge %t, want zero and true", counted, mayNudge)
+	}
+	client.Close()
 }
 
 // --interrupt does not wait for the boundary: Esc reaches the terminal, the
@@ -229,6 +314,54 @@ func TestAnUnsentAutomatedDraftIsRecordedAndClearedBeforeTheHandover(t *testing.
 	}
 	client.Close()
 	<-done
+}
+
+func TestAFailedDraftClearAbortsTheHandover(t *testing.T) {
+	w := newTakenWorker(t, "asmai inbox --dispatch 9")
+	w.boundary()
+	w.l.session.Stop(time.Second)
+	client, r, done := w.taking(t, "/dev/pts/7", false)
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, r); !strings.Contains(resp.Error, "clearing the automated draft") {
+		t.Errorf("the failed clear was answered %+v, want an error", resp)
+	}
+	<-done
+	w.f.d.mu.Lock()
+	held := w.l.taken != nil
+	w.f.d.mu.Unlock()
+	if held || len(takeJournal(t, w.f.s, store.KindInputTaken)) != 0 || len(takeJournal(t, w.f.s, store.KindDraftCleared)) != 0 {
+		t.Errorf("a failed clear left a hold or journaled a successful take")
+	}
+	client.Close()
+}
+
+func TestANewerTakeWaitsUntilTheOlderDraftIsCleared(t *testing.T) {
+	w := newTakenWorker(t, "asmai inbox --dispatch 9")
+	w.working(41)
+	older, olderReader, olderDone := w.taking(t, "/dev/pts/1", true)
+	eventually(t, "the older take's interrupt", func() bool { return w.typedSoFar() == interruptKey })
+	newer, newerReader, newerDone := w.taking(t, "/dev/pts/2", false)
+	newer.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, err := newerReader.Peek(1); err == nil {
+		t.Fatal("the newer take answered before draft clearing finished")
+	}
+	newer.SetReadDeadline(time.Time{})
+	if resp := answered(t, olderReader); resp.Error != "" || resp.Attached == nil {
+		t.Fatalf("the older take was answered %+v", resp)
+	}
+	if resp := answered(t, newerReader); resp.Error != "" || resp.Attached == nil || resp.Attached.Taken != "/dev/pts/2" {
+		t.Fatalf("the newer take was answered %+v", resp)
+	}
+	line, _ := json.Marshal(ClientMessage{Keys: []byte("new")})
+	newer.Write(append(line, '\n'))
+	eventually(t, "the newer terminal's keys", func() bool { return strings.HasSuffix(w.typedSoFar(), "new") })
+	if got := w.typedSoFar(); got != interruptKey+providers.ClaudeCodeClearInput+"new" {
+		t.Errorf("the terminal received %q, want interrupt, clear, then newer keys", got)
+	}
+	older.Close()
+	newer.Close()
+	<-olderDone
+	<-newerDone
 }
 
 // A newer take of an agent the user already holds moves the hold: the older
@@ -297,16 +430,28 @@ func TestAnAgentsCredentialCannotTake(t *testing.T) {
 	}
 }
 
-// The conversation is Coordination's input already, so it is not taken.
-func TestCoordinationsLeaderIsNotTaken(t *testing.T) {
-	f := newTwoResults(t)
-	f.withWorkers(t)
-	server, client := connectedPair(t)
-	f.d.take(server, bufio.NewReader(server), Request{Command: CommandTake, Agent: roles.Coordination})
-	resp := answered(t, bufio.NewReader(client))
-	if !strings.Contains(resp.Error, "asmai chat") {
-		t.Errorf("taking Coordination was answered %+v, want it sent to the conversation", resp)
+func TestCoordinationsLeaderCanBeTaken(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.boundary()
+	coordination := roles.LeaderOf(roles.Coordination)
+	w.f.d.mu.Lock()
+	delete(w.f.d.leaders, w.name)
+	w.name, w.l.address = coordination.String(), coordination
+	w.f.d.leaders[w.name] = w.l
+	w.f.d.mu.Unlock()
+	client, r, done := w.taking(t, "/dev/pts/7", false)
+	if resp := answered(t, r); resp.Error != "" || resp.Attached == nil || resp.Attached.Agent != w.name {
+		t.Errorf("taking Coordination was answered %+v, want its input", resp)
 	}
+	w.f.d.typed(&conversation{leader: w.l, session: w.l.session}, []byte("chat"))
+	line, _ := json.Marshal(ClientMessage{Keys: []byte("take")})
+	client.Write(append(line, '\n'))
+	eventually(t, "the taken terminal's keys", func() bool { return strings.Contains(w.typedSoFar(), "take") })
+	if got := w.typedSoFar(); got != "take" {
+		t.Errorf("Coordination's input received %q, want only the taking terminal's keys", got)
+	}
+	client.Close()
+	<-done
 }
 
 // The status line shows the input the user holds, in every attached

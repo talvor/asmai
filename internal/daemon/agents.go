@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/talvor/asmai/internal/certify"
@@ -241,8 +242,10 @@ type leader struct {
 	// input waits, until they release it. taking counts the takes that wait
 	// for the session's turn to end, which keep a nudge from starting
 	// another.
-	taken  *conversation
-	taking int
+	taken   *conversation
+	taking  int
+	takeMu  sync.Mutex
+	takeSeq uint64
 }
 
 // inputOwner says who owns l's input, as the status shows it. d.mu is held.
@@ -1042,7 +1045,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.userInput, l.submits, l.earlier, l.submitTerminal = false, 0, 0, ""
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
 	l.interrupted, l.renudge, l.clearUnsent = 0, 0, false
-	l.taken, l.taking = nil, 0
+	l.taken, l.taking, l.takeSeq = nil, 0, 0
 	l.prompt, l.managedOnly = nil, perms.ManagedOnly
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
@@ -1484,9 +1487,11 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 // can submit their message is counted, so that the provider's confirmation
 // of it can be told apart from automation's submissions.
 func (d *daemon) typed(c *conversation, keys []byte) {
+	c.leader.takeMu.Lock()
+	defer c.leader.takeMu.Unlock()
 	d.mu.Lock()
 	l := c.leader
-	if l.session != c.session || c.displaced {
+	if l.session != c.session || c.displaced || l.taken != nil && l.taken != c {
 		d.mu.Unlock()
 		return
 	}

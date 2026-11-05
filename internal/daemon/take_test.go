@@ -335,6 +335,89 @@ func TestAFailedDraftClearAbortsTheHandover(t *testing.T) {
 	client.Close()
 }
 
+func TestAFailedInterruptWriteLeavesTheTurnAndInputUntouched(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.working(41)
+	w.l.session.Stop(time.Second)
+	client, r, done := w.taking(t, "/dev/pts/7", true)
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, r); !strings.Contains(resp.Error, "interrupting") {
+		t.Errorf("the failed interrupt was answered %+v, want an error", resp)
+	}
+	<-done
+	w.f.d.mu.Lock()
+	held, interrupted, taking := w.l.taken != nil, w.l.interrupted, w.l.taking
+	w.f.d.mu.Unlock()
+	if held || interrupted != 0 || taking != 0 || len(takeJournal(t, w.f.s, store.KindInputTaken)) != 0 {
+		t.Errorf("the failed interrupt left hold %t, interrupted %d, takes %d, or a take journal entry", held, interrupted, taking)
+	}
+	client.Close()
+}
+
+func TestAJournalFailureKeepsTheClearedDraftRecorded(t *testing.T) {
+	w := newTakenWorker(t, "asmai inbox --dispatch 9")
+	w.boundary()
+	client, r, done := w.taking(t, "/dev/pts/7", false)
+	eventually(t, "the draft clear key", func() bool { return w.typedSoFar() == providers.ClaudeCodeClearInput })
+	if err := w.f.s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, r); !strings.Contains(resp.Error, "journaling the take") {
+		t.Errorf("the failed journal was answered %+v, want an error", resp)
+	}
+	<-done
+	w.f.d.mu.Lock()
+	held, taking := w.l.taken != nil, w.l.taking
+	w.f.d.mu.Unlock()
+	if held || taking != 0 {
+		t.Errorf("the failed journal left hold %t and takes %d, want neither", held, taking)
+	}
+	reopened, err := store.Open(w.f.d.cfg.Paths.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if recorded := takeJournal(t, reopened, store.KindDraftRecorded); len(recorded) != 1 || recorded[0]["text"] != "asmai inbox --dispatch 9" {
+		t.Errorf("the cleared draft was recorded as %v, want its text preserved", recorded)
+	}
+	if taken := takeJournal(t, reopened, store.KindInputTaken); len(taken) != 0 {
+		t.Errorf("the failed take was journaled as %v", taken)
+	}
+	client.Close()
+}
+
+func TestAFailedMovedTakeKeepsThePreviousTerminalTyping(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.boundary()
+	older, olderReader, olderDone := w.taking(t, "/dev/pts/1", false)
+	answered(t, olderReader)
+	w.f.d.mu.Lock()
+	previous := w.l.taken
+	w.f.d.mu.Unlock()
+	if err := w.f.s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	newer, newerReader, newerDone := w.taking(t, "/dev/pts/2", false)
+	newer.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, newerReader); !strings.Contains(resp.Error, "journaling the take") {
+		t.Errorf("the failed move was answered %+v, want an error", resp)
+	}
+	<-newerDone
+	w.f.d.mu.Lock()
+	holder, displaced := w.l.taken, previous.displaced
+	w.f.d.mu.Unlock()
+	if holder != previous || displaced {
+		t.Errorf("the failed move left holder %p and displaced %t, want the old holder %p undisplaced", holder, displaced, previous)
+	}
+	line, _ := json.Marshal(ClientMessage{Keys: []byte("still here")})
+	older.Write(append(line, '\n'))
+	eventually(t, "the original terminal's keys", func() bool { return w.typedSoFar() == "still here" })
+	older.Close()
+	newer.Close()
+	<-olderDone
+}
+
 func TestANewerTakeWaitsUntilTheOlderDraftIsCleared(t *testing.T) {
 	w := newTakenWorker(t, "asmai inbox --dispatch 9")
 	w.working(41)
@@ -430,28 +513,29 @@ func TestAnAgentsCredentialCannotTake(t *testing.T) {
 	}
 }
 
-func TestCoordinationsLeaderCanBeTaken(t *testing.T) {
-	w := newTakenWorker(t, "")
-	w.boundary()
+func TestCoordinationsLeaderIsNotTaken(t *testing.T) {
+	w := newTakenWorker(t, "the user's unsent chat")
 	coordination := roles.LeaderOf(roles.Coordination)
 	w.f.d.mu.Lock()
 	delete(w.f.d.leaders, w.name)
-	w.name, w.l.address = coordination.String(), coordination
+	w.name, w.l.address, w.l.userInput = coordination.String(), coordination, true
 	w.f.d.leaders[w.name] = w.l
 	w.f.d.mu.Unlock()
-	client, r, done := w.taking(t, "/dev/pts/7", false)
-	if resp := answered(t, r); resp.Error != "" || resp.Attached == nil || resp.Attached.Agent != w.name {
-		t.Errorf("taking Coordination was answered %+v, want its input", resp)
+	server, client := connectedPair(t)
+	w.f.d.take(server, bufio.NewReader(server), Request{Command: CommandTake, Agent: roles.Coordination, Interrupt: true})
+	if resp := answered(t, bufio.NewReader(client)); !strings.Contains(resp.Error, "asmai chat") {
+		t.Errorf("taking Coordination was answered %+v, want the conversation command", resp)
 	}
-	w.f.d.typed(&conversation{leader: w.l, session: w.l.session}, []byte("chat"))
-	line, _ := json.Marshal(ClientMessage{Keys: []byte("take")})
-	client.Write(append(line, '\n'))
-	eventually(t, "the taken terminal's keys", func() bool { return strings.Contains(w.typedSoFar(), "take") })
-	if got := w.typedSoFar(); got != "take" {
-		t.Errorf("Coordination's input received %q, want only the taking terminal's keys", got)
+	if got := w.typedSoFar(); got != "" {
+		t.Errorf("taking Coordination typed %q into the user's chat", got)
+	}
+	if draft, _ := providers.ClaudeCodeUnsentText(w.l.session.Screen()); draft != "the user's unsent chat" {
+		t.Errorf("the user's unsent chat became %q", draft)
+	}
+	if recorded := takeJournal(t, w.f.s, store.KindDraftRecorded); len(recorded) != 0 {
+		t.Errorf("the user's chat was recorded as an automated draft: %v", recorded)
 	}
 	client.Close()
-	<-done
 }
 
 // The status line shows the input the user holds, in every attached

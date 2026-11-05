@@ -239,9 +239,8 @@ type leader struct {
 	clearUnsent bool
 	// taken is the terminal the user took the session's input in with
 	// `asmai take`, once they did: the user holds the input, and automated
-	// input waits, until they release it. taking counts the takes that wait
-	// for the session's turn to end, which keep a nudge from starting
-	// another.
+	// input waits, until they release it. taking counts takes awaiting a
+	// boundary or handover, which keep a nudge from starting another.
 	taken   *conversation
 	taking  int
 	takeMu  sync.Mutex
@@ -1491,7 +1490,7 @@ func (d *daemon) typed(c *conversation, keys []byte) {
 	defer c.leader.takeMu.Unlock()
 	d.mu.Lock()
 	l := c.leader
-	if l.session != c.session || c.displaced || l.taken != nil && l.taken != c {
+	if l.session != c.session || c.displaced {
 		d.mu.Unlock()
 		return
 	}

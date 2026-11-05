@@ -46,6 +46,10 @@ func (d *daemon) take(conn *net.UnixConn, r *bufio.Reader, req Request) {
 		reply(conn, Response{Error: err.Error()})
 		return
 	}
+	if address == roles.LeaderOf(roles.Coordination) {
+		reply(conn, Response{Error: fmt.Sprintf("%s is the conversation; use `asmai chat` to speak with it", address)})
+		return
+	}
 	d.mu.Lock()
 	l := d.leaders[address.String()]
 	if l == nil || l.session == nil || d.stopping {
@@ -83,8 +87,8 @@ func (d *daemon) take(conn *net.UnixConn, r *bufio.Reader, req Request) {
 		take.Draft, err = d.clearDraft(c, interrupted)
 		if err != nil {
 			d.mu.Lock()
-			if l.taken == c {
-				l.taken = nil
+			if l.generation == generation {
+				l.taking--
 			}
 			d.mu.Unlock()
 			l.takeMu.Unlock()
@@ -95,8 +99,8 @@ func (d *daemon) take(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	d.mu.Lock()
 	if l.session != s {
-		if l.taken == c {
-			l.taken = nil
+		if l.generation == generation {
+			l.taking--
 		}
 		d.mu.Unlock()
 		l.takeMu.Unlock()
@@ -105,15 +109,19 @@ func (d *daemon) take(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	if _, err := d.store.InputTaken(take, time.Now()); err != nil {
 		d.log.Error("journaling the user taking an agent's input", "agent", address.String(), "error", err.Error())
-		if l.taken == c {
-			l.taken = nil
-		}
+		l.taking--
 		d.mu.Unlock()
 		l.takeMu.Unlock()
 		d.nudge(address.String())
 		reply(conn, Response{Error: fmt.Sprintf("journaling the take: %v", err)})
 		return
 	}
+	if older := l.taken; older != nil {
+		older.displaced = true
+		older.takenOver <- terminal
+	}
+	l.taken = c
+	l.taking--
 	d.mu.Unlock()
 	l.takeMu.Unlock()
 	d.log.Info("the user took an agent's input", "agent", address.String(), "generation", generation, "terminal", terminal, "interrupted", interrupted, "moved", moved, "draft", take.Draft != "")
@@ -132,8 +140,7 @@ var errTakeAbandoned = errors.New("the client went before the take was granted")
 // boundary, or the user already holds its input, which the take then moves,
 // or interrupt is set, which has the running turn interrupted. It returns the
 // take, whether it interrupted a turn or moved a hold, and the dispatch that
-// was interrupted. The take is made, and l.taking counted down, under d.mu, so
-// that no nudge slips in between the boundary and the hold.
+// was interrupted.
 func (d *daemon) awaitBoundary(conn *net.UnixConn, r *bufio.Reader, l *leader, s *session.Session, seq uint64, terminal string, interrupt bool) (c *conversation, interrupted, moved bool, dispatch int64, err error) {
 	for {
 		l.takeMu.Lock()
@@ -153,29 +160,21 @@ func (d *daemon) awaitBoundary(conn *net.UnixConn, r *bufio.Reader, l *leader, s
 			return nil, false, false, 0, errors.New("the factory is stopping")
 		case l.taken != nil || interrupt || l.atBoundary():
 			c = &conversation{leader: l, session: s, generation: l.generation, terminal: terminal, takenOver: make(chan string, 1)}
-			if older := l.taken; older != nil {
-				// The newer take moves the hold: the older terminal is told,
-				// and only observes from now on.
+			if l.taken != nil {
 				moved = true
-				older.displaced = true
-				older.takenOver <- terminal
 			} else if !l.atBoundary() {
 				interrupted = true
 				dispatch = l.currentDispatch
-				if l.currentDispatch != 0 {
-					// Claude Code reports no interrupt, so the turn's state is
-					// unknown until the session reports a finished turn.
-					l.interrupted = l.currentDispatch
-				}
-			}
-			l.taken = c
-			l.taking--
-			d.mu.Unlock()
-			if interrupted {
 				if err := s.Input([]byte(interruptKey)); err != nil {
-					d.log.Warn("interrupting the turn of an agent the user takes", "agent", l.address.String(), "error", err.Error())
+					d.mu.Unlock()
+					l.takeMu.Unlock()
+					return nil, false, false, 0, fmt.Errorf("interrupting %s's turn: %w", l.address, err)
+				}
+				if dispatch != 0 {
+					l.interrupted = dispatch
 				}
 			}
+			d.mu.Unlock()
 			return c, interrupted, moved, dispatch, nil
 		}
 		d.mu.Unlock()
@@ -194,11 +193,10 @@ func (d *daemon) awaitBoundary(conn *net.UnixConn, r *bufio.Reader, l *leader, s
 }
 
 // clearDraft records and clears what automation left unsent in the input box
-// of the session c holds, now that nothing is typed for it, and returns it:
+// of the session c names, now that nothing is typed for it, and returns it:
 // the text that stands in the box, which the user did not type, is never
 // theirs to send. When the turn was interrupted the box is read once it has
-// settled. The user holds the input before the box is cleared, so nothing
-// of theirs can be in it.
+// settled.
 func (d *daemon) clearDraft(c *conversation, interrupted bool) (string, error) {
 	if interrupted {
 		c.session.Settle(settleQuiet, settleLimit)
@@ -206,6 +204,9 @@ func (d *daemon) clearDraft(c *conversation, interrupted bool) (string, error) {
 	draft, readable := providers.ClaudeCodeUnsentText(c.session.Screen())
 	if !readable || draft == "" {
 		return "", nil
+	}
+	if err := d.store.DraftRecorded(c.leader.address.String(), c.generation, c.terminal, draft, time.Now()); err != nil {
+		return "", err
 	}
 	if err := c.session.Input([]byte(providers.ClaudeCodeClearInput)); err != nil {
 		d.log.Error("clearing an automated draft for the user taking the input", "agent", c.leader.address.String(), "error", err.Error())

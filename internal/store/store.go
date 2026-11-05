@@ -388,8 +388,9 @@ const (
 	// terminal moving the hold, and KindDraftCleared the automated draft
 	// that was recorded and cleared from the agent's input box before the
 	// input was handed over.
-	KindInputTaken   = "input.taken"
-	KindDraftCleared = "draft.cleared"
+	KindInputTaken    = "input.taken"
+	KindDraftRecorded = "draft.recorded"
+	KindDraftCleared  = "draft.cleared"
 	// KindRepositoryAdded and KindRepositoryRemoved record the user
 	// registering and removing a repository.
 	KindRepositoryAdded   = "repository.added"
@@ -1074,6 +1075,12 @@ type DraftCleared struct {
 	Terminal string `json:"terminal"`
 	Text     string `json:"text"`
 	Taken    int64  `json:"taken"`
+}
+
+func (s *Store) DraftRecorded(agent string, generation int, terminal, text string, at time.Time) error {
+	return s.change(at, func(tx *sql.Tx) (string, any, error) {
+		return KindDraftRecorded, map[string]any{"agent": agent, "generation": generation, "terminal": terminal, "text": text}, nil
+	})
 }
 
 // InputTaken journals that the user took an agent's input as t says, and the

@@ -128,7 +128,7 @@ func (d *daemon) take(conn *net.UnixConn, r *bufio.Reader, req Request) {
 
 	model := d.modelOf(address.String(), generation)
 	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: generation, PID: s.PID(), Input: InputUser, Taken: terminal, Model: model.Name, Effort: model.Effort}
-	how := d.stream(conn, r, req, s, attached, c.takenOver, nil, func(keys []byte) { d.typed(c, keys) })
+	how := d.stream(conn, r, req, s, attached, c.takenOver, nil, func(keys []byte) { d.typed(c, keys) }, c)
 	d.log.Info("the user detached from an agent they hold", "agent", address.String(), "generation", generation, "terminal", terminal, "how", how)
 }
 

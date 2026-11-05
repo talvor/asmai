@@ -455,6 +455,9 @@ func TestANewerTakeMovesTheHoldToTheNewTerminal(t *testing.T) {
 	w.boundary()
 	older, olderReader, olderDone := w.taking(t, "/dev/pts/1", false)
 	answered(t, olderReader)
+	w.f.d.mu.Lock()
+	previous := w.l.taken
+	w.f.d.mu.Unlock()
 	newer, newerReader, newerDone := w.taking(t, "/dev/pts/2", false)
 	// The newer take is not made to wait for a boundary, as the user holds
 	// the input already.
@@ -475,6 +478,18 @@ func TestANewerTakeMovesTheHoldToTheNewTerminal(t *testing.T) {
 	if holder != "/dev/pts/2" {
 		t.Errorf("the hold is in %s, want /dev/pts/2", holder)
 	}
+	initialServer, initialClient := connectedPair(t)
+	initialDone := make(chan struct{})
+	go func() {
+		defer close(initialDone)
+		w.f.d.stream(initialServer, bufio.NewReader(initialServer), Request{Columns: 30, Rows: 12}, w.l.session, &Leader{Agent: w.name, Generation: w.l.generation}, nil, nil, nil, previous)
+	}()
+	answered(t, bufio.NewReader(initialClient))
+	initialClient.Close()
+	<-initialDone
+	if screen := w.l.session.Screen(); screen.Columns != 80 || screen.Rows != 24 {
+		t.Errorf("the displaced terminal's initial size changed the screen to %d by %d", screen.Columns, screen.Rows)
+	}
 
 	send := func(c *net.UnixConn, keys string) {
 		line, _ := json.Marshal(ClientMessage{Keys: []byte(keys)})
@@ -491,9 +506,22 @@ func TestANewerTakeMovesTheHoldToTheNewTerminal(t *testing.T) {
 	if len(taken) != 2 || taken[1]["moved"] != true || taken[1]["terminal"] != "/dev/pts/2" {
 		t.Errorf("the journal holds the takes %v, want the second to have moved the hold", taken)
 	}
+	resize := func(c *net.UnixConn, columns, rows int, leave bool) {
+		line, _ := json.Marshal(ClientMessage{Columns: columns, Rows: rows, Leave: leave})
+		c.Write(append(line, '\n'))
+	}
+	resize(newer, 100, 28, false)
+	eventually(t, "the new holder's size", func() bool {
+		screen := w.l.session.Screen()
+		return screen.Columns == 100 && screen.Rows == 28
+	})
+	resize(older, 40, 15, true)
+	<-olderDone
+	if screen := w.l.session.Screen(); screen.Columns != 100 || screen.Rows != 28 {
+		t.Errorf("the displaced terminal's later size changed the screen to %d by %d", screen.Columns, screen.Rows)
+	}
 	older.Close()
 	newer.Close()
-	<-olderDone
 	<-newerDone
 }
 

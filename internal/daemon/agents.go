@@ -1407,7 +1407,7 @@ func (d *daemon) attach(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	d.log.Info("attached", "agent", address.String(), "generation", generation)
 	defer d.log.Info("detached", "agent", address.String(), "generation", generation)
-	d.stream(conn, r, req, s, attached, nil, nil, nil)
+	d.stream(conn, r, req, s, attached, nil, nil, nil, nil)
 }
 
 // converse opens the conversation: it attaches the user's terminal, named
@@ -1474,7 +1474,7 @@ func (d *daemon) converse(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	d.log.Info("the user entered the conversation", "agent", address.String(), "generation", c.generation, "terminal", c.terminal)
 	model := d.modelOf(address.String(), c.generation)
 	attached := &Leader{Agent: address.String(), State: store.AgentRunning, Generation: c.generation, PID: c.session.PID(), Conversation: c.terminal, Model: model.Name, Effort: model.Effort}
-	how := d.stream(conn, r, req, c.session, attached, c.takenOver, &catchUp, func(keys []byte) { d.typed(c, keys) })
+	how := d.stream(conn, r, req, c.session, attached, c.takenOver, &catchUp, func(keys []byte) { d.typed(c, keys) }, c)
 	d.leave(c, how)
 	if how == LeftByDetaching && !d.displaced(c) {
 		json.NewEncoder(conn).Encode(Frame{Left: true})
@@ -1618,15 +1618,32 @@ func (d *daemon) farewell(c *conversation, how string) bool {
 	return saved
 }
 
+func (d *daemon) resize(s *session.Session, agent string, owner *conversation, columns, rows int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l := d.leaders[agent]
+	if l == nil || l.session != s {
+		return
+	}
+	if owner != nil {
+		if l.taken != owner && d.conversation != owner {
+			return
+		}
+	} else if l.taken != nil || l.address == roles.LeaderOf(roles.Coordination) && d.conversation != nil {
+		return
+	}
+	s.Resize(columns, rows)
+}
+
 // stream answers the client on conn, which r reads, with attached, then
 // sends it session s's State and its output as it comes until the session
 // ends or the client goes, and returns which it was. The client may resize
 // the agent's terminal. Only given keys may it also type: each key it sends
 // is passed to keys, and it may ask to leave, which ends the stream with
 // LeftByDetaching for the caller to answer.
-func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, takenOver <-chan string, catchUp *CatchUp, keys func([]byte)) (how string) {
+func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *session.Session, attached *Leader, takenOver <-chan string, catchUp *CatchUp, keys func([]byte), owner *conversation) (how string) {
 	if req.Columns > 0 && req.Rows > 0 {
-		s.Resize(req.Columns, req.Rows)
+		d.resize(s, attached.Agent, owner, req.Columns, req.Rows)
 	}
 	conn.SetDeadline(time.Time{})
 	reply(conn, Response{Attached: attached, CatchUp: catchUp})
@@ -1645,7 +1662,7 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 				continue
 			}
 			if m.Columns > 0 && m.Rows > 0 {
-				s.Resize(m.Columns, m.Rows)
+				d.resize(s, attached.Agent, owner, m.Columns, m.Rows)
 			}
 			if keys == nil {
 				continue

@@ -37,7 +37,7 @@ func newTakenWorker(t *testing.T, draft string) takenWorker {
 	capture := filepath.Join(t.TempDir(), "typed")
 	rule := strings.Repeat("─", 60)
 	screen := fmt.Sprintf("\x1b[2J\x1b[H%s\r\n❯ %s\r\n%s\x1b[2;%dH", rule, draft, rule, 4+len([]rune(draft)))
-	script := `printf '%s' "$ASMAI_SCREEN"; stty raw -echo; cat >> "$ASMAI_CAPTURE"`
+	script := `stty raw -echo; printf '%s' "$ASMAI_SCREEN"; cat >> "$ASMAI_CAPTURE"`
 	s, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", script}, Env: append(os.Environ(), "ASMAI_SCREEN="+screen, "ASMAI_CAPTURE="+capture), Columns: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

@@ -99,20 +99,31 @@ func (d *daemon) take(conn *net.UnixConn, r *bufio.Reader, req Request) {
 	}
 	d.mu.Lock()
 	if l.session != s {
+		restoreErr := restoreDraft(c, take.Draft)
 		if l.generation == generation {
 			l.taking--
 		}
 		d.mu.Unlock()
 		l.takeMu.Unlock()
-		reply(conn, Response{Error: fmt.Sprintf("%s's session ended before its input could be taken", address)})
+		err := fmt.Errorf("%s's session ended before its input could be taken", address)
+		if restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restoring the automated draft: %w", restoreErr))
+		}
+		reply(conn, Response{Error: err.Error()})
 		return
 	}
 	if _, err := d.store.InputTaken(take, time.Now()); err != nil {
 		d.log.Error("journaling the user taking an agent's input", "agent", address.String(), "error", err.Error())
+		restoreErr := restoreDraft(c, take.Draft)
 		l.taking--
 		d.mu.Unlock()
 		l.takeMu.Unlock()
-		d.nudge(address.String())
+		if take.Draft == "" {
+			d.nudge(address.String())
+		}
+		if restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restoring the automated draft: %w", restoreErr))
+		}
 		reply(conn, Response{Error: fmt.Sprintf("journaling the take: %v", err)})
 		return
 	}
@@ -165,12 +176,27 @@ func (d *daemon) awaitBoundary(conn *net.UnixConn, r *bufio.Reader, l *leader, s
 			} else if !l.atBoundary() {
 				interrupted = true
 				dispatch = l.currentDispatch
+				pending := l.pendingDispatch
+				if dispatch == 0 {
+					dispatch = pending
+				}
 				if err := s.Input([]byte(interruptKey)); err != nil {
 					d.mu.Unlock()
 					l.takeMu.Unlock()
 					return nil, false, false, 0, fmt.Errorf("interrupting %s's turn: %w", l.address, err)
 				}
-				if dispatch != 0 {
+				if pending != 0 {
+					if err := d.store.InterruptedDispatch(pending, l.address.String(), l.generation, l.transcript, time.Now()); err != nil {
+						d.mu.Unlock()
+						l.takeMu.Unlock()
+						return nil, false, false, 0, fmt.Errorf("settling %s's interrupted submission: %w", l.address, err)
+					}
+					l.renudge = pending
+					l.pendingDispatch = 0
+					l.pendingPrompt = ""
+					l.inputUnknown = false
+					l.ready = true
+				} else if dispatch != 0 {
 					l.interrupted = dispatch
 				}
 			}
@@ -205,13 +231,17 @@ func (d *daemon) clearDraft(c *conversation, interrupted bool) (string, error) {
 	if !readable || draft == "" {
 		return "", nil
 	}
-	if err := d.store.DraftRecorded(c.leader.address.String(), c.generation, c.terminal, draft, time.Now()); err != nil {
-		return "", err
-	}
 	if err := c.session.Input([]byte(providers.ClaudeCodeClearInput)); err != nil {
 		d.log.Error("clearing an automated draft for the user taking the input", "agent", c.leader.address.String(), "error", err.Error())
 		return "", err
 	}
 	c.session.Settle(settleQuiet, settleLimit)
 	return draft, nil
+}
+
+func restoreDraft(c *conversation, draft string) error {
+	if draft == "" {
+		return nil
+	}
+	return c.session.Input([]byte(pasteStart + draft + pasteEnd))
 }

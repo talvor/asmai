@@ -518,10 +518,17 @@ func (c *attachClient) statusLine() string {
 			text += " · " + c.notice
 		}
 	}
+	if len(c.held) > 0 {
+		held := make([]string, len(c.held))
+		for i, item := range c.held {
+			held[i] = strings.Map(printable, item)
+		}
+		text = " " + strings.Join(held, " · ") + " ·" + text
+	}
 	// What waits on the user comes first, then the focused job and the
 	// jobs that run, so that on a narrow terminal the rest is cut before
 	// them.
-	for _, p := range slices.Concat(c.prompts, c.decisions, c.held) {
+	for _, p := range slices.Concat(c.prompts, c.decisions) {
 		text += " · " + strings.Map(printable, p)
 	}
 	if c.focus > 0 {

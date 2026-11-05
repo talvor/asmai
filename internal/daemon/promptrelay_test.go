@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -168,6 +169,65 @@ func TestUnderThePolicyANativePromptAtAWorkerIsRaisedToTheUserAndOnlyTheirWitnes
 			if _, _, _, err := f.d.conversationAnswer(Request{Session: "coordination", Command: CommandDecisionRecord, Request: r.Request, Version: 1, Cites: said, Choice: tt.choice, Reading: "again"}); err == nil {
 				t.Error("the prompt was answered twice")
 			}
+		})
+	}
+}
+
+func TestAnsweredNativePromptsWaitWhileTheUserHoldsTheAgentsInput(t *testing.T) {
+	for _, promptBeforeTake := range []bool{true, false} {
+		name := "prompt after take"
+		if promptBeforeTake {
+			name = "prompt before take"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newTwoResults(t)
+			f.withWorkers(t)
+			agent, ref, capture := f.stalled(t, true)
+			if promptBeforeTake {
+				f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+			} else {
+				f.d.mu.Lock()
+				f.d.leaders[agent].ready = true
+				f.d.leaders[agent].currentDispatch = 0
+				f.d.mu.Unlock()
+			}
+			server, client := connectedPair(t)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				f.d.take(server, bufio.NewReader(server), Request{Command: CommandTake, Agent: agent, Terminal: "/dev/pts/7"})
+			}()
+			client.SetReadDeadline(time.Now().Add(2 * time.Second))
+			if resp := answered(t, bufio.NewReader(client)); resp.Error != "" || resp.Attached == nil || resp.Attached.Input != InputUser {
+				t.Fatalf("taking the agent's input answered %+v", resp)
+			}
+			if !promptBeforeTake {
+				f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+			}
+			prompts := f.pendingPrompts(t)
+			if len(prompts) != 1 {
+				t.Fatalf("pending prompts = %+v, want one", prompts)
+			}
+			request := prompts[0]
+			if _, err := f.d.decisionPresent(Request{Session: "coordination", Command: CommandDecisionPresent, Request: request.Request, Version: 1}); err != nil {
+				t.Fatal(err)
+			}
+			said := f.userSays(t, "allow it")
+			if _, _, _, err := f.d.conversationAnswer(Request{Session: "coordination", Command: CommandDecisionRecord, Request: request.Request, Version: 1, Cites: said, Choice: store.PromptAllow, Reading: "go on"}); err != nil {
+				t.Fatal(err)
+			}
+			if !nothingTyped(t, capture) || journaledOf(t, f.s, store.KindPromptRelayed) != 0 {
+				t.Error("the answered prompt typed automated input while the user held the terminal")
+			}
+			f.d.mu.Lock()
+			waiting := f.d.leaders[agent].prompt
+			f.d.mu.Unlock()
+			answered, err := f.s.DecisionRequest(request.Request)
+			if err != nil || answered.State != store.RequestAnswered || waiting == nil || waiting.Request != request.Request {
+				t.Errorf("the answered prompt was not retained to wait: %+v, %+v, %v", answered, waiting, err)
+			}
+			client.Close()
+			<-done
 		})
 	}
 }

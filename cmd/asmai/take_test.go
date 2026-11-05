@@ -59,13 +59,13 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 		return statusText(c.statusLine())
 	}
 	typing := " worker1@engineering · typing · Ctrl-] detaches · ↑/↓ history"
-	if got, want := line(daemon.Frame{State: &state, Held: &held}), typing+" · you hold worker1@engineering's input"; got != want {
+	if got, want := line(daemon.Frame{State: &state, Held: &held}), " you hold worker1@engineering's input ·"+typing; got != want {
 		t.Errorf("the terminal that took the input shows %q, want %q", got, want)
 	}
 	if got, want := line(daemon.Frame{Held: &none}), typing; got != want {
 		t.Errorf("once the hold is gone the status line is %q, want %q", got, want)
 	}
-	if got, want := line(daemon.Frame{TakenOver: "/dev/pts/9", Held: &held}), " worker1@engineering · observing · your hold on its input moved to /dev/pts/9 · Ctrl-] detaches · ↑/↓ history · you hold worker1@engineering's input"; got != want {
+	if got, want := line(daemon.Frame{TakenOver: "/dev/pts/9", Held: &held}), " you hold worker1@engineering's input · worker1@engineering · observing · your hold on its input moved to /dev/pts/9 · Ctrl-] detaches · ↑/↓ history"; got != want {
 		t.Errorf("the older terminal shows %q, want %q", got, want)
 	}
 	if c.observing() == false {
@@ -75,8 +75,8 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 	<-c.end
 
 	// A terminal that only observes shows the held input too.
-	o := &attachClient{agent: "leader@coordination", columns: 300, rows: 6, held: held, term: vt.New(300, 5)}
-	if got, want := statusText(o.statusLine()), " leader@coordination · observing · Ctrl-] detaches · ↑/↓ history · you hold worker1@engineering's input"; got != want {
-		t.Errorf("an observing terminal shows %q, want %q", got, want)
+	o := &attachClient{agent: "leader@coordination", columns: 80, rows: 6, held: held, term: vt.New(80, 5)}
+	if got := statusText(o.statusLine()); !strings.HasPrefix(got, " you hold worker1@engineering's input · leader@coordination") {
+		t.Errorf("an observing terminal at 80 columns shows %q, want the held agent first", got)
 	}
 }

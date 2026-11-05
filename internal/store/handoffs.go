@@ -668,8 +668,8 @@ func (s *Store) InterruptedDispatch(id int64, agent string, generation int, tran
 		if err != nil {
 			return "", nil, err
 		}
-		if state != DispatchNudged && state != DispatchDelivered && state != DispatchWorking {
-			return "", nil, fmt.Errorf("dispatch %d is %s, not a submitted turn's", id, state)
+		if state != DispatchUnknown && state != DispatchNudged && state != DispatchDelivered && state != DispatchWorking {
+			return "", nil, fmt.Errorf("dispatch %d is %s, not an interrupted submission's", id, state)
 		}
 		data, err := changeDispatch(tx, id, generation, state, DispatchNudged, transcript, "", at)
 		if err != nil {

@@ -354,7 +354,48 @@ func TestAFailedInterruptWriteLeavesTheTurnAndInputUntouched(t *testing.T) {
 	client.Close()
 }
 
-func TestAJournalFailureKeepsTheClearedDraftRecorded(t *testing.T) {
+func TestInterruptingAPendingSubmissionSettlesItBeforeTakingInput(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.boundary()
+	work, err := w.f.s.WorkerDispatch(w.f.assignments[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := work.Dispatch.ID
+	if err := w.f.s.ChangeDispatch(id, 1, store.DispatchDelivered, store.DispatchUnknown, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	prompt := fmt.Sprintf("asmai inbox --dispatch %d", id)
+	w.f.d.mu.Lock()
+	w.l.ready, w.l.inputUnknown, w.l.pendingDispatch, w.l.pendingPrompt = false, true, id, prompt
+	w.f.d.mu.Unlock()
+
+	client, r, done := w.taking(t, "/dev/pts/7", true)
+	client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if resp := answered(t, r); resp.Error != "" || resp.Attached == nil || resp.Attached.Input != InputUser {
+		t.Fatalf("interrupting the pending submission answered %+v", resp)
+	}
+	if got := w.typedSoFar(); got != interruptKey {
+		t.Errorf("the terminal received %q, want one interrupt key", got)
+	}
+	w.f.d.mu.Lock()
+	pending, unknown, retry, nudge := w.l.pendingDispatch, w.l.inputUnknown, w.l.renudge, w.f.d.mayNudge(w.l)
+	w.f.d.mu.Unlock()
+	if pending != 0 || unknown || retry != id || nudge {
+		t.Errorf("the pending dispatch left pending %d, unknown %t, retry %d, nudge allowed %t", pending, unknown, retry, nudge)
+	}
+	ref := sessionRef{address: w.l.address, generation: 1}
+	if matched, err := w.f.d.automatedSubmitted(ref, prompt, "late", "", json.RawMessage(`{"prompt":"`+prompt+`"}`)); err != nil || matched {
+		t.Errorf("the late submission hook matched %t with error %v", matched, err)
+	}
+	if changed := takeJournal(t, w.f.s, store.KindDispatchChanged); len(changed) == 0 || changed[len(changed)-1]["id"] != float64(id) || changed[len(changed)-1]["state"] != store.DispatchNudged || changed[len(changed)-1]["interrupted"] != true {
+		t.Errorf("the pending dispatch did not return to the inbox as interrupted: %v", changed)
+	}
+	client.Close()
+	<-done
+}
+
+func TestAJournalFailureRestoresTheAutomatedDraft(t *testing.T) {
 	w := newTakenWorker(t, "asmai inbox --dispatch 9")
 	w.boundary()
 	client, r, done := w.taking(t, "/dev/pts/7", false)
@@ -373,16 +414,21 @@ func TestAJournalFailureKeepsTheClearedDraftRecorded(t *testing.T) {
 	if held || taking != 0 {
 		t.Errorf("the failed journal left hold %t and takes %d, want neither", held, taking)
 	}
+	wantInput := providers.ClaudeCodeClearInput + pasteStart + "asmai inbox --dispatch 9" + pasteEnd
+	eventually(t, "the automated draft restored in the worker's input", func() bool { return w.typedSoFar() == wantInput })
+	if got := w.typedSoFar(); got != wantInput {
+		t.Errorf("the worker's input received %q, want the draft restored with %q", got, wantInput)
+	}
 	reopened, err := store.Open(w.f.d.cfg.Paths.Store)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if recorded := takeJournal(t, reopened, store.KindDraftRecorded); len(recorded) != 1 || recorded[0]["text"] != "asmai inbox --dispatch 9" {
-		t.Errorf("the cleared draft was recorded as %v, want its text preserved", recorded)
-	}
 	if taken := takeJournal(t, reopened, store.KindInputTaken); len(taken) != 0 {
 		t.Errorf("the failed take was journaled as %v", taken)
+	}
+	if cleared := takeJournal(t, reopened, store.KindDraftCleared); len(cleared) != 0 {
+		t.Errorf("the failed take journaled the draft as cleared: %v", cleared)
 	}
 	client.Close()
 }
@@ -560,8 +606,8 @@ func TestCoordinationsLeaderIsNotTaken(t *testing.T) {
 	if draft, _ := providers.ClaudeCodeUnsentText(w.l.session.Screen()); draft != "the user's unsent chat" {
 		t.Errorf("the user's unsent chat became %q", draft)
 	}
-	if recorded := takeJournal(t, w.f.s, store.KindDraftRecorded); len(recorded) != 0 {
-		t.Errorf("the user's chat was recorded as an automated draft: %v", recorded)
+	if cleared := takeJournal(t, w.f.s, store.KindDraftCleared); len(cleared) != 0 {
+		t.Errorf("the user's chat was cleared as an automated draft: %v", cleared)
 	}
 	client.Close()
 }

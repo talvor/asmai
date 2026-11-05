@@ -169,7 +169,7 @@ func (d *daemon) awaitBoundary(conn *net.UnixConn, r *bufio.Reader, l *leader, s
 			d.mu.Unlock()
 			l.takeMu.Unlock()
 			return nil, false, false, 0, errors.New("the factory is stopping")
-		case l.taken != nil || interrupt || l.atBoundary():
+		case l.taken != nil || interrupt && (l.currentDispatch != 0 || l.pendingDispatch != 0) || l.atBoundary():
 			c = &conversation{leader: l, session: s, generation: l.generation, terminal: terminal, takenOver: make(chan string, 1)}
 			if l.taken != nil {
 				moved = true

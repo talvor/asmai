@@ -521,9 +521,17 @@ func (c *attachClient) statusLine() string {
 	if len(c.held) > 0 {
 		held := make([]string, len(c.held))
 		for i, item := range c.held {
-			held[i] = strings.Map(printable, item)
+			if len(c.held) == 1 {
+				held[i] = strings.Map(printable, item)
+			} else {
+				held[i] = strings.Map(printable, strings.TrimSuffix(strings.TrimPrefix(item, "you hold "), "'s input"))
+			}
 		}
-		text = " " + strings.Join(held, " · ") + " ·" + text
+		if len(c.held) == 1 {
+			text = " " + held[0] + " ·" + text
+		} else {
+			text = " held: " + strings.Join(held, ", ") + " ·" + text
+		}
 	}
 	// What waits on the user comes first, then the focused job and the
 	// jobs that run, so that on a narrow terminal the rest is cut before

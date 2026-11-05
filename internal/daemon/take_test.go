@@ -167,6 +167,35 @@ func TestATakeWaitsForTheRunningTurnsBoundaryAndNoNudgeSlipsInBetween(t *testing
 	}
 }
 
+func TestInterruptBeforeTheFirstBoundaryWaitsForReadiness(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.f.d.mu.Lock()
+	w.l.ready, w.l.currentDispatch, w.l.pendingDispatch = false, 0, 0
+	w.f.d.mu.Unlock()
+	client, r, done := w.taking(t, "/dev/pts/7", true)
+	client.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	if _, err := r.Peek(1); err == nil {
+		t.Fatal("the interrupting take was answered before the first boundary")
+	}
+	client.SetReadDeadline(time.Time{})
+	if got := w.typedSoFar(); got != "" {
+		t.Errorf("startup received %q, want no interrupt key", got)
+	}
+	w.boundary()
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, r); resp.Error != "" || resp.Attached == nil || resp.Attached.Input != InputUser {
+		t.Fatalf("the take after readiness was answered %+v", resp)
+	}
+	if got := w.typedSoFar(); got != "" {
+		t.Errorf("the ready session received %q, want no interrupt key", got)
+	}
+	if taken := takeJournal(t, w.f.s, store.KindInputTaken); len(taken) != 1 || taken[0]["interrupted"] != nil {
+		t.Errorf("the take at the first boundary was journaled as %v", taken)
+	}
+	client.Close()
+	<-done
+}
+
 func TestANativePromptIsABoundaryDuringAnAutomatedTurn(t *testing.T) {
 	w := newTakenWorker(t, "")
 	w.working(41)

@@ -79,4 +79,30 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 	if got := statusText(o.statusLine()); !strings.HasPrefix(got, " you hold worker1@engineering's input · leader@coordination") {
 		t.Errorf("an observing terminal at 80 columns shows %q, want the held agent first", got)
 	}
+	multiple := []string{
+		"you hold worker1@engineering's input",
+		"you hold worker2@engineering's input",
+		"you hold worker3@engineering's input",
+	}
+	for _, mode := range []struct {
+		name         string
+		conversation bool
+		taking       bool
+		takenOver    string
+	}{
+		{name: "observing"},
+		{name: "conversation", conversation: true},
+		{name: "typing", taking: true},
+		{name: "displaced", taking: true, takenOver: "/dev/pts/9"},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			a := &attachClient{agent: "leader@coordination", columns: 80, rows: 6, held: multiple, term: vt.New(80, 5), conversation: mode.conversation, taking: mode.taking, takenOver: mode.takenOver}
+			got := statusText(a.statusLine())
+			for _, agent := range []string{"worker1@engineering", "worker2@engineering", "worker3@engineering"} {
+				if !strings.Contains(got, agent) {
+					t.Errorf("the 80-column status %q omits %s", got, agent)
+				}
+			}
+		})
+	}
 }

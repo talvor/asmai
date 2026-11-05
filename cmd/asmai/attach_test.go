@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -31,7 +32,12 @@ func TestConversationAttachFailsWhenDaemonOmitsCatchUp(t *testing.T) {
 	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 100, Rows: 25}); err != nil {
 		t.Fatal(err)
 	}
-	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	dir, err := os.MkdirTemp(".", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "s")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)

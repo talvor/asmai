@@ -459,7 +459,12 @@ func TestAgentStatusKeepsDecisionLinksWithTheUser(t *testing.T) {
 	}
 	f.d.leaders[roles.LeaderOf(roles.Engineering).String()].session = s
 	f.d.mu.Unlock()
-	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	dir, err := os.MkdirTemp(".", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "s")
 	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)

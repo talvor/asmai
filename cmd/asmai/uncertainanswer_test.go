@@ -91,6 +91,18 @@ func TestAWorkerThatExitsBeforeAcknowledgingAnAnswerHoldsItsAssignmentAgainstThe
 	if got := answerDispatchStates(t, 5); got != "created,unknown" {
 		t.Errorf("the answer's dispatch moved through %s, want it kept unknown", got)
 	}
+	status, stderr, code := runAsmai(t, "status")
+	if code != 0 || !strings.Contains(status, "outcome nobody knows") {
+		t.Errorf("status exited %d with %s%s, want the unknown outcome hold", code, status, stderr)
+	}
+	t.Logf("status with unknown dispatch outcome:\n%s", status)
+	a := inTerminal(t, 100, 25)
+	waitFor(t, "the catch-up before the live conversation", func() bool { return len(a.printedBeforeTheConversation()) > 0 })
+	if printed := strings.Join(a.printedBeforeTheConversation(), "\n"); !strings.Contains(printed, "outcome nobody knows") {
+		t.Errorf("the return printed %q before the conversation, want the unknown outcome hold", printed)
+	} else {
+		t.Logf("return attach before live screen:\n%s", printed)
+	}
 }
 
 // finishing are the steps of a worker's next session that commit, push and

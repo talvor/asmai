@@ -185,7 +185,7 @@ func TestUnderTheManagedPolicyTheUsersWitnessedAnswerToAWorkersNativePromptIsRel
 // nobody can answer, no request is raised, and nothing is typed into the
 // worker's terminal.
 func TestWithoutTheManagedPolicyAWorkersNativePromptIsOnlyReported(t *testing.T) {
-	testDir, _ := promptRelayFlow(t, false, "", "", "")
+	testDir, user := promptRelayFlow(t, false, "", "", "")
 	waitFor(t, "the worker to finish", touched(testDir, "worker-done"))
 	if stdout, _, _ := runAsmai(t, "status"); !strings.Contains(stdout, "worker1@engineering waits at a native prompt nobody can answer: Bash `rm -rf build`") {
 		t.Errorf("asmai status printed %q, want the prompt reported as one nobody can answer", stdout)
@@ -195,5 +195,17 @@ func TestWithoutTheManagedPolicyAWorkersNativePromptIsOnlyReported(t *testing.T)
 	}
 	if got := journaled(t, "prompt.relayed"); len(got) != 0 {
 		t.Errorf("relays journaled without the policy: %+v", got)
+	}
+	leaveFrom(t, user)
+	status, stderr, code := runAsmai(t, "status")
+	if code != 0 || !strings.Contains(status, "native prompt") || !strings.Contains(status, "worker1@engineering waits at a native prompt nobody can answer") {
+		t.Errorf("status after leaving exited %d printing %s%s, want the worker's prompt", code, status, stderr)
+	}
+	returned := inTerminal(t, 100, 25)
+	waitFor(t, "the return catch-up", func() bool { return len(returned.printedBeforeTheConversation()) > 0 })
+	if printed := strings.Join(returned.printedBeforeTheConversation(), "\n"); !strings.Contains(printed, "native prompt: worker1@engineering waits at a native prompt nobody can answer") {
+		t.Errorf("the return printed %q, want the worker's prompt", printed)
+	} else {
+		t.Logf("return attach before live screen:\n%s", printed)
 	}
 }

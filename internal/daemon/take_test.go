@@ -91,7 +91,11 @@ func (w takenWorker) taking(t *testing.T, terminal string, interrupt bool) (*net
 func answered(t *testing.T, r *bufio.Reader) Response {
 	t.Helper()
 	var resp Response
-	if err := json.NewDecoder(r).Decode(&resp); err != nil {
+	line, err := r.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("reading the daemon's answer to the take: %v", err)
+	}
+	if err := json.Unmarshal(line, &resp); err != nil {
 		t.Fatalf("reading the daemon's answer to the take: %v", err)
 	}
 	return resp
@@ -126,9 +130,8 @@ func TestATakeWaitsForTheRunningTurnsBoundaryAndNoNudgeSlipsInBetween(t *testing
 	client, r, done := w.taking(t, "/dev/pts/7", false)
 
 	client.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
-	var early Response
-	if err := json.NewDecoder(r).Decode(&early); err == nil {
-		t.Fatalf("the take was answered in the middle of the turn: %+v", early)
+	if _, err := r.Peek(1); err == nil {
+		t.Fatal("the take was answered in the middle of the turn")
 	}
 	client.SetReadDeadline(time.Time{})
 	w.f.d.mu.Lock()

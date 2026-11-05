@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -59,13 +60,13 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 		return statusText(c.statusLine())
 	}
 	typing := " worker1@engineering · typing · Ctrl-] detaches · ↑/↓ history"
-	if got, want := line(daemon.Frame{State: &state, Held: &held}), " you hold worker1@engineering's input ·"+typing; got != want {
+	if got, want := line(daemon.Frame{State: &state, Held: &held}), " held 1: worker1@engineering ·"+typing; got != want {
 		t.Errorf("the terminal that took the input shows %q, want %q", got, want)
 	}
 	if got, want := line(daemon.Frame{Held: &none}), typing; got != want {
 		t.Errorf("once the hold is gone the status line is %q, want %q", got, want)
 	}
-	if got, want := line(daemon.Frame{TakenOver: "/dev/pts/9", Held: &held}), " you hold worker1@engineering's input · worker1@engineering · observing · your hold on its input moved to /dev/pts/9 · Ctrl-] detaches · ↑/↓ history"; got != want {
+	if got, want := line(daemon.Frame{TakenOver: "/dev/pts/9", Held: &held}), " held 1: worker1@engineering · worker1@engineering · observing · your hold on its input moved to /dev/pts/9 · Ctrl-] detaches · ↑/↓ history"; got != want {
 		t.Errorf("the older terminal shows %q, want %q", got, want)
 	}
 	if c.observing() == false {
@@ -76,15 +77,10 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 
 	// A terminal that only observes shows the held input too.
 	o := &attachClient{agent: "leader@coordination", columns: 80, rows: 6, held: held, term: vt.New(80, 5)}
-	if got := statusText(o.statusLine()); !strings.HasPrefix(got, " you hold worker1@engineering's input · leader@coordination") {
+	if got := statusText(o.statusLine()); !strings.HasPrefix(got, " held 1: worker1@engineering · leader@coordination") {
 		t.Errorf("an observing terminal at 80 columns shows %q, want the held agent first", got)
 	}
-	multiple := []string{
-		"you hold worker1@engineering's input",
-		"you hold worker2@engineering's input",
-		"you hold worker3@engineering's input",
-	}
-	for _, mode := range []struct {
+	modes := []struct {
 		name         string
 		conversation bool
 		taking       bool
@@ -94,15 +90,27 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 		{name: "conversation", conversation: true},
 		{name: "typing", taking: true},
 		{name: "displaced", taking: true, takenOver: "/dev/pts/9"},
+	}
+	for _, size := range []struct {
+		count int
+		want  string
+	}{
+		{1, " held 1: worker1@engineering"},
+		{3, " held 3: worker1@engineering, worker2@engineering, worker3@engineering"},
+		{7, " held 7: worker1@engineering, worker2@engineering, worker3@engineering +4 more"},
 	} {
-		t.Run(mode.name, func(t *testing.T) {
-			a := &attachClient{agent: "leader@coordination", columns: 80, rows: 6, held: multiple, term: vt.New(80, 5), conversation: mode.conversation, taking: mode.taking, takenOver: mode.takenOver}
-			got := statusText(a.statusLine())
-			for _, agent := range []string{"worker1@engineering", "worker2@engineering", "worker3@engineering"} {
-				if !strings.Contains(got, agent) {
-					t.Errorf("the 80-column status %q omits %s", got, agent)
+		var holds []string
+		for n := 1; n <= size.count; n++ {
+			holds = append(holds, fmt.Sprintf("you hold worker%d@engineering's input", n))
+		}
+		for _, mode := range modes {
+			t.Run(fmt.Sprintf("%d holds %s", size.count, mode.name), func(t *testing.T) {
+				a := &attachClient{agent: "leader@coordination", columns: 80, rows: 6, held: holds, term: vt.New(80, 5), conversation: mode.conversation, taking: mode.taking, takenOver: mode.takenOver}
+				got := statusText(a.statusLine())
+				if !strings.HasPrefix(got, size.want) {
+					t.Errorf("the 80-column status %q, want prefix %q", got, size.want)
 				}
-			}
-		})
+			})
+		}
 	}
 }

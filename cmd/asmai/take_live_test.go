@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"os"
@@ -13,6 +14,120 @@ import (
 
 	"github.com/talvor/asmai/internal/fakeprovider"
 )
+
+// A real take client crosses a provider permission boundary and the exported
+// journal records the answer even when the user moves to another terminal.
+func TestTakeLiveNativePromptAnswer(t *testing.T) {
+	gitIdentity(t)
+	dir := t.TempDir()
+	t.Setenv("ASMAI_TEST_DIR", dir)
+	request := `{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"cd /workspace\nrm -rf build"}}`
+	longAnswer := pasteStart + strings.Repeat("p", 256*1024) + "\r" + pasteEnd + "y\r"
+	engineering := []string{
+		hookStep("SessionStart", "", ""),
+		inputBox(""),
+		`{"expect":"asmai inbox --dispatch 1\r"}`,
+		hookStep("UserPromptSubmit", "first", "asmai inbox --dispatch 1"),
+		fakeRun(`asmai inbox --dispatch 1`, 0, "First request"),
+		`{"hook":"PermissionRequest","payload":` + request + `}`,
+		`{"screen":"Bash permission requested\r\nAllow once / Deny?\r\n"}`,
+		touchFile("prompting"),
+		`{"expect":"n"}`,
+		touchFile("first-key-received"),
+		`{"expect":"\u001b\r\u001b[200~line one\rline two\u001b[201~y\r"}`,
+		`{"hook":"PermissionRequest","payload":` + request + `}`,
+		touchFile("first-prompt-ended"),
+		`{"screen":"Another Bash permission requested\r\nAllow once / Deny?\r\n"}`,
+		`{"expect":` + quoted(longAnswer) + `}`,
+		hookStep("Stop", "first", ""),
+		touchFile("past-second-prompt"),
+		`{"expect":"only typed by a test that means to"}`,
+	}
+	t.Setenv(fakeprovider.ScriptEnv+"_ENGINEERING", writeScript(t, "engineering-native-prompt", engineering))
+	coordination := []string{
+		hookStep("SessionStart", "", ""),
+		inputBox(""),
+		`{"expect":"Please route this work\r"}`,
+		hookStep("UserPromptSubmit", "user", "Please route this work"),
+		fakeRun(`asmai job open --message latest --repository fixture --reading 'Route work' --criterion Answered`, 0, "Opened job 1"),
+		fakeRun(`asmai handoff send --job 1 --to engineering --outcome 'First request' --decisions none --evidence none --constraints none --permissions none --criterion Answered`, 0, "dispatch 1"),
+		hookStep("Stop", "user", ""),
+		`{"expect":"only typed by a test that means to"}`,
+	}
+	readyFactory(t, coordination)
+	registerHandoffFixture(t)
+	if _, stderr, code := runAsmai(t, "start"); code != 0 {
+		t.Fatal(stderr)
+	}
+	chat := inTerminal(t, 80, 25, "chat")
+	waitFor(t, "Coordination prompt", chat.shows("❯ Try"))
+	chat.ptmx.WriteString("Please route this work\r")
+	waitFor(t, "Engineering's native prompt", touched(dir, "prompting"))
+	first := inTerminal(t, 80, 25, "take", "leader@engineering")
+	waitFor(t, "take granted at the prompt", first.shows("leader@engineering · typing"))
+	if got := journaled(t, "prompt.answered"); len(got) != 0 {
+		t.Fatalf("answer recorded before the user typed: %+v", got)
+	}
+	first.ptmx.WriteString("n")
+	waitFor(t, "first terminal's key reached the agent", touched(dir, "first-key-received"))
+	second := inTerminal(t, 80, 25, "take", "leader@engineering")
+	waitFor(t, "take moved to the second terminal", second.shows("leader@engineering · typing"))
+	waitFor(t, "first terminal became observing", first.shows("leader@engineering · observing"))
+	takeScreenEvidence(t, "take-native-prompt.html", "Take at a native permission prompt", first.lines(), second.lines())
+	second.ptmx.WriteString("\x1b\r\x1b[200~line one\rline two\x1b[201~y\r")
+	waitFor(t, "first prompt ended", touched(dir, "first-prompt-ended"))
+	waitFor(t, "first answer exported", func() bool { return len(journaled(t, "prompt.answered")) == 1 })
+	var got struct {
+		Agent    string `json:"agent"`
+		Terminal string `json:"terminal"`
+		Prompt   string `json:"prompt"`
+		Dispatch int64 `json:"dispatch"`
+		Keys     string `json:"keys"`
+	}
+	entry := journaled(t, "prompt.answered")[0]
+	if err := json.Unmarshal(entry.Data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Agent != "leader@engineering" || got.Terminal != second.name || got.Prompt != request || got.Dispatch != 1 || got.Keys != "n\x1b\r\x1b[200~line one\rline two\x1b[201~y\r" {
+		t.Fatalf("exported prompt answer: %+v", got)
+	}
+	t.Logf("exported prompt.answered: %s", entry.Data)
+	for offset := 0; offset < len(longAnswer); offset += 256 {
+		end := min(offset+256, len(longAnswer))
+		if _, err := second.ptmx.WriteString(longAnswer[offset:end]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, "agent passed the long pasted answer", touched(dir, "past-second-prompt"))
+	waitFor(t, "second answer exported", func() bool { return len(journaled(t, "prompt.answered")) == 2 })
+	secondEntry := journaled(t, "prompt.answered")[1]
+	var secondAnswer struct {
+		Keys string `json:"keys"`
+	}
+	if err := json.Unmarshal(secondEntry.Data, &secondAnswer); err != nil {
+		t.Fatal(err)
+	}
+	if secondAnswer.Keys != longAnswer {
+		t.Fatalf("long pasted answer recorded %d keys, want %d", len(secondAnswer.Keys), len(longAnswer))
+	}
+	t.Logf("second exported prompt.answered retained %d pasted key bytes", len(secondAnswer.Keys))
+	if evidence := os.Getenv("ASMAI_TEST_EVIDENCE"); evidence != "" {
+		formatted, err := json.MarshalIndent(entry, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(evidence, "take-native-prompt-journal.json"), formatted, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		formatted, err = json.MarshalIndent(secondEntry, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(evidence, "take-native-prompt-long-journal.json"), formatted, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 // Drive the installed CLI through two real PTYs against a disposable factory.
 // The scripted provider is only the agent terminal, not the daemon or client.

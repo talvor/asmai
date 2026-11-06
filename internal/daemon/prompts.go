@@ -24,8 +24,9 @@ const permissionRequested = "PermissionRequest"
 const promptCheck = time.Second
 
 // WaitingPrompt is a native permission prompt an agent's session waits at.
-// Only Coordination's terminal takes the user's keys. A prompt in any other
-// session is something its rules did not foresee.
+// Coordination's leader takes the user's keys through the conversation; the
+// user can take another agent's input at a prompt. A prompt in that session
+// is something its rules did not foresee.
 type WaitingPrompt struct {
 	Agent      string `json:"agent"`
 	Generation int    `json:"generation"`
@@ -187,11 +188,11 @@ func (d *daemon) promptAnswered(p *WaitingPrompt) {
 	}
 }
 
-// promptRaised raises the native prompt l's session waits at, which nobody
-// can answer in its terminal, as a decision request to the user through
-// Coordination, in the job the agent works on, and returns the agent that
-// presents it. The user decides it: nothing is ever typed into the prompt
-// until their witnessed answer is recorded (relayPrompt). d.mu is held.
+// promptRaised raises the native prompt l's session waits at as a decision
+// request to the user through Coordination, in the job the agent works on,
+// and returns the agent that presents it. The relay types nothing into the
+// prompt until the user's witnessed answer is recorded (relayPrompt).
+// d.mu is held.
 func (d *daemon) promptRaised(l *leader) (notify string) {
 	p := l.prompt
 	job := d.promptJob(l)

@@ -40,18 +40,27 @@ type WaitingPrompt struct {
 	// was raised. terminal and keys are where the user holding the agent's
 	// input answered it, and what they typed there (03 rule 34).
 	dispatch int64
+	request  json.RawMessage
 	terminal string
 	keys     []byte
+	complete bool
 }
-
-// maxAnswerKeys bounds the keys kept of a user's answer at a native prompt.
-const maxAnswerKeys = 256
 
 // answered notes keys the user typed from terminal while the prompt waited.
 func (p *WaitingPrompt) answered(terminal string, keys []byte) {
+	if p.complete {
+		return
+	}
+	if p.terminal != terminal {
+		p.keys = nil
+	}
 	p.terminal = terminal
-	if room := maxAnswerKeys - len(p.keys); room > 0 {
-		p.keys = append(p.keys, keys[:min(room, len(keys))]...)
+	for i, key := range keys {
+		p.keys = append(p.keys, key)
+		if key == '\r' || key == 0x1b && i == len(keys)-1 {
+			p.complete = true
+			return
+		}
 	}
 }
 
@@ -110,11 +119,11 @@ func (d *daemon) promptNoted(ref sessionRef, event string, payload json.RawMessa
 	if l == nil || l.session == nil || l.generation != ref.generation {
 		return ""
 	}
-	d.promptEnded(l)
+	d.promptEnded(l, true)
 	if event != permissionRequested {
 		return ""
 	}
-	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now(), dispatch: cmp.Or(l.currentDispatch, l.pendingDispatch)}
+	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now(), dispatch: cmp.Or(l.currentDispatch, l.pendingDispatch), request: slices.Clone(payload)}
 	if ref.address != roles.LeaderOf(roles.Coordination) {
 		d.log.Warn("an agent waits at a native permission prompt nobody can answer", "agent", l.prompt.Agent, "generation", l.prompt.Generation, "about", l.prompt.About)
 		if l.managedOnly {
@@ -126,14 +135,14 @@ func (d *daemon) promptNoted(ref sessionRef, event string, payload json.RawMessa
 
 // promptEnded forgets the native prompt l's session waited at, and withdraws
 // the request raised for it if the user has not answered it. d.mu is held.
-func (d *daemon) promptEnded(l *leader) {
+func (d *daemon) promptEnded(l *leader, observed bool) {
 	p := l.prompt
 	l.prompt = nil
 	if p == nil {
 		return
 	}
-	if p.terminal != "" {
-		answer := store.PromptAnswer{Agent: p.Agent, Generation: p.Generation, Terminal: p.terminal, Prompt: p.About, Dispatch: p.dispatch, Request: p.Request, Keys: string(p.keys)}
+	if observed && p.complete {
+		answer := store.PromptAnswer{Agent: p.Agent, Generation: p.Generation, Terminal: p.terminal, Prompt: string(p.request), Dispatch: p.dispatch, Request: p.Request, Keys: string(p.keys)}
 		if err := d.store.PromptAnsweredByUser(answer, time.Now()); err != nil {
 			d.log.Error("journaling the user's answer at a native prompt", "agent", p.Agent, "error", err.Error())
 		} else {

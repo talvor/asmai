@@ -336,7 +336,7 @@ func TestAPromptTheAgentIsPastIsWithdrawnAndRelaysNothing(t *testing.T) {
 		"the session ending": func(f twoResults, ref sessionRef) {
 			f.d.mu.Lock()
 			defer f.d.mu.Unlock()
-			f.d.promptEnded(f.d.leaders[ref.address.String()])
+			f.d.promptEnded(f.d.leaders[ref.address.String()], false)
 		},
 		"another prompt": func(f twoResults, ref sessionRef) {
 			f.d.promptObserved(ref, "PermissionRequest", json.RawMessage(`{"hook_event_name": "PermissionRequest", "tool_name": "Edit", "tool_input": {"file_path": "/etc/hosts"}}`))

@@ -901,8 +901,8 @@ func (s *Store) PromptRelayed(r DecisionRequest, choice string, generation int, 
 	return tx.Commit()
 }
 
-// PromptAnswer is the user's answer to a native prompt, typed in the terminal
-// of the agent they took: Prompt is what the agent asked to do, Dispatch the
+// PromptAnswer is the user's answer to a native prompt, typed in the agent's
+// terminal: Prompt is the complete permission request, Dispatch the
 // dispatch it worked on (zero for none), Request the decision request raised
 // for the prompt (zero for none) and Keys what the user typed.
 type PromptAnswer struct {
@@ -916,7 +916,7 @@ type PromptAnswer struct {
 }
 
 // PromptAnsweredByUser journals the user's answer to a native prompt, typed
-// in the terminal of the agent they took (03 rule 34).
+// in the agent's terminal (03 rule 34).
 func (s *Store) PromptAnsweredByUser(a PromptAnswer, at time.Time) error {
 	tx, err := s.db.Begin()
 	if err != nil {

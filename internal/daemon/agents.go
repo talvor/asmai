@@ -1086,7 +1086,7 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 		return
 	}
 	l.session = nil
-	d.promptEnded(l)
+	d.promptEnded(l, false)
 	if d.stopping {
 		return
 	}
@@ -1494,7 +1494,12 @@ func (d *daemon) typed(c *conversation, keys []byte) {
 		d.mu.Unlock()
 		return
 	}
-	if l.taken == c && l.prompt != nil {
+	if err := c.session.Input(keys); err != nil {
+		d.mu.Unlock()
+		d.log.Warn("typing the user's keys into the conversation", "agent", l.address.String(), "error", err.Error())
+		return
+	}
+	if l.prompt != nil && (l.taken == c || d.conversation == c) {
 		l.prompt.answered(c.terminal, keys)
 	}
 	l.userInput = true
@@ -1506,9 +1511,6 @@ func (d *daemon) typed(c *conversation, keys []byte) {
 		l.interrupted = l.currentDispatch
 	}
 	d.mu.Unlock()
-	if err := c.session.Input(keys); err != nil {
-		d.log.Warn("typing the user's keys into the conversation", "agent", l.address.String(), "error", err.Error())
-	}
 }
 
 // The brackets a terminal puts around pasted text.

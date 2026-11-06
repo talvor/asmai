@@ -685,21 +685,26 @@ func TestAnswerTypedAtANativePromptWhileTakingIsRecordedWithThePromptAndDispatch
 	w := newTakenWorker(t, "")
 	w.working(41)
 	ref := sessionRef{address: w.l.address, generation: w.l.generation}
-	w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+	request := json.RawMessage(`{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"cd /workspace\nrm -rf build"}}`)
+	w.f.d.promptObserved(ref, permissionRequested, request)
 	client, r, done := w.taking(t, "/dev/pts/7", false)
 	client.SetReadDeadline(time.Now().Add(time.Second))
 	if resp := answered(t, r); resp.Error != "" {
 		t.Fatalf("taking at the native prompt was answered %+v", resp)
 	}
-	line, _ := json.Marshal(ClientMessage{Keys: []byte("\r")})
+	answer := strings.Repeat("y", 300) + "\r"
+	line, _ := json.Marshal(ClientMessage{Keys: []byte(answer)})
 	client.Write(append(line, '\n'))
-	eventually(t, "the answer in the agent's terminal", func() bool { return w.typedSoFar() == "\r" })
+	eventually(t, "the answer in the agent's terminal", func() bool { return w.typedSoFar() == answer })
 	if got := takeJournal(t, w.f.s, store.KindPromptAnswered); len(got) != 0 {
 		t.Fatalf("the answer was journaled before the agent was past the prompt: %v", got)
 	}
-	w.f.d.promptObserved(ref, "PostToolUse", json.RawMessage(`{}`))
+	line, _ = json.Marshal(ClientMessage{Keys: []byte("follow-up\r")})
+	client.Write(append(line, '\n'))
+	eventually(t, "the follow-up in the agent's terminal", func() bool { return w.typedSoFar() == answer+"follow-up\r" })
+	w.f.d.promptObserved(ref, turnStopped, json.RawMessage(`{"hook_event_name":"Stop"}`))
 	got := takeJournal(t, w.f.s, store.KindPromptAnswered)
-	if len(got) != 1 || got[0]["agent"] != w.name || got[0]["terminal"] != "/dev/pts/7" || got[0]["keys"] != "\r" || got[0]["dispatch"] != float64(41) || !strings.Contains(got[0]["prompt"].(string), "rm -rf build") {
+	if len(got) != 1 || got[0]["agent"] != w.name || got[0]["terminal"] != "/dev/pts/7" || got[0]["keys"] != answer || got[0]["dispatch"] != float64(41) || got[0]["prompt"] != string(request) {
 		t.Fatalf("the user's answer was journaled as %v", got)
 	}
 	client.Close()
@@ -717,10 +722,90 @@ func TestKeysTypedWithoutANativePromptAreNotJournaledAsAnswers(t *testing.T) {
 	client.Write(append(line, '\n'))
 	eventually(t, "the keys", func() bool { return w.typedSoFar() == "x" })
 	w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
-	w.f.d.promptObserved(ref, "PostToolUse", json.RawMessage(`{}`))
+	w.f.d.promptObserved(ref, turnStopped, json.RawMessage(`{"hook_event_name":"Stop"}`))
 	if got := takeJournal(t, w.f.s, store.KindPromptAnswered); len(got) != 0 {
 		t.Errorf("journaled %v, want no answer", got)
 	}
 	client.Close()
 	<-done
+}
+
+func TestMovedTakeRecordsOnlyTheAnswerFromTheNewTerminal(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.working(41)
+	ref := sessionRef{address: w.l.address, generation: w.l.generation}
+	w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+	older, olderReader, olderDone := w.taking(t, "/dev/pts/1", false)
+	answered(t, olderReader)
+	line, _ := json.Marshal(ClientMessage{Keys: []byte("n")})
+	older.Write(append(line, '\n'))
+	eventually(t, "the first terminal's key", func() bool { return w.typedSoFar() == "n" })
+	newer, newerReader, newerDone := w.taking(t, "/dev/pts/2", false)
+	answered(t, newerReader)
+	line, _ = json.Marshal(ClientMessage{Keys: []byte("y\r")})
+	newer.Write(append(line, '\n'))
+	eventually(t, "the second terminal's answer", func() bool { return w.typedSoFar() == "ny\r" })
+	w.f.d.promptObserved(ref, turnStopped, json.RawMessage(`{"hook_event_name":"Stop"}`))
+	got := takeJournal(t, w.f.s, store.KindPromptAnswered)
+	if len(got) != 1 || got[0]["terminal"] != "/dev/pts/2" || got[0]["keys"] != "y\r" {
+		t.Errorf("the moved take's answer was journaled as %v", got)
+	}
+	older.Close()
+	newer.Close()
+	<-olderDone
+	<-newerDone
+}
+
+func TestPromptExitAndFailedInputDoNotRecordAnAnswer(t *testing.T) {
+	for _, failedInput := range []bool{false, true} {
+		name := "session exit"
+		if failedInput {
+			name = "failed input"
+		}
+		t.Run(name, func(t *testing.T) {
+			w := newTakenWorker(t, "")
+			w.working(41)
+			ref := sessionRef{address: w.l.address, generation: w.l.generation}
+			w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+			client, r, done := w.taking(t, "/dev/pts/7", false)
+			answered(t, r)
+			w.f.d.mu.Lock()
+			c := w.l.taken
+			w.f.d.mu.Unlock()
+			if failedInput {
+				w.l.session.Stop(time.Second)
+				w.f.d.typed(c, []byte("\r"))
+				w.f.d.promptObserved(ref, turnStopped, json.RawMessage(`{"hook_event_name":"Stop"}`))
+			} else {
+				line, _ := json.Marshal(ClientMessage{Keys: []byte("\r")})
+				client.Write(append(line, '\n'))
+				eventually(t, "the key before exit", func() bool { return w.typedSoFar() == "\r" })
+				w.f.d.mu.Lock()
+				w.f.d.promptEnded(w.l, false)
+				w.f.d.mu.Unlock()
+			}
+			if got := takeJournal(t, w.f.s, store.KindPromptAnswered); len(got) != 0 {
+				t.Errorf("journaled an unconfirmed answer: %v", got)
+			}
+			client.Close()
+			<-done
+		})
+	}
+}
+
+func TestConversationAnswerAtANativePromptIsRecorded(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.working(41)
+	ref := sessionRef{address: w.l.address, generation: w.l.generation}
+	w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+	c := &conversation{leader: w.l, session: w.l.session, generation: w.l.generation, terminal: "/dev/pts/chat"}
+	w.f.d.mu.Lock()
+	w.f.d.conversation = c
+	w.f.d.mu.Unlock()
+	w.f.d.typed(c, []byte("\r"))
+	w.f.d.promptObserved(ref, turnStopped, json.RawMessage(`{"hook_event_name":"Stop"}`))
+	got := takeJournal(t, w.f.s, store.KindPromptAnswered)
+	if len(got) != 1 || got[0]["terminal"] != "/dev/pts/chat" || got[0]["keys"] != "\r" {
+		t.Errorf("the conversation's answer was journaled as %v", got)
+	}
 }

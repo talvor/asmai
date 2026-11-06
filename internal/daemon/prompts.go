@@ -44,6 +44,8 @@ type WaitingPrompt struct {
 	request  json.RawMessage
 	terminal string
 	keys     []byte
+	scan     int
+	pasting  bool
 	complete bool
 	observed bool
 }
@@ -55,22 +57,29 @@ func (p *WaitingPrompt) answered(terminal string, keys []byte) {
 	}
 	p.terminal = terminal
 	p.keys = append(p.keys, keys...)
-	pasting := false
-	for i := 0; i < len(p.keys); i++ {
+	for p.scan < len(p.keys) {
+		i := p.scan
+		rest := p.keys[i:]
 		switch {
-		case bytes.HasPrefix(p.keys[i:], []byte(pasteStart)):
-			pasting = true
-			i += len(pasteStart) - 1
-		case bytes.HasPrefix(p.keys[i:], []byte(pasteEnd)):
-			pasting = false
-			i += len(pasteEnd) - 1
-		case p.keys[i] == '\r' && !pasting && (i == 0 || p.keys[i-1] != 0x1b):
+		case bytes.HasPrefix(rest, []byte(pasteStart)):
+			p.pasting = true
+			p.scan += len(pasteStart)
+		case bytes.HasPrefix(rest, []byte(pasteEnd)):
+			p.pasting = false
+			p.scan += len(pasteEnd)
+		case len(rest) >= 2 && len(rest) < len(pasteStart) && (bytes.HasPrefix([]byte(pasteStart), rest) || bytes.HasPrefix([]byte(pasteEnd), rest)):
+			return
+		case rest[0] == '\r' && !p.pasting && (i == 0 || p.keys[i-1] != 0x1b):
 			p.keys = p.keys[:i+1]
 			p.complete = true
 			return
+		case p.pasting && rest[0] == 0x1b && len(rest) == 1:
+			return
+		default:
+			p.scan++
 		}
 	}
-	if !pasting && len(keys) > 0 && p.keys[len(p.keys)-1] == 0x1b {
+	if !p.pasting && len(keys) > 0 && p.keys[len(p.keys)-1] == 0x1b {
 		p.complete = true
 	}
 }

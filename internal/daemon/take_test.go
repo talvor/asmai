@@ -763,6 +763,7 @@ func TestNonSubmittingEnterRemainsInNativePromptAnswer(t *testing.T) {
 	}{
 		{"Alt-Enter", []string{"n\x1b\r", "y\r"}},
 		{"bracketed paste across frames", []string{"\x1b[20", "0~line one\rline two\x1b[2", "01~y\r"}},
+		{"bracketed paste ends after a split escape", []string{"\x1b[200~line one\r\x1b", "[201~y\r"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTakenWorker(t, "")

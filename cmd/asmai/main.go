@@ -47,7 +47,7 @@ commands you type:
                               Coordination, and each message you submit is journaled word for word.
                               ↑/↓ scroll its history and are not sent to Coordination.
                               Shift-Enter, Alt-Enter or \ then Enter starts a new line.
-                              Ctrl-] leaves the conversation, which pauses nothing
+                              Ctrl-] opens a menu; its Detach leaves the conversation, which pauses nothing
   asmai init [--yes] [--claude-default-model MODEL]
                               the first run: check this platform is certified, choose Claude's
                               default model and write a file staffing every role if there is none;
@@ -80,14 +80,14 @@ commands you type:
   asmai job clean <number>    remove the scratch workspaces of a job with no repository, and the results in them;
                               they are kept until you run this, and it is refused while the job is open
   asmai attach <agent>        show an agent's terminal and observe it; ↑/↓ scroll its history
-                              and Ctrl-] detaches.
+                              and Ctrl-] opens a menu that detaches.
                               Address an agent as name@role, or by its role for its leader
   asmai take <agent> [--interrupt]
                               become the agent's input owner and type into its terminal. It waits for
                               the agent's running turn to end; --interrupt interrupts the turn instead.
                               Any unsent automated draft is recorded and cleared first. While you hold
-                              the input the agent's messages wait in its inbox. Ctrl-] detaches without
-                              giving the input back, and the status line keeps reminding you that you
+                              the input the agent's messages wait in its inbox. Ctrl-] opens a menu, whose Detach
+                              detaches without giving the input back, and the status line keeps reminding you that you
                               hold it. A newer take of the agent moves the hold to the newer terminal
   asmai release <agent> [--note <text>]
                               give the agent's input back to automation. If you only answered its native

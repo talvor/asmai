@@ -229,7 +229,7 @@ func TestDashboardEnterHandsTheTerminalToAttachAndTakesItBack(t *testing.T) {
 	// Keys typed while attached are attach's, not the Dashboard's: q does not
 	// quit, and only Ctrl-] detaches.
 	d.Send("q")
-	d.Send("\x1d")
+	d.Send("\x1d\r")
 	screen := d.WaitForText("factory running")
 	if !strings.Contains(screen, "Agents") || !strings.Contains(screen, "worker-2@quality") || strings.Contains(screen, "observing") {
 		t.Errorf("after attach the screen is\n%s\nwant the Agents tab drawn again", screen)
@@ -263,7 +263,7 @@ func TestDashboardReadsTheSizeAgainWhenAttachReturns(t *testing.T) {
 	d.WaitFor("attach drawn at the new size", func(screen string) bool {
 		return strings.Contains(screen, "observing") && len(strings.Split(screen, "\n")) == 25
 	})
-	d.Send("\x1d")
+	d.Send("\x1d\r")
 	d.WaitFor("the Agents tab at 80x24", func(screen string) bool {
 		return strings.Contains(screen, "worker-2@quality") && !strings.Contains(screen, "observing") && len(strings.Split(screen, "\n")) == 25
 	})
@@ -282,7 +282,7 @@ func TestDashboardShowsTheFactoryStoppedWhenAttachReturnsToADeadDaemon(t *testin
 	d.WaitForText("observing")
 
 	fake.Stop()
-	d.Send("\x1d")
+	d.Send("\x1d\r")
 	screen := d.WaitForText("The factory is not running.")
 	if strings.Contains(screen, "worker-2@quality") || strings.Contains(screen, "observing") {
 		t.Errorf("the screen after attach to a stopped factory is\n%s\nwant none of the agents or of attach", screen)

@@ -67,7 +67,7 @@ func TestASecondAttachTakesTheConversationAndSavesTheOlderTerminalsUnsentText(t 
 	}
 
 	// Detaching the older terminal leaves the conversation where it is.
-	a.ptmx.WriteString("\x1d")
+	a.ptmx.WriteString("\x1d\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("detaching the older terminal, asmai exited %d, want 0", code)
 	}
@@ -81,7 +81,7 @@ func TestASecondAttachTakesTheConversationAndSavesTheOlderTerminalsUnsentText(t 
 		t.Errorf("the journal holds %d departures, want only the one the takeover caused", len(lefts))
 	}
 
-	b.ptmx.WriteString("\x1d")
+	b.ptmx.WriteString("\x1d\r")
 	if code := b.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}

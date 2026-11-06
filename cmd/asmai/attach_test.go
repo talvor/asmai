@@ -373,7 +373,7 @@ func TestTheArrowsScrollTheObservedHistory(t *testing.T) {
 	}
 
 	// Ctrl-] still detaches.
-	w.Write([]byte{detachKey})
+	w.Write([]byte{detachKey, '\r'})
 	if why := <-c.end; why != "Detached from leader@coordination." {
 		t.Errorf("Ctrl-] ended the client with %q", why)
 	}
@@ -465,7 +465,7 @@ func TestInTheConversationTheArrowsScrollAndAreNotSent(t *testing.T) {
 		t.Errorf("after typing the view is %d lines back, want the live screen", c.back)
 	}
 
-	w.Write([]byte{detachKey})
+	w.Write([]byte{detachKey, '\r'})
 	if m := <-sent; !m.Leave {
 		t.Errorf("Ctrl-] sent %+v, want the conversation left", m)
 	}

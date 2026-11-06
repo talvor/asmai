@@ -36,7 +36,7 @@ func (a *attachedTerminal) printedBeforeTheConversation() []string {
 // exit.
 func leaveFrom(t *testing.T, a *attachedTerminal) {
 	t.Helper()
-	a.ptmx.WriteString("\x1d")
+	a.ptmx.WriteString("\x1d\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}

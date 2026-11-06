@@ -331,7 +331,7 @@ func (h *Harness) c52(ctx context.Context, f *Factory, r *Result) error {
 			return err
 		}
 		time.Sleep(time.Second)
-		if err := d.s.Input([]byte(detachKeyByte)); err != nil {
+		if err := d.s.Input([]byte(detachKeyByte + "\r")); err != nil {
 			return err
 		}
 		back, err := d.waitFor(ctx, fmt.Sprintf("the dashboard back after Ctrl-], drawn at %dx%d", columns, rows), func(v dashboardView) bool {

@@ -543,7 +543,7 @@ func TestCoordinationsLeaderRunsInADaemonOwnedTerminalWithItsSettingsOnItsComman
 		t.Errorf("after keys were typed in the attached terminal, the leader is %+v, want generation 1 still running", agents[0])
 	}
 	// Ctrl-] detaches.
-	a.ptmx.WriteString("\x1d")
+	a.ptmx.WriteString("\x1d\r")
 	select {
 	case err := <-a.done:
 		if err != nil {

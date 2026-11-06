@@ -63,6 +63,10 @@ const (
 	// user's keys typed in. It waits for the end of the agent's turn, or with
 	// Interrupt interrupts the turn instead (03 rule 32).
 	CommandTake = "take"
+	// CommandRelease returns the input of an agent the user holds to
+	// automation, with an optional Note, and answers with the intervention
+	// record (03 rules 36 to 38).
+	CommandRelease = "release"
 	// CommandHook journals what an agent session's hook reported.
 	CommandHook = "hook"
 	// CommandConversation attaches the user's terminal to Coordination's
@@ -363,6 +367,8 @@ type Response struct {
 	// focus keeps it.
 	Focus      *store.Focus `json:"focus,omitempty"`
 	FocusMoved bool         `json:"focus_moved,omitempty"`
+	// Released is what releasing an agent's input did.
+	Released *store.Released `json:"released,omitempty"`
 	// Returned says an accept found the job branch moved after the result
 	// was submitted, so it returned the result to its worker instead of
 	// accepting it: not a rejection, and Decision is nil.
@@ -817,6 +823,8 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.converse(conn, r, req)
 	case CommandTake:
 		d.take(conn, r, req)
+	case CommandRelease:
+		d.release(conn, req)
 	case CommandHook:
 		if err := d.observe(req.Session, req.Payload); err != nil {
 			reply(conn, Response{Error: err.Error()})

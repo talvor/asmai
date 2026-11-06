@@ -390,6 +390,10 @@ const (
 	// input was handed over.
 	KindInputTaken   = "input.taken"
 	KindDraftCleared = "draft.cleared"
+	// KindInputReleased records the user releasing an agent's input, with
+	// the intervention record it ended, which the owning leader is sent
+	// when the user typed any message.
+	KindInputReleased = "input.released"
 	// KindRepositoryAdded and KindRepositoryRemoved record the user
 	// registering and removing a repository.
 	KindRepositoryAdded   = "repository.added"

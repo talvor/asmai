@@ -45,7 +45,7 @@ type ModalAnswered struct {
 	Keys       string `json:"keys"`
 }
 
-// InputHeld journals that agent is held, and, when the hold has a job and a
+// InputHeld journals that agent is held, and, when there is a
 // recipient, sends the recipient the hold in a message, whose dispatch it
 // returns. Nothing is typed, and nothing the agent waits on is cancelled: its
 // messages stay as dispatches that wait.
@@ -59,7 +59,7 @@ func (s *Store) InputHeld(h InputHold, recipient string, at time.Time) (Dispatch
 		return Dispatch{}, err
 	}
 	var told Dispatch
-	if recipient != "" && h.Job != 0 {
+	if recipient != "" {
 		body := fmt.Sprintf("%s is held at an input state %s %s does not know, and nothing has been typed at it. Its work stops there, and the messages for it wait, kept, until it is past it: the factory never cancels or retries it. Tell the user, and keep independent work going. The user can look with `asmai attach %s`, and take the agent's input with `asmai take %s`.\nIt shows:\n%s", h.Agent, h.Provider, h.Version, h.Agent, h.Agent, indent(h.Screen))
 		told, err = createMessage(tx, messageRef{}, h.Job, Daemon, recipient, MessageInputHeld, body, at)
 		if err != nil {

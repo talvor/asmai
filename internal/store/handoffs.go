@@ -41,6 +41,10 @@ const (
 	ClosedRedispatched      = "redispatched"
 	ClosedAnswerRedelivered = "answer-redelivered"
 	ClosedAnswerRetired     = "answer-retired"
+	// ClosedSuperseded is a dispatch the user's own message to its agent,
+	// typed while they held the agent's input, took the place of (03 rule
+	// 37). The owning leader sends the work again in a new dispatch.
+	ClosedSuperseded = "superseded"
 )
 
 type Handoff struct {

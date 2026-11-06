@@ -126,6 +126,9 @@ type Frame struct {
 	// attached to the conversation and took it over: the stream goes on, but
 	// the client only observes.
 	TakenOver string `json:"takenOver,omitempty"`
+	// Released says that the user released the agent's input, from this or
+	// another terminal: the stream ends.
+	Released bool `json:"released,omitempty"`
 	// Prompts, when set, are the native prompts agents now wait at,
 	// Decisions the decision requests pending with the user, Focus the
 	// conversation's focused job, zero before any job had it, and Jobs the
@@ -1725,6 +1728,10 @@ func (d *daemon) stream(conn *net.UnixConn, r *bufio.Reader, req Request, s *ses
 				}
 			}
 		case terminal := <-takenOver:
+			if terminal == releasedMark {
+				send(Frame{Released: true})
+				return LeftByDetaching
+			}
 			if !send(Frame{TakenOver: terminal}) {
 				return LeftByTerminalClose
 			}

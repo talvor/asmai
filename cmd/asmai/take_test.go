@@ -114,3 +114,36 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 		}
 	}
 }
+
+// An agent's credential cannot release: only the user returns input.
+func TestAnAgentCannotRunAsmaiRelease(t *testing.T) {
+	t.Setenv(daemon.SessionCredential, "an-agent-session")
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"release", "worker1@engineering"}, strings.NewReader(""), &stdout, &stderr)
+
+	if code != 1 || !strings.Contains(stderr.String(), "an agent cannot run this command; ask the user to run `asmai release worker1@engineering`") {
+		t.Errorf("an agent running asmai release exited %d printing %q, want it refused", code, stderr.String())
+	}
+}
+
+func TestReleaseNeedsTheAgentNamed(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"release"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "name the agent you hold") {
+		t.Errorf("asmai release without an agent exited %d printing %q, want a usage error", code, stderr.String())
+	}
+}
+
+// A terminal that still streams the agent is told when its input is
+// released, and ends.
+func TestAStreamingTerminalEndsWhenTheInputIsReleased(t *testing.T) {
+	c := &attachClient{agent: "worker1@engineering", taking: true, columns: 80, rows: 6, dirty: make(chan struct{}, 1), end: make(chan string, 1)}
+	r, w := io.Pipe()
+	go c.readFrames(r)
+	if err := json.NewEncoder(w).Encode(daemon.Frame{Released: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-c.end; !strings.Contains(got, "Released worker1@engineering") {
+		t.Errorf("the terminal ended with %q, want it to say the input was released", got)
+	}
+}

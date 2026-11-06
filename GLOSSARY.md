@@ -291,6 +291,9 @@ An explicit period of direct human interaction with an agent outside the normal 
 The user becoming an agent's input owner with `asmai take <agent>`. See [Taking an agent](README.md#taking-an-agent) for its behavior.
 _Avoid_: Grab, lock
 
+**Releasing an agent**:
+The user returning an agent's input to automation with `asmai release <agent>`. If they typed any message, the agent's dispatch is superseded and its owning leader receives the intervention record. See [Taking an agent](README.md#taking-an-agent).
+
 **Dashboard**:
 The read-only terminal view of the factory's agents, jobs and log, opened with `asmai dashboard`. It shows what is happening and hands the terminal to an agent's attach; it never acts on the factory.
 _Avoid_: Console, monitor

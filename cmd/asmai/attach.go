@@ -256,6 +256,10 @@ func (c *attachClient) readFrames(r io.Reader) {
 			}
 		}
 		c.mu.Unlock()
+		if f.Released {
+			c.finish(fmt.Sprintf("Released %s: its input is back with automation.", c.agent))
+			return
+		}
 		if f.Ended != "" {
 			c.finish(fmt.Sprintf("%s's session ended (%s).", c.agent, f.Ended))
 			return

@@ -64,6 +64,9 @@ const (
 	// notice for a worker's unreported turn.
 	MessageRedispatch = "redispatch"
 	MessageStalled    = "stalled"
+	// MessageIntervention gives the owning leader the intervention record of
+	// an agent whose input the user held and released after typing to it.
+	MessageIntervention = "intervention"
 	// MessageRestoration tells a restored leader which job to load the brief
 	// of. It is about a job, not an assignment or a handoff.
 	MessageRestoration = "restoration"

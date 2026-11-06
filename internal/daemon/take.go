@@ -245,3 +245,99 @@ func restoreDraft(c *conversation, draft string) error {
 	}
 	return c.session.Input([]byte(pasteStart + draft + pasteEnd))
 }
+
+// releasedMark tells the stream of a take that the user released the agent's
+// input, in place of the terminal a newer take moved the hold to.
+const releasedMark = "\x00released"
+
+// release returns the input of the agent the request names, which the user
+// holds, to automation, with the request's note. Whatever the user left unsent
+// in the input box is cleared and recorded, so that no nudge is typed over it.
+// If the user only answered native prompts, the same dispatch continues;
+// otherwise the dispatch is superseded and the owning leader is sent the
+// intervention record (03 rules 36 to 38).
+func (d *daemon) release(conn *net.UnixConn, req Request) {
+	address, err := roles.ParseAddress(req.Agent)
+	if err != nil {
+		reply(conn, Response{Error: err.Error()})
+		return
+	}
+	d.mu.Lock()
+	l := d.leaders[address.String()]
+	if l == nil || l.session == nil || l.taken == nil {
+		d.mu.Unlock()
+		reply(conn, Response{Error: fmt.Sprintf("you do not hold %s's input; `asmai take %s` makes you its input owner", address, req.Agent)})
+		return
+	}
+	d.mu.Unlock()
+
+	// No key is typed while the box is read and cleared.
+	l.takeMu.Lock()
+	defer l.takeMu.Unlock()
+	d.mu.Lock()
+	c, s, generation := l.taken, l.session, l.generation
+	if c == nil || s == nil {
+		d.mu.Unlock()
+		reply(conn, Response{Error: fmt.Sprintf("you do not hold %s's input", address)})
+		return
+	}
+	d.mu.Unlock()
+	var unsent string
+	if text, readable := providers.ClaudeCodeUnsentText(s.Screen()); readable && text != "" {
+		if err := s.Input([]byte(providers.ClaudeCodeClearInput)); err != nil {
+			reply(conn, Response{Error: fmt.Sprintf("clearing the text you left unsent: %v", err)})
+			return
+		}
+		s.Settle(settleQuiet, settleLimit)
+		unsent = text
+	}
+
+	fallback := roles.LeaderOf(roles.Coordination).String()
+	if address.Name != roles.Leader {
+		fallback = roles.LeaderOf(address.Role).String()
+	}
+	d.mu.Lock()
+	if l.taken != c || l.session != s {
+		d.mu.Unlock()
+		reply(conn, Response{Error: fmt.Sprintf("%s's session ended before its input could be released", address)})
+		return
+	}
+	released, err := d.store.InputReleased(store.Release{Agent: address.String(), Role: address.Role, Generation: generation, Terminal: terminalOr(req.Terminal), Note: req.Note, Unsent: unsent, Fallback: fallback}, time.Now())
+	if err != nil {
+		d.mu.Unlock()
+		d.log.Error("journaling the user releasing an agent's input", "agent", address.String(), "error", err.Error())
+		reply(conn, Response{Error: fmt.Sprintf("journaling the release: %v", err)})
+		return
+	}
+	l.taken = nil
+	l.userInput = false
+	l.submits, l.earlier = 0, 0
+	if released.Superseded != 0 && l.renudge == released.Superseded {
+		l.renudge = 0
+	}
+	if released.Superseded != 0 && l.interrupted == released.Superseded {
+		l.interrupted = 0
+	}
+	c.displaced = true
+	select {
+	case c.takenOver <- releasedMark:
+	default:
+	}
+	d.mu.Unlock()
+	d.log.Info("the user released an agent's input", "agent", address.String(), "generation", generation, "messages", len(released.Intervention.Messages), "answers", len(released.Intervention.Answers), "superseded", released.Superseded, "assignment", released.Assignment)
+
+	// The nudges the hold kept back go on, and the owning leader reads the
+	// record.
+	d.nudge(address.String())
+	if released.Told.Agent != "" {
+		d.nudge(released.Told.Agent)
+	}
+	reply(conn, Response{Released: &released})
+}
+
+func terminalOr(terminal string) string {
+	if terminal == "" {
+		return "a terminal asmai could not name"
+	}
+	return terminal
+}

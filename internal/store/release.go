@@ -175,7 +175,8 @@ func (s *Store) InputReleased(r Release, at time.Time) (Released, error) {
 	if err != nil {
 		return Released{}, err
 	}
-	reconcile := assignment != 0 && (state == AssignmentActive || state == AssignmentCancelling)
+	// A cancelling assignment keeps its cancellation: its owner is only told.
+	reconcile := assignment != 0 && state == AssignmentActive
 	if reconcile {
 		w, err := workerDispatch(tx, assignment)
 		if err != nil {

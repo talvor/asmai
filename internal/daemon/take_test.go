@@ -756,6 +756,39 @@ func TestMovedTakeRecordsTheFullAnswerWithTheFinishingTerminal(t *testing.T) {
 	<-newerDone
 }
 
+func TestNonSubmittingEnterRemainsInNativePromptAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{"Alt-Enter", []string{"n\x1b\r", "y\r"}},
+		{"bracketed paste across frames", []string{"\x1b[20", "0~line one\rline two\x1b[2", "01~y\r"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTakenWorker(t, "")
+			w.working(41)
+			ref := sessionRef{address: w.l.address, generation: w.l.generation}
+			w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+			client, r, done := w.taking(t, "/dev/pts/7", false)
+			answered(t, r)
+			var want string
+			for _, chunk := range tc.chunks {
+				line, _ := json.Marshal(ClientMessage{Keys: []byte(chunk)})
+				client.Write(append(line, '\n'))
+				want += chunk
+				eventually(t, "the prompt keys in the terminal", func() bool { return w.typedSoFar() == want })
+			}
+			w.f.d.promptObserved(ref, turnStopped, json.RawMessage(`{"hook_event_name":"Stop"}`))
+			got := takeJournal(t, w.f.s, store.KindPromptAnswered)
+			if len(got) != 1 || got[0]["keys"] != want {
+				t.Errorf("the prompt answer was journaled as %v, want %q", got, want)
+			}
+			client.Close()
+			<-done
+		})
+	}
+}
+
 func TestPromptExitAndFailedInputDoNotRecordAnAnswer(t *testing.T) {
 	for _, failedInput := range []bool{false, true} {
 		name := "session exit"

@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"fmt"
@@ -53,12 +54,24 @@ func (p *WaitingPrompt) answered(terminal string, keys []byte) {
 		return
 	}
 	p.terminal = terminal
-	for i, key := range keys {
-		p.keys = append(p.keys, key)
-		if key == '\r' || key == 0x1b && i == len(keys)-1 {
+	p.keys = append(p.keys, keys...)
+	pasting := false
+	for i := 0; i < len(p.keys); i++ {
+		switch {
+		case bytes.HasPrefix(p.keys[i:], []byte(pasteStart)):
+			pasting = true
+			i += len(pasteStart) - 1
+		case bytes.HasPrefix(p.keys[i:], []byte(pasteEnd)):
+			pasting = false
+			i += len(pasteEnd) - 1
+		case p.keys[i] == '\r' && !pasting && (i == 0 || p.keys[i-1] != 0x1b):
+			p.keys = p.keys[:i+1]
 			p.complete = true
 			return
 		}
+	}
+	if !pasting && len(keys) > 0 && p.keys[len(p.keys)-1] == 0x1b {
+		p.complete = true
 	}
 }
 

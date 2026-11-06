@@ -394,6 +394,13 @@ const (
 	// the intervention record it ended, which the owning leader is sent
 	// when the user typed any message.
 	KindInputReleased = "input.released"
+	// KindInputHeld records an agent held at an input state its provider
+	// version's allow-list does not name, KindInputHoldLifted the end of
+	// that hold, and KindModalAnswered a modal on the allow-list answered
+	// with its safe default.
+	KindInputHeld       = "input.held"
+	KindInputHoldLifted = "input.hold.lifted"
+	KindModalAnswered   = "modal.answered"
 	// KindRepositoryAdded and KindRepositoryRemoved record the user
 	// registering and removing a repository.
 	KindRepositoryAdded   = "repository.added"

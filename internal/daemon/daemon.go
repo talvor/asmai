@@ -681,6 +681,9 @@ type daemon struct {
 	sessions     map[string]sessionRef
 	lastChecks   []Check
 	heldChecks   map[string][]Check
+	// modalList, when set, replaces the allow-list of the qualified provider
+	// version, for tests.
+	modalList []providers.Modal
 	// versionSeen holds, by path, the executable the version check last read
 	// the version of, so that a start looks again only at a file that
 	// changed, as one that updated itself does.

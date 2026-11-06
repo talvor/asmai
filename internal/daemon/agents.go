@@ -223,6 +223,9 @@ type leader struct {
 	stoppedPromptID string
 	pendingPrompt   string
 	transcript      string
+	// hold is set while the session is held at an input state its provider
+	// version's allow-list does not name.
+	hold *inputHold
 	// prompt is the native permission prompt the session waits at, if any.
 	prompt *WaitingPrompt
 	// managedOnly is set when the session started under the managed policy
@@ -255,7 +258,7 @@ func (l *leader) inputOwner() string {
 	switch {
 	case l.taken != nil:
 		return InputUser
-	case l.inputUnknown || l.interrupted != 0:
+	case l.inputUnknown || l.interrupted != 0 || l.hold != nil:
 		return InputUnknown
 	case l.userInput:
 		return InputUser
@@ -1048,7 +1051,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 	l.ready, l.started, l.inputUnknown, l.pendingDispatch, l.currentDispatch, l.currentPromptID, l.stoppedPromptID, l.pendingPrompt, l.transcript = false, false, false, 0, 0, "", "", "", ""
 	l.interrupted, l.renudge, l.clearUnsent = 0, 0, false
 	l.taken, l.taking, l.takeSeq = nil, 0, 0
-	l.prompt, l.managedOnly = nil, perms.ManagedOnly
+	l.prompt, l.managedOnly, l.hold = nil, perms.ManagedOnly, nil
 	d.sessions[credential] = sessionRef{address: l.address, generation: generation}
 	d.log.Info("agent started", "agent", l.address.String(), "generation", generation, "pid", s.PID(), "provider", install.Name, "version", install.Version, "model", launch.model)
 	d.agents.Add(1)

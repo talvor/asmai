@@ -46,6 +46,7 @@ func (d *daemon) statusLine(was statusLine) statusLine {
 	if p := d.coordinationPrompt(); p != nil {
 		now.prompts = append(now.prompts, p.String())
 	}
+	now.prompts = append(now.prompts, d.inputHolds()...)
 	for _, p := range d.waitingPrompts() {
 		line := p.String()
 		if job, ok := jobOf[p.Request]; ok {

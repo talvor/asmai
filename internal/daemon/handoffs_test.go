@@ -296,7 +296,7 @@ func TestAnsweredNudgeDoesNotStarveLaterDispatch(t *testing.T) {
 	if _, err := s.SessionStarted(store.SessionStart{Agent: agent, Role: roles.Engineering, Provider: "claude-code", Version: "v", Model: "m", Executable: "/bin/sh", Dir: t.TempDir(), PID: 1, At: at}); err != nil {
 		t.Fatal(err)
 	}
-	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
+	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "printf '\\033[?2004h'; sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestAcknowledgedUnfetchedDispatchDoesNotStarveLaterDispatch(t *testing.T) {
 	if _, err := s.SessionStarted(store.SessionStart{Agent: agent, Role: roles.Engineering, Provider: "claude-code", Version: "v", Model: "m", Executable: "/bin/sh", Dir: t.TempDir(), PID: 1, At: at}); err != nil {
 		t.Fatal(err)
 	}
-	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
+	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "printf '\\033[?2004h'; sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestANudgeTypedAsTheStopHookRunsEndsAtTheFollowingTurnsStop(t *testing.T) {
 	if _, err := s.SessionStarted(store.SessionStart{Agent: agent, Role: roles.Engineering, Provider: "claude-code", Version: "v", Model: "m", Executable: "/bin/sh", Dir: t.TempDir(), PID: 1, At: at}); err != nil {
 		t.Fatal(err)
 	}
-	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
+	sess, err := session.Start(session.Spec{Path: "/bin/sh", Args: []string{"-c", "printf '\\033[?2004h'; sleep 60"}, Env: os.Environ(), Dir: t.TempDir(), Columns: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
 	}

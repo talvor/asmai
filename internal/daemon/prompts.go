@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"fmt"
@@ -23,8 +24,9 @@ const permissionRequested = "PermissionRequest"
 const promptCheck = time.Second
 
 // WaitingPrompt is a native permission prompt an agent's session waits at.
-// Only Coordination's terminal takes the user's keys. A prompt in any other
-// session is something its rules did not foresee.
+// Coordination's leader takes the user's keys through the conversation; the
+// user can take another agent's input at a prompt. A prompt in that session
+// is something its rules did not foresee.
 type WaitingPrompt struct {
 	Agent      string `json:"agent"`
 	Generation int    `json:"generation"`
@@ -35,6 +37,52 @@ type WaitingPrompt struct {
 	// Request is the decision request the daemon raised for the user through
 	// Coordination under the managed policy, and zero where it raised none.
 	Request int64 `json:"request,omitempty"`
+
+	// dispatch is the automated dispatch the agent worked on as the prompt
+	// was raised. terminal and keys are where the user holding the agent's
+	// input answered it, and what they typed there (03 rule 34).
+	dispatch int64
+	request  json.RawMessage
+	terminal string
+	keys     []byte
+	scan     int
+	pasting  bool
+	complete bool
+	observed bool
+}
+
+// answered notes keys the user typed from terminal while the prompt waited.
+func (p *WaitingPrompt) answered(terminal string, keys []byte) {
+	if p.complete {
+		return
+	}
+	p.terminal = terminal
+	p.keys = append(p.keys, keys...)
+	for p.scan < len(p.keys) {
+		i := p.scan
+		rest := p.keys[i:]
+		switch {
+		case bytes.HasPrefix(rest, []byte(pasteStart)):
+			p.pasting = true
+			p.scan += len(pasteStart)
+		case bytes.HasPrefix(rest, []byte(pasteEnd)):
+			p.pasting = false
+			p.scan += len(pasteEnd)
+		case len(rest) >= 2 && len(rest) < len(pasteStart) && (bytes.HasPrefix([]byte(pasteStart), rest) || bytes.HasPrefix([]byte(pasteEnd), rest)):
+			return
+		case rest[0] == '\r' && !p.pasting && (i == 0 || p.keys[i-1] != 0x1b):
+			p.keys = p.keys[:i+1]
+			p.complete = true
+			return
+		case p.pasting && rest[0] == 0x1b && len(rest) == 1:
+			return
+		default:
+			p.scan++
+		}
+	}
+	if !p.pasting && len(keys) > 0 && p.keys[len(p.keys)-1] == 0x1b {
+		p.complete = true
+	}
 }
 
 // String is how `asmai status` and the status line show the prompt.
@@ -92,11 +140,11 @@ func (d *daemon) promptNoted(ref sessionRef, event string, payload json.RawMessa
 	if l == nil || l.session == nil || l.generation != ref.generation {
 		return ""
 	}
-	d.promptEnded(l)
+	d.promptEnded(l, true)
 	if event != permissionRequested {
 		return ""
 	}
-	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now()}
+	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now(), dispatch: cmp.Or(l.currentDispatch, l.pendingDispatch), request: slices.Clone(payload)}
 	if ref.address != roles.LeaderOf(roles.Coordination) {
 		d.log.Warn("an agent waits at a native permission prompt nobody can answer", "agent", l.prompt.Agent, "generation", l.prompt.Generation, "about", l.prompt.About)
 		if l.managedOnly {
@@ -108,10 +156,17 @@ func (d *daemon) promptNoted(ref sessionRef, event string, payload json.RawMessa
 
 // promptEnded forgets the native prompt l's session waited at, and withdraws
 // the request raised for it if the user has not answered it. d.mu is held.
-func (d *daemon) promptEnded(l *leader) {
+func (d *daemon) promptEnded(l *leader, observed bool) {
 	p := l.prompt
 	l.prompt = nil
-	if p == nil || p.Request == 0 {
+	if p == nil {
+		return
+	}
+	p.observed = observed
+	if p.observed && p.complete {
+		d.promptAnswered(p)
+	}
+	if p.Request == 0 {
 		return
 	}
 	withdrawn, err := d.store.PromptRequestWithdrawn(p.Request, time.Now())
@@ -124,11 +179,20 @@ func (d *daemon) promptEnded(l *leader) {
 	}
 }
 
-// promptRaised raises the native prompt l's session waits at, which nobody
-// can answer in its terminal, as a decision request to the user through
-// Coordination, in the job the agent works on, and returns the agent that
-// presents it. The user decides it: nothing is ever typed into the prompt
-// until their witnessed answer is recorded (relayPrompt). d.mu is held.
+func (d *daemon) promptAnswered(p *WaitingPrompt) {
+	answer := store.PromptAnswer{Agent: p.Agent, Generation: p.Generation, Terminal: p.terminal, Prompt: string(p.request), Dispatch: p.dispatch, Request: p.Request, Keys: string(p.keys)}
+	if err := d.store.PromptAnsweredByUser(answer, time.Now()); err != nil {
+		d.log.Error("journaling the user's answer at a native prompt", "agent", p.Agent, "error", err.Error())
+	} else {
+		d.log.Info("the user answered a native prompt in the agent's terminal", "agent", p.Agent, "terminal", p.terminal, "dispatch", p.dispatch)
+	}
+}
+
+// promptRaised raises the native prompt l's session waits at as a decision
+// request to the user through Coordination, in the job the agent works on,
+// and returns the agent that presents it. The relay types nothing into the
+// prompt until the user's witnessed answer is recorded (relayPrompt).
+// d.mu is held.
 func (d *daemon) promptRaised(l *leader) (notify string) {
 	p := l.prompt
 	job := d.promptJob(l)

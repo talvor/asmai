@@ -410,7 +410,7 @@ func TestAgentsWithoutTheUsersTerminalAreToldADenialReplacesThePrompt(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "any native permission prompt another agent waits at, which nobody can answer: tell the user"; !strings.Contains(coordination, want) {
+	if want := "any native permission prompt another agent waits at: tell the user when one does"; !strings.Contains(coordination, want) {
 		t.Errorf("Coordination's leader's instructions lack %q", want)
 	}
 }

@@ -120,7 +120,7 @@ func inbox(o *output, paths statedir.Paths, dispatch int64) int {
 		if m.Kind == store.MessageRedispatch {
 			fmt.Fprintf(o.stdout, "%s\n", m.Body)
 		}
-		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageStalled || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed || m.Kind == store.MessageGrantEnded || m.Kind == store.MessageSetup || m.Kind == store.MessageJobCancelled {
+		if m.Kind == store.MessageRestoration || m.Kind == store.MessageReconciliation || m.Kind == store.MessageStalled || m.Kind == store.MessageDelivery || m.Kind == store.MessageChecksRed || m.Kind == store.MessageGrantEnded || m.Kind == store.MessageSetup || m.Kind == store.MessageInputHeld || m.Kind == store.MessageJobCancelled {
 			fmt.Fprintf(o.stdout, "%s\n", m.Body)
 		}
 		if a := m.AssignmentData; a != nil {

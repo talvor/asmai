@@ -183,7 +183,7 @@ func (d *daemon) handoffCommand(conn *net.UnixConn, req Request) {
 func (d *daemon) workFetchedReply(l *leader, ref sessionRef, m *store.Message) error {
 	switch m.Kind {
 	case store.HandoffAccepted, store.HandoffClarified, store.HandoffDeclined, store.MessageAssignment, store.MessageRejection, store.MessageMovedTip, store.MessageCancellation, store.MessageValidation, store.ReportResult, store.ReportBlocked, store.MessageBlockedResolved,
-		store.MessageResumption, store.MessageRedispatch, store.MessageStalled, store.MessageIntervention, store.MessageReconciliation, store.MessageRestoration, store.MessageDecisionRequest, store.MessageDecisionAnswer, store.MessageLavishSent, store.MessageSetup:
+		store.MessageResumption, store.MessageRedispatch, store.MessageStalled, store.MessageIntervention, store.MessageInputHeld, store.MessageReconciliation, store.MessageRestoration, store.MessageDecisionRequest, store.MessageDecisionAnswer, store.MessageLavishSent, store.MessageSetup:
 	default:
 		return nil
 	}
@@ -508,6 +508,7 @@ func (d *daemon) nudge(agent string) {
 	}
 	var dispatch store.Dispatch
 	var err error
+	renudged := l.renudge != 0
 	if l.renudge != 0 {
 		// The dispatch of the turn the user interrupted goes first, nudged
 		// again for its messages to be read again.
@@ -521,6 +522,14 @@ func (d *daemon) nudge(agent string) {
 	}
 	if err != nil {
 		d.log.Error("reading pending dispatch", "agent", agent, "error", err)
+		return
+	}
+	if !d.atKnownInput(l) {
+		// The dispatch waits, untouched, for the agent to be past the input
+		// state it is held at.
+		if renudged {
+			l.renudge = dispatch.ID
+		}
 		return
 	}
 	if l.address == roles.LeaderOf(roles.Coordination) {

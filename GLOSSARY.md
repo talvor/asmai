@@ -294,6 +294,13 @@ _Avoid_: Grab, lock
 **Releasing an agent**:
 The user returning an agent's input to automation with `asmai release <agent>`. If they typed any message, the agent's dispatch is superseded and its owning leader receives the intervention record. See [Taking an agent](README.md#taking-an-agent).
 
+**Modal allow-list**:
+The modals a qualified provider version may be answered at without the user, each with a safe default answer (Enter or Escape) that cannot change the provider, model, sign-in or permissions. It is carried per qualified provider version and starts empty.
+
+**Input hold**:
+The stop placed on an agent whose terminal shows an input state not on its provider version's modal allow-list. Nothing is typed over it, Coordination brings it to the user while independent work continues, the agent's messages wait as the dispatches they are, and nothing is cancelled or retried. It ends when the agent is at its input box again.
+_Avoid_: Pause (a pause is always the user's)
+
 **Dashboard**:
 The read-only terminal view of the factory's agents, jobs and log, opened with `asmai dashboard`. It shows what is happening and hands the terminal to an agent's attach; it never acts on the factory.
 _Avoid_: Console, monitor

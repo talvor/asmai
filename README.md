@@ -320,6 +320,10 @@ The factory's state directory, `~/.local/state/asmai`, is readable only by the u
 
 No journal entry or log line records environment variables.
 
+### Unknown input states
+
+Each qualified provider version carries an allow-list of modals it may be answered at without you, each with a safe default answer (Enter or Escape), which cannot change the provider, model, sign-in or permissions. The pinned Claude Code's allow-list is empty. When an agent's terminal shows any other input state than its input box, the agent is held: nothing is typed over it, its messages wait in its inbox, the status line shows the hold, and Coordination is told so it can bring it to you while independent work continues. AsmAI never cancels or retries the agent's work for you. Look at it with `asmai attach <agent>`, take its input with `asmai take <agent>` to deal with the dialog, and the hold ends when the agent is at its input box again.
+
 ### Writing assignments
 
 Engineering's leader does not write code itself: it gives a writing assignment to a worker with `asmai assign --job <number> --outcome <text> --criterion <text>`, repeating `--criterion` for each acceptance criterion. Only Engineering's leader may for code, and Planning's for notes (see [Planning](#planning)); the worker is one of the role of the leader that assigns. The assignment is recorded with its owning leader, its worker, its outcome and its acceptance criteria, and moves from active to submitted when its worker submits a result.

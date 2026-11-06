@@ -730,7 +730,7 @@ func TestKeysTypedWithoutANativePromptAreNotJournaledAsAnswers(t *testing.T) {
 	<-done
 }
 
-func TestMovedTakeRecordsOnlyTheAnswerFromTheNewTerminal(t *testing.T) {
+func TestMovedTakeRecordsTheFullAnswerWithTheFinishingTerminal(t *testing.T) {
 	w := newTakenWorker(t, "")
 	w.working(41)
 	ref := sessionRef{address: w.l.address, generation: w.l.generation}
@@ -747,7 +747,7 @@ func TestMovedTakeRecordsOnlyTheAnswerFromTheNewTerminal(t *testing.T) {
 	eventually(t, "the second terminal's answer", func() bool { return w.typedSoFar() == "ny\r" })
 	w.f.d.promptObserved(ref, turnStopped, json.RawMessage(`{"hook_event_name":"Stop"}`))
 	got := takeJournal(t, w.f.s, store.KindPromptAnswered)
-	if len(got) != 1 || got[0]["terminal"] != "/dev/pts/2" || got[0]["keys"] != "y\r" {
+	if len(got) != 1 || got[0]["terminal"] != "/dev/pts/2" || got[0]["keys"] != "ny\r" {
 		t.Errorf("the moved take's answer was journaled as %v", got)
 	}
 	older.Close()

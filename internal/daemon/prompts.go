@@ -44,15 +44,13 @@ type WaitingPrompt struct {
 	terminal string
 	keys     []byte
 	complete bool
+	observed bool
 }
 
 // answered notes keys the user typed from terminal while the prompt waited.
 func (p *WaitingPrompt) answered(terminal string, keys []byte) {
 	if p.complete {
 		return
-	}
-	if p.terminal != terminal {
-		p.keys = nil
 	}
 	p.terminal = terminal
 	for i, key := range keys {
@@ -141,13 +139,9 @@ func (d *daemon) promptEnded(l *leader, observed bool) {
 	if p == nil {
 		return
 	}
-	if observed && p.complete {
-		answer := store.PromptAnswer{Agent: p.Agent, Generation: p.Generation, Terminal: p.terminal, Prompt: string(p.request), Dispatch: p.dispatch, Request: p.Request, Keys: string(p.keys)}
-		if err := d.store.PromptAnsweredByUser(answer, time.Now()); err != nil {
-			d.log.Error("journaling the user's answer at a native prompt", "agent", p.Agent, "error", err.Error())
-		} else {
-			d.log.Info("the user answered a native prompt in the agent's terminal", "agent", p.Agent, "terminal", p.terminal, "dispatch", p.dispatch)
-		}
+	p.observed = observed
+	if p.observed && p.complete {
+		d.promptAnswered(p)
 	}
 	if p.Request == 0 {
 		return
@@ -159,6 +153,15 @@ func (d *daemon) promptEnded(l *leader, observed bool) {
 	}
 	if withdrawn {
 		d.log.Info("the agent is past its native prompt; its request to the user is withdrawn", "agent", p.Agent, "request", p.Request)
+	}
+}
+
+func (d *daemon) promptAnswered(p *WaitingPrompt) {
+	answer := store.PromptAnswer{Agent: p.Agent, Generation: p.Generation, Terminal: p.terminal, Prompt: string(p.request), Dispatch: p.dispatch, Request: p.Request, Keys: string(p.keys)}
+	if err := d.store.PromptAnsweredByUser(answer, time.Now()); err != nil {
+		d.log.Error("journaling the user's answer at a native prompt", "agent", p.Agent, "error", err.Error())
+	} else {
+		d.log.Info("the user answered a native prompt in the agent's terminal", "agent", p.Agent, "terminal", p.terminal, "dispatch", p.dispatch)
 	}
 }
 

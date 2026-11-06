@@ -503,6 +503,10 @@ const (
 	// answer to a native prompt request into the terminal of the agent that
 	// waits at the prompt.
 	KindPromptRelayed = "prompt.relayed"
+	// KindPromptAnswered records the user answering a native prompt
+	// directly in the terminal of the agent they took, with the prompt and
+	// the dispatch the agent worked on.
+	KindPromptAnswered = "prompt.answered"
 	// KindDecisionPresented records Coordination showing the user a version
 	// of a decision request in the conversation, and KindDecisionRefused the
 	// daemon refusing a record that cited a nudge, or a message typed

@@ -1494,6 +1494,9 @@ func (d *daemon) typed(c *conversation, keys []byte) {
 		d.mu.Unlock()
 		return
 	}
+	if l.taken == c && l.prompt != nil {
+		l.prompt.answered(c.terminal, keys)
+	}
 	l.userInput = true
 	if n := c.enters(keys); n > 0 {
 		l.submits += n

@@ -901,6 +901,34 @@ func (s *Store) PromptRelayed(r DecisionRequest, choice string, generation int, 
 	return tx.Commit()
 }
 
+// PromptAnswer is the user's answer to a native prompt, typed in the terminal
+// of the agent they took: Prompt is what the agent asked to do, Dispatch the
+// dispatch it worked on (zero for none), Request the decision request raised
+// for the prompt (zero for none) and Keys what the user typed.
+type PromptAnswer struct {
+	Agent      string `json:"agent"`
+	Generation int    `json:"generation"`
+	Terminal   string `json:"terminal"`
+	Prompt     string `json:"prompt"`
+	Dispatch   int64  `json:"dispatch,omitempty"`
+	Request    int64  `json:"request,omitempty"`
+	Keys       string `json:"keys"`
+}
+
+// PromptAnsweredByUser journals the user's answer to a native prompt, typed
+// in the terminal of the agent they took (03 rule 34).
+func (s *Store) PromptAnsweredByUser(a PromptAnswer, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := appendEntry(tx, at, KindPromptAnswered, a); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func decisionRequests(q querier, where string, args ...any) ([]DecisionRequest, error) {
 	rows, err := q.Query(`SELECT `+decisionRequestColumns+` FROM decision_requests WHERE `+where+` ORDER BY request, version`, args...)
 	if err != nil {

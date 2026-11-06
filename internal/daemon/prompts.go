@@ -35,6 +35,24 @@ type WaitingPrompt struct {
 	// Request is the decision request the daemon raised for the user through
 	// Coordination under the managed policy, and zero where it raised none.
 	Request int64 `json:"request,omitempty"`
+
+	// dispatch is the automated dispatch the agent worked on as the prompt
+	// was raised. terminal and keys are where the user holding the agent's
+	// input answered it, and what they typed there (03 rule 34).
+	dispatch int64
+	terminal string
+	keys     []byte
+}
+
+// maxAnswerKeys bounds the keys kept of a user's answer at a native prompt.
+const maxAnswerKeys = 256
+
+// answered notes keys the user typed from terminal while the prompt waited.
+func (p *WaitingPrompt) answered(terminal string, keys []byte) {
+	p.terminal = terminal
+	if room := maxAnswerKeys - len(p.keys); room > 0 {
+		p.keys = append(p.keys, keys[:min(room, len(keys))]...)
+	}
 }
 
 // String is how `asmai status` and the status line show the prompt.
@@ -96,7 +114,7 @@ func (d *daemon) promptNoted(ref sessionRef, event string, payload json.RawMessa
 	if event != permissionRequested {
 		return ""
 	}
-	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now()}
+	l.prompt = &WaitingPrompt{Agent: ref.address.String(), Generation: ref.generation, About: promptAbout(payload), Since: time.Now(), dispatch: cmp.Or(l.currentDispatch, l.pendingDispatch)}
 	if ref.address != roles.LeaderOf(roles.Coordination) {
 		d.log.Warn("an agent waits at a native permission prompt nobody can answer", "agent", l.prompt.Agent, "generation", l.prompt.Generation, "about", l.prompt.About)
 		if l.managedOnly {
@@ -111,7 +129,18 @@ func (d *daemon) promptNoted(ref sessionRef, event string, payload json.RawMessa
 func (d *daemon) promptEnded(l *leader) {
 	p := l.prompt
 	l.prompt = nil
-	if p == nil || p.Request == 0 {
+	if p == nil {
+		return
+	}
+	if p.terminal != "" {
+		answer := store.PromptAnswer{Agent: p.Agent, Generation: p.Generation, Terminal: p.terminal, Prompt: p.About, Dispatch: p.dispatch, Request: p.Request, Keys: string(p.keys)}
+		if err := d.store.PromptAnsweredByUser(answer, time.Now()); err != nil {
+			d.log.Error("journaling the user's answer at a native prompt", "agent", p.Agent, "error", err.Error())
+		} else {
+			d.log.Info("the user answered a native prompt in the agent's terminal", "agent", p.Agent, "terminal", p.terminal, "dispatch", p.dispatch)
+		}
+	}
+	if p.Request == 0 {
 		return
 	}
 	withdrawn, err := d.store.PromptRequestWithdrawn(p.Request, time.Now())

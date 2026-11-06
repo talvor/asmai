@@ -677,3 +677,50 @@ func TestTheStatusLineShowsTheInputTheUserHolds(t *testing.T) {
 		t.Errorf("after detaching the status line shows %v held, want the hold to remain", now.held)
 	}
 }
+
+// The user answers a native prompt in the terminal of the agent they took, and
+// the answer is journaled with the prompt and the dispatch once the agent is
+// past it (03 rule 34).
+func TestAnswerTypedAtANativePromptWhileTakingIsRecordedWithThePromptAndDispatch(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.working(41)
+	ref := sessionRef{address: w.l.address, generation: w.l.generation}
+	w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+	client, r, done := w.taking(t, "/dev/pts/7", false)
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	if resp := answered(t, r); resp.Error != "" {
+		t.Fatalf("taking at the native prompt was answered %+v", resp)
+	}
+	line, _ := json.Marshal(ClientMessage{Keys: []byte("\r")})
+	client.Write(append(line, '\n'))
+	eventually(t, "the answer in the agent's terminal", func() bool { return w.typedSoFar() == "\r" })
+	if got := takeJournal(t, w.f.s, store.KindPromptAnswered); len(got) != 0 {
+		t.Fatalf("the answer was journaled before the agent was past the prompt: %v", got)
+	}
+	w.f.d.promptObserved(ref, "PostToolUse", json.RawMessage(`{}`))
+	got := takeJournal(t, w.f.s, store.KindPromptAnswered)
+	if len(got) != 1 || got[0]["agent"] != w.name || got[0]["terminal"] != "/dev/pts/7" || got[0]["keys"] != "\r" || got[0]["dispatch"] != float64(41) || !strings.Contains(got[0]["prompt"].(string), "rm -rf build") {
+		t.Fatalf("the user's answer was journaled as %v", got)
+	}
+	client.Close()
+	<-done
+}
+
+// Keys typed with no prompt waiting are not an answer to one.
+func TestKeysTypedWithoutANativePromptAreNotJournaledAsAnswers(t *testing.T) {
+	w := newTakenWorker(t, "")
+	w.boundary()
+	ref := sessionRef{address: w.l.address, generation: w.l.generation}
+	client, r, done := w.taking(t, "/dev/pts/7", false)
+	answered(t, r)
+	line, _ := json.Marshal(ClientMessage{Keys: []byte("x")})
+	client.Write(append(line, '\n'))
+	eventually(t, "the keys", func() bool { return w.typedSoFar() == "x" })
+	w.f.d.promptObserved(ref, permissionRequested, json.RawMessage(permissionRequest))
+	w.f.d.promptObserved(ref, "PostToolUse", json.RawMessage(`{}`))
+	if got := takeJournal(t, w.f.s, store.KindPromptAnswered); len(got) != 0 {
+		t.Errorf("journaled %v, want no answer", got)
+	}
+	client.Close()
+	<-done
+}

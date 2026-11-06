@@ -27,8 +27,9 @@ import (
 	"github.com/talvor/asmai/internal/vt"
 )
 
-// detachKey is the key that detaches an attach client, and leaves the
-// conversation: Ctrl-]. In M4 it opens a menu instead.
+// detachKey is the key that opens the menu of an attach client: Ctrl-]. The
+// menu detaches, which leaves the conversation, takes, releases, interrupts,
+// or moves the terminal to the conversation or another agent.
 const detachKey = 0x1d
 
 // leaveWait is how long the conversation waits for the daemon to say the
@@ -65,9 +66,25 @@ func attach(o *output, paths statedir.Paths, agent string, stdin io.Reader) int 
 // reach the agent; otherwise none does. notice, if any, shows on the status
 // line until the user's first key.
 func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File, notice string) int {
+	for {
+		code, next := showOnce(o, paths, req, in, out, notice)
+		if next == nil {
+			return code
+		}
+		// The user moved this terminal with the Ctrl-] menu.
+		req, notice = *next, ""
+		if req.Command == daemon.CommandTake && !req.Interrupt {
+			fmt.Fprintf(o.stderr, "Taking %s: waiting for its running turn to end, if there is one.\n", req.Agent)
+		}
+	}
+}
+
+// showOnce is show of one request, and returns the request the user moved
+// this terminal to with the menu, if they did.
+func showOnce(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File, notice string) (int, *daemon.Request) {
 	columns, rows, err := term.GetSize(int(out.Fd()))
 	if err != nil {
-		return o.fail(fmt.Errorf("finding the terminal's size: %w", err))
+		return o.fail(fmt.Errorf("finding the terminal's size: %w", err)), nil
 	}
 	// The agent's terminal is one row shorter than this one: the last row is
 	// the status line.
@@ -77,26 +94,28 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 		defer conn.Close()
 	}
 	if err != nil {
-		return o.fail(err)
+		return o.fail(err), nil
 	}
 	if resp.Attached == nil {
-		return o.fail(errors.New("the daemon did not answer with the agent it attached"))
+		return o.fail(errors.New("the daemon did not answer with the agent it attached")), nil
 	}
 	// The conversation starts with the catch-up, on the user's own screen
 	// before the live conversation takes it over (04 rule 17).
 	if req.Command == daemon.CommandConversation {
 		if resp.CatchUp == nil {
-			return o.fail(errors.New("the daemon did not answer with the conversation's catch-up"))
+			return o.fail(errors.New("the daemon did not answer with the conversation's catch-up")), nil
 		}
 		printCatchUp(o.stdout, resp.CatchUp, func(port int) string { return lavish.ForwardCommand(sshDestination(), port) })
 	}
 	restore, err := term.MakeRaw(int(in.Fd()))
 	if err != nil {
-		return o.fail(fmt.Errorf("making the terminal raw: %w", err))
+		return o.fail(fmt.Errorf("making the terminal raw: %w", err)), nil
 	}
 
 	c := &attachClient{
 		out:          out,
+		paths:        paths,
+		terminal:     req.Terminal,
 		conn:         conn,
 		agent:        resp.Attached.Agent,
 		conversation: req.Command == daemon.CommandConversation,
@@ -127,8 +146,11 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 	}
 	out.WriteString("\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l")
 	term.Restore(int(in.Fd()), restore)
+	if c.next != nil {
+		return 0, c.next
+	}
 	fmt.Fprintln(o.stderr, why)
-	return 0
+	return 0, nil
 }
 
 // attachClient draws an agent's terminal, which it emulates from the
@@ -136,6 +158,8 @@ func show(o *output, paths statedir.Paths, req daemon.Request, in, out *os.File,
 // the daemon the user's keys.
 type attachClient struct {
 	out          *os.File
+	paths        statedir.Paths
+	terminal     string
 	conn         net.Conn
 	agent        string
 	conversation bool
@@ -150,6 +174,10 @@ type attachClient struct {
 
 	mu     sync.Mutex
 	notice string
+	// menu is the Ctrl-] menu while it is open, and next the request the
+	// user moved this terminal to with it.
+	menu *menu
+	next *daemon.Request
 	// takenOver names the terminal that took the conversation over, once
 	// one did: this one then only observes.
 	takenOver string
@@ -333,9 +361,16 @@ func (c *attachClient) readKeys(in io.Reader) {
 // typed acts on keys, the next the user typed as readKeys reads them, and
 // reports whether Ctrl-] among them detached or left the conversation.
 func (c *attachClient) typed(keys []byte) bool {
+	c.mu.Lock()
+	open := c.menu != nil
+	c.mu.Unlock()
+	if open {
+		return c.menuKeys(keys)
+	}
 	detach := bytes.IndexByte(keys, detachKey)
+	var after []byte
 	if detach >= 0 {
-		keys = keys[:detach]
+		keys, after = keys[:detach], keys[detach+1:]
 	}
 	if len(keys) > 0 {
 		c.mu.Lock()
@@ -350,8 +385,8 @@ func (c *attachClient) typed(keys []byte) bool {
 		c.send(daemon.ClientMessage{Keys: keys})
 	}
 	if detach >= 0 {
-		c.leave()
-		return true
+		c.openMenu()
+		return c.menuKeys(after)
 	}
 	return false
 }
@@ -482,8 +517,15 @@ func (c *attachClient) frame() []byte {
 	if c.term == nil {
 		return nil
 	}
+	if c.menu != nil {
+		// The menu is drawn over the screen, which is then drawn whole.
+		c.renderer.Invalidate()
+	}
 	frame := c.renderer.RenderBack(c.term, c.columns, max(c.rows-1, 0), c.back)
 	frame = append(frame, c.statusLine()...)
+	if c.menu != nil {
+		frame = append(frame, c.menuOverlay()...)
+	}
 	// Only the terminal that holds the conversation brackets pasted text.
 	if want := c.input() && c.takenOver == "" && c.term.BracketedPaste(); want != c.paste {
 		c.paste = !c.paste

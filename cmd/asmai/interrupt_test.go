@@ -88,7 +88,7 @@ func TestAnInterruptedAutomatedTurnIsRecognisedAtTheNextStopAndNudgedAgain(t *te
 	if leader := coordination(t); leader.Input != "unknown" {
 		t.Errorf("after Esc in Coordination's automated turn, its input is %q, want unknown", leader.Input)
 	}
-	a.ptmx.WriteString("\x1d")
+	a.ptmx.WriteString("\x1d\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}
@@ -177,7 +177,7 @@ func TestAnInterruptedAutomatedTurnIsRecognisedAtTheNextStopAndNudgedAgain(t *te
 	if witnessed := journaled(t, "message.witnessed"); len(witnessed) != 2 {
 		t.Errorf("the journal holds %d witnessed messages, want the user's two", len(witnessed))
 	}
-	b.ptmx.WriteString("\x1d")
+	b.ptmx.WriteString("\x1d\r")
 	if code := b.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai chat exited %d, want 0", code)
 	}

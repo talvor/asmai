@@ -221,7 +221,7 @@ func TestDashboardJobDetailEnterOnAnAssignmentAttachesToItsWorker(t *testing.T) 
 	if screen := d.Screen(); !strings.Contains(screen, "the worker's own screen") || strings.Contains(screen, "asmai dashboard") {
 		t.Errorf("while attached the screen is\n%s\nwant the worker's screen and none of the Dashboard's", screen)
 	}
-	d.Send("\x1d") // Ctrl-]
+	d.Send("\x1d\r") // Ctrl-]
 	screen := d.WaitForText("Assignment 32")
 	if !strings.Contains(screen, "Validation accepted at 4f1c9a2") {
 		t.Errorf("after attach the job detail is gone:\n%s", screen)

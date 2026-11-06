@@ -137,7 +137,7 @@ func TestInTheConversationShiftEnterIsSentAsANewLineAndCtrlBracketLeaves(t *test
 		}
 	}
 
-	w.Write([]byte("\x1b[93;5u"))
+	w.Write([]byte("\x1b[93;5u\r"))
 	select {
 	case m := <-sent:
 		if !m.Leave {

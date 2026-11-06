@@ -191,7 +191,7 @@ func leavingWithUnsentText(t *testing.T, how string, leave func(a *attachedTermi
 // the reply that waited for it be typed at once.
 func TestDetachingSavesTheUsersUnsentTextAndResumesDelivery(t *testing.T) {
 	leavingWithUnsentText(t, "detached", func(a *attachedTerminal) {
-		a.ptmx.WriteString("\x1d")
+		a.ptmx.WriteString("\x1d\r")
 		if code := a.exited(t); code != 0 {
 			t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 		}
@@ -241,7 +241,7 @@ func TestANudgeWaitsForTheUsersLastKeysToBeDrawn(t *testing.T) {
 		t.Fatalf("with the user holding Coordination's input, the reply went %v, want it waiting", replyStates(t))
 	}
 
-	a.ptmx.WriteString("draft\x1d")
+	a.ptmx.WriteString("draft\x1d\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}
@@ -279,7 +279,7 @@ func TestUnsentTextLeftInTheMiddleOfAnAutomatedTurnIsClearedAtItsBoundary(t *tes
 	waitFor(t, "Coordination's input box", a.shows("❯ Try"))
 	a.ptmx.WriteString("Please implement fixture\r")
 	waitFor(t, "the handoff to Engineering", touched(dir, "handed-off"))
-	a.ptmx.WriteString("\x1d")
+	a.ptmx.WriteString("\x1d\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}
@@ -290,7 +290,7 @@ func TestUnsentTextLeftInTheMiddleOfAnAutomatedTurnIsClearedAtItsBoundary(t *tes
 	waitFor(t, "Coordination's automated turn", b.shows("Working (esc to interrupt)"))
 	b.ptmx.WriteString("draft")
 	waitFor(t, "the user's unsent text", touched(dir, "drafted"))
-	b.ptmx.WriteString("\x1d")
+	b.ptmx.WriteString("\x1d\r")
 	if code := b.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}
@@ -344,7 +344,7 @@ func TestTheUsersKeysReachCoordinationInTheMiddleOfAnAutomatedTurn(t *testing.T)
 	}
 
 	// Leaving lets the nudge be typed.
-	a.ptmx.WriteString("\x1d")
+	a.ptmx.WriteString("\x1d\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}

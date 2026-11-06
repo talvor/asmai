@@ -174,7 +174,7 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 
 	// Ctrl-] leaves the conversation: by the time asmai exits, Coordination
 	// is back under automation, and nothing is paused or ended.
-	a.ptmx.WriteString("\x1d")
+	a.ptmx.WriteString("\x1d\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}
@@ -231,7 +231,7 @@ func TestTheConversationAttachesTheUserToCoordinationAndJournalsWhatTheySubmit(t
 	if screen.Started || screen.Agent.Agent != "leader@coordination" || len(screen.Screen.Lines) != 24 {
 		t.Errorf("asmai chat --json printed %+v, want Coordination's screen and nothing started", screen)
 	}
-	b.ptmx.WriteString("\x1d")
+	b.ptmx.WriteString("\x1d\r")
 	if code := b.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai chat exited %d, want 0", code)
 	}
@@ -313,7 +313,7 @@ func TestAMultiLineMessageIsSubmittedWholeAndJournaledWithItsLineBreaks(t *testi
 
 	// Ctrl-], as the kitty keyboard protocol sends it, still leaves, and
 	// the terminal is restored.
-	a.ptmx.WriteString("\x1b[93;5u")
+	a.ptmx.WriteString("\x1b[93;5u\r")
 	if code := a.exited(t); code != 0 {
 		t.Fatalf("leaving the conversation, asmai exited %d, want 0", code)
 	}

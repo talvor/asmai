@@ -81,7 +81,7 @@ func TestTakeLiveNativePromptAnswer(t *testing.T) {
 		Agent    string `json:"agent"`
 		Terminal string `json:"terminal"`
 		Prompt   string `json:"prompt"`
-		Dispatch int64 `json:"dispatch"`
+		Dispatch int64  `json:"dispatch"`
 		Keys     string `json:"keys"`
 	}
 	entry := journaled(t, "prompt.answered")[0]

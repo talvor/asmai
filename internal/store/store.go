@@ -357,6 +357,12 @@ CREATE TABLE focus_changes (
  witness INTEGER NOT NULL, changed_at TEXT NOT NULL
 );
 `,
+	`
+CREATE TABLE recordings (
+ dispatch INTEGER PRIMARY KEY REFERENCES dispatches(id), path TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0,
+ started_at TEXT NOT NULL, deleted_at TEXT
+);
+`,
 }
 
 // schemaVersion is the version of the schema this asmai writes.

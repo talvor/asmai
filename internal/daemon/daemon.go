@@ -584,6 +584,8 @@ func Run(ctx context.Context, cfg Config) error {
 	d.removeEndedJobsLocal()
 	d.wg.Add(1)
 	go d.watchCI()
+	d.wg.Add(1)
+	go d.watchRecordings()
 	// The daemon runs the factory's Lavish server itself, so that review
 	// pages outlive any agent; it stops with the work.
 	d.wg.Add(1)

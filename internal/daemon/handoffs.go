@@ -551,6 +551,7 @@ func (d *daemon) nudge(agent string) {
 	l.inputUnknown = true
 	l.pendingDispatch = dispatch.ID
 	l.pendingPrompt = prompt
+	d.syncRecording(l)
 	if err = l.session.Input([]byte(prompt + "\r")); err != nil {
 		d.log.Error("typing nudge", "dispatch", dispatch.ID, "error", err)
 	}
@@ -629,6 +630,7 @@ func (d *daemon) endCurrentDispatch(ref sessionRef, promptID, transcript string)
 	// the inbox. Keep the durable dispatch eligible for another nudge, but do
 	// not leave the finished prompt as the leader's current dispatch.
 	l.currentDispatch = 0
+	d.syncRecording(l)
 	if stopped {
 		return id, err
 	}
@@ -652,6 +654,7 @@ func (d *daemon) interruptedTurn(l *leader, ref sessionRef, prompt, transcript s
 		return false, nil
 	}
 	l.currentDispatch, l.currentPromptID = 0, ""
+	d.syncRecording(l)
 	if err := d.store.InterruptedDispatch(id, ref.address.String(), ref.generation, transcript, time.Now()); err != nil {
 		return true, err
 	}

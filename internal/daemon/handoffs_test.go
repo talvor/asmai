@@ -301,6 +301,7 @@ func TestAnsweredNudgeDoesNotStarveLaterDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sess.Stop(100 * time.Millisecond) })
+	eventually(t, "the agent to be at its input box", func() bool { return providers.ClaudeCodeAtInput(sess.Screen()) })
 	first := addPendingDispatch(t, s, agent, store.DispatchCreated, 1)
 	l := &leader{address: roles.LeaderOf(roles.Engineering), session: sess, generation: 1, ready: true}
 	d := &daemon{leaders: map[string]*leader{agent: l}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -367,6 +368,7 @@ func TestAcknowledgedUnfetchedDispatchDoesNotStarveLaterDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sess.Stop(100 * time.Millisecond) })
+	eventually(t, "the agent to be at its input box", func() bool { return providers.ClaudeCodeAtInput(sess.Screen()) })
 	first := addPendingDispatch(t, s, agent, store.DispatchCreated, 1)
 	l := &leader{address: roles.LeaderOf(roles.Engineering), session: sess, generation: 1, ready: true}
 	d := &daemon{leaders: map[string]*leader{agent: l}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -429,6 +431,7 @@ func TestANudgeTypedAsTheStopHookRunsEndsAtTheFollowingTurnsStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sess.Stop(100 * time.Millisecond) })
+	eventually(t, "the agent to be at its input box", func() bool { return providers.ClaudeCodeAtInput(sess.Screen()) })
 	first := addPendingDispatch(t, s, agent, store.DispatchCreated, 1)
 	l := &leader{address: roles.LeaderOf(roles.Engineering), session: sess, generation: 1, ready: true}
 	d := &daemon{leaders: map[string]*leader{agent: l}, store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}

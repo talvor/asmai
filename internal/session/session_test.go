@@ -3,8 +3,10 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,5 +104,61 @@ func TestASessionEndsWhenItsProgramExits(t *testing.T) {
 	}
 	if _, ok := <-events; ok {
 		t.Error("following an ended session goes on")
+	}
+}
+
+type tap struct {
+	mu     sync.Mutex
+	output strings.Builder
+	sizes  []string
+}
+
+func (r *tap) Output(p []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.output.Write(p)
+}
+
+func (r *tap) Resize(columns, rows int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sizes = append(r.sizes, fmt.Sprintf("%dx%d", columns, rows))
+}
+
+func (r *tap) text() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.output.String()
+}
+
+// A recorder starts from the screen as it is, then receives what the
+// program writes and the terminal's resizes, until it is taken off.
+func TestASessionGivesItsRecorderTheScreenThenItsOutputAndResizes(t *testing.T) {
+	s, err := Start(Spec{Path: "/bin/sh", Args: []string{"-c", `printf 'before\r\n'; read -r line; printf 'after\r\n'; read -r line; printf 'unrecorded\r\n'; read -r line`}, Env: os.Environ(), Dir: t.TempDir(), Columns: 30, Rows: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Stop(time.Second) })
+	waitFor(t, "the first output", func() bool { return strings.Contains(screenText(s), "before") })
+
+	r := &tap{}
+	s.Record(r)
+	if !strings.Contains(r.text(), "before") {
+		t.Errorf("the recorder starts from %q, want the screen as it was", r.text())
+	}
+	if err := s.Resize(40, 8); err != nil {
+		t.Fatal(err)
+	}
+	s.Input([]byte("\n"))
+	waitFor(t, "the recorder to receive the output", func() bool { return strings.Contains(r.text(), "after") })
+	if len(r.sizes) != 1 || r.sizes[0] != "40x8" {
+		t.Errorf("the recorder saw resizes %v, want 40x8", r.sizes)
+	}
+
+	s.Record(nil)
+	s.Input([]byte("\n"))
+	waitFor(t, "the output after recording stopped", func() bool { return strings.Contains(screenText(s), "unrecorded") })
+	if strings.Contains(r.text(), "unrecorded") {
+		t.Error("the recorder received output after it was taken off")
 	}
 }

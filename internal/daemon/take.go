@@ -196,6 +196,7 @@ func (d *daemon) awaitBoundary(conn *net.UnixConn, r *bufio.Reader, l *leader, s
 					l.pendingPrompt = ""
 					l.inputUnknown = false
 					l.ready = true
+					d.syncRecording(l)
 				} else if dispatch != 0 {
 					l.interrupted = dispatch
 				}

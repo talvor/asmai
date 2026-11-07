@@ -135,7 +135,7 @@ func TestTheCatchUpOffersTheUnsentTextBackAndShowsALostSignIn(t *testing.T) {
 		inputBox("draft"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/drafted"`, 0, ""),
 		// The saved text is cleared at the boundary, and never typed again.
-		`{"expect":"\u000c"}`,
+		`{"expect":"\u0003"}`,
 		inputBox(""),
 		`{"expect":"only typed by a test that means to"}`,
 	})

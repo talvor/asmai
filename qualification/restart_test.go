@@ -259,7 +259,7 @@ case "$*" in
 *"You are Coordination's leader in AsmAI"*) role=coordination ;;
 *"You are Engineering's leader in AsmAI"*) role=engineering ;;
 *) case "$(basename "$PWD")" in
-	agents|workspaces|qualification-handoff) role=setup ;;
+	agents|workspaces|qualification-handoff|qualification-setup) role=setup ;;
 	*) role=idle ;;
 	esac ;;
 esac

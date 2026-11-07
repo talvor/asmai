@@ -2,7 +2,7 @@
 
 The qualification harness runs AsmAI's qualification cases against the real pinned provider CLIs, on a real host, as that host's own qualification user ([11](https://github.com/talvor/AssemblyAI/blob/main/docs/spec/11-qualification-and-proving.md) rules 6 and 7, [ADR 0008](adr/0008-qualification-runs-real-provider-clis-on-real-hosts.md)). It builds the commit under test, runs its own factory with the pinned Claude Code, and reports each case as passed or failed with the platform, the pinned provider version and the commit. The hosts it runs on, and how to reach them, are in [`qualification-hosts.md`](qualification-hosts.md).
 
-So far it has twenty-five cases:
+So far it has thirty-two cases:
 
 | Case | What it qualifies |
 |---|---|
@@ -10,8 +10,15 @@ So far it has twenty-five cases:
 | C2 | An unqualified provider version is refused before any dispatch; a provider CLI that upgraded itself holds its agent at the next restart |
 | C3 | The pinned Claude Code reuses the user's existing sign-in without a new login |
 | C4 | Every agent session starts without provider API-key variables |
+| C6 | A native input state that is not on the provider version's allow-list (which starts empty) holds the agent instead of being typed over: the hold is journaled with the screen, nothing is typed at the picker, and the hold lifts when the agent is at its input box |
 | C7 | An automated nudge counts only after the receiving provider acknowledges its exact prompt |
+| C8 | Taking an agent waits for the end of its turn, or with `--interrupt` interrupts it, and the user never types into an automated draft (recorded and cleared; a real session cannot be made to hold one, so that part is a listed limitation covered by the development tests) |
+| C9 | The attach client draws the pinned Claude Code's screen above its status line at reduced height: the status line keeps the last row and the input prompt stays on screen |
+| C10 | The user's unsent text in the conversation is read exactly from the input box, saved when they leave, and the box is cleared |
 | C11 | The user's witnessed request is journaled, while the daemon's nudge is not |
+| C12 | A Claude turn the user interrupted with Esc is recognised, with no Interrupt hook, and journaled as interrupted |
+| C13 | A second attach takes the conversation over: the older terminal is told, only observes, and its unsent text is saved |
+| C14 | Each dispatch's terminal is recorded, and `asmai replay` plays the recording to its end |
 | C19 | Dispatches and results stay correlated and reconcilable across restarts |
 | C33 | Personal, provider built-in and repository skills are hidden, including Claude Code's built-in code-review next to the shipped one |
 | C34 | Per-session skill delivery works although Claude Code namespaces plugin skills and upstream skills call each other by bare name |
@@ -48,7 +55,7 @@ Once per host, as the qualification user (on `asmai-vm`, `phillip`; see [`qualif
 
 1. Sign Claude Code in with its own login, as that user, and check it: `claude auth status` reports `claude.ai`. The harness never starts a sign-in.
 2. Staff the roles in `~/.config/asmai/config.toml` ([the configuration file](../README.md#the-configuration-file)). The harness refuses to run without it and never writes it.
-   For an isolated run, set `ASMAI_CONFIG_FILE` to an absolute path to a scratch config with Coordination and Engineering staffed. C2, C7, C11, C19, C48, C52, C53, C54 and C57 use a dedicated disposable state directory and remove it after the factories stop; the harness refuses to reuse a leftover directory. They run with a copy of the configuration file in that directory, so the fixture repository they register is removed with it and the file itself stays as it was.
+   For an isolated run, set `ASMAI_CONFIG_FILE` to an absolute path to a scratch config with Coordination and Engineering staffed. C2, C6, C7, C8, C9, C10, C11, C12, C13, C14, C19, C48, C52, C53, C54 and C57 use a dedicated disposable state directory and remove it after the factories stop; the harness refuses to reuse a leftover directory. They run with a copy of the configuration file in that directory, so the fixture repository they register is removed with it and the file itself stays as it was.
    Run `asmai setup` once, as the qualification user, in a terminal on the host, and answer "Yes, I trust this folder" yourself for `agents/`, `workspaces/` and each registered repository's clone in the configured state directory (`asmai repo add`, run in a terminal, asks about the clone it makes), where C3, C4, C36, C37, C49, C55 and C56 start Coordination's leader ([ADR 0011](adr/0011-agents-rely-on-one-user-given-directory-trust.md)). The harness never answers that question there: a leader that asks it fails the case.
 3. Have `git`, `go` and `make` on the `PATH`. A command passed straight to `ssh` may need `~/.local/bin` and, on the Mac, `/opt/homebrew/bin` added, as [`qualification-hosts.md`](qualification-hosts.md) describes.
 4. Stop any factory the user has running with `asmai stop`: the harness runs its own, and refuses to run beside another.

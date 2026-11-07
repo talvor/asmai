@@ -294,6 +294,10 @@ _Avoid_: Grab, lock
 **Releasing an agent**:
 The user returning an agent's input to automation with `asmai release <agent>`. If they typed any message, the agent's dispatch is superseded and its owning leader receives the intervention record. See [Taking an agent](README.md#taking-an-agent).
 
+**Recording**:
+The compressed recording of an agent's terminal while a dispatch is typed to it, kept as a file in the state directory under `recordings/<agent>/`, with its place and size journaled. A dispatch typed again after the user interrupted it adds to the recording it has. Recordings are deleted `[logs] recording_retention` (14 days) after their job ends, and the deletion is journaled.
+_Avoid_: Transcript (the provider's own file, which stays where the provider writes it)
+
 **Modal allow-list**:
 The modals a qualified provider version may be answered at without the user, each with a safe default answer (Enter or Escape) that cannot change the provider, model, sign-in or permissions. It is carried per qualified provider version and starts empty.
 

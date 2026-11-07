@@ -324,6 +324,12 @@ No journal entry or log line records environment variables.
 
 Each qualified provider version carries an allow-list of modals it may be answered at without you, each with a safe default answer (Enter or Escape), which cannot change the provider, model, sign-in or permissions. The pinned Claude Code's allow-list is empty. When an agent's terminal shows any other input state than its input box, the agent is held: nothing is typed over it, its messages wait in its inbox, the status line shows the hold, and Coordination is told so it can bring it to you while independent work continues. AsmAI never cancels or retries the agent's work for you. Look at it with `asmai attach <agent>`, take its input with `asmai take <agent>` to deal with the dialog, and the hold ends when the agent is at its input box again.
 
+### Recordings
+
+Every dispatch typed to an agent is recorded: the agent's terminal output, from the moment the daemon types the dispatch until its turn ends, goes to a gzip-compressed [asciicast](https://docs.asciinema.org/manual/asciicast/v2/) file, `recordings/<agent>/dispatch-<id>.cast.gz` in the state directory. The journal records where it is (`recording.started`) and how large it grew (`recording.finished`). A dispatch the user interrupted and the daemon types again adds to the recording it has. Provider transcripts are not recordings and stay where the provider writes them.
+
+The daemon deletes a recording `recording_retention` after its job ends (`14d` unless `[logs]` sets another), checking when it starts and every hour after, and journals each deletion (`recording.deleted`). Setting it applies at the next check. A recording of a job that has not ended is kept. Replaying recordings arrives in a later milestone.
+
 ### Writing assignments
 
 Engineering's leader does not write code itself: it gives a writing assignment to a worker with `asmai assign --job <number> --outcome <text> --criterion <text>`, repeating `--criterion` for each acceptance criterion. Only Engineering's leader may for code, and Planning's for notes (see [Planning](#planning)); the worker is one of the role of the leader that assigns. The assignment is recorded with its owning leader, its worker, its outcome and its acceptance criteria, and moves from active to submitted when its worker submits a result.

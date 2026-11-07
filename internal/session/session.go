@@ -38,6 +38,14 @@ type Event struct {
 	Output []byte
 }
 
+// Recorder is what records a session's terminal.
+type Recorder interface {
+	// Output records p, written to the terminal.
+	Output(p []byte)
+	// Resize records the terminal becoming columns by rows.
+	Resize(columns, rows int)
+}
+
 // Session is a provider CLI running in a pseudo-terminal.
 type Session struct {
 	cmd  *exec.Cmd
@@ -49,6 +57,8 @@ type Session struct {
 	mu        sync.Mutex
 	term      *vt.Terminal
 	followers map[chan Event]struct{}
+	// recorder, when set, is given the terminal's output and resizes.
+	recorder Recorder
 	// active is when a key was last typed into the session or it last
 	// wrote output.
 	active time.Time
@@ -115,6 +125,9 @@ func (s *Session) readOutput() {
 			s.mu.Lock()
 			s.active = time.Now()
 			s.term.Write(out)
+			if s.recorder != nil {
+				s.recorder.Output(out)
+			}
 			answers := s.term.TakeResponses()
 			for f := range s.followers {
 				select {
@@ -222,6 +235,22 @@ func (s *Session) Follow() (<-chan Event, func()) {
 	}
 }
 
+// Record makes r record the session's terminal from now on, in place of any
+// recorder before it. It is first given the screen as it is now, to start
+// from. Passing nil stops recording.
+func (s *Session) Record(r Recorder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recorder = r
+	if r == nil {
+		return
+	}
+	if t, err := vt.FromState(s.term.State()); err == nil {
+		columns, rows := t.Size()
+		r.Output((&vt.Renderer{}).Render(t, columns, rows))
+	}
+}
+
 // Screen returns the session's terminal as it is now.
 func (s *Session) Screen() vt.State {
 	s.mu.Lock()
@@ -242,6 +271,9 @@ func (s *Session) Resize(columns, rows int) error {
 		return err
 	}
 	s.term.Resize(columns, rows)
+	if s.recorder != nil {
+		s.recorder.Resize(columns, rows)
+	}
 	state := s.term.State()
 	for f := range s.followers {
 		select {

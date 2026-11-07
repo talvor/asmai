@@ -63,6 +63,9 @@ type Paths struct {
 	// Workspaces holds each assignment's workspace and its temporary
 	// directory, in a directory named for its job and assignment.
 	Workspaces string
+	// Recordings holds the compressed terminal recording of each dispatch,
+	// in a directory named for the agent it went to.
+	Recordings string
 	// Views holds the leaders' read-only view of each repository job, in a
 	// directory named for the job.
 	Views string
@@ -111,6 +114,7 @@ func At(dir string) Paths {
 		Plugins:       filepath.Join(dir, "plugins"),
 		Repositories:  filepath.Join(dir, "repositories"),
 		Workspaces:    filepath.Join(dir, "workspaces"),
+		Recordings:    filepath.Join(dir, "recordings"),
 		Views:         filepath.Join(dir, "views"),
 	}
 }
@@ -130,7 +134,7 @@ func (p Paths) Prepare() error {
 // Folders are the folders the factory keeps in the state directory, besides
 // the directory itself.
 func (p Paths) Folders() []string {
-	return []string{p.Providers, p.Bin, p.GitHooks, p.Agents, p.Repositories, p.Workspaces, p.Views}
+	return []string{p.Providers, p.Bin, p.GitHooks, p.Agents, p.Repositories, p.Workspaces, p.Recordings, p.Views}
 }
 
 // MakeFolders prepares the state directory and makes each of its Folders

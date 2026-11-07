@@ -223,6 +223,9 @@ type leader struct {
 	stoppedPromptID string
 	pendingPrompt   string
 	transcript      string
+	// recording is the recording being made of the session's terminal for
+	// the dispatch it is working on.
+	recording *dispatchRecording
 	// hold is set while the session is held at an input state its provider
 	// version's allow-list does not name.
 	hold *inputHold
@@ -1044,6 +1047,7 @@ func (d *daemon) startSession(l *leader, install store.ProviderInstall, launch l
 		s.Stop(stopGrace)
 		return fmt.Errorf("journaling the session's start: %w", err)
 	}
+	d.stopRecording(l)
 	l.session, l.generation, l.startedAt = s, generation, at
 	l.skills = skills.NamesOf(launch.skills)
 	l.model, l.effort = launch.model, ""
@@ -1091,6 +1095,7 @@ func (d *daemon) watch(l *leader, s *session.Session, generation int, resumed bo
 	if l.session != s {
 		return
 	}
+	d.stopRecording(l)
 	l.session = nil
 	d.promptEnded(l, false)
 	if d.stopping {

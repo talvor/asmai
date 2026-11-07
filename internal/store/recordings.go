@@ -122,6 +122,7 @@ func (s *Store) ExpiredRecordings(cutoff time.Time) ([]Recording, error) {
 		var r Recording
 		var started, deleted string
 		var ended sql.NullString
+		// Only recordings not yet deleted are selected, so deleted is empty.
 		if err := rows.Scan(&r.Dispatch, &r.Agent, &r.Job, &r.Path, &r.Size, &started, &deleted, &ended); err != nil {
 			return nil, err
 		}

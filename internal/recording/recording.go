@@ -64,7 +64,11 @@ func Open(path string, epoch time.Time, columns, rows int) (*Writer, error) {
 	} else {
 		w.Resize(columns, rows)
 	}
-	return w, w.err
+	if w.err != nil {
+		f.Close()
+		return nil, fmt.Errorf("writing a recording: %w", w.err)
+	}
+	return w, nil
 }
 
 // Output records p, written to the terminal.
@@ -119,8 +123,12 @@ func (w *Writer) Close() (int64, error) {
 	if err == nil {
 		err = serr
 	}
-	if err != nil {
-		return 0, fmt.Errorf("writing a recording: %w", err)
+	var size int64
+	if serr == nil {
+		size = info.Size()
 	}
-	return info.Size(), nil
+	if err != nil {
+		return size, fmt.Errorf("writing a recording: %w", err)
+	}
+	return size, nil
 }

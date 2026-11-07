@@ -6,7 +6,6 @@ import (
 	"cmp"
 	"errors"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/talvor/asmai/internal/recording"
@@ -45,6 +44,10 @@ func (d *daemon) syncRecording(l *leader) {
 	r, err := d.store.RecordingStarted(want, recording.Path(d.cfg.Paths.Recordings, agent, want), time.Now())
 	if err != nil {
 		d.log.Error("journaling where a dispatch is recorded", "agent", agent, "dispatch", want, "error", err.Error())
+		return
+	}
+	if !r.Deleted.IsZero() {
+		// Its job ended and the retention ran out; it is not made again.
 		return
 	}
 	screen := l.session.Screen()
@@ -117,7 +120,6 @@ func (d *daemon) sweepRecordings(now time.Time) {
 			d.log.Error("deleting a recording", "dispatch", r.Dispatch, "path", r.Path, "error", err.Error())
 			continue
 		}
-		os.Remove(filepath.Dir(r.Path)) // only when empty
 		if err := d.store.RecordingDeleted(r.Dispatch, now); err != nil {
 			d.log.Error("journaling a recording's deletion", "dispatch", r.Dispatch, "error", err.Error())
 			continue

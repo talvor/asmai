@@ -67,6 +67,10 @@ const (
 	// automation, with an optional Note, and answers with the intervention
 	// record (03 rules 36 to 38).
 	CommandRelease = "release"
+	// CommandReplay answers with the recording of the dispatch the request
+	// names, or of the latest dispatch of the agent it names, for
+	// `asmai replay` to play (03 rule 42).
+	CommandReplay = "replay"
 	// CommandHook journals what an agent session's hook reported.
 	CommandHook = "hook"
 	// CommandConversation attaches the user's terminal to Coordination's
@@ -367,6 +371,8 @@ type Response struct {
 	// focus keeps it.
 	Focus      *store.Focus `json:"focus,omitempty"`
 	FocusMoved bool         `json:"focus_moved,omitempty"`
+	// Recording is the recording a replay found.
+	Recording *store.Recording `json:"recording,omitempty"`
 	// Released is what releasing an agent's input did.
 	Released *store.Released `json:"released,omitempty"`
 	// Returned says an accept found the job branch moved after the result
@@ -830,6 +836,13 @@ func (d *daemon) handle(conn *net.UnixConn) (handedOn bool) {
 		d.take(conn, r, req)
 	case CommandRelease:
 		d.release(conn, req)
+	case CommandReplay:
+		resp, err := d.replay(req)
+		if err != nil {
+			reply(conn, Response{Error: err.Error()})
+			return false
+		}
+		reply(conn, resp)
 	case CommandHook:
 		if err := d.observe(req.Session, req.Payload); err != nil {
 			reply(conn, Response{Error: err.Error()})

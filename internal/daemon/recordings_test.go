@@ -161,3 +161,56 @@ func TestARecordingIsDeletedOnceItsJobEndedForTheRetention(t *testing.T) {
 		})
 	}
 }
+
+// A replay finds the latest recording of the agent, or the dispatch named,
+// and says plainly when there is none, when it is another agent's, when it
+// was deleted and when its file is gone.
+func TestAReplayFindsARecordingOrSaysWhyThereIsNone(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	d := &daemon{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	const agent = "leader@engineering"
+
+	if _, err := d.replay(Request{Agent: agent}); err == nil || !strings.Contains(err.Error(), "has no recording") {
+		t.Errorf("an agent never recorded: %v, want it to say it has no recording", err)
+	}
+	if _, err := d.replay(Request{Agent: "nobody@nowhere"}); err == nil {
+		t.Error("an address naming no agent was accepted")
+	}
+	first := addPendingDispatch(t, s, agent, store.DispatchCreated, 1)
+	file := filepath.Join(t.TempDir(), "first.cast.gz")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordingStarted(first, file, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := d.replay(Request{Agent: "engineering"})
+	if err != nil || resp.Recording == nil || resp.Recording.Dispatch != first || resp.Recording.Path != file {
+		t.Fatalf("replay of the agent = %+v (%v), want its recording of dispatch %d", resp.Recording, err, first)
+	}
+	if resp, err = d.replay(Request{Agent: agent, Dispatch: first}); err != nil || resp.Recording.Dispatch != first {
+		t.Errorf("replay of the dispatch named = %+v (%v)", resp.Recording, err)
+	}
+	if _, err := d.replay(Request{Agent: "worker1@engineering", Dispatch: first}); err == nil || !strings.Contains(err.Error(), "not worker1@engineering") {
+		t.Errorf("replay of another agent's dispatch: %v, want it refused", err)
+	}
+	if _, err := d.replay(Request{Agent: agent, Dispatch: first + 100}); err == nil || !strings.Contains(err.Error(), "no recording") {
+		t.Errorf("replay of a dispatch with no recording: %v", err)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.replay(Request{Agent: agent}); err == nil || !strings.Contains(err.Error(), "is missing") {
+		t.Errorf("replay of a recording whose file is gone: %v", err)
+	}
+	if err := s.RecordingDeleted(first, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.replay(Request{Agent: agent}); err == nil || !strings.Contains(err.Error(), "was deleted") {
+		t.Errorf("replay of a deleted recording: %v, want it to say it was deleted", err)
+	}
+}

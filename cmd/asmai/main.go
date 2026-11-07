@@ -82,6 +82,10 @@ commands you type:
   asmai attach <agent>        show an agent's terminal and observe it; ↑/↓ scroll its history
                               and Ctrl-] opens a menu that detaches.
                               Address an agent as name@role, or by its role for its leader
+  asmai replay <agent> [--dispatch <id>]
+                              play the recording of the agent's latest dispatch, or of the dispatch named,
+                              on this terminal. Recordings are deleted after their job ended and the
+                              retention ran out; replay says so
   asmai take <agent> [--interrupt]
                               become the agent's input owner and type into its terminal. It waits for
                               the agent's running turn to end; --interrupt interrupts the turn instead.
@@ -347,6 +351,7 @@ var positional = map[string][]string{
 	"job show":         {"name the job number, as `asmai jobs` shows it"},
 	"job clean":        {"name the job number, as `asmai jobs` shows it"},
 	"job cancel":       {"name the job number, as `asmai jobs` shows it"},
+	"replay":           {"name the agent, such as worker1@engineering or engineering"},
 	"take":             {"name the agent, such as worker1@engineering or engineering"},
 	"release":          {"name the agent you hold, such as worker1@engineering or engineering"},
 	"focus":            {"name the job number, as `asmai jobs` shows it"},
@@ -456,6 +461,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		flags.StringVar(&claudeDefaultModel, "claude-default-model", "", "Claude's fallback model in a new config (default opus)")
 	case "start":
 		foreground = flags.Bool("foreground", false, "keep the daemon attached to this terminal")
+	case "replay":
+		flags.Int64Var(&dispatchID, "dispatch", 0, "replay this dispatch's recording, not the agent's latest")
 	case "release":
 		flags.StringVar(&blockedNote, "note", "", "a note for the owning leader, kept in the intervention record")
 	case "take":
@@ -638,7 +645,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	o := &output{stdout: stdout, stderr: stderr, json: *jsonOutput, toon: *toonOutput}
 	if os.Getenv(daemon.SessionCredential) != "" && !slices.Contains([]string{"status", "agents", "jobs", "brief", "job open", "job link", "job cancel", "focus", "hook", "inbox", "handoff send", "handoff accept", "handoff clarify", "handoff decline", "assign", "effect", "result", "blocked", "blocked resolve", "accept", "reject", "cancel", "redispatch", "answer redeliver", "answer retire", "push", "decision record", "decision request", "decision answer", "decision present", "authorize", "grant invalidate"}, name) {
-		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean", "take", "release"}, name) {
+		if slices.Contains([]string{"init", "doctor", "start", "stop", "providers install", "providers list", "lavish", "repo add", "repo list", "repo show", "repo remove", "config check", "config example", "config show", "config edit", "config apply", "role list", "role set", "grants", "grant revoke", "job clean", "take", "release", "replay"}, name) {
 			return o.fail(fmt.Errorf("an agent cannot run this command; ask the user to run `asmai %s`", strings.Join(original, " ")))
 		}
 		return o.fail(fmt.Errorf("an agent cannot run asmai %s; use an agent coordination command", name))
@@ -762,6 +769,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return attach(o, paths, arg, stdin)
 	case "take":
 		return take(o, paths, arg, interrupt, stdin)
+	case "replay":
+		return replay(o, paths, arg, dispatchID)
 	case "release":
 		return release(o, paths, arg, blockedNote, stdin)
 	case "hook":

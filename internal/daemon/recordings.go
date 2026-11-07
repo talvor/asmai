@@ -5,11 +5,14 @@ package daemon
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/talvor/asmai/internal/recording"
+	"github.com/talvor/asmai/internal/roles"
 	"github.com/talvor/asmai/internal/session"
+	"github.com/talvor/asmai/internal/store"
 )
 
 // recordingSweep is how often the daemon deletes the recordings whose
@@ -126,4 +129,42 @@ func (d *daemon) sweepRecordings(now time.Time) {
 		}
 		d.log.Info("a recording was deleted after its job ended", "dispatch", r.Dispatch, "job", r.Job, "retention", retention.String())
 	}
+}
+
+// replay finds the recording req asks to replay: the one of the dispatch it
+// names, which must have been typed to its agent, or the latest of its agent.
+// It says plainly when there is none, and when it has been deleted.
+func (d *daemon) replay(req Request) (Response, error) {
+	address, err := roles.ParseAddress(req.Agent)
+	if err != nil {
+		return Response{}, err
+	}
+	agent := address.String()
+	var r store.Recording
+	var ok bool
+	if req.Dispatch != 0 {
+		r, ok, err = d.store.Recording(req.Dispatch)
+		if err == nil && ok && r.Agent != agent {
+			return Response{}, fmt.Errorf("dispatch %d was typed to %s, not %s", req.Dispatch, r.Agent, agent)
+		}
+		if err == nil && !ok {
+			return Response{}, fmt.Errorf("dispatch %d has no recording for %s: it was never typed to an agent, or is not a dispatch of %s", req.Dispatch, agent, agent)
+		}
+	} else {
+		r, ok, err = d.store.LatestRecording(agent)
+		if err == nil && !ok {
+			return Response{}, fmt.Errorf("%s has no recording: no dispatch has been typed to it", agent)
+		}
+	}
+	if err != nil {
+		d.log.Error("finding a recording to replay", "agent", agent, "error", err.Error())
+		return Response{}, fmt.Errorf("finding the recording: %w", err)
+	}
+	if !r.Deleted.IsZero() {
+		return Response{}, fmt.Errorf("the recording of dispatch %d of %s was deleted on %s, after its job ended and the retention ran out", r.Dispatch, agent, r.Deleted.Local().Format("2006-01-02 15:04"))
+	}
+	if _, err := os.Stat(r.Path); err != nil {
+		return Response{}, fmt.Errorf("the recording of dispatch %d of %s is missing: its file %s cannot be read (%v)", r.Dispatch, agent, r.Path, err)
+	}
+	return Response{Recording: &r}, nil
 }

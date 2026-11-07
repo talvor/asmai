@@ -156,7 +156,7 @@ func isAgentCommand(command string) bool {
 
 func commandName(command string) string {
 	switch command {
-	case CommandStart, CommandStop, CommandStatus, CommandAgents, CommandExport, CommandAttach, CommandHook, CommandBrief, CommandJobs, CommandFocus, CommandTake, CommandRelease:
+	case CommandStart, CommandStop, CommandStatus, CommandAgents, CommandExport, CommandAttach, CommandHook, CommandBrief, CommandJobs, CommandFocus, CommandTake, CommandRelease, CommandReplay:
 		return command
 	case CommandConversation:
 		return "chat"

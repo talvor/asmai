@@ -638,9 +638,16 @@ func (h *Harness) c14(ctx context.Context, f *Factory, r *Result) error {
 	if err != nil {
 		return err
 	}
-	var recorded store.Recording
 	if err := h.awaitJournal(ctx, f, fmt.Sprintf("dispatch %d's recording to finish", e.dispatch), func(entries []store.Entry) (bool, error) {
-		return len(entriesAfter(entries, 0, store.KindRecordingFinished)) > 0, nil
+		for _, en := range entriesAfter(entries, 0, store.KindRecordingFinished) {
+			var fin struct {
+				Dispatch int64 `json:"dispatch"`
+			}
+			if json.Unmarshal(en.Data, &fin) == nil && fin.Dispatch == e.dispatch {
+				return true, nil
+			}
+		}
+		return false, nil
 	}); err != nil {
 		return err
 	}
@@ -651,7 +658,7 @@ func (h *Harness) c14(ctx context.Context, f *Factory, r *Result) error {
 	if resp.Error != "" || resp.Recording == nil {
 		return fmt.Errorf("the daemon has no recording of dispatch %d to replay: %s", e.dispatch, resp.Error)
 	}
-	recorded = *resp.Recording
+	recorded := *resp.Recording
 	info, err := os.Stat(recorded.Path)
 	if err != nil || info.Size() == 0 {
 		return fmt.Errorf("the recording of dispatch %d at %s is missing or empty (%v)", e.dispatch, recorded.Path, err)
@@ -684,11 +691,9 @@ func (h *Harness) c14(ctx context.Context, f *Factory, r *Result) error {
 // --interrupt interrupts the turn; the taker never types into an automated
 // draft, which is recorded and cleared.
 func (h *Harness) c8(ctx context.Context, f *Factory, r *Result) error {
-	e, err := h.exerciseHandoff(ctx, f, r)
-	if err != nil {
+	if _, err := h.exerciseHandoff(ctx, f, r); err != nil {
 		return err
 	}
-	_ = e
 	engineering := engineeringLeader
 	waiting := func(args ...string) (*session.Session, error) {
 		env := envValue(f.env, "TERM", "xterm-256color")
@@ -734,20 +739,6 @@ func (h *Harness) c8(ctx context.Context, f *Factory, r *Result) error {
 	if err != nil {
 		s.Stop(5 * time.Second)
 		return err
-	}
-	entries, err := factoryJournal(f)
-	if err != nil {
-		s.Stop(5 * time.Second)
-		return err
-	}
-	for _, en := range entriesAfter(entries, baseline, store.KindObservation) {
-		var d struct {
-			Agent string `json:"agent"`
-			Event string `json:"event"`
-		}
-		if json.Unmarshal(en.Data, &d) == nil && d.Agent == engineering && d.Event == "UserPromptSubmit" && en.ID < entry.ID {
-			r.observe("a prompt was submitted to %s while the take waited; the take was granted only after it", engineering)
-		}
 	}
 	r.observe("the user took %s's input once its turn had ended (journal entry %d)", engineering, entry.ID)
 	s.Stop(5 * time.Second)

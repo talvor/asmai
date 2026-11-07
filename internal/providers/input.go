@@ -12,9 +12,12 @@ import (
 // box, before the text typed into it.
 const claudeCodePrompt = "❯"
 
-// ClaudeCodeClearInput is the key that empties Claude Code's input box: Ctrl-L,
-// which the pinned Claude Code binds to its chat:clearInput action.
-const ClaudeCodeClearInput = "\x0c"
+// ClaudeCodeClearInput is the key that empties Claude Code's input box,
+// whatever lines it holds: Ctrl-C. The harness's C10 found that Ctrl-L, which
+// the key was before, does not clear the box in the pinned Claude Code, and
+// that Ctrl-U clears one line at a time. Ctrl-C on an empty box starts
+// Claude Code's exit confirmation, so it is typed only at a box that holds text.
+const ClaudeCodeClearInput = "\x03"
 
 // ClaudeCodeUnsentText reads the text typed into Claude Code's input box and
 // not yet submitted from screen, the terminal Claude Code draws, and reports

@@ -145,7 +145,7 @@ func TestTakeLiveWaitsClearsDraftQueuesAndMoves(t *testing.T) {
 		touchFile("working"),
 		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/finish" ]; do sleep 0.02; done`, 0, ""),
 		hookStep("Stop", "first", ""),
-		`{"expect":"\u000c"}`,
+		`{"expect":"\u0003"}`,
 		inputBox(""),
 		`{"expect":"new terminal\r"}`,
 		fakeRun(`asmai take leader@engineering > "$ASMAI_TEST_DIR/credential-refusal" 2>&1; code=$?; cat "$ASMAI_TEST_DIR/credential-refusal"; exit $code`, 1, "an agent cannot run this command"),

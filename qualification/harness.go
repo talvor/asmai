@@ -94,8 +94,15 @@ var Cases = []Case{
 		Env:   withAPIKeyCanaries,
 		Run:   (*Harness).c4,
 	},
+	{ID: "C6", Title: "A native input state that is not on the provider version's allow-list holds the agent instead of being typed over, and the hold lifts when the agent is at its input box", Env: signedInOnly, Run: (*Harness).c6},
 	{ID: "C7", Title: "Every automated submission has a correlated positive acknowledgment", Env: signedInOnly, Run: (*Harness).c7},
+	{ID: "C8", Title: "Taking an agent waits for its turn's boundary, or interrupts the turn, and an automated draft is recorded and cleared", Env: signedInOnly, Run: (*Harness).c8},
+	{ID: "C9", Title: "The attach client draws the provider's screen above its status line at reduced height", Env: signedInOnly, Run: (*Harness).c9},
+	{ID: "C10", Title: "The user's unsent text in the conversation is read from the input box, saved, and the box cleared", Env: signedInOnly, Run: (*Harness).c10},
 	{ID: "C11", Title: "Witnessed user messages are distinct from daemon nudges", Env: signedInOnly, Run: (*Harness).c11},
+	{ID: "C12", Title: "A Claude turn the user interrupted is recognised with no Interrupt hook", Env: signedInOnly, Run: (*Harness).c12},
+	{ID: "C13", Title: "A second attach takes the conversation over; the older terminal only observes and its unsent text is saved", Env: signedInOnly, Run: (*Harness).c13},
+	{ID: "C14", Title: "Each dispatch's terminal is recorded and replayed", Env: signedInOnly, Run: (*Harness).c14},
 	{ID: "C19", Title: "Dispatches and results stay correlated and reconcilable across restarts", Env: signedInOnly, Run: (*Harness).c19},
 	{ID: "C33", Title: "Personal, provider built-in and repository skills are hidden, including Claude Code's built-in code-review next to the shipped one", Env: signedInOnly, Run: (*Harness).c33},
 	{ID: "C34", Title: "Per-session skill delivery works although Claude Code namespaces plugin skills and upstream skills call each other by bare name", Env: signedInOnly, Run: (*Harness).c34},
@@ -234,7 +241,7 @@ func (h *Harness) resetDisposableState() error {
 // disposableState reports whether the case id runs in the disposable state
 // directory, which the harness has `asmai setup` prepare.
 func disposableState(id string) bool {
-	return slices.Contains([]string{"C2", "C7", "C11", "C19", "C48", "C52", "C53", "C54", "C57"}, id)
+	return slices.Contains([]string{"C2", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C13", "C14", "C19", "C48", "C52", "C53", "C54", "C57"}, id)
 }
 
 // withoutAPIKeys returns environ less any provider API-key variable, and the

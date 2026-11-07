@@ -131,7 +131,7 @@ func leavingWithUnsentText(t *testing.T, how string, leave func(a *attachedTermi
 		inputBox("draft"),
 		fakeRun(`touch "$ASMAI_TEST_DIR/drafted"`, 0, ""),
 		// Anything else typed here, a nudge included, ends the fake.
-		`{"expect":"\u000c"}`,
+		`{"expect":"\u0003"}`,
 		inputBox(""),
 		`{"expect":"asmai inbox --dispatch 2\r"}`,
 		`{"hook":"UserPromptSubmit","payload":{"hook_event_name":"UserPromptSubmit","prompt":"asmai inbox --dispatch 2"}}`,
@@ -221,7 +221,7 @@ func TestANudgeWaitsForTheUsersLastKeysToBeDrawn(t *testing.T) {
 		fakeRun(`sleep 0.05`, 0, ""),
 		inputBox("draft"),
 		// Anything typed here, a nudge included, ends the fake.
-		`{"expect":"\u000c"}`,
+		`{"expect":"\u0003"}`,
 		inputBox(""),
 		`{"expect":"asmai inbox --dispatch 2\r"}`,
 		fakeRun(`touch "$ASMAI_TEST_DIR/nudged"`, 0, ""),
@@ -267,7 +267,7 @@ func TestUnsentTextLeftInTheMiddleOfAnAutomatedTurnIsClearedAtItsBoundary(t *tes
 		fakeRun(`while [ ! -f "$ASMAI_TEST_DIR/left" ]; do sleep 0.02; done`, 0, ""),
 		fakeRun(`asmai inbox --dispatch 2`, 0, "accepted from leader@engineering"),
 		`{"hook":"Stop","payload":{"hook_event_name":"Stop","prompt_id":"reply"}}`,
-		`{"expect":"\u000c"}`,
+		`{"expect":"\u0003"}`,
 		inputBox(""),
 		fakeRun(`touch "$ASMAI_TEST_DIR/cleared"`, 0, ""),
 		// The saved text typed again, or anything else, ends the fake.

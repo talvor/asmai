@@ -328,7 +328,9 @@ Each qualified provider version carries an allow-list of modals it may be answer
 
 Every dispatch typed to an agent is recorded: the agent's terminal output, from the moment the daemon types the dispatch until its turn ends, goes to a gzip-compressed [asciicast](https://docs.asciinema.org/manual/asciicast/v2/) file, `recordings/<agent>/dispatch-<id>.cast.gz` in the state directory. The journal records where it is (`recording.started`) and how large it grew (`recording.finished`). A dispatch the user interrupted and the daemon types again adds to the recording it has. Provider transcripts are not recordings and stay where the provider writes them.
 
-The daemon deletes a recording `recording_retention` after its job ends (`14d` unless `[logs]` sets another), checking when it starts and every hour after, and journals each deletion (`recording.deleted`). Setting it applies at the next check. A recording of a job that has not ended is kept. Replaying recordings arrives in a later milestone.
+The daemon deletes a recording `recording_retention` after its job ends (`14d` unless `[logs]` sets another), checking when it starts and every hour after, and journals each deletion (`recording.deleted`). Setting it applies at the next check. A recording of a job that has not ended is kept.
+
+`asmai replay <agent>` plays the recording of the agent's latest dispatch on your terminal, and `asmai replay <agent> --dispatch <id>` that of the dispatch named, with the pauses it was recorded with (none longer than two seconds). It says so when the agent or the dispatch has no recording, when the recording was deleted after its retention, and when its file is missing.
 
 ### Writing assignments
 

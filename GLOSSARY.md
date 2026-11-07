@@ -295,7 +295,7 @@ _Avoid_: Grab, lock
 The user returning an agent's input to automation with `asmai release <agent>`. If they typed any message, the agent's dispatch is superseded and its owning leader receives the intervention record. See [Taking an agent](README.md#taking-an-agent).
 
 **Recording**:
-The compressed recording of an agent's terminal while a dispatch is typed to it, kept as a file in the state directory under `recordings/<agent>/`, with its place and size journaled. A dispatch typed again after the user interrupted it adds to the recording it has. Recordings are deleted `[logs] recording_retention` (14 days) after their job ends, and the deletion is journaled.
+The compressed recording of an agent's terminal while a dispatch is typed to it, kept as a file in the state directory under `recordings/<agent>/`, with its place and size journaled. A dispatch typed again after the user interrupted it adds to the recording it has. Recordings are deleted `[logs] recording_retention` (14 days) after their job ends, and the deletion is journaled. The user plays one on their terminal with `asmai replay <agent> [--dispatch <id>]`.
 _Avoid_: Transcript (the provider's own file, which stays where the provider writes it)
 
 **Modal allow-list**:

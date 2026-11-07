@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -106,5 +107,33 @@ func TestAClosedWriterRecordsNothing(t *testing.T) {
 	}
 	if got := lines(t, path); len(got) != 1 {
 		t.Fatalf("got %d lines, want only the header", len(got))
+	}
+}
+
+// A recording plays back the output it holds, in order, with its pauses
+// capped, and without its resizes.
+func TestPlayWritesTheRecordedOutputWithItsPauses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a", "d.cast.gz")
+	w, err := Open(path, time.Now(), 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Output([]byte("one "))
+	w.Resize(100, 30)
+	time.Sleep(20 * time.Millisecond)
+	w.Output([]byte("two"))
+	if _, err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	var waits []time.Duration
+	if err := Play(&out, path, func(d time.Duration) { waits = append(waits, d) }); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "one two" || len(waits) != 2 || waits[1] < 15*time.Millisecond {
+		t.Errorf("Play wrote %q waiting %v, want the output in order with the pause between", out.String(), waits)
+	}
+	if err := Play(&out, filepath.Join(t.TempDir(), "none"), func(time.Duration) {}); err == nil {
+		t.Error("playing a recording that is not there succeeded")
 	}
 }

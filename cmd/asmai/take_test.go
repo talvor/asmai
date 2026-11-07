@@ -147,3 +147,16 @@ func TestAStreamingTerminalEndsWhenTheInputIsReleased(t *testing.T) {
 		t.Errorf("the terminal ended with %q, want it to say the input was released", got)
 	}
 }
+
+// An agent's credential cannot replay, and replay needs the agent named.
+func TestReplayIsTheUsersAndNeedsAnAgent(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"replay"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "name the agent") {
+		t.Errorf("asmai replay without an agent exited %d printing %q, want a usage error", code, stderr.String())
+	}
+	t.Setenv(daemon.SessionCredential, "an-agent-session")
+	stderr.Reset()
+	if code := run([]string{"replay", "worker1@engineering"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "an agent cannot run this command") {
+		t.Errorf("an agent running asmai replay exited %d printing %q, want it refused", code, stderr.String())
+	}
+}

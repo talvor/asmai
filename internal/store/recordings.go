@@ -162,3 +162,13 @@ func (s *Store) RecordingDeleted(dispatch int64, at time.Time) error {
 		return KindRecordingDeleted, map[string]any{"dispatch": dispatch, "path": path}, nil
 	})
 }
+
+// LatestRecording returns the recording of the latest dispatch typed to
+// agent, and whether the agent has one.
+func (s *Store) LatestRecording(agent string) (Recording, bool, error) {
+	r, err := scanRecording(s.db.QueryRow(`SELECT `+recordingColumns+` FROM recordings r JOIN dispatches d ON d.id = r.dispatch JOIN messages m ON m.id = d.message WHERE d.agent = ? ORDER BY r.dispatch DESC LIMIT 1`, agent))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Recording{}, false, nil
+	}
+	return r, err == nil, err
+}
